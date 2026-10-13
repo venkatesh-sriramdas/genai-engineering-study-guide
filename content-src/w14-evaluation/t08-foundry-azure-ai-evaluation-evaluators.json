@@ -1,0 +1,110 @@
+{
+  "id": "w14-t08",
+  "order": 8,
+  "group": "Metrics",
+  "title": "Foundry and Azure AI Evaluation evaluators",
+  "minutes": 9,
+  "difficulty": "advanced",
+  "summary": "Foundry ships built-in evaluators for quality, RAG, safety and agents, plus custom evaluators, through two SDK paths. Many are preview. Choose by what you can label, which tools your agent calls and whether a preview dependency is acceptable.",
+  "useIf": "You build on Foundry or Azure and want portal-visible scores, safety evaluators and CI-friendly runs.",
+  "avoidIf": "You need a feature with an SLA today and the evaluator you want is preview, or your agent uses tools the evaluators barely support.",
+  "explain": [
+    { "t": "p", "md": "The built-in catalog has families: general purpose (Coherence, Fluency), textual similarity (Similarity, F1, BLEU, GLEU, ROUGE, METEOR), RAG, risk and safety, agent, rubric (preview), Azure OpenAI graders and custom (preview). Microsoft suggests RAG = Retrieval + Groundedness + Relevance + Content Safety, and agents = Output Quality + Tool Use Quality + Rubric + Content Safety [[r2]]." },
+    { "t": "table", "caption": "Families and status as checked on 2026-10-13", "head": ["Family", "Examples", "Needs ground truth?", "Status note"], "rows": [
+      ["RAG", "Retrieval, Document Retrieval, Groundedness, Relevance", "Document Retrieval needs qrels, Retrieval does not", "Groundedness Pro and Response Completeness are preview [[r4]]"],
+      ["Risk and safety", "Violence, sexual, self-harm, hate and unfairness, protected material, code vulnerability, ungrounded attributes, indirect attack", "No", "Prohibited actions and sensitive data leakage (agents only) are preview. Output is a defect rate [[tr1]]"],
+      ["Agent, system level", "Task Completion, Task Adherence, Intent Resolution, Customer Satisfaction, Task Navigation Efficiency", "Navigation efficiency needs a ground-truth tool sequence", "Most are preview [[r3]]"],
+      ["Agent, process level", "Tool Call Accuracy, Tool Selection, Tool Input Accuracy, Tool Output Utilization, Tool Call Success", "No", "Composite `builtin.tool_use_quality` is preview"],
+      ["Custom", "Code-based, prompt-based, endpoint-based", "Your choice", "Preview [[r41]]"]
+    ] },
+    { "t": "list", "style": "ul", "items": [
+      "**Composite evaluators.** `builtin.output_quality` batches Fluency, Coherence, Intent Resolution, Task Adherence, Groundedness and Task Completion into one judge call. `builtin.tool_use_quality` batches five tool metrics. Default pass thresholds are 3 on 1 to 5 scales and 1 on 0/1 scales, and the primary result passes only if every applicable component passes [[r3]].",
+      "**Levels.** `evaluation_level` is `turn` (default) or `conversation`. Conversation level needs the `messages` format and skips turn-only evaluators [[r2]].",
+      "**Custom evaluators (preview).** Code-based returns a float from Python `grade(sample, item)`. Prompt-based returns JSON with `result` and `reason`. Endpoint-based returns `score`, `reason`, `status` and optional `properties` [[r41]]. Foundry also recommends a **rubric evaluator** (preview) as the primary agent measure: weighted dimensions applied by an LLM judge, hand-written or generated from the agent's name, instructions and tools [[tr5]].",
+      "**Two SDK paths.** Classic `azure-ai-evaluation` (1.18.8 released 2026-10-09) with `evaluate()`, and new cloud evaluation through `azure-ai-projects` (2.2.0 or later, latest 2.8.0 on 2026-10-05) using `AIProjectClient` and `get_openai_client()`. The classic agent article does not apply to the new portal, so check each page's banner [[r38]]."
+    ] },
+    { "t": "callout", "kind": "gotcha", "title": "Tool coverage and a deprecated grader", "md": "Agent evaluators fully support File Search, Function tool, MCP and Knowledge-based MCP. For Azure AI Search, Bing Grounding, Bing Custom Search, SharePoint Grounding, Code Interpreter, Fabric Data Agent and Web Search, avoid `tool_call_accuracy`, `tool_input_accuracy`, `tool_output_utilization`, `tool_call_success` and `groundedness`. Quality Grader is deprecated even though one catalog page still lists it as preview [[r3]]." }
+  ],
+  "whereToUse": [
+    "Foundry projects that want results in the portal with run comparison and t-tests [[r39]]",
+    "Agent Framework apps, with `LocalEvaluator` checks in CI and `FoundryEvals` for depth [[r10]]",
+    "Pre-launch safety measurement across hate, violence, self-harm and indirect attack",
+    "Scheduled and continuous evaluation of deployed agents (preview)",
+    "Custom evaluators where policy rules are domain specific"
+  ],
+  "whenToUse": {
+    "use": ["Your models and agents are already on Foundry", "You want safety evaluators backed by hosted models", "You accept preview status for agent evaluators"],
+    "avoid": ["Relying on preview evaluators for a hard compliance gate without a fallback", "Using tool evaluators on tools listed as limited support", "Mixing classic and new-portal docs and code"],
+    "flips": ["Tools have limited evaluator support: use outcome checks and custom code evaluators", "Fast deterministic CI needed: use local code checks first, cloud judges nightly", "Portal not needed: open-source frameworks (RAGAS, DeepEval, promptfoo) are alternatives"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Foundry evaluators", "Azure native, portal, safety, red teaming", "You need no cloud dependency", "Many preview, region limits, two SDK paths"],
+      ["Agent Framework `LocalEvaluator`", "Fast code checks such as `keyword_check`, `tool_called_check`", "You need semantic judgement", "Only the checks you write"],
+      ["RAGAS", "Readable RAG metric definitions", "Agent and safety coverage", "API changes between versions"],
+      ["DeepEval", "Pytest style, many metrics and trajectory metrics", "Azure integration", "Default threshold 0.5, mostly judge based"],
+      ["promptfoo", "Config-file evals and red teaming in CI", "Rich portal analytics", "OpenAI agreed to acquire it on 2026-03-09, open source continues [[r45]]"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Tool Call Accuracy returns odd scores for an agent that uses Azure AI Search", "cause": "That tool has limited evaluator support", "fix": "Avoid the four tool metrics and groundedness there, grade the outcome or write a custom evaluator" },
+    { "symptom": "Code samples fail against the new portal", "cause": "A classic SDK article was followed (`azure-ai-evaluation`) for a new-portal project", "fix": "Read the banner, and use `azure-ai-projects` 2.x for new cloud evaluation" },
+    { "symptom": "A build breaks after an evaluator was renamed or withdrawn", "cause": "Preview feature, or Quality Grader which is deprecated", "fix": "Pin versions, keep a fallback code check and watch the docs for status changes" }
+  ],
+  "scenarios": [
+    {
+      "id": "w14-t08-s1",
+      "title": "Agent that calls Azure AI Search and Bing",
+      "situation": "A Foundry agent answers questions using Azure AI Search and Bing Grounding. The team wants a tool-quality score in the dashboard and a CI gate.",
+      "constraints": ["Tools have limited evaluator support", "Foundry-hosted", "Needs a CI gate"],
+      "unknowns": ["Can the outcome be checked in code?", "Is a rubric evaluator acceptable as preview?"],
+      "question": "How do you score tool use?",
+      "options": [
+        { "name": "Outcome check plus rubric or custom evaluator, with tool metrics skipped for those tools", "verdict": "best", "why": "The docs say to avoid the four tool metrics and groundedness for these tools, so grade what the agent achieved and encode your own rules.", "tradeoff": "More effort than built-ins, and rubric and custom evaluators are preview." },
+        { "name": "Use `builtin.tool_use_quality` anyway", "verdict": "poor", "why": "The composite includes metrics that are documented as unsupported for these tools, so scores mislead.", "tradeoff": "Right for agents that use Function tool, MCP or File Search." },
+        { "name": "Skip tool evaluation and rely on thumbs up and down", "verdict": "good", "why": "Cheap and shows user sentiment.", "tradeoff": "No gate and no step-level signal." }
+      ],
+      "flips": [
+        { "if": "The agent switches to function tools or MCP", "then": "Use the built-in tool evaluators." },
+        { "if": "Preview status is unacceptable", "then": "Write code-based checks and keep them local." }
+      ],
+      "takeaway": "Check tool coverage before you trust a tool metric."
+    },
+    {
+      "id": "w14-t08-s2",
+      "title": "Fast CI on an Agent Framework app",
+      "situation": "A team builds with Agent Framework in Python and merges 20 times a day. Cloud judge runs take minutes and cost tokens. They still want safety coverage before release.",
+      "constraints": ["Fast CI", "Limited judge spend", "Need safety evidence before release"],
+      "unknowns": ["Which checks are deterministic?", "How often do releases happen?"],
+      "question": "How do you split local and cloud evaluators?",
+      "options": [
+        { "name": "`LocalEvaluator` code checks per PR, Foundry evaluators nightly and before release", "verdict": "best", "why": "Deterministic checks (`keyword_check`, `tool_called_check`) give fast feedback and cloud judges and safety evaluators run where cost and time are acceptable.", "tradeoff": "Two systems to maintain." },
+        { "name": "Cloud evaluators on every PR", "verdict": "poor", "why": "It slows merges and burns judge spend.", "tradeoff": "Fine with a handful of merges a week." },
+        { "name": "Safety evaluators only at launch", "verdict": "good", "why": "Cheap.", "tradeoff": "Safety regressions between launches go unseen." }
+      ],
+      "flips": [
+        { "if": "Merges drop to a few a week", "then": "Run cloud evaluators on each PR." },
+        { "if": "A policy needs semantic judgement per change", "then": "Add a small prompt-based custom evaluator to the PR suite." }
+      ],
+      "takeaway": "Local checks for speed, cloud judges for depth."
+    }
+  ],
+  "quiz": [
+    { "id": "w14-t08-q1", "type": "single", "tag": "concept", "q": "A composite evaluator such as `builtin.tool_use_quality` reports its primary result as pass when...", "options": ["The average component score is above the threshold", "Any applicable component passes", "Every applicable component passes", "Tool Call Success passes"], "answer": 2, "explain": "The primary result passes only if every applicable component passes. Averaging or any-pass would hide a failing component." },
+    { "id": "w14-t08-q2", "type": "single", "tag": "bug", "q": "This plan uses an evaluator on an agent that calls Bing Grounding and Code Interpreter. What is wrong?", "code": { "lang": "text", "code": "agent tools: Bing Grounding, Code Interpreter\nevaluators: tool_call_accuracy, tool_output_utilization, groundedness" }, "options": ["Too few evaluators", "Evaluators cannot run on agents", "tool_call_accuracy only works offline", "Those tools have limited support, so these evaluators should be avoided"], "answer": 3, "explain": "The docs list Bing Grounding and Code Interpreter as limited support and say to avoid these four tool metrics and groundedness for such conversations." },
+    { "id": "w14-t08-q3", "type": "match", "tag": "concept", "q": "Match each custom evaluator kind to what it returns or runs.", "pairs": [
+      { "l": "Code-based", "r": "Python `grade(sample, item)` returning a float from 0.0 to 1.0" },
+      { "l": "Prompt-based", "r": "A judge prompt returning JSON with `result` and `reason`" },
+      { "l": "Endpoint-based", "r": "Your HTTP endpoint returning `score`, `reason` and `status`" }
+    ], "explain": "These are the three custom evaluator kinds, all labelled preview as checked on 2026-10-13." }
+  ],
+  "flashcards": [
+    { "front": "Which two SDK paths exist for Foundry evaluation?", "back": "Classic `azure-ai-evaluation` with `evaluate()`, and new cloud evaluation via `azure-ai-projects` 2.x with `AIProjectClient` and `get_openai_client()`. Docs mix both, so read the banner." },
+    { "front": "Default pass thresholds for composite agent evaluators?", "back": "3 on 1 to 5 scales and 1 on 0/1 scales. The primary result passes only if every applicable component passes." },
+    { "front": "Which agent tools have limited evaluator support?", "back": "Azure AI Search, Bing Grounding, Bing Custom Search, SharePoint Grounding, Code Interpreter, Fabric Data Agent and Web Search. Avoid four tool metrics and groundedness there." }
+  ],
+  "related": ["w14-t07", "w14-t11", "w14-t13", "w12-t14", "w11-t26", "w14-l4"],
+  "refs": ["r2", "r3", "r4", "r10", "r38", "r39", "r41", "r45", "tr1", "tr5"]
+}

@@ -1,0 +1,118 @@
+{
+  "id": "w05-t05",
+  "order": 5,
+  "group": "Ranking",
+  "title": "Rerankers",
+  "minutes": 9,
+  "difficulty": "core",
+  "summary": "A reranker rescoring a shortlist with a model that reads query and chunk together. It improves order, not recall: it cannot find chunks the first stage missed.",
+  "useIf": "The right chunk is usually in the shortlist but not at the top, and you can afford extra latency and cost per query.",
+  "avoidIf": "The right chunk is not in the candidate set, or the latency budget leaves no room for a second model pass.",
+  "explain": [
+    { "t": "p", "md": "First-stage retrievers are built for speed over millions of chunks, so they score query and chunk separately. A **cross-encoder** feeds the query and one candidate through a transformer together and outputs a single relevance score, with attention across both. It is more accurate and too slow for a whole corpus, so it rescores only a shortlist, for example 100 candidates [[tr7]]. BEIR found re-ranking and late-interaction models gave the best zero-shot average, at high compute cost [[r11]]." },
+    { "t": "diagram", "id": "w05-t05-d1", "title": "Retrieve wide, rerank narrow", "alt": "A first stage returns many candidates, the top 50 go to the reranker, and a handful of the best go to the model.", "src": "flowchart LR\n  A[Corpus] --> B[Hybrid retrieval]\n  B --> C[Top 50 candidates]\n  C --> D[Reranker]\n  D --> E[Top 5 to 10]\n  E --> F[Prompt]" },
+    { "t": "table", "caption": "Reranker families and their dials", "head": ["Family", "How it scores", "Notes from the sources"], "rows": [
+      ["Azure semantic ranker", "Managed ranking inside the search service", "Reranks the top 50 only and cannot find new documents. About 2,000 tokens per document feed summarisation, and the summary string is capped at 2,048 tokens (256 before November 2024). `@search.rerankerScore` runs 0 to 4 [[r3]]"],
+      ["Cohere Rerank API", "Hosted cross-encoder", "`rerank-v4.0-pro` and `rerank-v4.0-fast` take 32k context, `rerank-v3.5` takes 4096 tokens. Results carry `index` and `relevance_score`. YAML strings recommended for structured documents [[r31]]"],
+      ["Self-hosted cross-encoder", "Open model you run", "You control data residency and cost, and you own GPUs and updates [[tr7]]"],
+      ["LLM reranker", "Prompted model orders a window of candidates", "RankGPT found instructed GPT-class models competitive with supervised rerankers. Cost is an extra model call per window [[r13]]"],
+      ["ColBERT late interaction", "Token-level interaction over precomputed vectors", "Encodes query and document independently [[tr11]]. Index grows about tenfold, which ColBERTv2 compresses [[r12]]. Not documented in the Azure vector pages read on 2026-10-13"]
+    ], "highlightCol": 2 },
+    { "t": "p", "md": "**Where reranking pays.** In Anthropic's tests the top-20 retrieval failure rate fell from 5.7% to 3.7% with contextual embeddings and to 2.9% with contextual BM25 added. Adding reranking brought the reduction to 67% [[r26]]. **Where it cannot help.** A relevant chunk at candidate position 80 never reaches an Azure reranker that takes 50, so raise first-stage recall before blaming the ranker." },
+    { "t": "callout", "kind": "gotcha", "title": "Azure semantic ranker limits that bite", "md": "`search=*` or an empty search disables it, `orderBy` with semantic returns HTTP 400, and it is billed when `queryType=semantic` and the search string is not empty. Score distributions shift with model updates, so avoid fine cutoffs [[r3]]." }
+  ],
+  "whereToUse": [
+    "After hybrid retrieval, where fused order is rough and the model sees only 5 to 10 chunks",
+    "Corpora with many near-duplicate or topically similar chunks, where order matters",
+    "Long-form answers where the top chunk must truly answer the question",
+    "Systems that return extractive captions or answers directly from the ranker"
+  ],
+  "whenToUse": {
+    "use": ["The gold chunk sits in the top 50 but rarely in the top 5", "You can afford extra latency per query (author estimate: tens to hundreds of milliseconds, so measure on your data)", "A managed option exists in your search service", "Order quality drives answer quality"],
+    "avoid": ["Candidate recall is the problem", "Strict latency budgets such as voice, with no spare milliseconds", "You need stable absolute scores for thresholds across model updates"],
+    "flips": ["Data cannot leave your network: use a self-hosted cross-encoder", "Documents are long: check the ranker's input limit, since only a summary or window is read", "Query volume is huge: shrink the candidate window or rerank only the hard queries"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["No reranker", "Latency is tight, first-stage precision is high", "Order of the top 10 is noisy", "Cheapest, lowest accuracy"],
+      ["Managed semantic ranker", "You already use Azure AI Search and want in-service processing", "Candidate set exceeds 50 or you need stable thresholds", "Premium billing, preview-versus-GA differences by feature"],
+      ["Hosted rerank API", "Fast to adopt, long context needed", "Data residency or egress is restricted", "Per-request cost, external dependency"],
+      ["Self-hosted cross-encoder", "Control over data and tuning", "Small team without GPU operations", "Infrastructure and model upkeep"],
+      ["LLM reranker", "Highest flexibility, reasoning over criteria", "Tight latency or volume", "Extra model call per candidate window"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "The relevant document never appears even with the ranker on", "cause": "It was outside the top 50 candidates, and the ranker only reorders", "fix": "Raise first-stage recall: hybrid, query transformation, `k` and `maxTextRecallSize` so they sum to at least 50 [[r2]]" },
+    { "symptom": "Abstention rate jumps after a service update", "cause": "The reranker score distribution shifted", "fix": "Recalibrate coarse bands on the golden set and monitor score percentiles" }
+  ],
+  "scenarios": [
+    {
+      "id": "w05-t05-s1",
+      "title": "Azure-native stack, order is noisy",
+      "situation": "A hybrid index sits in Azure AI Search. Evaluation shows the gold chunk is in the top 50 for nearly every query but only in the top 5 for about half.",
+      "constraints": ["Data must stay inside the search service boundary", "Latency budget allows 300 ms extra", "English and German content"],
+      "unknowns": ["Is semantic ranker available in the region and tier?", "How are scores used downstream?"],
+      "question": "What do you add?",
+      "options": [
+        { "name": "Enable the semantic ranker and set coarse bands for any cutoff", "verdict": "best", "why": "It fits the in-service data constraint and targets exactly the symptom of good recall with weak order [[r3]].", "tradeoff": "Premium billing, and scores drift with model updates." },
+        { "name": "Add an LLM reranker over the top 50", "verdict": "good", "why": "Flexible and often accurate.", "tradeoff": "Higher latency and cost, and data leaves the service." },
+        { "name": "Increase `k` to 200 and send everything to the model", "verdict": "poor", "why": "It floods the context and does not fix order.", "tradeoff": "Fine for a model with a large window when ordering matters little." }
+      ],
+      "flips": [
+        { "if": "The gold chunk is often outside the top 50", "then": "Fix first-stage recall before adding or tuning a ranker." },
+        { "if": "The deployment is outside Azure", "then": "Use a hosted rerank API or a self-hosted cross-encoder." }
+      ],
+      "takeaway": "Rerank when the order is bad, not when the shortlist is bad."
+    },
+    {
+      "id": "w05-t05-s2",
+      "title": "Regulated data, own search engine",
+      "situation": "A bank runs OpenSearch inside its network. Documents cannot go to an external API. Analysts accept a two-second response.",
+      "constraints": ["No external data egress", "A small ML platform team exists", "Moderate volume"],
+      "unknowns": ["GPU capacity?", "Languages required?"],
+      "question": "Which reranker?",
+      "options": [
+        { "name": "Self-hosted cross-encoder over the top 50 to 100", "verdict": "best", "why": "It keeps data inside the boundary and the latency budget tolerates a model pass [[tr7]].", "tradeoff": "You operate GPUs, evaluate model updates and tune on your data." },
+        { "name": "Hosted rerank API", "verdict": "poor", "why": "It sends document text outside the network.", "tradeoff": "Right when residency rules allow a vendor and you want zero operations." },
+        { "name": "No reranker, trust the hybrid order", "verdict": "good", "why": "Zero added latency or ops.", "tradeoff": "Top-5 order may be noisy, which hurts answer quality." }
+      ],
+      "flips": [
+        { "if": "The platform team cannot run GPUs", "then": "Ship without a reranker first and revisit with a vendor approved for the data." },
+        { "if": "The response budget tightens to well under a second", "then": "Shrink the rerank window to about 20 to 30 candidates or use a smaller distilled cross-encoder." }
+      ],
+      "takeaway": "Residency often chooses the reranker for you."
+    },
+    {
+      "id": "w05-t05-s3",
+      "title": "Voice assistant with a tight budget",
+      "situation": "A voice agent must speak within about a second of the end of the question. Retrieval is allotted 250 ms.",
+      "constraints": ["Retrieval budget 250 ms", "High volume", "Short factual questions"],
+      "unknowns": ["How precise is first-stage retrieval on a labelled set?", "Can the reranker run on a small candidate window?"],
+      "question": "How do you handle reranking?",
+      "options": [
+        { "name": "Measure first-stage precision, and rerank only a small window (for example 20) if it fits the budget", "verdict": "best", "why": "Cost scales with candidates, so a small window may fit, and the measurement shows whether reranking is needed.", "tradeoff": "A smaller window lowers the chance the gold chunk is included." },
+        { "name": "Rerank 100 candidates with an LLM", "verdict": "poor", "why": "An extra model call per window blows the budget [[r13]].", "tradeoff": "Right for offline or asynchronous research workflows." },
+        { "name": "Skip reranking permanently", "verdict": "good", "why": "Simple and fast.", "tradeoff": "Gives up accuracy that might be affordable." }
+      ],
+      "flips": [
+        { "if": "The budget grows to a second or more", "then": "A full 50-candidate rerank becomes affordable." },
+        { "if": "First-stage precision at 20 is already very high on the golden set", "then": "Skip the reranker and keep the saved latency, since it would reorder little." }
+      ],
+      "takeaway": "Candidate window size is the latency dial."
+    }
+  ],
+  "quiz": [
+    { "id": "w05-t05-q1", "type": "single", "tag": "diagnose", "q": "After enabling the Azure semantic ranker, a relevant document still never appears. Debug output shows it at position 74 before reranking. What is the cause?", "options": ["Only the top 50 candidates go to the ranker", "The ranker scores it too low", "Semantic ranker cannot read English", "The `orderBy` clause is empty"], "answer": 0, "explain": "Position 74 is outside the top 50 that the ranker receives, so it is never rescored. Fix first-stage recall. The other options do not match the evidence." },
+    { "id": "w05-t05-q2", "type": "match", "tag": "concept", "q": "Match each reranker to its defining property.", "pairs": [{ "l": "Cross-encoder", "r": "Scores query and chunk together with attention across both" }, { "l": "ColBERT", "r": "Independent encodings with token-level interaction, large index" }, { "l": "LLM reranker", "r": "Prompted model orders a window, extra call per window" }, { "l": "Azure semantic ranker", "r": "Reranks the top 50 and cannot find new documents" }], "explain": "These are the properties each source describes: cross-encoders attend across query and document, ColBERT delays interaction, LLM rerankers add a model call and Azure's ranker only reorders its 50 candidates." },
+    { "id": "w05-t05-q3", "type": "single", "tag": "tradeoff", "q": "Which is the strongest reason to choose a self-hosted cross-encoder over a hosted rerank API?", "options": ["It is always more accurate", "It needs no GPUs", "It removes the need for first-stage recall", "Document text must not leave your network"], "answer": 3, "explain": "Residency is the decisive dial. Accuracy depends on the model and data, self-hosting needs compute, and no reranker fixes missing candidates." }
+  ],
+  "flashcards": [
+    { "front": "Why can a reranker not fix poor recall?", "back": "It only reorders the candidates it receives. Azure's semantic ranker takes the top 50 and cannot find new documents." },
+    { "front": "What is the Azure `@search.rerankerScore` range?", "back": "0.00 to 4.00. The distribution shifts with model updates, so use coarse cutoffs only." },
+    { "front": "Cross-encoder versus bi-encoder?", "back": "A cross-encoder scores query and chunk together, which is accurate but slow. A bi-encoder embeds them separately, which is fast for first-stage search." }
+  ],
+  "related": ["w05-t04", "w05-t06", "w05-l3", "w04-t08", "w14-t06"],
+  "refs": ["tr7", "tr11", "r3", "r2", "r11", "r12", "r13", "r26", "r31"]
+}

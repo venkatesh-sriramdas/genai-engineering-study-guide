@@ -1,0 +1,175 @@
+{
+  "id": "w09-t07",
+  "order": 7,
+  "group": "Interaction modes",
+  "title": "Streaming, polling and push notifications",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "A2A offers three ways to hear about task progress: poll with GetTask, stream over Server-Sent Events, or receive webhook calls (push notifications). Task duration, caller reachability and update frequency decide.",
+  "useIf": "You call or build an agent whose work outlasts a single quick reply and you must choose how updates arrive.",
+  "avoidIf": "You use a blocking SendMessage for jobs that may run for minutes: the call waits until the task is terminal or interrupted.",
+  "explain": [
+    { "t": "p", "md": "`SendMessage` is **blocking by default**: with `returnImmediately` false the call waits until the task reaches a terminal or interrupted state. Set `SendMessageConfiguration.returnImmediately` to true to get the task back at once and then use one of three mechanisms [[r1]]." },
+    { "t": "list", "style": "ul", "items": [
+      "**Polling** with `GetTask`: always available, works behind firewalls, simple, but adds latency and wasted requests. Best for infrequent updates [[r1]].",
+      "**Streaming** with `SendStreamingMessage` or `SubscribeToTask`: low latency over an open connection, needs `capabilities.streaming`. The stream starts with a `Task` snapshot, delivers `TaskStatusUpdateEvent` and `TaskArtifactUpdateEvent` in order, and ends when the task ends. If it drops, reconnect with `SubscribeToTask` [[r7]] [[r1]].",
+      "**Push notifications**: the client registers a webhook (`TaskPushNotificationConfig` with `url`, optional `token` and `authentication`). The agent POSTs a `StreamResponse` payload on significant changes. Needs `capabilities.pushNotifications`. The client typically then calls `GetTask` [[r7]]."
+    ] },
+    { "t": "diagram", "id": "w09-t07-d1", "title": "Push notification flow", "alt": "The client sends a message with a push configuration. The agent returns a submitted task. The agent later posts a status update to the client's webhook with credentials, and the client calls GetTask for the full task.", "src": "sequenceDiagram\n  participant C as Client\n  participant A as Agent\n  participant W as Client webhook\n  C->>A: SendMessage with push config\n  A-->>C: Task SUBMITTED\n  A->>W: POST statusUpdate with credentials\n  W-->>A: 2xx\n  W->>A: GetTask taskId\n  A-->>W: Task with artifacts" },
+    { "t": "callout", "kind": "warn", "title": "Webhooks need defences on both sides", "md": "Agents SHOULD NOT post to any URL a client supplies, because attackers could aim them at internal services (SSRF) or use them as DDoS amplifiers: use allowlists, ownership checks and egress controls. Agents SHOULD reject private, loopback and link-local URLs, use 10 to 30 second timeouts and may retry with exponential backoff. The agent MUST authenticate to the webhook. The receiver MUST verify authenticity (for example JWT signatures checked against the agent's JWKS, or HMAC) and SHOULD guard against replay and process idempotently [[r7]] [[r1]]." }
+  ],
+  "whereToUse": [
+    "A chat or dashboard UI that shows live progress of a task over an open connection",
+    "A serverless function or mobile client that cannot hold a connection for hours",
+    "A batch job behind a strict firewall that can only make outbound calls",
+    "Event-driven backends that react to a task finishing or asking for input",
+    "Gateways that must bound open connections and prefer short requests"
+  ],
+  "whenToUse": {
+    "use": [
+      "Stream when a connected client benefits from partial results or progress within seconds to minutes",
+      "Use push for hours-long tasks and callers that are reachable by HTTPS but cannot keep a connection open",
+      "Poll when firewalls block inbound calls, updates are rare or the peer supports neither streaming nor push"
+    ],
+    "avoid": [
+      "Do not use blocking `SendMessage` for open-ended jobs",
+      "Do not register webhooks on endpoints you do not authenticate and verify",
+      "Do not assume a stream replays missed events: resume with `SubscribeToTask` and then `GetTask`"
+    ],
+    "flips": [
+      "The peer is Foundry (no streaming for v1.0): fall back to polling [[r17]]",
+      "The caller sits behind a firewall with no inbound path: push is out, poll with backoff",
+      "Updates arrive every second and users watch: streaming beats polling on cost and latency"
+    ]
+  },
+  "alternatives": {
+    "title": "Delivery mechanisms",
+    "head": ["Mechanism", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Blocking `SendMessage`", "Short jobs under a few seconds", "Work is long or may pause for input", "Connection and gateway timeouts"],
+      ["Polling (`GetTask`)", "Infrequent updates, restrictive networks", "Users expect live progress", "Latency and wasted requests"],
+      ["Streaming (SSE or native)", "Live progress and partial artifacts", "Hours-long tasks, serverless callers", "Open connections, reconnect logic"],
+      ["Push (webhook)", "Long tasks, disconnected but reachable callers", "No inbound path, or browsers", "SSRF, authenticity, replay and idempotency work"]
+    ]
+  },
+  "pitfalls": [
+    {
+      "symptom": "The caller hangs for the whole job on `SendMessage`",
+      "cause": "`returnImmediately` defaults to false, so the call blocks until terminal or interrupted",
+      "fix": "Set `returnImmediately: true` and then poll, stream or rely on push [[r1]]"
+    },
+    {
+      "symptom": "A dropped stream loses the result",
+      "cause": "The client treated the stream as the only source of truth",
+      "fix": "Reconnect with `SubscribeToTask` (it starts with the current `Task`) and confirm with `GetTask` [[r1]]"
+    },
+    {
+      "symptom": "The agent's webhook calls reach internal services",
+      "cause": "A client supplied a private or loopback URL and the agent posted to it blindly",
+      "fix": "Allowlist, verify ownership of the URL, block private ranges and use egress controls [[r7]]"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "w09-t07-s1",
+      "title": "A web UI with a 3-minute task",
+      "situation": "A browser UI shows progress for a task that runs about 3 minutes and emits an update every few seconds. Users stay on the page.",
+      "constraints": ["Short-to-medium duration", "Frequent updates", "Connected browser client"],
+      "unknowns": ["Does the peer declare `streaming: true`?", "How do gateways treat long connections?"],
+      "question": "How should updates arrive?",
+      "options": [
+        { "name": "Streaming over SSE with `SubscribeToTask` for reconnects", "verdict": "best", "why": "Low latency and incremental artifacts for a connected user.", "tradeoff": "Needs reconnect logic and a gateway that tolerates open connections." },
+        { "name": "Polling `GetTask` every 2 seconds", "verdict": "good", "why": "Works everywhere and survives proxies.", "tradeoff": "Latency up to the interval and many wasted requests." },
+        { "name": "Push to a webhook", "verdict": "poor", "why": "A browser has no stable HTTPS endpoint for the agent to call.", "tradeoff": "Right for server-side callers that cannot stream." }
+      ],
+      "flips": [
+        { "if": "The peer does not declare streaming", "then": "Poll with a short interval." },
+        { "if": "The job stretches to hours", "then": "Let a backend receive push and notify the UI." }
+      ],
+      "takeaway": "Connected users and frequent updates mean streaming."
+    },
+    {
+      "id": "w09-t07-s2",
+      "title": "A two-day task and a serverless caller",
+      "situation": "A serverless function starts a job that takes up to two days. It can expose a public HTTPS endpoint with token verification. Anyone supplying webhook URLs is a risk to the agent's side.",
+      "constraints": ["Very long duration", "Caller cannot hold connections", "Both sides internet reachable"],
+      "unknowns": ["Does the agent declare `pushNotifications: true`?", "Can the agent validate webhook URLs?"],
+      "question": "How should updates arrive?",
+      "options": [
+        { "name": "Push to an authenticated webhook, then `GetTask` on notification", "verdict": "best", "why": "No open connection for two days and the caller reacts only on state changes.", "tradeoff": "You run a verified, idempotent receiver and the agent must defend against SSRF." },
+        { "name": "Polling with exponential backoff", "verdict": "good", "why": "Needs no inbound endpoint and is always supported.", "tradeoff": "Idle polls for two days and delayed reaction." },
+        { "name": "Streaming for the whole duration", "verdict": "poor", "why": "A two-day connection will drop and a function cannot hold it.", "tradeoff": "Right for minutes-long jobs with a connected client." }
+      ],
+      "flips": [
+        { "if": "The agent does not declare push", "then": "Poll with backoff." },
+        { "if": "Webhook delivery is unreliable", "then": "Pair push with a periodic `GetTask` sweep." }
+      ],
+      "takeaway": "Hours or days with a reachable caller point to push, backed by polling."
+    },
+    {
+      "id": "w09-t07-s3",
+      "title": "A batch job behind a strict firewall",
+      "situation": "A nightly batch job sits in a network zone with no inbound connections. It starts 200 tasks that each run about 10 minutes.",
+      "constraints": ["No inbound traffic allowed", "Medium-length tasks", "Many tasks in parallel"],
+      "unknowns": ["Is there a rate limit at the agent?", "Can outbound long-lived connections pass the proxy?"],
+      "question": "How does the job learn each task finished?",
+      "options": [
+        { "name": "Poll `GetTask` with jittered backoff", "verdict": "best", "why": "It needs only outbound HTTPS and is supported by every A2A server.", "tradeoff": "Request volume grows with task count, so batch and back off." },
+        { "name": "One stream per task", "verdict": "good", "why": "Low latency and works over outbound HTTPS if the proxy allows long connections.", "tradeoff": "200 open connections and reconnect handling." },
+        { "name": "Push to a webhook", "verdict": "poor", "why": "The zone accepts no inbound calls, so the agent cannot reach the job.", "tradeoff": "Right if a relay endpoint outside the zone can receive and forward." }
+      ],
+      "flips": [
+        { "if": "A relay in a public zone is allowed", "then": "Receive push there and forward events." },
+        { "if": "Latency matters for each result", "then": "Stream if the proxy tolerates it." }
+      ],
+      "takeaway": "When nothing can call you, you call them."
+    }
+  ],
+  "quiz": [
+    {
+      "id": "w09-t07-q1",
+      "type": "single",
+      "tag": "bug",
+      "q": "A caller invokes `SendMessage` for a job that runs 25 minutes and the call hangs until a gateway times out. What was missed?",
+      "options": [
+        "`returnImmediately` defaults to false, so the call blocks until the task is terminal or interrupted",
+        "`SendMessage` is only valid for streaming agents",
+        "The task must first be subscribed to",
+        "A webhook must be registered before any send"
+      ],
+      "answer": 0,
+      "explain": "Blocking is the default. Setting `returnImmediately` to true returns the task at once. `SendMessage` works for any agent, subscribing is optional and webhooks are one of three delivery options, not a prerequisite."
+    },
+    {
+      "id": "w09-t07-q2",
+      "type": "multi",
+      "tag": "security",
+      "q": "Which controls belong on the agent or receiver side of push notifications? Select all that apply.",
+      "options": [
+        "Reject private, loopback and link-local webhook URLs",
+        "Authenticate the sender to the webhook and verify signatures or tokens",
+        "Trust any URL the client supplies to reduce latency",
+        "Process notifications idempotently and guard against replay"
+      ],
+      "answers": [0, 1, 3],
+      "explain": "The spec guidance covers SSRF defences, mutual authenticity checks, and replay and idempotency handling. Trusting any supplied URL is the vulnerability, not a control."
+    },
+    {
+      "id": "w09-t07-q3",
+      "type": "numeric",
+      "tag": "numeric",
+      "q": "The spec recommends webhook request timeouts of 10 to 30 seconds. What is the upper bound, in seconds?",
+      "answer": 30,
+      "tolerancePct": 0,
+      "unit": "seconds",
+      "explain": "Agents SHOULD use a reasonable timeout for webhook requests, recommended at 10 to 30 seconds. They may retry with exponential backoff."
+    }
+  ],
+  "flashcards": [
+    { "front": "What does `SendMessageConfiguration.returnImmediately` do?", "back": "If true, the task is returned right after creation. If false (default), the call waits until the task is terminal or interrupted." },
+    { "front": "How do you resume a dropped A2A stream?", "back": "Call `SubscribeToTask`. The stream begins with the current `Task` snapshot, then continues with ordered events." },
+    { "front": "Which capability flags gate streaming and push?", "back": "`capabilities.streaming` and `capabilities.pushNotifications` on the Agent Card. Without them the operations are unsupported." }
+  ],
+  "related": ["w09-t04", "w09-t06", "w09-t08", "w09-l04", "w16-t08"],
+  "refs": ["r1", "r7", "r17"]
+}

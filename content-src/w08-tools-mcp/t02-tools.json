@@ -1,0 +1,94 @@
+{
+  "id": "w08-t02",
+  "order": 2,
+  "group": "Foundations",
+  "title": "Tools",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "A tool is a function a server advertises with a name, description and JSON Schema. The model decides when to call it with `tools/call`, and the result flows back as content, structured content or an error the model can act on.",
+  "useIf": "The model must take an action or fetch data on demand, and you can describe the inputs with a schema.",
+  "avoidIf": "The data is static context a host should attach itself (a resource) or a user-picked workflow (a prompt).",
+  "explain": [
+    { "t": "p", "md": "A tool definition has `name`, `title`, `description`, `icons`, `inputSchema`, an optional `outputSchema` and `annotations` [[r37]]. Names SHOULD be 1 to 128 characters from A-Z, a-z, 0-9, underscore, hyphen and dot, and unique per server. A client or proxy that merges servers SHOULD prefix names with a server identifier to avoid collisions [[r6]]." },
+    { "t": "p", "md": "**Discovery** is `tools/list`. In 2026-07-28 the result carries `ttlMs` and `cacheScope`, servers SHOULD return a deterministic order, and the list MUST NOT vary per connection, though it MAY vary by the authorization on the request. A change is announced with `notifications/tools/list_changed` on a `subscriptions/listen` stream. In 2025-11-25 it arrived on a server-to-client stream inside the session." },
+    { "t": "p", "md": "**Invocation** is `tools/call` with `name` and `arguments`. The result holds `content` blocks (text, image, audio, `resource_link` or an embedded resource), optional `structuredContent` and `isError`. There are two error kinds. Protocol errors (unknown tool, malformed request) are JSON-RPC errors. Execution errors, including input validation failures, use `isError: true` so the model can read the message and retry (a change made in 2025-11-25 [[r31]]) [[r6]]." },
+    { "t": "diagram", "id": "w08-t02-d1", "title": "From catalog to result", "alt": "The host lists tools from the server, gives definitions to the model, the model requests a call, the host calls the server and returns the result to the model.", "src": "sequenceDiagram\n  participant H as Host\n  participant S as Server\n  participant M as Model\n  H->>S: tools/list\n  S-->>H: definitions, ttlMs\n  H->>M: prompt and definitions\n  M-->>H: call get_order\n  H->>S: tools/call\n  S-->>H: content, isError\n  H->>M: result" },
+    { "t": "code", "lang": "json", "title": "A tools/call request in 2026-07-28 (shortened)", "code": "{\n  \"jsonrpc\": \"2.0\", \"id\": 7, \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"get_order\",\n    \"arguments\": { \"order_id\": \"A-1042\" },\n    \"_meta\": { \"io.modelcontextprotocol/protocolVersion\": \"2026-07-28\" }\n  }\n}", "caption": "Each request carries version and capabilities in `_meta`. A 2025-11-25 request instead relied on the session set up by `initialize`." },
+    { "t": "callout", "kind": "warn", "title": "Keep a human in the loop", "md": "The spec says there SHOULD be a human able to deny tool invocations, with clear indicators when tools run. Clients MUST treat annotations as untrusted unless the server is trusted, and servers MUST validate inputs, enforce access control, rate limit and sanitize outputs." }
+  ],
+  "whereToUse": [
+    "Actions with side effects: create a ticket, send a message, deploy a build",
+    "On-demand lookups the model cannot predict: search, query, fetch by id",
+    "Computation the model should not do itself: calculations, code execution in a sandbox",
+    "Workflow tools that bundle several API calls into one outcome"
+  ],
+  "whenToUse": {
+    "use": ["The model should choose when and with what arguments", "The input fits a JSON Schema", "The result is small enough to put in context, or can be a link"],
+    "avoid": ["The content is a fixed document the host should attach (resource)", "A user should pick a canned workflow (prompt)", "The call needs a human decision on every use and no approval path exists"],
+    "flips": ["Result payloads are large: return a summary plus a `resource_link`", "Many similar tools pile up: consolidate into workflow tools or use tool search"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Tool (model-controlled)", "Model chooses actions or lookups on demand", "Content should always be present or user-picked", "Every definition costs tokens per request"],
+      ["Resource (application-controlled)", "Host attaches known context by URI", "The model must decide what to fetch", "Invisible to the model unless the host attaches it"],
+      ["Prompt (user-controlled)", "User picks a templated workflow", "The model should act autonomously", "Needs UI such as slash commands"],
+      ["Function defined in the app", "One host owns the function", "Several hosts reuse it", "Duplicated across hosts"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "The wrong server's tool runs when two servers both expose `search`", "cause": "Names are unique per server only and the aggregator did not prefix them", "fix": "Prefix names with a server identifier and keep descriptions specific" },
+    { "symptom": "The agent loops on a bad date argument", "cause": "Validation failed as a JSON-RPC protocol error, which clients may not feed back to the model", "fix": "Return `isError: true` with an actionable message such as the expected format" },
+    { "symptom": "Latency and token cost jump after adding a report tool", "cause": "A large payload is pushed through the context window on every call", "fix": "Return a summary plus a `resource_link`, or paginate with sensible defaults" }
+  ],
+  "scenarios": [
+    {
+      "id": "w08-t02-s1",
+      "title": "A refund tool with side effects",
+      "situation": "An agent may issue customer refunds through a server owned by the payments team. A mistaken call moves real money. Volume is a few hundred calls a day.",
+      "constraints": ["Side effects are financial", "Low volume", "Server is third-party to the host"],
+      "unknowns": ["Is there an approval policy by amount?", "Does the payments API support idempotency keys?", "Who is the caller identity downstream?"],
+      "question": "How do you expose and guard it?",
+      "options": [
+        { "name": "A tool with host approval and an idempotency key argument", "verdict": "best", "why": "Keeps the model in charge of choosing the call while a human confirms the money movement, and the key prevents double refunds on retry.", "tradeoff": "Approval prompts add friction and need a reviewer." },
+        { "name": "A prompt the user triggers manually", "verdict": "good", "why": "User-controlled by design and safe.", "tradeoff": "The agent cannot act on its own, which loses the point of automation." },
+        { "name": "Auto-approve because the tool is marked destructiveHint false", "verdict": "poor", "why": "Annotations are hints and MUST be treated as untrusted unless the server is trusted.", "tradeoff": "Trusting hints is acceptable only for servers you operate and review." }
+      ],
+      "flips": [
+        { "if": "Refunds below a small amount may be automated", "then": "Approve by policy in the host and require a human above a threshold." },
+        { "if": "Volume reaches thousands a day", "then": "Move to policy-based approvals plus after-the-fact review." }
+      ],
+      "takeaway": "Side effects need approval and idempotency, not trust in hints."
+    },
+    {
+      "id": "w08-t02-s2",
+      "title": "A report that returns 80,000 tokens",
+      "situation": "A `get_report` tool returns the full text of a quarterly report. The assistant usually needs only a few figures. Context is limited and cost matters.",
+      "constraints": ["Large payload per call", "Most turns need a small part", "Cost per request matters"],
+      "unknowns": ["Can the report be summarised or sliced server side?", "Does the host support resource links?"],
+      "question": "What should the tool return?",
+      "options": [
+        { "name": "A short summary plus a `resource_link` to the full report", "verdict": "best", "why": "The model sees what it needs and the host can read the full resource only when required.", "tradeoff": "Needs a server-side summary and a client that handles resource links." },
+        { "name": "Paginated sections with a cursor argument", "verdict": "good", "why": "Bounds each result and lets the model ask for more.", "tradeoff": "Several round trips for a full read." },
+        { "name": "The whole report as text content", "verdict": "poor", "why": "Every call pays the full token cost and crowds out the conversation.", "tradeoff": "Fine only when payloads are small." }
+      ],
+      "flips": [
+        { "if": "The task is to summarise the whole report", "then": "Returning the whole text once is justified." },
+        { "if": "The host cannot render or follow resource links", "then": "Use pagination or a search tool that returns relevant slices." }
+      ],
+      "takeaway": "Bound result size and let large data travel by reference."
+    }
+  ],
+  "quiz": [
+    { "id": "w08-t02-q1", "type": "single", "tag": "diagnose", "q": "An agent keeps retrying a booking with a bad date format. The server answers every time with JSON-RPC error -32602. What is the best fix?", "options": ["Raise the retry limit", "Return a tool result with `isError: true` and a message naming the expected format", "Switch the tool to a resource", "Remove the `inputSchema`"], "answer": 1, "explain": "Input validation failures are tool execution errors, which clients SHOULD show to the model so it can self-correct. Protocol errors are less likely to lead to recovery. More retries, a resource or no schema do not give the model the information it lacks." },
+    { "id": "w08-t02-q2", "type": "multi", "tag": "concept", "q": "Which content types can a tool result carry?", "options": ["Text", "Image", "A `resource_link`", "A raw database cursor object", "An embedded resource"], "answers": [0, 1, 2, 4], "explain": "Tool results may hold text, image, audio, resource links and embedded resources, plus optional structured content. A raw cursor object is not a content type." }
+  ],
+  "flashcards": [
+    { "front": "What two error kinds exist for tool calls?", "back": "Protocol errors (JSON-RPC, such as unknown tool) and tool execution errors (`isError: true`), which the model can read and fix." },
+    { "front": "Who controls tools, and what should still apply?", "back": "The model decides when to call them. A human SHOULD be able to deny invocations, and annotations are untrusted unless the server is trusted." },
+    { "front": "What changed for `tools/list` in 2026-07-28?", "back": "Results carry `ttlMs` and `cacheScope`, servers SHOULD use a deterministic order, and change notifications come over `subscriptions/listen`." }
+  ],
+  "related": ["w08-t05", "w08-t14", "w08-t03", "w08-l02"],
+  "refs": ["r6", "r37", "r31"]
+}

@@ -1,0 +1,126 @@
+{
+  "id": "w18-t08",
+  "order": 8,
+  "group": "Specialised agents",
+  "title": "Code interpreter and sandboxes",
+  "minutes": 8,
+  "difficulty": "advanced",
+  "summary": "The model writes code and a sandbox runs it, so the agent can calculate, analyse files and draw charts. The code is untrusted, so isolation, per-user sessions and egress limits matter more than the model.",
+  "useIf": "The task needs exact calculation, file or data analysis, or chart generation, and you can run model-written code in an isolated environment.",
+  "avoidIf": "A plain API or MCP tool already does the job, or you would run the code in the same process or container as your secrets.",
+  "explain": [
+    { "t": "p", "md": "A **code interpreter** gives the model a tool that executes code, usually Python, and returns output, files and errors. The model loops: write code, read the result, fix and retry. It turns arithmetic, data analysis and plotting from guesses into computed results. The code comes from a model that may have read attacker text, so treat it as **untrusted code**." },
+    { "t": "diagram", "id": "w18-t08-d1", "title": "One turn of a code-interpreter loop", "alt": "The user asks, the app calls the model, the model returns code, the app runs it in a per-user sandbox session, and the output goes back to the model for the answer.", "src": "sequenceDiagram\n  participant U as User\n  participant A as App\n  participant M as Model\n  participant S as Sandbox session\n  U->>A: Question and file\n  A->>M: Prompt and tool\n  M->>A: Python code\n  A->>S: Run with session id\n  S->>A: Output and files\n  A->>M: Tool result\n  M->>A: Answer" },
+    { "t": "p", "md": "**Azure Container Apps dynamic sessions** run code interpreter sessions isolated by a Hyper-V boundary, designed for untrusted code. The **session identifier** is a caller-defined string. It is treated as sensitive, and your app must ensure each user or tenant reaches only its own sessions. A session pool allows up to 600 concurrent sessions, an idle cooldown of 300 to 3600 seconds and outbound network `EgressDisabled` by default. Python sessions include NumPy, pandas and scikit-learn [[r32]] [[r33]]. Doc samples use the preview REST version `2025-10-02-preview`, so check API status before depending on it [[r32]]." },
+    { "t": "p", "md": "The **Foundry Code Interpreter** tool runs Python in a sandbox for agents. It has charges beyond token fees. Two simultaneous conversations create two sessions, and each session is active for one hour by default with a 30-minute idle timeout [[tr1]]. Code Interpreter is among the tools supported under Foundry network isolation [[r27]]." },
+    { "t": "callout", "kind": "gotcha", "title": "Egress is the exfiltration path", "md": "If the sandbox can reach the internet, injected code can send your files out. Keep egress disabled, pass data in as files and put network calls behind separate, reviewed tools." }
+  ],
+  "whereToUse": [
+    "Analysing uploaded spreadsheets and CSV files and producing charts",
+    "Exact arithmetic and unit conversions that models get wrong when they guess",
+    "File format conversions and data cleaning inside an agent",
+    "Computer-use alternatives: code against a page (for example Playwright) in an isolated runtime",
+    "Education or notebook-style assistants where users run model-written code"
+  ],
+  "whenToUse": {
+    "use": [
+      "The task is computable and a checked result beats a guess",
+      "You can isolate each user or tenant in its own session",
+      "Egress can stay off and data goes in as files"
+    ],
+    "avoid": [
+      "Running model-written code in the app's own process or a container with secrets",
+      "Letting the client choose the session identifier",
+      "Using open egress for convenience"
+    ],
+    "flips": [
+      "Packages or data need the internet: pre-stage them or add a reviewed tool instead of opening egress",
+      "Many short, stateless calls: per-request sessions may be cheaper than long-lived ones",
+      "Platform charges per session dominate: pool or share sessions only within one user's trust boundary"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Vendor-hosted code interpreter (Foundry)", "Fastest path for agents on that platform", "You need custom runtimes or tight cost control", "Extra session charges, one-hour sessions by default"],
+      ["Azure Container Apps dynamic sessions", "You own the app and need Hyper-V isolation and pools", "You want zero infrastructure", "Preview API versions in doc samples, pool tuning, identifier handling"],
+      ["Self-managed containers or microVMs", "Special runtimes, strict control", "Small team", "You own isolation, patching and cleanup"],
+      ["Direct API or MCP tool", "A deterministic function exists", "The task is open-ended analysis", "Narrow coverage, but safest"],
+      ["Run in the app process", "Never for model-written code", "Always", "Secrets and network are exposed to model code"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "One user's files appear in another user's session", "cause": "Session identifiers were guessable, shared or supplied by the client", "fix": "Derive the identifier server side from the authenticated user and conversation, treat it as sensitive and check ownership on every call." },
+    { "symptom": "Costs climb with simultaneous chats", "cause": "Each concurrent conversation creates its own session with its own charges", "fix": "Cap concurrency, tune idle cooldown and timeouts and meter sessions per tenant." },
+    { "symptom": "Data leaves the sandbox", "cause": "Egress was enabled and injected code made outbound calls", "fix": "Keep egress disabled, stage files in and out through your app and log every execution." }
+  ],
+  "scenarios": [
+    {
+      "id": "w18-t08-s1",
+      "title": "Employee data assistant",
+      "situation": "Employees upload spreadsheets and ask for analysis and charts. No internet access is needed. Each person's files are confidential to them.",
+      "constraints": ["Untrusted model-written code", "Per-user confidentiality", "No outbound access needed"],
+      "unknowns": ["How many concurrent users at peak?", "Do sessions need to persist across days?"],
+      "question": "Where does the code run?",
+      "options": [
+        { "name": "In the app's own container, to keep things simple", "verdict": "poor", "why": "Model code would share a process with your secrets and network.", "tradeoff": "Only acceptable for a throwaway local prototype with no sensitive data." },
+        { "name": "Dynamic sessions with a per-user session id and egress disabled", "verdict": "best", "why": "Hyper-V isolation, per-user sessions and no outbound access fit untrusted code and confidential files.", "tradeoff": "You build pool sizing and session id ownership checks." },
+        { "name": "The Foundry Code Interpreter tool", "verdict": "good", "why": "Least build effort when the agent already runs on Foundry.", "tradeoff": "Per-session charges beyond tokens and less control over the runtime." }
+      ],
+      "flips": [
+        { "if": "The agent is already a Foundry agent and volume is small", "then": "The Foundry tool may be the simpler best choice." },
+        { "if": "You need a custom runtime", "then": "Use a self-managed sandbox and own its isolation." }
+      ],
+      "takeaway": "Isolate by user and keep egress off for untrusted code."
+    },
+    {
+      "id": "w18-t08-s2",
+      "title": "Analysis that needs an external dataset",
+      "situation": "The analysis needs a public dataset and extra Python packages that are not pre-installed. The team suggests enabling outbound access on the sandbox.",
+      "constraints": ["Packages and data come from the internet", "Files are sensitive", "Security review applies"],
+      "unknowns": ["Can packages be pre-approved and staged?", "Can the dataset be fetched by a tool instead?"],
+      "question": "How do you provide the dependencies?",
+      "options": [
+        { "name": "Enable open outbound access so code can fetch anything", "verdict": "poor", "why": "Injected or mistaken code could also send sensitive files out.", "tradeoff": "Reasonable only for a sandbox that never sees sensitive data." },
+        { "name": "A separate reviewed tool fetches the dataset, and approved packages are staged in advance", "verdict": "good", "why": "Keeps the sandbox closed and the fetch auditable.", "tradeoff": "More engineering and a maintenance list of approved packages." },
+        { "name": "Keep egress disabled and pass the dataset in as a file the app retrieves", "verdict": "best", "why": "The app controls what enters the sandbox and nothing can leave on its own.", "tradeoff": "Dependencies must come with the session environment or be avoided." }
+      ],
+      "flips": [
+        { "if": "The sandbox only ever sees public data", "then": "Limited egress is a lower risk." },
+        { "if": "Needed packages are not available", "then": "Stage them through a reviewed build path, not at run time." }
+      ],
+      "takeaway": "Bring data in through your app, not through open egress."
+    },
+    {
+      "id": "w18-t08-s3",
+      "title": "SaaS product with client-supplied session ids",
+      "situation": "A SaaS app lets browser clients start analysis. A developer proposes the browser sends a session id so users can resume work.",
+      "constraints": ["Many tenants share the platform", "Session ids are caller-defined strings", "Resuming sessions is a real user need"],
+      "unknowns": ["How are users authenticated?", "How long should sessions live?"],
+      "question": "How do you manage session identity?",
+      "options": [
+        { "name": "Derive the id on the server from the authenticated user and conversation", "verdict": "best", "why": "The identifier is sensitive and the app must ensure users reach only their own sessions.", "tradeoff": "Server-side mapping and cleanup logic." },
+        { "name": "Accept any id the browser sends", "verdict": "poor", "why": "A guessed or leaked id gives another user's session and files.", "tradeoff": "Fine only if ids are unguessable and checked against the owner on every call." },
+        { "name": "A fresh random session per request", "verdict": "good", "why": "No cross-user reuse.", "tradeoff": "Users lose resume, uploaded files and state each time." }
+      ],
+      "flips": [
+        { "if": "Resume is not needed", "then": "Per-request sessions are simplest." },
+        { "if": "Sessions must survive device changes", "then": "Store the mapping server side with an expiry." }
+      ],
+      "takeaway": "Treat the session id like a credential and mint it on the server."
+    }
+  ],
+  "quiz": [
+    { "id": "w18-t08-q1", "type": "single", "tag": "security", "q": "What is the default outbound network setting for Azure Container Apps session pools?", "options": ["Open to the internet", "Allowed to a fixed list of Azure services", "Disabled (EgressDisabled)", "Open only for pip"], "answer": 2, "explain": "Session pools default to `EgressDisabled`. Enabling egress is a deliberate choice that creates an exfiltration path.", "ref": "r33" },
+    { "id": "w18-t08-q2", "type": "multi", "tag": "diagnose", "q": "A tenant reports seeing another tenant's files in a session. Which causes are plausible?", "options": ["The client could choose the session identifier", "Identifiers were predictable", "The pool allowed 600 sessions", "Egress was disabled"], "answers": [0, 1], "explain": "The identifier is a sensitive, caller-defined string and the app must scope it to a user. Pool size and disabled egress do not cause cross-tenant access.", "ref": "r32" },
+    { "id": "w18-t08-q3", "type": "single", "tag": "tradeoff", "q": "Two simultaneous conversations call the Foundry Code Interpreter. What happens?", "options": ["They share one session until the idle timeout expires", "Two sessions are created, each billed beyond tokens", "The second call waits in a queue until the first conversation ends", "Sessions never expire"], "answer": 1, "explain": "Each simultaneous conversation creates its own Code Interpreter session. Sessions are active for one hour by default with a 30-minute idle timeout, and they carry charges beyond token fees.", "ref": "tr1" }
+  ],
+  "flashcards": [
+    { "front": "What isolates Azure Container Apps code interpreter sessions?", "back": "A Hyper-V boundary, designed for untrusted code. Pools allow up to 600 concurrent sessions and default to egress disabled." },
+    { "front": "Why is the dynamic session identifier sensitive?", "back": "It is a caller-defined string that selects a session. Your app must ensure each user or tenant reaches only its own sessions." },
+    { "front": "How long does a Foundry Code Interpreter session live by default?", "back": "One hour active with a 30-minute idle timeout. Each simultaneous conversation creates its own session, billed beyond token fees." }
+  ],
+  "related": ["w18-l4", "w18-t09", "w12-t09", "w07-t13", "w08-t13", "w12-t05"],
+  "refs": ["r27", "r32", "r33", "tr1"]
+}

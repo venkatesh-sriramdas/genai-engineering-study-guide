@@ -1,0 +1,108 @@
+{
+  "id": "w03-t02",
+  "order": 2,
+  "group": "Architecture",
+  "title": "Source connectors and access patterns",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "A connector choice is three questions: does an indexer exist and in what release state, how does the source say something changed or was deleted, and how do you authenticate without being throttled.",
+  "useIf": "You are choosing how to read SharePoint, Blob or ADLS Gen2, OneLake, SQL, Cosmos DB or the web into an index.",
+  "avoidIf": "You pick a connector by popularity: preview status, delete visibility and throttling decide whether it survives production.",
+  "explain": [
+    { "t": "p", "md": "Azure AI Search indexers are GA for Blob Storage (ADLS Gen2 goes through the blob indexer), Cosmos DB for NoSQL, Azure SQL Database, SQL Managed Instance, Table Storage and OneLake. SharePoint in Microsoft 365, Azure MySQL, Cosmos DB for MongoDB and Gremlin are preview, and Cosmos DB for Cassandra is not supported [[tr1]]. That overview page was last updated 2025-06-23, so confirm status on each source page." },
+    { "t": "p", "md": "The second question is the **change and delete signal**. Blob uses the `LastModified` timestamp and does not track deletes by default [[tr4]]. Azure SQL offers integrated change tracking (tables only, sees deleted rows) or a high-water-mark column [[tr5]]. Cosmos DB uses `_ts` and needs a Boolean soft-delete field because hard deletes are invisible [[tr6]]. The SharePoint indexer detects deleted files on the next run, but it is preview and its user-delegated tokens expire every 75 minutes [[tr7]]." },
+    { "t": "p", "md": "The third question is **access pattern**. Sources throttle: Microsoft Graph and SharePoint answer with 429 or 503 and a `Retry-After` header, and ignoring it makes throttling worse [[tr29]] [[tr30]]. Reduce concurrency, spread bursts and honour the header. For sources without an indexer (SaaS tools, wikis, the open web) you push from your own code, or use a remote knowledge source that queries at request time [[tr13]]." },
+    { "t": "table", "caption": "Source, indexer state and signals (checked 2026-10-13)", "head": ["Source", "Indexer", "Change signal", "Delete signal"], "rows": [["Blob Storage, ADLS Gen2", "GA", "`LastModified`", "Native soft delete or a metadata flag, set up before the first run"], ["Azure SQL, SQL MI", "GA", "Integrated change tracking or high-water mark", "Tracking sees deletes, or a soft-delete column"], ["Cosmos DB for NoSQL", "GA", "`_ts` high-water mark", "Boolean soft-delete field only"], ["OneLake", "GA", "Check the OneLake indexer page", "Check the OneLake indexer page"], ["SharePoint in Microsoft 365", "Preview", "Per run crawl", "Detected on the next run"], ["SaaS, wiki, web", "None", "Your code", "Your code"]] }
+  ],
+  "whereToUse": [
+    "Choosing the first connector for a knowledge base and checking its release state before committing",
+    "Estimating delete behaviour before promising the business that removed content disappears from answers",
+    "Planning concurrency and retry settings for large first crawls of SharePoint or SaaS APIs",
+    "Deciding between an indexed knowledge source and a remote one in Foundry IQ",
+    "Reviewing a design where a source has no indexer and the team must write a reader"
+  ],
+  "whenToUse": {
+    "use": [
+      "Use the GA indexer for Blob, SQL, Cosmos DB and OneLake when staleness of minutes is fine and the delete signal exists",
+      "Use a custom reader with push when the source has no indexer or the indexer is preview and you need a firm service level",
+      "Use a remote knowledge source when the content must be live and you do not want to copy it",
+      "Use change tracking over high-water marks on SQL tables, since it also sees deletes"
+    ],
+    "avoid": [
+      "Avoid preview indexers for production workloads that have a no-preview policy",
+      "Avoid assuming deletes propagate: Blob and Cosmos DB indexers only see soft deletes configured from the first run",
+      "Avoid unbounded parallel crawls of Graph or SharePoint, which trigger 429 and 503 responses"
+    ],
+    "flips": [
+      "Policy forbids preview features: sync SharePoint content with your own reader and push, carrying ACL fields yourself",
+      "Source is a view rather than a table: switch from integrated change tracking to a high-water mark plus a soft-delete column",
+      "Freshness must be live and copying is not allowed: choose a remote knowledge source and accept query-time latency"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["GA indexer (Blob, SQL, Cosmos DB, OneLake)", "Supported store, change signal exists", "Source rows are hard-deleted or the structure needs custom parsing", "Delete blind spots, per-run time caps"],
+      ["Preview indexer (SharePoint)", "Prototype or acceptable preview risk, least code", "No-preview policy or a firm SLA", "API changes, token expiry every 75 minutes"],
+      ["Custom reader plus push", "No indexer, custom auth or parsing", "Small team, no on-call", "You own throttling, retries and ACL capture"],
+      ["Remote knowledge source (Foundry IQ)", "Live content, no copy allowed", "You need ranking control or offline access", "Latency per query, several kinds are preview"],
+      ["Export to Blob then blob indexer", "A GA path from a source with only export", "Permissions and fast change matter", "Extra hop, ACLs lost unless carried as metadata"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Deleted records or files still appear in answers", "cause": "The Blob or Cosmos DB indexer cannot see hard deletes and no soft-delete policy existed on the first run", "fix": "Add a soft-delete flag and policy, or run a reconciliation job that compares source ids with index keys" },
+    { "symptom": "A big SharePoint crawl stops part way or the crawler gets blocked", "cause": "User-delegated tokens expire every 75 minutes, or immediate retries after 429 count against the usage limits", "fix": "Plan the first load in resumable slices, honour `Retry-After`, cap concurrency and check the current auth guidance" },
+    { "symptom": "Moved folders are not re-indexed", "cause": "Renaming an ADLS Gen2 directory does not update blob timestamps", "fix": "Touch the files or reset the indexer after bulk moves" }
+  ],
+  "scenarios": [
+    {
+      "id": "w03-t02-s1",
+      "title": "SharePoint sites with a no-preview policy",
+      "situation": "An assistant must answer from about 20,000 SharePoint pages and files. Access differs by site. Security policy bans preview features in production and go-live is next month.",
+      "constraints": ["Source is SharePoint", "No preview features in production", "Permissions differ by site", "Small team"],
+      "unknowns": ["Is any document needed within minutes of editing?", "Who owns ACL sync after launch?"],
+      "question": "How do you connect to SharePoint?",
+      "options": [
+        { "name": "Own reader using Microsoft Graph, pushing chunks with ACL fields", "verdict": "best", "why": "It stays on GA surfaces, lets you capture site permissions on every chunk and gives you control over throttling.", "tradeoff": "You build and run the reader and the permission refresh." },
+        { "name": "Copy files to Blob Storage and use the blob indexer", "verdict": "good", "why": "Both pieces are GA and cheap to run.", "tradeoff": "Permissions and deletes are lost unless the copy job carries them as metadata." },
+        { "name": "SharePoint indexer in preview", "verdict": "poor", "why": "It is the least code but it breaks the no-preview rule.", "tradeoff": "Right when preview risk is acceptable and speed to prototype matters." }
+      ],
+      "flips": [
+        { "if": "Policy allows preview and the team is tiny", "then": "The SharePoint indexer wins on effort." },
+        { "if": "Content must stay in SharePoint and never be copied", "then": "A remote knowledge source, if its preview state is acceptable, avoids the copy." }
+      ],
+      "takeaway": "Release state is a requirement, not a footnote: it can rule out the easiest connector."
+    },
+    {
+      "id": "w03-t02-s2",
+      "title": "Orders table with frequent deletes",
+      "situation": "A relational table of about five million rows changes every minute. Cancelled and purged rows must leave search results the same day. Freshness of 10 minutes is fine.",
+      "constraints": ["Azure SQL table, not a view", "Deletes must propagate within a day", "10 minute freshness", "Team can run one scheduled job"],
+      "unknowns": ["Are rows deleted physically or flagged?", "Is change tracking enabled on the database?"],
+      "question": "Which pattern do you pick?",
+      "options": [
+        { "name": "SQL indexer with integrated change tracking", "verdict": "best", "why": "It is recommended for tables and detects deleted rows without a flag.", "tradeoff": "Change tracking must be enabled on the source and it does not work on views." },
+        { "name": "SQL indexer with a high-water-mark column", "verdict": "good", "why": "Works for tables and views and needs only a rowversion or last-updated column.", "tradeoff": "Needs a soft-delete column too, or purged rows stay in the index." },
+        { "name": "Nightly full reload into a new index", "verdict": "poor", "why": "It re-embeds unchanged rows every night and leaves answers stale for up to a day.", "tradeoff": "Right for a small table or when no change signal exists." }
+      ],
+      "flips": [
+        { "if": "The source is a view", "then": "Use the high-water mark with a soft-delete column." },
+        { "if": "Deletes arrive as separate purge jobs outside the table", "then": "Add a reconciliation job comparing ids." }
+      ],
+      "takeaway": "Pick the change signal that also reveals deletes."
+    }
+  ],
+  "quiz": [
+    { "id": "w03-t02-q1", "type": "single", "tag": "diagnose", "q": "A removed Cosmos DB document still shows in search. Which cause is most likely?", "options": ["The document was hard-deleted and no soft-delete field exists", "The semantic ranker cached it", "The `_ts` field is not indexed", "The embedding model changed"], "answer": 0, "explain": "The Cosmos DB indexer detects deletes only through a pre-existing soft-delete field, so a hard delete is invisible. Ranker caching, `_ts` indexing and model changes do not explain a document that is still present.", "ref": "tr6" },
+    { "id": "w03-t02-q2", "type": "match", "tag": "concept", "q": "Match each source with its change signal for indexers.", "pairs": [{ "l": "Blob Storage", "r": "`LastModified` timestamp" }, { "l": "Azure SQL table", "r": "Integrated change tracking" }, { "l": "Cosmos DB for NoSQL", "r": "`_ts` high-water mark" }, { "l": "SharePoint indexer", "r": "Crawl on each run, preview" }], "explain": "Each source exposes a different signal and only some also reveal deletes. SharePoint is a preview indexer that re-detects deleted files on the next run.", "ref": "tr1" },
+    { "id": "w03-t02-q3", "type": "single", "tag": "bug", "q": "Your crawler gets 429 from SharePoint and retries immediately. What happens?", "options": ["Retries succeed faster", "Nothing, 429 is informational", "Throttled calls count against usage limits, so it gets worse and can be blocked", "The server resets its limits"], "answer": 2, "explain": "Throttled requests count towards usage limits, so you must wait for `Retry-After` and reduce concurrency. 429 is an error, not a hint, and limits do not reset on request.", "ref": "tr30" }
+  ],
+  "flashcards": [
+    { "front": "Which Azure AI Search indexer data sources are GA and which are preview?", "back": "GA: Blob (incl. ADLS Gen2), Cosmos DB NoSQL, Azure SQL, SQL MI, Table, OneLake. Preview: SharePoint, MySQL, Cosmos Mongo and Gremlin. Cassandra unsupported." },
+    { "front": "How do Blob and Cosmos DB indexers learn about deletes?", "back": "Only through a soft-delete signal set up before the first run: blob soft delete or a metadata flag, and a Boolean field in Cosmos DB." },
+    { "front": "What should a crawler do on 429 or 503 from Graph or SharePoint?", "back": "Wait the `Retry-After` seconds, reduce concurrency and spread bursts. Immediate retries count against limits." }
+  ],
+  "related": ["w03-t01", "w03-t06", "w03-t09", "w03-t11", "w07-t12"],
+  "refs": ["tr1", "tr4", "tr5", "tr6", "tr7", "tr13", "tr29", "tr30"]
+}

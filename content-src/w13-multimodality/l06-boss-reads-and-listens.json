@@ -1,0 +1,89 @@
+{
+  "id": "w13-l6",
+  "order": 6,
+  "title": "Boss: the assistant that reads and listens",
+  "kind": "boss",
+  "minutes": 22,
+  "brief": "An interviewer asks for an assistant that reads visually rich documents and takes voice calls, and leaves every dial open. Clarify, compare, pick, name the failures and say how you will measure.",
+  "blocks": [
+    { "t": "h", "text": "Defend a multimodal design", "level": 2 },
+    { "t": "scenario", "title": "The interviewer's setup", "known": ["Sources are scanned manuals, slide decks and charts", "Field staff also call in with questions", "Answers will be acted on, so they need evidence"], "ask": ["How visual is the meaning: prose, or charts and layout?", "Must citations be text passages, or are page images acceptable?", "Do users search by image as well as by text?", "Must voice transcripts be inspected, redacted or logged, and how strict is latency?"], "tension": "Page-image retrieval is the most faithful to layout but costs about 30 times the storage and cites images. Text pipelines are cheap and citable but lose figures." },
+    { "t": "diagram", "id": "w13-l6-d1", "title": "One possible architecture", "alt": "Inputs are validated and moderated, then read into a text and page-image index. A voice agent and a text client both query the same retrieval and answer with citations.", "src": "flowchart LR\n  I[Page, image or voice] --> G[Validate and moderate]\n  G --> R[Read: layout and captions]\n  R --> X[Index: text and page images]\n  V[Voice agent] --> Q[Retrieve]\n  T[Text client] --> Q\n  X --> Q\n  Q --> A[Answer with citations]", "caption": "The voice agent and the text client share one retrieval tool, so quality work is done once." },
+    { "t": "table", "caption": "Defaults to propose and the dial that flips each", "head": ["Dial", "Default", "Flips to", "When"], "rows": [
+      ["Image detail", "`high`, pinned per model", "`original`", "Dense pages, small print or computer use"],
+      ["Reading", "Layout service, field models only for standard forms", "Document Intelligence containers, or a vision LLM", "Air-gapped sites, or odd layouts at low volume"],
+      ["Retrieval", "Text index plus verbalized figures", "Single-vector multimodal, or page-image multi-vector", "Image queries, or figure-heavy pages with storage budget"],
+      ["Voice", "Chained when text must be inspected, else speech-to-speech", "GPT-Live style delegation", "A slow backend must not freeze the call"],
+      ["Turn detection", "`semantic_vad` with low eagerness", "Tuned `server_vad`", "Noisy lines where classifiers misfire"],
+      ["Safety", "Image text is untrusted, least-privilege tools", "Add image moderation and human review", "Untrusted uploads, or high-impact actions"]
+    ], "highlightCol": 1 },
+    { "t": "callout", "kind": "interview", "title": "What interviewers listen for", "md": "A storage estimate for page-image retrieval, a citation form for every answer, PII handled after OCR, and a stratified golden set. Name preview status with a date." }
+  ],
+  "quiz": [
+    { "id": "w13-l6-q1", "type": "single", "tag": "tradeoff", "q": "Scanned manuals have many charts, answers must cite text passages, the index budget is moderate and nobody searches by image. Which design fits?", "options": ["Page-image multi-vector retrieval only, because it leads on ViDoRe", "Single-vector multimodal embeddings for every page", "A text index fed by layout extraction plus verbalized figures, keeping page images for display", "Plain text extraction, since charts rarely matter"], "answer": 2, "explain": "Verbalized figures give citable text and work with hybrid search at modest storage. Page-image multi-vector retrieval costs about 30 times the storage and cites images. Single-vector embeddings give no citation text. Plain extraction drops the charts the questions depend on.", "difficulty": 2, "ref": "r12" },
+    { "id": "w13-l6-q2", "type": "order", "tag": "order", "q": "Put the ingestion steps in order.", "items": ["Validate and moderate the image", "Extract layout and text", "Verbalize figures with a vision model", "Redact PII in all extracted text and captions", "Chunk, embed and index with page and region metadata"], "explain": "Moderation gates the file first. Extraction and verbalization produce all the text that could hold personal data, so redaction runs after both and before indexing. Indexing last keeps unredacted text out of the store.", "difficulty": 2, "ref": "r21" },
+    { "id": "w13-l6-q3", "type": "numeric", "tag": "numeric", "q": "A tile model charges 85 base tokens and 170 per 512 px tile. At `detail: high` it fits the image in 2048 x 2048 and scales the short side down to 768 px. How many tokens does a 2048 x 1024 page cost?", "answer": 1105, "tolerancePct": 1, "unit": "tokens", "hint": "The short side 1024 scales to 768, so the long side becomes 1536.", "explain": "2048 x 1024 fits the square. The short side scales to 768 and the long side to 1536, giving 3 x 2 = 6 tiles of 512 px. 85 + 6 x 170 = 1,105 tokens. This follows the documented tile rules and is not an example printed in the docs.", "difficulty": 3, "ref": "r1" }
+  ],
+  "defend": {
+    "prompt": "Design an assistant that answers questions over scanned manuals, slide decks and charts, and that also takes voice calls from field staff. Walk me through the design.",
+    "timebox": "5 min",
+    "clarify": [
+      "How visual is the meaning: mostly prose, or charts, diagrams and layout?",
+      "Must answers cite text passages, or are page images acceptable evidence?",
+      "Do users query by image as well as by text?",
+      "How many pages exist, how often do they change and what is the index budget?",
+      "Where must it run, and which preview features are acceptable?",
+      "Must voice transcripts be inspected, redacted or logged, and how strict is latency?",
+      "Who uploads images, and could they hold personal data or hostile text?"
+    ],
+    "options": [
+      { "name": "Text-first pipeline with verbalized figures", "when": "Meaning is mostly prose with some charts and answers need text citations.", "tradeoff": "One LLM call per image at index time, and captions can miss detail." },
+      { "name": "Add page-image multi-vector retrieval", "when": "Parsing fails on figure-heavy pages and the index budget allows about 30 times the storage.", "tradeoff": "Evidence is an image, and storage and ops grow." },
+      { "name": "Single-vector multimodal embeddings", "when": "Users search by example image or need look-alikes.", "tradeoff": "No reasons or citation text." }
+    ],
+    "modelAnswer": [
+      { "t": "p", "md": "**Clarify.** I would ask how visual the meaning is, whether citations must be text, whether anyone queries by image, the page count and index budget, where it runs, how strict voice latency is and whether transcripts must be inspected. I would also ask who uploads images." },
+      { "t": "p", "md": "**Options.** A text-first pipeline with verbalized figures is the boring, cheap and citable option. Page-image multi-vector retrieval reads layout without parsing but costs about 257.5 KB per page against 8.6 KB for a text vector. Single-vector multimodal embeddings serve image queries but cannot explain a hit." },
+      { "t": "p", "md": "**Pick and flip.** I would start with the layout service for text and tables, a Document Intelligence prebuilt model only for standard forms, and a vision model with a pinned `detail` of `high` to verbalize figures into captions stored with page and region. Page images stay for display. Retrieval is hybrid over text and captions. I would add page-image retrieval for the figure-heavy subset only if the storage estimate fits." },
+      { "t": "list", "style": "ul", "items": [
+        "Flip to Document Intelligence containers if the site is air-gapped.",
+        "Flip to `original` detail, after resizing and mapping coordinates, for dense pages.",
+        "Flip to single-vector embeddings if users search by image.",
+        "Voice: chained pipeline if transcripts must be redacted or logged, speech-to-speech or Voice Live if latency dominates, with `semantic_vad` at low eagerness for thinking pauses and reconnect logic before the 60 minute cap."
+      ] },
+      { "t": "table", "head": ["Failure mode", "How I detect it"], "rows": [
+        ["Right page, wrong number from a chart", "Answer faithfulness on chart questions, scored separately from page recall"],
+        ["Hidden instructions in an uploaded image", "Red-team set of hidden-text images, and approval logs for actions"],
+        ["PII leaks from an image of an ID", "OCR then redaction tests, and sampled index audits"],
+        ["Storage or cost blowout", "Bytes per page and tokens per page, tracked per collection"],
+        ["Callers interrupted mid-thought", "Interruption rate and barge-in complaints by line type"],
+        ["Preview feature changes", "A dated feature register, with GA fallbacks"]
+      ] },
+      { "t": "p", "md": "**Metrics and rollout.** I would track parse fidelity on sampled pages, page recall at k and element recall by modality, answer faithfulness on visual questions against a text-only baseline, transcript word error rate, time to first audio, interruption rate, tokens per page and per call, and cost per 1,000 pages. Rollout starts with a pilot collection, a shadow comparison and a golden-set gate stratified by modality. Voice starts with a human fallback." }
+    ],
+    "rubric": [
+      { "pt": "Asks how visual the meaning is, the citation form and the query modes before naming tools", "w": 3 },
+      { "pt": "Compares at least two retrieval approaches and names storage and citation trade-offs", "w": 3 },
+      { "pt": "Chooses a document reading path by layout complexity, volume and on-premises needs", "w": 2 },
+      { "pt": "Chooses a voice architecture from the latency and text-control dials, and names turn detection", "w": 2 },
+      { "pt": "Treats image text as untrusted and handles PII after OCR", "w": 3 },
+      { "pt": "Names failure modes with a detection signal each", "w": 2 },
+      { "pt": "Gives metrics by modality and a staged rollout", "w": 2 },
+      { "pt": "States flip conditions and labels preview features with dates", "w": 2 }
+    ],
+    "followUps": [
+      { "q": "Page-image storage is three times your budget. What do you do?", "a": "Restrict it to figure-heavy pages, apply compression or token pooling, or fall back to verbalized figures with text citations. Measure the retrieval loss on the golden set before deciding." },
+      { "q": "A technician uploads a label photo with hidden text telling the agent to export the customer list. What stops it?", "a": "Image text is treated as untrusted, the agent has no export tool without approval, and outputs are screened. Add the case to the red-team set." },
+      { "q": "A chained voice pipeline is too slow. What changes?", "a": "Move the audio path to speech-to-speech or Voice Live, keep transcripts as a tap where compliance allows, or delegate a slow backend so the call stays responsive. Track time to first audio." }
+    ],
+    "redFlags": [
+      "Says a vision LLM replaces OCR and layout services everywhere",
+      "Picks page-image retrieval with no storage estimate",
+      "Trusts text read from images, or skips PII handling",
+      "Ignores turn detection and session limits in voice",
+      "Gives no dates for preview status or model names"
+    ]
+  },
+  "refs": ["r1", "r4", "r10", "r12", "r14", "r15", "r18", "r19", "r21"],
+  "takeaways": ["Ask how visual the meaning is and what evidence form is needed before choosing retrieval", "Estimate storage, token and latency costs for each option", "Treat image text as untrusted and redact PII after OCR", "Measure by modality, then roll out in stages with a human fallback for voice"]
+}

@@ -1,0 +1,118 @@
+{
+  "id": "w01-t05",
+  "order": 5,
+  "group": "Sampling and decoding",
+  "title": "top_k, seed and determinism",
+  "minutes": 6,
+  "difficulty": "core",
+  "summary": "top_k exists on a few APIs only, seed gives best-effort repeatability on OpenAI Chat Completions, and no major API guarantees identical outputs.",
+  "useIf": "You need repeatable behaviour for tests, audits or debugging, or you port code that sets top_k or seed.",
+  "avoidIf": "You expect bit-for-bit reproducibility from a hosted model. Design tests and audits around variance instead.",
+  "explain": [
+    { "t": "p", "md": "**top_k** limits sampling to the k most probable tokens. It is not in the OpenAI Responses or Chat Completions bodies. Anthropic Messages still lists `top_k`, deprecated, and models released after Opus 4.6 reject it with 400. Gemini exposes `topK` inside `generationConfig` [[r19]] [[tr3]]." },
+    { "t": "p", "md": "**seed** asks the service to sample deterministically. Only Chat Completions has it, and it is marked Beta. Repeated requests with the same seed and parameters should usually match, but determinism is not guaranteed, so watch `system_fingerprint` for backend changes [[r5]]. The Responses API has no `seed`, and Anthropic documents none and says temperature 0.0 is not fully deterministic [[r19]]. Treat determinism as something you measure: run the same request several times, compare the parsed results and track the agreement rate, instead of assuming a flag delivers it." },
+    { "t": "table", "caption": "Sources of variation and what controls them", "head": ["Source", "What you can do", "Limit"], "rows": [
+      ["Sampling randomness", "Lower temperature, or use a strict schema or enum", "Reasoning and new Claude models reject temperature"],
+      ["Moving model aliases", "Pin a dated snapshot or version", "Snapshots retire on published dates [[r11]]"],
+      ["Backend changes", "Send `seed`, log `system_fingerprint`", "Chat Completions only, Beta, best effort"],
+      ["Prompt or tool-order changes", "Version prompts and tool lists", "Needs process discipline"],
+      ["Need for exact replay", "Store the output with inputs and model version", "Storage and privacy handling"]
+    ] },
+    { "t": "callout", "kind": "gotcha", "title": "Compatibility layers drop controls", "md": "Anthropic's OpenAI SDK layer silently ignores `seed`, `logprobs`, `top_logprobs`, `presence_penalty`, `frequency_penalty`, `logit_bias`, `response_format`, `reasoning_effort` and `store`. Anthropic says it is for testing, not production [[r36]]." }
+  ],
+  "whereToUse": [
+    "Regression tests for prompts, where you compare behaviour across versions",
+    "Debugging an odd answer: replay with the same seed and parameters to see if it recurs",
+    "Audit and dispute handling, where you must show what the system said",
+    "Porting code between vendors, to remove parameters one side ignores",
+    "Evaluation design, to decide how many repeated runs a metric needs"
+  ],
+  "whenToUse": {
+    "use": [
+      "You call Chat Completions on a non-reasoning model and want fewer surprises in tests",
+      "You can log `system_fingerprint` and the exact parameters",
+      "You treat repeatability as a goal to measure, not a guarantee"
+    ],
+    "avoid": [
+      "Building a compliance claim on `seed` or temperature 0",
+      "Sending `top_k` to OpenAI or recent Claude models",
+      "Asserting exact string equality on free text in CI"
+    ],
+    "flips": [
+      "You move to the Responses API: there is no `seed`, so test by repeated runs and store outputs",
+      "You must prove past behaviour: store the output, not the recipe",
+      "Variance is acceptable for the product: spend effort on quality metrics instead"
+    ]
+  },
+  "alternatives": {
+    "title": "Ways to get stable behaviour",
+    "head": ["Approach", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["`seed` plus fixed parameters", "Chat Completions and debugging replays", "Responses, Anthropic, reasoning models", "Best effort only, Beta"],
+      ["Strict schema or enum output", "Shape and label sets are fixed", "Free-form answers", "Constrains format, not wording"],
+      ["Pinned snapshot", "You need the same model over months", "The snapshot retires", "Forced migration on the retirement date"],
+      ["Store outputs and replay from storage", "Audit and user-visible history", "You want fresh answers", "Storage, retention and privacy duties"],
+      ["Repeated runs with a pass-rate threshold", "Testing prompts and evals", "A single run must be exact", "Multiplies test cost"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A test with `seed` and temperature 0 fails intermittently", "cause": "`seed` is Beta and best effort, and backends change", "fix": "Assert on parsed fields with a tolerance over repeated runs, and log `system_fingerprint`" },
+    { "symptom": "400 error mentioning `top_k` on Claude", "cause": "`top_k` is deprecated and rejected on models after Opus 4.6", "fix": "Remove it and control behaviour with prompt, schema and effort" },
+    { "symptom": "`seed` has no effect after a migration", "cause": "The Responses API and the Anthropic compatibility layer do not support it", "fix": "Remove it and use stored outputs or repeated-run tests" }
+  ],
+  "scenarios": [
+    {
+      "id": "w01-t05-s1",
+      "title": "A flaky extraction test in CI",
+      "situation": "An extraction prompt is tested in CI by comparing the full output string to a saved file. The test fails about one run in ten with no code change.",
+      "constraints": ["Non-reasoning model", "CI must stay fast", "The team wants reliable red and green signals"],
+      "unknowns": ["Which fields differ between runs?", "Is the model alias pinned?"],
+      "question": "How do you fix the test?",
+      "options": [
+        { "name": "Set `seed` and temperature 0 and keep exact string equality", "verdict": "poor", "why": "Both are best effort, so some runs still differ and the test stays flaky.", "tradeoff": "It helps debugging replays, not CI gating." },
+        { "name": "Record golden outputs and review diffs by hand", "verdict": "good", "why": "Catches real regressions and needs no randomness assumptions.", "tradeoff": "Manual effort on every change." },
+        { "name": "Pin the model snapshot, parse fields, and assert a pass rate over several runs per case", "verdict": "best", "why": "It tolerates harmless variance and fails when quality falls, which is what the gate should measure.", "tradeoff": "Several calls per test case raise CI time and cost." }
+      ],
+      "flips": [
+        { "if": "Outputs are a fixed enum", "then": "Exact equality on the parsed label is fine, with a small retry budget." },
+        { "if": "CI time is tight", "then": "Run the repeated-run suite nightly and a single-run smoke test per commit." }
+      ],
+      "takeaway": "Gate on measured pass rates, not on exact strings from a sampled model."
+    },
+    {
+      "id": "w01-t05-s2",
+      "title": "Showing a regulator what the assistant said",
+      "situation": "A regulated team must show exactly what the assistant told a customer last quarter. A colleague suggests regenerating the answer at audit time with `seed` and temperature 0.",
+      "constraints": ["Exact record required", "Models and backends change over a quarter", "Regulated domain"],
+      "unknowns": ["Retention period for chat data", "Whether the model alias has moved"],
+      "question": "What is the sound approach?",
+      "options": [
+        { "name": "Store inputs, model version, parameters and the output, and show the stored record", "verdict": "best", "why": "A stored record is exact, while regeneration depends on a model and backend that may have changed.", "tradeoff": "You take on storage, access control and retention duties." },
+        { "name": "Send `seed`, log `system_fingerprint`, and regenerate if the fingerprint matches", "verdict": "good", "why": "A matching fingerprint raises confidence in a replay.", "tradeoff": "Still best effort, and the snapshot may be retired by then." },
+        { "name": "Regenerate at audit time with temperature 0", "verdict": "poor", "why": "Temperature 0 is not fully deterministic and the model may have changed.", "tradeoff": "Fine for debugging a recent session, not as evidence." }
+      ],
+      "flips": [
+        { "if": "Data retention rules forbid storing outputs", "then": "Store a hash and the minimum metadata, and consult legal on what proof is acceptable." },
+        { "if": "Only an informal internal review is needed", "then": "A seeded replay may be enough." }
+      ],
+      "takeaway": "Evidence is a record, not a recipe you hope to replay."
+    }
+  ],
+  "quiz": [
+    { "id": "w01-t05-q1", "type": "match", "tag": "concept", "q": "Match each API to its status for `seed`.", "pairs": [
+      { "l": "OpenAI Chat Completions", "r": "Has `seed`, Beta, best effort" },
+      { "l": "OpenAI Responses", "r": "No `seed` parameter" },
+      { "l": "Anthropic Messages", "r": "No `seed`, temperature 0.0 not fully deterministic" },
+      { "l": "Anthropic OpenAI SDK layer", "r": "Accepts `seed` but ignores it" }
+    ], "explain": "Only Chat Completions exposes `seed`, and it is Beta. The Responses API and the Anthropic Messages API have none, and the Anthropic compatibility layer silently ignores it." },
+    { "id": "w01-t05-q2", "type": "single", "tag": "tradeoff", "q": "What is the most defensible way to prove what an assistant said last quarter?", "options": ["Regenerate with temperature 0", "Regenerate with the same seed", "Store the output with inputs and model version", "Re-run the prompt on the newest model"], "answer": 2, "explain": "A stored record is exact. Regeneration depends on a model and backend that may have changed, and `seed` and temperature 0 are best effort." },
+    { "id": "w01-t05-q3", "type": "single", "tag": "diagnose", "q": "Which field helps you notice that the backend changed between two requests with the same seed?", "options": ["`system_fingerprint`", "`finish_reason`", "`logprobs`", "`n`"], "answer": 0, "explain": "`system_fingerprint` identifies the backend configuration, so a change explains different outputs. The other fields do not describe the backend." }
+  ],
+  "flashcards": [
+    { "front": "Which major APIs expose `top_k`?", "back": "Not OpenAI Responses or Chat Completions. Anthropic lists it as deprecated and rejects it on models after Opus 4.6. Gemini has `topK` in `generationConfig`." },
+    { "front": "How reliable is `seed`?", "back": "Best effort and Beta, on Chat Completions only. Log `system_fingerprint` to spot backend changes." },
+    { "front": "How do you test a flaky structured extraction?", "back": "Pin the model snapshot, parse fields, run each case several times and assert a pass rate instead of exact strings." }
+  ],
+  "related": ["w01-t04", "w01-t08", "w14-t12", "w14-t14", "w01-l2"],
+  "refs": ["r5", "r19", "r36", "r11", "tr3"]
+}

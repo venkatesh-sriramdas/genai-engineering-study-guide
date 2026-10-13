@@ -1,0 +1,130 @@
+{
+  "id": "w18-t07",
+  "order": 7,
+  "group": "Specialised agents",
+  "title": "Text-to-SQL",
+  "minutes": 8,
+  "difficulty": "advanced",
+  "summary": "A model turns a natural-language question into SQL. It works on small clean schemas and degrades on large, dirty enterprise ones, and its output must be treated as untrusted input to your database.",
+  "useIf": "Users ask ad hoc questions over structured data, the schema can be curated, and wrong answers are cheap to catch or the data is low risk.",
+  "avoidIf": "Answers must be exact every time, or the database holds data users must never see and the connection is not locked down.",
+  "explain": [
+    { "t": "p", "md": "Text-to-SQL looks solved on demos and is not. **BIRD** has 12,751 question and SQL pairs over 95 databases (33.4 GB, 37 domains) with dirty values and external knowledge. ChatGPT reached 40.08% execution accuracy against 92.96% for humans [[r29]]. **Spider 2.0** uses 632 enterprise workflow problems, often over databases with more than 1,000 columns. An o1-preview code agent solved 21.3%, against 91.2% on Spider 1.0 and 73.0% on BIRD [[r30]]. Scores come from the papers and age quickly, but the gap from clean to enterprise schemas is the lesson." },
+    { "t": "flow", "title": "A defended text-to-SQL path", "direction": "h", "steps": [
+      { "title": "Schema linking", "md": "Pick the relevant tables, columns, descriptions and sampled values. Do not send 1,000 columns.", "tag": "accuracy" },
+      { "title": "Generate", "md": "Produce one read-only statement against curated views.", "tag": "model" },
+      { "title": "Validate", "md": "Parse it, allow-list tables, reject DDL and DML, add a row limit and timeout.", "tag": "guard" },
+      { "title": "Execute", "md": "Run under a read-only role with row-level security in the database.", "tag": "least privilege" },
+      { "title": "Answer", "md": "Return the result, show the SQL and flag low-confidence cases.", "tag": "trust" }
+    ] },
+    { "t": "p", "md": "**Treat generated SQL as untrusted.** The P2SQL paper shows that unsanitized prompts can drive SQL injection in LangChain-based LLM-integrated web apps, so generated SQL needs the same defences as user-supplied SQL [[r31]]. A prompt that says 'only run SELECT' is not a control. A read-only database role is." },
+    { "t": "p", "md": "**Row access belongs in the database tier.** SQL Server and Azure SQL row-level security uses filter predicates, which silently filter rows for `SELECT`, `UPDATE` and `DELETE`, and block predicates for writes, defined as inline table-valued functions and enforced by a security policy. A middle-tier app can share one database user and set the application user ID in `SESSION_CONTEXT` after connecting. The `@read_only` flag stops the value changing until the connection returns to the pool [[tr2]]." }
+  ],
+  "whereToUse": [
+    "Analyst self-service over a curated reporting schema or semantic layer",
+    "Internal data copilots where each answer shows its SQL for review",
+    "Exploration tools on read replicas, where a bad query costs time and not data",
+    "Natural-language filters that map onto a known set of verified queries"
+  ],
+  "whenToUse": {
+    "use": [
+      "The schema is curated: few tables, clear names, descriptions and sampled values",
+      "The role is read-only and rows are restricted in the database",
+      "Users can see the SQL, and failures are cheap to catch"
+    ],
+    "avoid": [
+      "Exact financial or legal numbers with no human review",
+      "Giving the model write access or an owner-level connection",
+      "Pointing it at a raw 1,000-column warehouse with unclear names"
+    ],
+    "flips": [
+      "Schema grows or turns dirty: add curated views or a semantic layer before widening access",
+      "Answers must be exact: switch to verified query templates or stored procedures",
+      "Multi-tenant exposure: enforce row-level security in the database, not in the prompt"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Free-form generation over the full schema", "Small, clean schema and exploratory use", "Large or dirty schemas", "Wrong joins, hallucinated columns, injection surface"],
+      ["Schema-linked prompts with sampled values", "Medium schema, ambiguous column names", "Hundreds of near-duplicate tables", "Linking step can miss the right table"],
+      ["Curated views or a semantic layer", "Business terms need stable meaning", "Questions fall outside the modeled views", "Modeling effort and upkeep"],
+      ["Verified query templates or stored procedures", "Exact, repeatable reports with parameters", "Open-ended questions", "Limited coverage, template upkeep"],
+      ["Existing BI dashboards", "The questions are known and stable", "Users need ad hoc slicing", "Less flexibility, fewer surprises"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Plausible SQL returns wrong numbers", "cause": "Wrong join keys, dirty values or business terms the schema does not explain", "fix": "Link a narrow schema, include descriptions and sampled values, show the SQL and evaluate execution accuracy on your own questions." },
+    { "symptom": "A user sees another tenant's rows", "cause": "Tenant filtering lived in the prompt, or a pooled connection kept a previous user's session context", "fix": "Use row-level security in the database, set `SESSION_CONTEXT` per request with `@read_only` and test cross-tenant queries." },
+    { "symptom": "A query locks up the warehouse", "cause": "No timeout, row limit or cost guard on generated SQL", "fix": "Enforce a statement timeout and row cap, route to a replica and block unbounded scans." }
+  ],
+  "scenarios": [
+    {
+      "id": "w18-t07-s1",
+      "title": "Analyst copilot over a huge warehouse",
+      "situation": "Analysts want to ask questions over a warehouse with thousands of columns and inconsistent naming. Users are internal and a human reads results before use.",
+      "constraints": ["Very large, dirty schema", "Internal users with review", "Read-only access"],
+      "unknowns": ["Which 20 tables answer 80% of questions?", "Are business terms defined anywhere?"],
+      "question": "How do you scope the assistant?",
+      "options": [
+        { "name": "Free-form generation over the whole warehouse", "verdict": "poor", "why": "Enterprise-scale schemas are where scores fall hard: 21.3% on Spider 2.0 against 91.2% on Spider 1.0.", "tradeoff": "Reasonable for a small, clean schema or a sandbox for exploration." },
+        { "name": "Curated views plus schema linking with descriptions and sampled values", "verdict": "best", "why": "It shrinks the problem the model sees and fixes meaning in one place.", "tradeoff": "Someone must build and maintain the views." },
+        { "name": "Verified templates only", "verdict": "good", "why": "Accurate for the questions they cover.", "tradeoff": "Analysts lose open-ended questions." }
+      ],
+      "flips": [
+        { "if": "The schema is small and clean", "then": "Schema-linked free-form generation is enough." },
+        { "if": "Answers feed decisions without review", "then": "Add verification or move to templates for those questions." }
+      ],
+      "takeaway": "Curate before you scale: schema size is the biggest accuracy lever."
+    },
+    {
+      "id": "w18-t07-s2",
+      "title": "Multi-tenant customer assistant",
+      "situation": "A product lets customers ask questions about their own account data in a shared database. A leak across customers would be a serious incident.",
+      "constraints": ["Shared tables across tenants", "High cost of leakage", "Moderate query complexity"],
+      "unknowns": ["Does the database support row-level security?", "Are connections pooled?"],
+      "question": "Where do you enforce tenant isolation?",
+      "options": [
+        { "name": "A system prompt rule: 'always filter by the caller's tenant id'", "verdict": "poor", "why": "A prompt is not a control, and injected or malformed SQL can omit the filter.", "tradeoff": "Acceptable as a hint layered on top of real enforcement." },
+        { "name": "Application appends a WHERE clause to the generated SQL", "verdict": "good", "why": "Better than the prompt and easy to build.", "tradeoff": "String rewriting is brittle with joins, subqueries and CTEs." },
+        { "name": "Row-level security in the database with per-request session context, plus a read-only role", "verdict": "best", "why": "The database applies the predicate on every access from any tier, so even wrong SQL cannot cross tenants.", "tradeoff": "Needs schema work, predicate performance tuning and care with pooled connections." }
+      ],
+      "flips": [
+        { "if": "Each tenant has its own database", "then": "Connection-level isolation may be simpler than row predicates." },
+        { "if": "The platform lacks row-level security", "then": "Expose tenant-scoped views or stored procedures instead." }
+      ],
+      "takeaway": "Enforce who sees which rows where the data lives."
+    },
+    {
+      "id": "w18-t07-s3",
+      "title": "Exact monthly figures for finance",
+      "situation": "A finance team asks for revenue and margin figures that feed a monthly report. Numbers must match the ledger exactly and be reproducible.",
+      "constraints": ["Exactness required", "Repeated questions with different parameters", "Audit trail needed"],
+      "unknowns": ["How many distinct report shapes exist?", "Who owns the definitions?"],
+      "question": "What do you build?",
+      "options": [
+        { "name": "Verified query templates or stored procedures, with the model only choosing and filling parameters", "verdict": "best", "why": "Definitions are fixed and reviewed, so numbers are reproducible and auditable.", "tradeoff": "Coverage is limited to the templates you write." },
+        { "name": "Free-form SQL with a result check by the user", "verdict": "poor", "why": "Plausible SQL can return wrong numbers and reviewers miss subtle errors.", "tradeoff": "Fine for exploration where nothing is booked from the output." },
+        { "name": "Schema-linked generation over curated views, with SQL shown", "verdict": "good", "why": "Flexible and reviewable.", "tradeoff": "Still not guaranteed correct, so a finance reviewer must sign off." }
+      ],
+      "flips": [
+        { "if": "Finance wants ad hoc drill-down", "then": "Offer generated SQL on curated views as an explicit, labelled exploration mode." },
+        { "if": "The report shapes keep multiplying", "then": "Invest in a semantic layer to define metrics once." }
+      ],
+      "takeaway": "When exactness matters, constrain the model to parameters of verified queries."
+    }
+  ],
+  "quiz": [
+    { "id": "w18-t07-q1", "type": "single", "tag": "security", "q": "Which control stops a generated `DROP TABLE` regardless of what the model writes?", "options": ["A prompt that says 'only SELECT'", "An output classifier on the answer text", "A read-only database role", "A lower temperature"], "answer": 2, "explain": "Permissions enforced by the database apply to any SQL. A prompt, a classifier on text or temperature can all be bypassed or fail, and P2SQL shows prompts can drive injection.", "ref": "r31" },
+    { "id": "w18-t07-q2", "type": "order", "tag": "order", "q": "Order the stages of a defended text-to-SQL path.", "items": ["Schema linking", "Generate SQL", "Validate and add limits", "Execute under a read-only role", "Return answer with SQL shown"], "explain": "Narrow the schema first, generate, validate and bound the statement, run it with least privilege, then present the result with the SQL so users can check it.", "ref": "r30" },
+    { "id": "w18-t07-q3", "type": "numeric", "tag": "numeric", "q": "On Spider 2.0 an o1-preview code agent solved 21.3%, against 91.2% on Spider 1.0. How many percentage points lower is Spider 2.0?", "answer": 69.9, "tolerancePct": 2, "unit": "percentage points", "hint": "Subtract.", "explain": "91.2 minus 21.3 is 69.9 percentage points. The point is that enterprise-scale schemas are much harder than the academic benchmark.", "ref": "r30" }
+  ],
+  "flashcards": [
+    { "front": "What gap did BIRD report?", "back": "ChatGPT reached 40.08% execution accuracy against 92.96% for humans, on 12,751 pairs over 95 databases with dirty values." },
+    { "front": "Why is a system prompt not a SQL safety control?", "back": "Prompts can be bypassed and P2SQL shows prompts can drive SQL injection. Use a read-only role, validation and database row-level security." },
+    { "front": "What is the SESSION_CONTEXT pattern in row-level security?", "back": "The app sets the current user ID after connecting and policies filter rows by it. The `@read_only` flag stops changes until the connection returns to the pool." }
+  ],
+  "related": ["w18-l4", "w07-t13", "w07-t02", "w14-t08", "w05-t13", "w06-t01"],
+  "refs": ["r29", "r30", "r31", "tr2"]
+}

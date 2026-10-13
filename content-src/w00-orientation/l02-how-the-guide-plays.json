@@ -1,0 +1,82 @@
+{
+  "id": "w00-l2",
+  "order": 2,
+  "title": "How this guide plays",
+  "kind": "concept",
+  "minutes": 15,
+  "brief": "You have an hour with a group, or twenty minutes alone. Learn the loop each level follows, where your progress lives and which study path fits your time and your gaps.",
+  "blocks": [
+    { "t": "h", "text": "The level loop", "level": 2 },
+    { "t": "flow", "title": "Every problem level follows the same eight steps", "direction": "h", "steps": [
+      { "title": "Brief", "md": "A problem with its constraints left open on purpose.", "tag": "read" },
+      { "title": "Options board", "md": "Every sensible option, with pros, cons, best-when and avoid-when.", "tag": "compare" },
+      { "title": "Flip the dials", "md": "Change scale, permissions, latency, risk or cost and watch the ranking and the reasons move.", "tag": "play" },
+      { "title": "Failure modes", "md": "Symptom, root cause and fix for what usually goes wrong.", "tag": "study" },
+      { "title": "Quiz", "md": "Single choice, multi select, ordering, matching, numeric and bug-spotting items.", "tag": "check" },
+      { "title": "Defend it", "md": "Write an interview-style answer, reveal the model answer, score yourself with the rubric.", "tag": "speak" },
+      { "title": "Flashcards", "md": "Spaced-repetition cards that build up across worlds.", "tag": "recall" },
+      { "title": "References", "md": "Dated links to specs, vendor docs, papers and courses.", "tag": "verify" }
+    ] },
+    { "t": "tabs", "tabs": [
+      { "label": "Saving and moving progress", "blocks": [
+        { "t": "list", "style": "ul", "items": [
+          "Progress lives in this browser's local storage on this computer. It is never sent anywhere, and the guide works with no network.",
+          "Clearing site data or switching browsers removes your progress. Export first from the footer or the Progress page.",
+          "To move to another browser or computer, export a file and import it there. Importing can merge with existing progress or replace it.",
+          "If the browser blocks local storage, a banner says so and the guide keeps progress in memory until you export."
+        ] }
+      ] },
+      { "label": "Flashcards and keys", "blocks": [
+        { "t": "table", "head": ["Keys", "What they do"], "rows": [
+          ["`/` or Ctrl+K or Cmd+K", "Open quick search"],
+          ["`Esc`", "Close search, a dialog or the navigation drawer"],
+          ["`[`", "Show or hide the sidebar"],
+          ["`t`", "Switch between light and dark theme"],
+          ["`?`", "Open the help page at the shortcuts"],
+          ["`1` to `5`, then Enter", "Quiz: choose an option, then check the answer"],
+          ["`Space`, then `1` to `4`", "Flashcards: flip the card, then grade it"],
+          ["Left and right arrows", "Tabs: move between variants"]
+        ], "compact": true }
+      ] },
+      { "label": "Labs", "blocks": [
+        { "t": "p", "md": "Seven interactive labs sit inside the worlds where the idea matters. World 2 holds `kv-cache`, `prompt-cache` and `latency-budget`. World 4 holds `chunk-visualizer`, world 5 holds `rrf-playground`, world 7 holds `acl-simulator` and world 10 holds `context-budget`. Each lab ends with three guided experiments." }
+      ] },
+      { "label": "Boards at a glance", "blocks": [
+        { "t": "table", "head": ["Board", "Use it to"], "rows": [
+          ["Compare", "Read each option's pros, cons, best-when and avoid-when"],
+          ["Dials", "Flip constraints and see the ranking and the reasons update"],
+          ["Scenario", "Separate what you know from what you must ask"],
+          ["Failure", "Match a symptom to a cause and a fix"],
+          ["Formula and stats", "Check the numbers behind a decision"],
+          ["Accordion", "Go deeper without cluttering the main path"]
+        ], "compact": true }
+      ] }
+    ] },
+    { "t": "h", "text": "Study strategy and facilitation", "level": 2 },
+    { "t": "table", "caption": "Run one world as a workshop", "head": ["Step", "What the facilitator does", "Time"], "rows": [
+      ["Choose the scope", "Pick one world per session. Most worlds take 60 to 90 minutes. Ask everyone to open the guide from the same zip so the content matches.", "5 min"],
+      ["Turn on facilitator mode", "It shows quiz answers and model answers with an Answer key badge. Keep it off on the learners' screens.", "1 min"],
+      ["Run each level in four moves", "Read the brief aloud. Let pairs flip the dials and argue. Take the quiz. Run the defend task with its timebox, then compare against the rubric.", "3, 10 and 5 min, then the timebox"],
+      ["Debrief with the flip question", "Ask what would change the choice. Good answers name a dial and a threshold.", "5 min"],
+      ["Collect evidence", "Ask each learner to export progress and share the file. The dashboard shows weak topics to coach next.", "5 min"]
+    ] },
+    { "t": "compare", "title": "Three study paths", "intro": "Pick by how much time you have and how much you already know.", "options": [
+      { "name": "Sequential tour", "summary": "Work through w00 to w19 in order.", "pros": ["Every dial is introduced before it is used", "Flashcards build up in order"], "cons": ["Slow if you already know a region"], "bestWhen": "You are new to GenAI engineering and have several weeks.", "avoidWhen": "An interview is days away." },
+      { "name": "Gap-driven", "summary": "Use the dashboard to find weak topics and revisit those levels.", "pros": ["Spends time where you are weakest"], "cons": ["Needs some progress data first", "Can skip prerequisite context"], "bestWhen": "You have finished a first pass and want to close gaps.", "avoidWhen": "You have no quiz history yet." },
+      { "name": "Interview sprint", "summary": "Do the boss levels and defend tasks first, then read the levels behind each miss.", "pros": ["Practises speaking structure under a timebox", "Shows gaps quickly"], "cons": ["Boss levels assume the earlier worlds"], "bestWhen": "You know the basics and need fluency in days.", "avoidWhen": "You cannot yet name the dials of a system." }
+    ] },
+    { "t": "callout", "kind": "tip", "title": "Say it out loud", "md": "The defend task rewards structure, and you build structure by speaking it. Answer aloud against the timebox before you reveal the model answer, then score yourself with the rubric." }
+  ],
+  "quiz": [
+    { "id": "w00-l2-q1", "type": "multi", "tag": "concept", "q": "Select every true statement about your progress in this guide.", "options": ["It is saved in browser local storage on this computer", "Switching to another browser keeps it automatically", "Importing a file can merge with or replace existing progress", "Exported files are uploaded to a server for backup", "If local storage is blocked, a banner appears and progress stays in memory until you export"], "answers": [0, 2, 4], "explain": "Progress is local to the browser, so switching browsers loses it unless you export and import. Nothing is ever uploaded, and a blocked local storage falls back to memory with a banner.", "difficulty": 1 },
+    { "id": "w00-l2-q2", "type": "single", "tag": "tradeoff", "q": "A facilitator projects the guide on a screen the whole group can see. Which setting should be off, and why?", "options": ["Dark theme, because it hides the dials from people far from the screen", "The sidebar, because it distracts the group from the quiz questions", "Facilitator mode, because it shows the answers", "Local storage, because it records every answer the group gives"], "answer": 2, "explain": "Facilitator mode shows answers with an Answer key badge, so it spoils the quiz and the defend task on a shared screen. Theme and sidebar do not affect learning, and local storage keeps data private to the browser.", "difficulty": 1 }
+  ],
+  "defend": null,
+  "refs": ["r23"],
+  "takeaways": [
+    "Every problem level runs the same loop: brief, options, dials, failures, quiz, defend, cards, references",
+    "Progress is local to the browser, so export before you clear data or switch machines",
+    "Facilitator mode reveals answers, so keep it off on learners' screens",
+    "Choose the study path by time and gaps, and always practise the defend task aloud"
+  ]
+}

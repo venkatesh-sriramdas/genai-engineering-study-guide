@@ -1,0 +1,95 @@
+{
+  "id": "w10-t18",
+  "order": 18,
+  "group": "Context and memory",
+  "title": "Context rot and compaction",
+  "minutes": 9,
+  "difficulty": "core",
+  "summary": "Model quality degrades as input grows, often well below the advertised window. Control it by clearing stale tool results, offloading to files, summarising with care and isolating work in sub-agents.",
+  "useIf": "A run has many tool calls or turns, quality drops late in the run, or you approach the context limit.",
+  "avoidIf": "Do not compact short tasks, and do not use lossy summaries where exact wording, numbers or constraints must survive.",
+  "explain": [
+    { "t": "p", "md": "**Context rot** is the loss of quality as input length grows. Chroma tested 18 models and found non-uniform degradation with longer inputs even on simple controlled tasks, and noted that needle-in-a-haystack tests only measure lexical retrieval [[r8]]. Other evidence points the same way: accuracy is highest when relevant text sits at the start or end and lowest in the middle [[r39]], and on RULER only about half of the 17 models tested kept satisfactory performance at 32K tokens despite claiming that length or more [[r33]]. On NoLiMa, 11 of 13 models claiming 128K or more fell below 50 percent of their short-context baseline at 32K, and GPT-4o dropped from 99.3 to 69.7 percent [[r22]]. Measure at your own lengths." },
+    { "t": "diagram", "id": "w10-t18-d1", "title": "Escalation ladder for a growing context", "alt": "Five steps from cheapest to most invasive: clear stale tool results, offload to files with pointers, keep structured notes, compact history with a summary, isolate branches in sub-agents.", "src": "flowchart LR\n  A[1 Clear stale tool results] --> B[2 Offload to files with pointers]\n  B --> C[3 Structured notes]\n  C --> D[4 Compact history]\n  D --> E[5 Sub-agents with fresh windows]" },
+    { "t": "p", "md": "Anthropic calls tool result clearing one of the safest, lightest forms of compaction, and lists compaction, structured note-taking and multi-agent architectures as the long-horizon toolkit [[r6]]. Manus uses the file system as restorable external memory: drop bulky content but keep the URL or path so it can be fetched again [[r7]]. The Claude API offers context editing in beta (header `context-management-2025-06-27`, strategies `clear_tool_uses_20250919` and `clear_thinking_20251015`), and server-side compaction in beta, which replaces older turns with a summary Claude writes [[r30]][[tr15]]. Agent Framework's compaction framework is experimental and applies only to agents that keep history in memory, because service-managed agents such as Foundry agents or the Responses API with `store` enabled already manage context server-side [[tr14]]." },
+    { "t": "callout", "kind": "gotcha", "title": "Compaction is lossy and cache-hostile", "md": "A summary drops exact wording, numbers and rare constraints, costs an extra model call and rewrites history, which breaks prefix cache reuse for that part. Anthropic found compaction alone was not enough for long coding runs and added progress files and incremental sessions [[r14]]. Keep tool-call and result pairs together when trimming: Agent Framework treats them as one atomic group because dropping one half causes API errors [[tr14]]." }
+  ],
+  "whereToUse": [
+    "Coding and research agents with dozens of tool calls per task",
+    "Long chat sessions where early turns lose relevance",
+    "Agents that browse or read large files and pages",
+    "Multi-hour runs that span several context windows",
+    "Cost and latency work on input-heavy workloads"
+  ],
+  "whenToUse": {
+    "use": ["Quality or cost degrades as a run grows", "Old tool results no longer matter but could be restored", "Work branches are independent enough to run in fresh windows"],
+    "avoid": ["Summarising exact figures, identifiers or legal text", "Compacting so often that cache reuse disappears", "Using the largest window as a substitute for trimming"],
+    "flips": ["A later step may need old output: offload to a file and keep a pointer instead of dropping it", "Facts must survive exactly: store them as structured notes and pin them", "One window cannot hold independent branches: use sub-agents and return condensed results"]
+  },
+  "alternatives": {
+    "title": "Techniques compared",
+    "head": ["Technique", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Clear stale tool results", "Results are bulky and rarely reused", "A later step needs the raw data", "Safe and cheap if a pointer remains [[r6]]"],
+      ["Offload to files", "Detail must stay restorable", "Reading the file costs more than keeping it", "Needs a file tool and conventions [[r7]]"],
+      ["Structured notes", "Decisions and facts must persist across windows", "Notes drift from reality", "Discipline to update them [[r6]]"],
+      ["Summarise or compact history", "Narrative history is long and low-value", "Exact details matter", "Lossy, extra call, cache miss [[tr15]]"],
+      ["Sub-agents with fresh windows", "Branches are independent", "Work is coupled", "More tokens, more coordination [[r2]]"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "The agent contradicts a decision from earlier in the run", "cause": "A summary dropped the decision or its reason", "fix": "Write decisions to structured notes, pin them in context and summarise only narrative." },
+    { "symptom": "API errors after trimming history", "cause": "A tool call was removed without its result, or the reverse [[tr14]]", "fix": "Trim whole call-and-result groups and let the framework's grouping handle it." },
+    { "symptom": "Costs rise after adding summarisation", "cause": "History rewrites break the cached prefix and each summary adds a model call", "fix": "Compact at thresholds, not every turn, and keep the stable prefix untouched." }
+  ],
+  "scenarios": [
+    {
+      "id": "w10-t18-s1",
+      "title": "Long coding run near the limit",
+      "situation": "A coding agent has made about a hundred tool calls. Most results are old file listings and test logs. Quality is slipping and the context nears its limit. The next steps only need the latest test output and the plan.",
+      "constraints": ["Many stale tool results", "Detail is restorable by re-running tools", "A plan and progress file exist"],
+      "unknowns": ["Which results are still referenced?", "Is the provider's context editing available?"],
+      "question": "What do you apply first?",
+      "options": [
+        { "name": "Clear stale tool results and keep pointers, update the progress notes, then compact only if still needed", "verdict": "best", "why": "Clearing is among the safest, lightest forms of compaction, and nothing is lost because tools can be re-run.", "tradeoff": "A later step may need to re-fetch cleared data." },
+        { "name": "Summarise the entire history into one paragraph", "verdict": "poor", "why": "It is lossy and can drop decisions and constraints, and it breaks cache reuse for the history.", "tradeoff": "Right when history is mostly chat with little structure and a lossy summary is acceptable." },
+        { "name": "Start a fresh session with only the original task", "verdict": "good", "why": "Cleanest context.", "tradeoff": "Loses progress unless notes and files carry state, which is the harness job." }
+      ],
+      "flips": [
+        { "if": "Notes and files hold state reliably", "then": "Fresh sessions per phase become safe and cheap." },
+        { "if": "Results are small but numerous", "then": "Compact in batches at a token threshold." }
+      ],
+      "takeaway": "Clear first, summarise last."
+    },
+    {
+      "id": "w10-t18-s2",
+      "title": "Exact figures must survive",
+      "situation": "A support assistant holds a thirty-turn conversation where order numbers, amounts and promised actions must stay exact. The context is growing and answer quality dips on later turns.",
+      "constraints": ["Exact identifiers matter", "Interactive latency", "History is mostly chat"],
+      "unknowns": ["Which fields must be exact?", "Do users revisit early turns?"],
+      "question": "How do you manage the history?",
+      "options": [
+        { "name": "Extract exact fields into a structured state object that is always included, and summarise only the narrative", "verdict": "best", "why": "Exact data stays lossless and the narrative shrinks safely.", "tradeoff": "Needs schema design and a reliable extraction step." },
+        { "name": "Free-text summary of the whole conversation", "verdict": "poor", "why": "Summaries paraphrase numbers and drop rare constraints.", "tradeoff": "Fine for casual chat with no exact data." },
+        { "name": "Drop the oldest turns after a fixed count", "verdict": "good", "why": "Simple and cheap.", "tradeoff": "Forgets early commitments unless they are pinned elsewhere." }
+      ],
+      "flips": [
+        { "if": "Conversations stay under ten turns", "then": "Keep full history and skip compaction." },
+        { "if": "Compliance needs the full record", "then": "Store the transcript separately and keep a compact working context." }
+      ],
+      "takeaway": "Compact the prose, pin the facts."
+    }
+  ],
+  "quiz": [
+    { "id": "w10-t18-q1", "type": "single", "tag": "concept", "q": "What did the NoLiMa study find about models claiming 128K or more of context?", "options": ["All kept at least 90 percent of baseline at 32K", "Context length had no effect on literal matching", "Only open models degraded", "At 32K, 11 of 13 fell below 50 percent of their short-context baseline"], "answer": 3, "explain": "NoLiMa tested 13 models claiming 128K or more, and at 32K 11 fell below half of their short-context baseline, for example GPT-4o from 99.3 to 69.7 percent. Degradation was not limited to open models. [[r22]]", "ref": "r22", "difficulty": 2 },
+    { "id": "w10-t18-q2", "type": "order", "tag": "order", "q": "Order the context-management techniques from least to most invasive.", "items": ["Clear stale tool results", "Offload bulky content to files with pointers", "Compact history into a summary", "Split independent branches into sub-agents"], "explain": "Clearing results is the lightest and safest. Offloading keeps content restorable. Summaries are lossy and rewrite history. Sub-agents change the architecture and multiply tokens. [[r6]]", "ref": "r6", "difficulty": 2 },
+    { "id": "w10-t18-q3", "type": "single", "tag": "diagnose", "q": "An agent using the Responses API with store enabled shows no effect from a client-side compaction strategy. Why?", "options": ["The service manages the conversation state, so client compaction has nothing to compact", "Compaction only works with Python", "The strategy needs a larger window", "Compaction requires temperature zero"], "answer": 0, "explain": "Agent Framework's compaction applies to agents that keep history in memory. Service-managed state, such as the Responses API with store enabled or Foundry agents, is handled server-side. [[tr14]]", "ref": "tr14", "difficulty": 3 }
+  ],
+  "flashcards": [
+    { "front": "What did RULER find about 32K context?", "back": "Of 17 models tested, only about half kept satisfactory performance at 32K despite claiming 32K or more [[r33]]." },
+    { "front": "Which Claude API settings control tool result clearing?", "back": "Context editing (beta, header context-management-2025-06-27) with strategy clear_tool_uses_20250919, and clear_thinking_20251015 for thinking blocks [[r30]]." },
+    { "front": "Why keep tool call and result together when trimming?", "back": "Dropping one half causes API errors. Agent Framework treats them as one atomic message group [[tr14]]." }
+  ],
+  "related": ["w10-l4", "w10-t17", "w10-t05", "w10-t19"],
+  "refs": ["r8", "r39", "r33", "r22", "r6", "r7", "r30", "r14", "r2", "tr14", "tr15"]
+}

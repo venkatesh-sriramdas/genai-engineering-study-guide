@@ -1,0 +1,113 @@
+{
+  "id": "w11-t03",
+  "order": 3,
+  "group": "Foundations",
+  "title": "Chat clients and the agent pipeline",
+  "minutes": 7,
+  "difficulty": "core",
+  "summary": "Every agent run flows through layers: agent middleware, a context layer (history and context providers), then a chat client with its own decorators. Knowing the layer tells you where an extension belongs.",
+  "useIf": "You are deciding where to put a guardrail, memory, logging or retry, or swapping a model provider.",
+  "avoidIf": "You only call an agent with default settings and no extension points.",
+  "explain": [
+    { "t": "p", "md": "A **chat client** talks to a model service: Foundry, Azure OpenAI, OpenAI, Anthropic, Ollama and others [[tr1]]. A `ChatClientAgent` (.NET, over any `IChatClient`) or `Agent` (Python, over any client implementing `SupportsChatGetResponse`) wraps it. Direct agent types wrap a managed or remote runtime instead: `FoundryAgent`, `A2AAgent`, `GitHubCopilotAgent`, `ClaudeAgent` [[tr52]]. Semantic Kernel's `ChatCompletionAgent`, `OpenAIAssistantAgent` and `AzureAIAgent` collapse into `ChatClientAgent` [[tr39]]." },
+    { "t": "p", "md": "**Three layers in .NET**: agent middleware (added with `.Use()`), the context layer (`ChatHistoryProvider` and `AIContextProviders`), then the chat client with decorators. In **Python** the outer `Agent` is `AgentMiddlewareLayer` plus `AgentTelemetryLayer` around `RawAgent`, which runs one `context_providers` list. The inner, interchangeable ChatClient runs `FunctionInvocation` (the tool loop, with function middleware and telemetry per tool call), then chat middleware and telemetry per model call, then the provider-specific `RawChatClient` [[tr3]]." },
+    { "t": "diagram", "id": "w11-t03-d1", "title": "One run through the Python pipeline", "alt": "Request passes agent middleware, context providers, the function invocation loop and chat middleware before reaching the model; the response returns through the same layers.", "src": "flowchart LR\n  U[Caller] --> AM[Agent middleware and telemetry]\n  AM --> CP[Context providers: history and memory]\n  CP --> FI[Function invocation loop]\n  FI --> CM[Chat middleware per model call]\n  CM --> M[(Model service)]\n  FI -.->|per tool call| FM[Function middleware]" },
+    { "t": "table", "caption": "Where an extension belongs", "head": ["I want to", "Plug in at", "Why there"], "rows": [
+      ["Block or rewrite a whole user request, any agent type", "Agent middleware", "Wraps the full run and works with `A2AAgent` too"],
+      ["Load history or inject memory, RAG, instructions", "Context provider", "Runs before and after the run; state lives in the session"],
+      ["Validate, allow-list or time a tool call", "Function middleware", "Sees `FunctionInvocationContext` for each tool call"],
+      ["Redact or log raw model requests, add retries", "Chat middleware", "Sees messages and options for each model call"]
+    ] },
+    { "t": "tabs", "tabs": [
+      { "label": "C#", "blocks": [ { "t": "code", "lang": "csharp", "code": "IChatClient chat = projectClient.GetProjectOpenAIClient()\n    .GetProjectResponsesClient()\n    .AsIChatClient(deployment)\n    .AsBuilder()\n    .Use(getResponseFunc: LogModelCalls, getStreamingResponseFunc: null)\n    .Build();\n\nAIAgent agent = new ChatClientAgent(chat, instructions: \"You are helpful.\")\n    .AsBuilder()\n    .Use(runFunc: GuardRun, runStreamingFunc: GuardRunStreaming)\n    .Build();" } ] },
+      { "label": "Python", "blocks": [ { "t": "code", "lang": "python", "code": "agent = Agent(\n    client=FoundryChatClient(credential=cred, project_endpoint=ep, model=model),\n    instructions='You are helpful.',\n    middleware=[guard_run, audit_tool_calls, log_model_calls],\n    context_providers=[InMemoryHistoryProvider('memory', load_messages=True)],\n)" } ] }
+    ] },
+    { "t": "callout", "kind": "gotcha", "title": "Chat middleware runs per model call", "md": "Since 1.0.0rc5 (2026-03-19) chat middleware runs for every model call, including each tool-loop iteration, not once per run. Code that assumed one call per run can act twice [[tr4]]." }
+  ],
+  "whereToUse": [
+    "Adding a guardrail once for every agent type, including remote agents, with agent middleware",
+    "Switching from Azure OpenAI to Foundry or another provider by replacing only the chat client",
+    "Cross-cutting concerns: timing, audit, retries and redaction at the right layer",
+    "Debugging: reading the order of layers to explain why a hook fired twice or not at all"
+  ],
+  "whenToUse": {
+    "use": [
+      "Put policy that applies to the whole run at the agent layer",
+      "Put model-call concerns (token logging, request rewriting) at the chat layer",
+      "Put memory and history at the context layer, keyed by `source_id` in session state"
+    ],
+    "avoid": [
+      "Do not add chat middleware to count runs: it fires per model call",
+      "Do not assume agent-level decorators know the agent type: they must stay generic",
+      "Do not skip the default function wrapping in .NET (`UseProvidedChatClientAsIs = true`) unless you supply your own tool loop"
+    ],
+    "flips": [
+      "You need to see raw prompts sent to the provider: use chat middleware, not agent middleware",
+      "The agent is remote (`A2AAgent`): only agent-level decorators apply, because there is no local chat client"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Agent middleware", "Whole-run policy, any agent type", "You need per-model-call detail", "Cannot assume agent internals"],
+      ["Function middleware", "Tool allow-lists, argument checks, timing", "You need to change model requests", ".NET: works with agents that use `FunctionInvokingChatClient`"],
+      ["Chat middleware", "Per-model-call redaction, retries, logging", "You want once-per-run behaviour", "Fires on every tool-loop iteration"],
+      ["Context provider", "Memory, RAG, dynamic instructions", "You need to stop the run", "Provider instance is shared across sessions"],
+      ["Agent Hooks (Python, experimental)", "A fail-closed control plane across all three layers", "You need .NET or a stable API", "Emits `ExperimentalWarning`, extra `agent-hooks`, not in `[all]` [[tr46]]"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A rate-limit or audit hook fires several times per user message", "cause": "Chat middleware runs for each model call, and a tool loop makes several", "fix": "Move run-level logic to agent middleware, keep chat middleware idempotent" },
+    { "symptom": "Middleware added to a decorated agent never runs for streaming calls (.NET)", "cause": "Only `runFunc` was supplied, so streaming runs through the non-streaming path", "fix": "Provide both `runFunc` and `runStreamingFunc`" }
+  ],
+  "scenarios": [
+    {
+      "id": "w11-t03-s1",
+      "title": "Mask card numbers before the model sees them",
+      "situation": "A support assistant must redact card numbers from user messages and tool results before any model call. It uses tools that return customer records.",
+      "constraints": ["Redaction must cover tool results re-sent to the model", "Latency budget is tight", "Mixed agent types in the fleet"],
+      "unknowns": ["Is redaction needed in stored history too?", "Do remote agents (A2A) need the same rule?", "Is a regex enough or is an ML detector needed?"],
+      "question": "Where do you put the redaction?",
+      "options": [
+        { "name": "Chat middleware, which sees every message list sent to the model including tool results", "verdict": "best", "why": "It runs per model call, so tool results in later iterations are covered too.", "tradeoff": "Runs on every call (cost grows with tool iterations) and does not change what history storage keeps." },
+        { "name": "Agent middleware on the user input only", "verdict": "poor", "why": "Tool results enter later in the loop and bypass it.", "tradeoff": "Right for input-only rules, such as blocking a banned topic before the run starts." },
+        { "name": "A context provider that rewrites history after the run", "verdict": "good", "why": "It can clean stored history.", "tradeoff": "Too late for the in-flight model call that already saw the numbers." }
+      ],
+      "flips": [
+        { "if": "Stored transcripts must also be clean", "then": "Add a history-side filter in addition to chat middleware." },
+        { "if": "The fleet includes remote A2A agents", "then": "Apply the rule inside each remote agent too, because your chat layer is not in their path." }
+      ],
+      "takeaway": "Pick the layer by what the hook must see: the run, the model call or the tool call."
+    },
+    {
+      "id": "w11-t03-s2",
+      "title": "Swap the model provider",
+      "situation": "A team wants to move an agent from Azure OpenAI to Foundry and later test another model family. Conversations are stored in your own database.",
+      "constraints": ["History is caller-managed", "Tools and instructions must stay unchanged"],
+      "unknowns": ["Is any history stored service-side with `resp_*` ids?", "Do prompts depend on provider-specific options?"],
+      "question": "How do you structure the swap?",
+      "options": [
+        { "name": "Keep the agent and providers, replace only the chat client behind it", "verdict": "best", "why": "The client is the interchangeable inner component. Caller-managed history ports across providers.", "tradeoff": "Provider-specific options and tool behaviour still need a regression run." },
+        { "name": "Rewrite the agent for each provider", "verdict": "poor", "why": "Duplicates instructions, tools and middleware.", "tradeoff": "Only justified when a provider needs a wholly different runtime, such as a managed `FoundryAgent`." },
+        { "name": "Use service-managed history on both and copy ids", "verdict": "poor", "why": "Ids such as `resp_*` are scoped to a key or project and are not portable across providers.", "tradeoff": "Works only inside one provider and project." }
+      ],
+      "flips": [
+        { "if": "You must switch models mid-conversation in .NET", "then": "Look at the experimental `RoutePersistingRoutingChatClient` (Python and Go have no equivalent) [[tr47]]." },
+        { "if": "A managed runtime such as `FoundryAgent` must own the conversation", "then": "History becomes service-managed, so compaction does not apply and model switching needs a new conversation." }
+      ],
+      "takeaway": "Caller-managed history plus a swappable client keeps provider choice cheap."
+    }
+  ],
+  "quiz": [
+    { "id": "w11-t03-q1", "type": "order", "tag": "order", "q": "Order the Python pipeline for one run, outermost first.", "items": ["Agent middleware and telemetry", "Context providers load history", "Function invocation loop", "Chat middleware and telemetry", "RawChatClient to the model"], "explain": "The agent layer wraps the run, RawAgent runs context providers, then the ChatClient tool loop calls chat middleware for each model call before the provider client.", "ref": "tr3" },
+    { "id": "w11-t03-q2", "type": "single", "tag": "diagnose", "q": "A logging hook registered as chat middleware writes five lines for one user question that triggered four tool calls. Why?", "options": ["The agent is retried five times", "The session was serialized five times", "The hook is registered at run level", "Chat middleware runs for each model call and the tool loop made several"], "answer": 3, "explain": "Chat middleware runs inside the function invocation loop, once per model call. Retries, run-level registration and serialization do not cause it.", "ref": "tr4" }
+  ],
+  "flashcards": [
+    { "front": "Name the three .NET pipeline layers.", "back": "Agent middleware (`.Use()`), the context layer (`ChatHistoryProvider` plus `AIContextProviders`), and the chat client (`IChatClient` with decorators)." },
+    { "front": "How often does Python chat middleware run?", "back": "On every model call, including each tool-loop iteration (since 1.0.0rc5, 2026-03-19)." },
+    { "front": "Which layer works with any agent type, including `A2AAgent`?", "back": "Agent middleware, because it wraps the whole run and makes no assumption about the inner agent." }
+  ],
+  "related": ["w11-t04", "w11-t05", "w11-t11", "w11-t12"],
+  "refs": ["tr1", "tr3", "tr4", "tr39", "tr46", "tr47", "tr52"]
+}

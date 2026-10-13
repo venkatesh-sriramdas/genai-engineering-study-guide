@@ -1,0 +1,113 @@
+{
+  "id": "w11-t25",
+  "order": 25,
+  "group": "Operate",
+  "title": "Hosting: A2A, AG-UI, OpenAI-compatible and Foundry hosted",
+  "minutes": 10,
+  "difficulty": "advanced",
+  "summary": "An agent or workflow becomes a service by choosing who owns the host: your own ASP.NET or Python server with protocol adapters (OpenAI-compatible, A2A, AG-UI), Foundry hosted agents, or the Durable Extension.",
+  "useIf": "Clients other than your own code must call the agent, and you must decide who owns routing, auth, sessions and scaling.",
+  "avoidIf": "You only run agents in-process inside an existing service and expose nothing new.",
+  "explain": [
+    { "t": "p", "md": "**Self-hosting.** In .NET, `Microsoft.Agents.AI.Hosting` (prerelease) registers agents and workflows in the generic host: `AddAIAgent`, `AddWorkflow` and `AddAsAIAgent`. Protocol packages add endpoints: **OpenAI-compatible** Chat Completions and Responses (`MapOpenAIChatCompletions`, `MapOpenAIResponses`, `MapOpenAIConversations`), **A2A** (`Microsoft.Agents.AI.Hosting.A2A.AspNetCore`, with an Agent Card; Python uses `A2AExecutor` from `agent-framework-a2a` inside the a2a-sdk server) and **AG-UI** (`MapAGUIServer`, Server-Sent Events for web agent UIs with tool rendering, approvals and state sync). Your app owns auth, routing, request validation and storage. No general-purpose durable `AgentSessionStore` ships, so supply one; scope persisted sessions by an authenticated user or tenant, because a continuation id identifies a session but does not prove ownership [[tr31]] [[tr32]] [[tr33]] [[tr34]]." },
+    { "t": "p", "md": "**Foundry hosted agents** (service GA; Python `agent-framework-foundry-hosting` Beta, .NET `.Foundry.Hosting` preview; checked 2026-10-13). A container with a platform identity per agent, persisted `$HOME` and files, and OpenAI-compatible endpoints. Two protocols: **Responses** (`ResponsesHostServer(agent)`, recommended start; the platform manages history, streaming and sessions) and **Invocations** (`InvocationsHostServer`, full control of payload and streaming such as AG-UI). Python `history_source` picks who supplies model history: `agent_server` (default), `service` or `agent`. Default hosted stores are namespaced by platform user and sandbox session, use ETag writes and expire sessions 30 days after last write. Host a workflow natively with `workflow=` and a `parse_response` callback; hosting `agent=workflow.as_agent()` is deprecated because a `WorkflowAgent` keeps state in memory [[tr35]]." },
+    { "t": "table", "caption": "Choosing a host", "head": ["Host", "You own", "Platform owns", "Maturity (2026-10-13)"], "rows": [
+      ["Self-host with protocol packages", "Auth, routing, session store, scaling, deployment", "Nothing", ".NET hosting packages prerelease; Python A2A Beta"],
+      ["Foundry hosted agents", "Agent code, container", "Identity, endpoints, scaling, session and file persistence", "Service GA; framework hosting packages Beta and preview"],
+      ["Durable Extension", "Code, Durable Task backend choice", "Durable state, scale-to-zero (Functions)", "Beta and preview"],
+      ["DevUI", "Nothing in production", "A sample app for local debugging, tracing and an OpenAI-compatible API [[tr51]]", "Sample, not for production; Beta and preview"]
+    ] },
+    { "t": "tabs", "tabs": [
+      { "label": "C#", "blocks": [ { "t": "code", "lang": "csharp", "code": "// self-host: OpenAI-compatible endpoints with a durable, isolated session store\nvar builder = WebApplication.CreateBuilder(args);\nvar hosted = builder.AddAIAgent(\"weather-agent\", (_, _) => agent);\nbuilder.Services.AddSingleton<AgentSessionStore, MyAgentSessionStore>();\nif (builder.Environment.IsDevelopment()) hosted.WithInMemorySessionStore(withIsolation: false);\nelse hosted.WithSessionStore((sp, _) => sp.GetRequiredService<AgentSessionStore>());\n\nvar app = builder.Build();\napp.MapOpenAIResponses(hosted);\napp.MapOpenAIChatCompletions(hosted);\napp.Run();\n\n// Foundry hosted (Responses)\nvar fb = AgentHost.CreateBuilder(args);\nfb.Services.AddFoundryResponses(agent);\nfb.RegisterProtocol(\"responses\", e => e.MapFoundryResponses());\nfb.Build().Run();" } ] },
+      { "label": "Python", "blocks": [ { "t": "code", "lang": "python", "code": "from agent_framework_foundry_hosting import ResponsesHostServer, CheckpointStoreProvider\n\n# Foundry hosted: agent instance, or a factory called once per request\nserver = ResponsesHostServer(agent)          # history_source='agent_server' by default\nserver.run()\n\n# native workflow on the Responses protocol\nserver = ResponsesHostServer(\n    workflow=build_workflow,                 # request-aware factory, fresh graph each call\n    parse_response=parse_response,\n    checkpoint_store_provider=CheckpointStoreProvider(\n        allowed_checkpoint_types=['my_app.models:Ticket']),\n)\n\n# self-host A2A with the a2a-sdk server\nhandler = DefaultRequestHandler(agent_executor=A2AExecutor(agent, stream=True),\n    task_store=InMemoryTaskStore(), agent_card=public_agent_card)" } ] }
+    ] }
+  ],
+  "whereToUse": [
+    "Self-host when the agent must live inside an existing ASP.NET service with your auth and network rules",
+    "OpenAI-compatible endpoints so any OpenAI SDK client can call your agent",
+    "A2A so other teams' or vendors' agents can discover and call yours through an Agent Card",
+    "AG-UI for web or mobile chat with streaming, approvals and shared state",
+    "Foundry hosted agents when you want managed identity, endpoints and session persistence for a container"
+  ],
+  "whenToUse": {
+    "use": [
+      "Self-host for maximum control and existing infrastructure",
+      "Foundry hosted for managed scaling, an Entra identity per agent and Responses endpoints",
+      "Responses first: add Invocations later for custom payloads, webhooks or custom streaming"
+    ],
+    "avoid": [
+      "Using DevUI in production: the docs call it a sample not intended for production use",
+      "Letting clients choose session ids without scoping to a user or tenant",
+      "Reusing one stateful agent or WorkflowAgent instance for different users"
+    ],
+    "flips": [
+      "You need durable waits and scale to zero: add the Durable Extension on Functions",
+      "Clients are agents from other organisations: expose A2A with an Agent Card and real auth, not only an OpenAI endpoint"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Self-host (ASP.NET or Python server)", "Control, existing platform", "You want zero ops", "You build session store, auth, scaling"],
+      ["Foundry hosted agents", "Managed identity, endpoints and persistence", "You need arbitrary networking or non-Foundry hosting", "Framework hosting packages Beta and preview"],
+      ["Durable Extension on Functions", "Waits of days, scale to zero", "Pre-release packages are banned", "Beta and preview"],
+      ["Copilot Studio or other managed UI", "Low-code front end", "You need full code control of the loop", "Different programming model"],
+      ["No hosting (in-process library)", "Agent used only inside one service", "Other clients must call it", "Nothing to secure externally"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Users resume each other's sessions", "cause": "Client-supplied continuation ids were trusted without an isolation key", "fix": "Use an isolation key (for example `IsolationKeyScopedAgentSessionStore`) tied to the authenticated user or tenant" },
+    { "symptom": "Sessions vanish after a restart on a self-hosted .NET service", "cause": "`InMemoryAgentSessionStore` loses state when the process exits", "fix": "Implement a durable `AgentSessionStore` keyed by agent id and opaque session id" },
+    { "symptom": "Hosted workflow mixes users' state", "cause": "A `WorkflowAgent` instance holds state in memory and was reused across requests", "fix": "Host natively with `workflow=` and a per-request factory that builds a fresh graph" }
+  ],
+  "scenarios": [
+    {
+      "id": "w11-t25-s1",
+      "title": "Expose an agent to partner agents",
+      "situation": "A logistics company wants partner companies' agents to request shipment quotes from its agent. Partners use different frameworks. Auth must be per partner and calls are asynchronous at times.",
+      "constraints": ["Third-party callers", "Different frameworks", "Per-partner auth"],
+      "unknowns": ["Do quotes ever take minutes?", "Is an Agent Card published publicly?", "Which host?"],
+      "question": "Which protocol do you expose?",
+      "options": [
+        { "name": "A2A with an Agent Card, per-partner auth and task support, hosted on your service or Foundry", "verdict": "best", "why": "A2A is the interop protocol for opaque agents across vendors and handles long-running tasks.", "tradeoff": "Python A2A is Beta and .NET preview, and v1 migration changed registration APIs in 2026." },
+        { "name": "OpenAI-compatible Responses endpoint only", "verdict": "good", "why": "Any OpenAI SDK client can call it.", "tradeoff": "Not agent-to-agent discovery, and partners must build around a chat-style API." },
+        { "name": "AG-UI endpoint", "verdict": "poor", "why": "AG-UI targets web or mobile agent UIs, not agent-to-agent calls.", "tradeoff": "Right for your own front end." }
+      ],
+      "flips": [
+        { "if": "Partners only use OpenAI SDKs and tasks are short", "then": "The Responses endpoint is enough." },
+        { "if": "You want managed identity and scaling", "then": "Host the A2A protocol on Foundry hosted agents." }
+      ],
+      "takeaway": "Pick the protocol by who the caller is: a person's UI, an SDK client or another agent."
+    },
+    {
+      "id": "w11-t25-s2",
+      "title": "Internal assistant with a small platform team",
+      "situation": "A two-person team must ship an internal assistant on Azure in six weeks. No one wants to operate containers or write session storage. Data stays in the Azure tenant.",
+      "constraints": ["Small team", "Azure only", "Six weeks"],
+      "unknowns": ["Is a preview hosting package acceptable?", "How many concurrent users?", "Any custom protocol need?"],
+      "question": "How do you host?",
+      "options": [
+        { "name": "Foundry hosted agent with the Responses protocol and the default platform session stores", "verdict": "best", "why": "Managed identity, endpoints and scoped session persistence remove most ops work, and the service is GA.", "tradeoff": "Framework hosting packages are Beta or preview, and you accept the platform's limits." },
+        { "name": "Self-host in ASP.NET with your own session store", "verdict": "good", "why": "Full control.", "tradeoff": "You build auth, session isolation, scaling and observability glue." },
+        { "name": "Run DevUI for everyone", "verdict": "poor", "why": "DevUI is a sample not intended for production.", "tradeoff": "Fine for demos on a developer machine." }
+      ],
+      "flips": [
+        { "if": "Preview packages are forbidden", "then": "Self-host on the stable core." },
+        { "if": "You need days-long approval waits", "then": "Add the Durable Extension." }
+      ],
+      "takeaway": "A small team should rent the platform; control costs engineering time."
+    }
+  ],
+  "quiz": [
+    { "id": "w11-t25-q1", "type": "match", "tag": "concept", "q": "Match each protocol to its purpose.", "pairs": [ { "l": "A2A", "r": "Agent discovery, messaging and tasks between agents" }, { "l": "AG-UI", "r": "Streaming events for web agent UIs with approvals and state" }, { "l": "Foundry Responses", "r": "OpenAI-compatible `/responses` with platform-managed history" }, { "l": "Foundry Invocations", "r": "Full control of the HTTP payload and streaming" } ], "explain": "Start with Responses and add Invocations for custom payloads. A2A is for agent-to-agent; AG-UI for user interfaces.", "ref": "tr35" },
+    { "id": "w11-t25-q2", "type": "single", "tag": "security", "q": "A self-hosted agent accepts a `conversation id` from clients and loads the matching session. What is missing?", "options": ["Compression", "Scoping the session lookup by the authenticated user or tenant", "A bigger model", "An Agent Card"], "answer": 1, "explain": "A continuation id identifies a session but does not prove ownership. Scope persisted sessions with an isolation key before accepting client ids.", "ref": "tr31" }
+  ],
+  "flashcards": [
+    { "front": "Which Foundry hosting protocol is recommended first?", "back": "Responses (OpenAI-compatible `/responses`, platform-managed history). Add Invocations later for custom payloads or streaming." },
+    { "front": "Does MAF ship a durable session store for self-hosting?", "back": "No general-purpose durable `AgentSessionStore` ships. Implement your own, keyed by agent id and an opaque session id." },
+    { "front": "What do the docs say about DevUI?", "back": "It is a sample app not intended for production: web UI, tracing and an OpenAI-compatible API for local development." }
+  ],
+  "related": ["w11-t10", "w11-t24", "w11-t17", "w09-t10", "w12-t03", "w12-t04"],
+  "refs": ["tr31", "tr32", "tr33", "tr34", "tr35", "tr51"]
+}

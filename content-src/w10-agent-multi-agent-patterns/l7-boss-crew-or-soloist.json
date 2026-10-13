@@ -1,0 +1,97 @@
+{
+  "id": "w10-l7",
+  "order": 7,
+  "title": "Boss: crew or soloist? Defend the topology",
+  "kind": "boss",
+  "minutes": 25,
+  "brief": "An interviewer asks whether a research-and-report workload needs several agents and wants the topology. The dials are not given. Clarify them, compare the options, choose, and say what would flip your answer.",
+  "blocks": [
+    { "t": "h", "text": "The prompt and the five steps", "level": 2 },
+    { "t": "scenario", "title": "What you know and what to ask", "known": ["The assistant researches a topic across internal and external sources", "It drafts a report and opens follow-up tickets", "A teammate proposes a crew of agents"], "ask": ["Are the subtasks mostly reads, or do they write a shared artifact?", "Can the subtasks be listed before the run?", "What is one run worth against its token cost, and how long may the user wait?", "Do any parts sit in a different team, tenant or trust zone?", "What must a reviewer be able to replay when a run goes wrong?"], "tension": "Parallel reads add breadth. Agents also add tokens, latency and new ways to fail, and they cannot safely share one pen." },
+    { "t": "table", "caption": "Dial-and-Defend applied to this question", "head": ["Step", "What you say"], "rows": [
+      ["1 Clarify the dials", "Read or write coupling, listable subtasks, value per run, latency, trust boundaries, replay needs"],
+      ["2 List the options", "Single agent, fixed workflow, orchestrator with read-only workers, handoff or Magentic crew"],
+      ["3 Pick and name the flips", "Orchestrator with read-only workers and one writer, unless value, latency or boundaries flip it"],
+      ["4 Failure modes and detection", "Loops, unverified success, conflicting writes, context rot, duplicate side effects, injection"],
+      ["5 Metrics and rollout", "Compare with the single-agent baseline on a golden set, shadow first, pinned versions"]
+    ], "highlightCol": 1 },
+    { "t": "callout", "kind": "interview", "title": "The sentence that earns points", "md": "Say the baseline out loud: the single agent. A crew must beat it by enough to repay roughly an order of magnitude more tokens, and you should say that number is vendor-reported (Anthropic, about 15x chat) and needs measuring on your own task." }
+  ],
+  "quiz": [
+    { "id": "w10-l7-q1", "type": "single", "tag": "flip", "difficulty": 2, "q": "Cognition warned against parallel writers on 2025-06-12 and refined its view on 2026-04-22. Which design uses several agents and still respects that refinement?", "options": ["Several read-only agents contribute findings while one agent performs every write", "Three agents edit different sections of one report in parallel, then a final agent merges them", "Every agent in a group chat may call the ticket tool when it sees fit", "Parallel agents that share only short summaries of their private decisions"], "answer": 0, "explain": "The refined view is that several agents can contribute intelligence while writes stay single-threaded. Parallel section edits, a shared ticket tool and summary-only sharing all let actions carry implicit decisions that conflict.", "ref": "r4" },
+    { "id": "w10-l7-q2", "type": "single", "tag": "diagnose", "difficulty": 2, "q": "A multi-agent report run finishes quickly and reports success, but a spot check finds two claims with no support in the cited sources. No agent re-read the sources. Which MAST category fits best?", "options": ["System design issues, because the crew was given too many overlapping roles to coordinate", "Inter-agent misalignment, because the workers ignored the lead", "Retrieval quality, because the search index returned weak documents", "Task verification, because nothing independently checked the result"], "answer": 3, "explain": "MAST groups failures into system design, inter-agent misalignment and task verification. Success was declared without an independent check of the output, which is a verification failure. The roles and the workers' obedience are not what the trace shows, and the index quality is untested by this symptom.", "ref": "r5" },
+    { "id": "w10-l7-q3", "type": "single", "tag": "tradeoff", "difficulty": 2, "q": "Run value is low, users want answers in seconds, and the team still wants a crew. What is the defensible recommendation?", "options": ["Add Magentic so a manager can re-plan whenever latency grows", "Keep the crew but run every subagent synchronously to avoid races between them", "Use a single agent or a fixed workflow, and revisit when value per run or breadth rises", "Use a group chat with a maker-checker loop to raise quality before worrying about speed or cost"], "answer": 2, "explain": "Multi-agent systems used about 15x the tokens of chat in Anthropic's data and add hops, so low value and a tight latency budget favour the lowest rung. Magentic is slow and untested outside its design, synchronous subagents were a bottleneck for Anthropic, and a review loop adds more turns.", "ref": "r2" },
+    { "id": "w10-l7-q4", "type": "multi", "tag": "security", "difficulty": 3, "q": "Select every control that shrinks the blast radius of the research crew.", "options": ["Read-only workers with least-privilege tool allow-lists", "Ticket creation behind human approval with an idempotency key", "One shared scratchpad that every worker can write to", "The same broad credentials for every worker to simplify setup", "Treating retrieved page text as data, never as instructions"], "answers": [0, 1, 4], "explain": "Read-only workers, an approval gate with an idempotency key and treating retrieved text as data all limit what a compromised or confused agent can do. A shared writable scratchpad is a path for one worker's injected text to reach the others, and shared broad credentials turn one compromise into all of them.", "ref": "r19" }
+  ],
+  "defend": {
+    "prompt": "We want an assistant that researches a topic across internal and external sources, drafts a report and opens follow-up tickets. A teammate wants a crew of agents. Do we need multiple agents? Walk me through the topology you would build.",
+    "timebox": "5 min",
+    "clarify": [
+      "Are the subtasks mostly reads, or do several of them write the same artifact?",
+      "Can the subtasks be listed before the run, or does the input decide them?",
+      "What is one run worth against its token cost, and how long may the user wait?",
+      "Do any parts run under different teams, tenants or trust zones?",
+      "What must a reviewer be able to replay when a run goes wrong?"
+    ],
+    "options": [
+      { "name": "Single agent with tools and context hygiene", "when": "Reads are modest, value per run is moderate and one team owns the whole flow.", "tradeoff": "One window carries every result, so rot risk grows, and tool calls run one after another." },
+      { "name": "Fixed workflow: route, parallel gather, single writer, gate", "when": "The steps are known in advance and latency matters.", "tradeoff": "It cannot add a step the designer did not foresee." },
+      { "name": "Orchestrator with read-only workers and one writer", "when": "Breadth-first reads with high value per run and a background latency budget.", "tradeoff": "About 15x chat tokens in Anthropic's data (vendor-reported), and the lead becomes a bottleneck." },
+      { "name": "Handoff mesh or Magentic crew", "when": "Separate owners or trust zones, or open-ended work where a plan ledger is worth the wait.", "tradeoff": "Bouncing, stalls and cost. Microsoft says Magentic's performance outside the original design is untested." }
+    ],
+    "modelAnswer": [
+      { "t": "p", "md": "**1. Clarify the dials.** Before naming a topology I would ask five things. Are the subtasks reads, or do they write a shared artifact? Can I list them in advance? What is a run worth against its token cost, and how long can the user wait? Does any part sit in a different team, tenant or trust zone? What must a reviewer replay when a run fails?" },
+      { "t": "table", "head": ["Option", "Pick when", "Loses when"], "rows": [
+        ["Single agent, clean context", "Moderate reads, moderate value", "Reads are broad and the window fills"],
+        ["Fixed workflow", "Steps known, latency tight", "Inputs decide the steps"],
+        ["Orchestrator, read-only workers, one writer", "Breadth-first reads, high value", "Value is low or the user waits in seconds"],
+        ["Handoff mesh or Magentic", "Separate owners, open-ended planning", "Latency matters or the path is deterministic"]
+      ] },
+      { "t": "p", "md": "**2 and 3. Options and the pick.** I would start from the single-agent baseline and only climb when a dial forces me. Assume the common case: independent source reads, one coupled write (a single report plus a few tickets), one owning team and a background run of minutes with enough value to justify spend. I would then build an orchestrator with read-only workers. A router classifies the topic, a lead plans the research, workers read in parallel in clean windows and return short cited results, and one writer drafts the report. A reviewer with a clean context checks the draft against the cited sources. Ticket creation waits for human approval and uses an idempotency key." },
+      { "t": "diagram", "id": "w10-d5", "title": "Recommended topology", "alt": "A question goes to a router and a lead, two read-only workers return results to the lead, then a single writer, a clean-context reviewer, human approval and the ticket tool.", "src": "flowchart LR\n  Q[Question] --> R[Router]\n  R --> L[Lead plans]\n  L --> W1[Reader A]\n  L --> W2[Reader B]\n  W1 --> L\n  W2 --> L\n  L --> W[Single writer]\n  W --> C[Clean-context reviewer]\n  C --> H[Human approval]\n  H --> T[Ticket tool]" },
+      { "t": "p", "md": "**Why not the others.** I would not use a handoff mesh, because no specialist needs to own the conversation. I would not use Magentic, because nothing needs a plan ledger and Microsoft says its performance outside the original design is untested. Writers stay single-threaded, which matches Cognition's 2025-06-12 and 2026-04-22 findings." },
+      { "t": "p", "md": "**4. Failure modes and how I would detect them.**" },
+      { "t": "list", "style": "ul", "items": [
+        "**Unverified success** (MAST task verification): reviewer rejection rate and the share of claims without a supporting citation.",
+        "**Runaway loops and cost:** stop-reason mix, steps and tokens per run, repeated-call alerts, hard caps in the harness.",
+        "**Conflicting or lossy results from workers:** compare worker outputs with the report's citations, and use a brief with objective, output format, tools and boundaries.",
+        "**Context rot in the lead:** quality by input length in evals, with tool result clearing and a notes file.",
+        "**Duplicate side effects after a retry:** duplicate-key counter, stored idempotency keys and a check of ticket state before re-issuing.",
+        "**Injection through fetched pages:** workers are read-only, hold no secrets and return text that the lead treats as data."
+      ] },
+      { "t": "p", "md": "**5. Metrics and rollout.** I would track task success and citation precision on a golden set, tokens and wall-clock time per run against the single-agent baseline, the stop-reason mix, reviewer rejection rate and the human override rate on tickets. The crew has to beat the baseline by enough to repay the extra tokens, so I would run both on the same set and report variance across repeated runs. Rollout is shadow mode first, then a small cohort, with prompt, model and tool versions pinned together and rainbow deployments so running jobs finish on the version that started them." },
+      { "t": "p", "md": "**What would flip this.** If research is shallow and a few sources matter, I collapse to a single agent with tool result clearing, because multi-agent runs used about 15x chat tokens in Anthropic's data. If parts must run under different identities or teams, I keep the workers but give each its own identity and tool allow-list, or hand off at the boundary. If users need answers in seconds, I drop the planner and use a fixed gather step. If someone asks for several agents to write the report in parallel, I decline and keep one writer. If the plan itself must stay open-ended and high value, I would consider Magentic, but only after measuring it against the baseline." },
+      { "t": "callout", "kind": "note", "title": "Label the evidence", "md": "Anthropic's 90.2% gain, its 4x and 15x token multipliers and Cognition's review numbers are vendor-reported on their own tasks. Quote them as such and replicate on your workload." }
+    ],
+    "rubric": [
+      { "pt": "Asks about read or write coupling, listable subtasks, value per run, latency, trust boundaries and replay before naming a topology", "w": 3 },
+      { "pt": "Offers at least three options including the single-agent baseline", "w": 2 },
+      { "pt": "Picks for the stated dials: read-only workers in parallel and exactly one writer", "w": 3 },
+      { "pt": "Names flip conditions: low value, tight latency, a trust boundary, a request for parallel writers", "w": 3 },
+      { "pt": "Names failure modes with detection signals, including unverified success and loops", "w": 2 },
+      { "pt": "Puts brakes and side-effect safety in the harness: budgets, stop reasons, approval and idempotency keys", "w": 2 },
+      { "pt": "Names metrics, compares with a single-agent baseline and proposes a staged rollout with pinned versions", "w": 2 },
+      { "pt": "Cites the evidence accurately and labels vendor-reported numbers", "w": 1 }
+    ],
+    "followUps": [
+      { "q": "The lead's context fills up after 30 workers report. What do you change?", "a": "Workers return short structured results and hand back artifacts by path or id. The lead clears stale tool results and keeps a notes file. Measure quality by input length, because rot appears below the advertised window." },
+      { "q": "Security says one worker must never see another worker's data. What follows?", "a": "Separate identities and tool allow-lists per worker, scoped memory per tenant and no shared scratchpad. The lead receives only permitted outputs. This is a trust boundary dial that can justify splitting even at higher cost." },
+      { "q": "How would you show the crew beats the single agent?", "a": "Same golden set and budget class, comparing success, citation precision, cost and time, with variance over repeated runs. Anthropic's 90.2% came from an internal eval on breadth-first queries, so replicate it before trusting it." },
+      { "q": "The writer finishes, then the process dies before tickets are created. How do you resume?", "a": "Resume from the last checkpoint, check which tickets exist, re-issue the rest with the stored idempotency keys and register compensating steps for partial changes." }
+    ],
+    "redFlags": [
+      "Recommends a multi-agent framework before asking about the task structure",
+      "Lets several agents write the same report in parallel",
+      "Relies on a prompt line to stop loops instead of harness budgets",
+      "Quotes vendor multipliers or gains as universal facts",
+      "Treats retrieved pages or memory as trusted instructions"
+    ]
+  },
+  "refs": ["r2", "r3", "r4", "r5", "r9", "r10", "r19", "r35"],
+  "takeaways": [
+    "Name the single-agent baseline first and climb only when a dial you can state forces it.",
+    "Parallelize reads, serialize writes: read-only workers plus one writer survive both Anthropic's and Cognition's evidence.",
+    "Put brakes, approvals and idempotency keys in the harness, not in the prompt.",
+    "Label vendor-reported numbers, and measure the crew against the baseline on your own golden set."
+  ]
+}

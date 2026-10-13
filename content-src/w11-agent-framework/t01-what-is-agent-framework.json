@@ -1,0 +1,114 @@
+{
+  "id": "w11-t01",
+  "order": 1,
+  "group": "Foundations",
+  "title": "What Agent Framework is, and its Semantic Kernel and AutoGen lineage",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "Microsoft Agent Framework (MAF) is the open-source SDK for building agents and graph workflows in C#, Python and Go. It is the direct successor to Semantic Kernel and AutoGen, built by the same teams.",
+  "useIf": "You build agents on the Microsoft stack (Foundry, Azure OpenAI, Entra, Azure Functions) or want one SDK for single agents, multi-agent orchestration and long-running workflows.",
+  "avoidIf": "You depend on a preview-only part (hosting, durable, AG-UI, skills) for a regulated launch and cannot absorb breaking changes, or one plain model call with a function would do the job.",
+  "explain": [
+    { "t": "p", "md": "The framework has **four areas**: **Agents** (an LLM plus tools, MCP servers and sessions), the **Harness Agent** (an opinionated agent for long multi-step work), **Workflows** (explicit graphs that connect agents and functions) and **Integrations** (model providers, memory, hosting, UI, evaluation) [[tr1]]. It merges AutoGen's simple single- and multi-agent abstractions with Semantic Kernel's enterprise features: session-based state, type safety, middleware and telemetry, then adds graph workflows [[tr1]]." },
+    { "t": "p", "md": "**Lineage matters for planning.** AutoGen is in maintenance mode and Semantic Kernel redirects to Agent Framework. The team promised to support Semantic Kernel v1.x for at least one year after Agent Framework is generally available [[tr44]]. Version 1.0 was announced on 2026-04-03 for .NET and Python with stable APIs and a long-term support commitment [[tr41]], so the earliest end of that window is about 2027-04 (derived date)." },
+    { "t": "p", "md": "**One version number hides mixed maturity.** The core (agents, graph workflows with checkpoints, orchestrations, declarative YAML, MCP) is stable. Hosting, A2A, DevUI, durable agents, Foundry hosting and several features are Beta, preview or experimental [[tr41]] [[tr42]] [[tr43]]. Check each package before you commit." },
+    { "t": "table", "caption": "Maturity snapshot, checked 2026-10-13", "head": ["Area", "Python (agent-framework 1.21.0)", ".NET (Microsoft.Agents.AI 1.24.0)", "Go"], "rows": [
+      ["Core agents, workflows, orchestrations", "Stable", "Stable", "Public preview"],
+      ["Harness Agent", "Released in core; background agents, file access, looping experimental", "Stable package `Microsoft.Agents.AI.Harness`", "No packaged Harness"],
+      ["Foundry hosting, A2A, DevUI, durable", "Beta extras", "Preview packages", "Not available or coming soon"],
+      ["Declarative, AG-UI", "Stable on PyPI (docs say `--pre`)", "Declarative `-rc1`, AG-UI preview", "No declarative"]
+    ] },
+    { "t": "tabs", "tabs": [
+      { "label": "C#", "blocks": [ { "t": "code", "lang": "csharp", "title": "A first agent", "code": "// dotnet add package Microsoft.Agents.AI.Foundry --prerelease\nAIAgent agent = new AIProjectClient(\n        new Uri(\"https://<svc>.services.ai.azure.com/api/projects/<project>\"),\n        new AzureCliCredential())\n    .AsAIAgent(\n        model: \"gpt-5.4-mini\",\n        instructions: \"You are a friendly assistant. Keep your answers brief.\");\n\nConsole.WriteLine(await agent.RunAsync(\"What is the largest city in France?\"));" } ] },
+      { "label": "Python", "blocks": [ { "t": "code", "lang": "python", "title": "A first agent", "code": "# pip install agent-framework\nfrom agent_framework import Agent\nfrom agent_framework.foundry import FoundryChatClient\nfrom azure.identity import AzureCliCredential\n\nagent = Agent(\n    client=FoundryChatClient(\n        project_endpoint='https://<svc>.services.ai.azure.com/api/projects/<project>',\n        model='gpt-5.4-mini',\n        credential=AzureCliCredential(),\n    ),\n    name='HelloAgent',\n    instructions='You are a friendly assistant. Keep your answers brief.',\n)\nresult = await agent.run('What is the largest city in France?')" } ] }
+    ] },
+    { "t": "callout", "kind": "preview", "title": "Go is a public preview (checked 2026-10-13)", "md": "Not yet in Go: declarative agents, RAG, CodeAct, functional workflows, a packaged Harness, Foundry hosting and an evaluation package. The Durable Extension is listed as coming soon [[tr1]] [[tr30]]." }
+  ],
+  "whereToUse": [
+    "Greenfield agent services on Azure, where Foundry, Azure OpenAI, Entra ID and Azure Functions are already in the estate",
+    "Migrating Semantic Kernel agents or AutoGen teams off a maintenance path [[tr39]] [[tr40]]",
+    "Systems that need three levels in one SDK: a single agent, orchestrated agents and long-running graph workflows",
+    "Teams that want built-in OpenTelemetry, middleware and evaluation hooks instead of bolting them on"
+  ],
+  "whenToUse": {
+    "use": [
+      "You want one programming model from a prototype agent to a checkpointed, approval-gated workflow",
+      "You value provider choice: Foundry, Azure OpenAI, OpenAI, Anthropic, Ollama and others [[tr1]]",
+      "You can pin versions and read release notes, since Python ships a minor release about every nine days (derived from PyPI upload times) [[tr42]]"
+    ],
+    "avoid": [
+      "A single prompt-in, text-out call suffices: the docs say that if you can write a function, do that instead of using an agent [[tr1]]",
+      "Your plan relies on a Beta or preview package and the release gate forbids pre-release dependencies",
+      "Your platform standard is another framework and the team has no Microsoft-stack integration need"
+    ],
+    "flips": [
+      "Release policy bans pre-release packages: build on the stable core and own hosting and durability yourself, or wait for the package to graduate",
+      "You need Go: treat the SDK as a preview and plan around the missing Harness, declarative and durable features"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Agent Framework", "New work on Microsoft platforms, one SDK for agents and workflows", "You need a part that is still Beta or preview in your language", "Fast release cadence, renamed APIs, docs that lag packages"],
+      ["Semantic Kernel (v1.x)", "A large working codebase that cannot move yet", "You start new work: it is the predecessor with a support window of at least one year after 2026-04-03 [[tr44]]", "Planned migration later"],
+      ["AutoGen", "Research code that already runs", "You need production support: the project is in maintenance mode and community managed", "Dead-end path"],
+      ["Another open-source framework such as LangGraph", "Your team standardised on it and runs it anywhere, including as a Foundry hosted agent [[tr35]]", "You want Microsoft-native hosting, durable and middleware integration with no glue code", "Two stacks to operate"],
+      ["Plain SDK calls plus your own loop", "One call, one tool, tight latency", "You need sessions, approvals, checkpoints or multi-agent", "You rebuild what the framework provides"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A blog or answer uses `ChatAgent`, `ai_function` or `workflow.send_responses` and the code does not import", "cause": "Python 1.0.0b to rc renames in February 2026: `ChatAgent` became `Agent`, `@ai_function` became `@tool`, `send_responses*` became `run(responses=...)` [[tr49]]", "fix": "Check the date of the source and the package version; use the Learn pages as the reference" },
+    { "symptom": "The team assumes \"1.0 GA\" covers hosting and durable agents", "cause": "GA covered the core only; hosting, A2A, DevUI, durable and Foundry hosting packages are Beta or preview [[tr41]] [[tr42]]", "fix": "List every package in the dependency plan with its maturity and own the risk explicitly" },
+    { "symptom": "Docs say `pip install ... --pre` but PyPI shows Production/Stable", "cause": "Documentation lags the registry for declarative and AG-UI [[tr42]]", "fix": "Trust the registry classifier and the release notes, re-check on each upgrade" }
+  ],
+  "scenarios": [
+    {
+      "id": "w11-t01-s1",
+      "title": "Large Semantic Kernel estate, quarterly releases",
+      "situation": "A team runs 15 Semantic Kernel agents in production with Azure OpenAI. Leadership asks whether to move to Agent Framework. Releases happen quarterly and each needs a change board.",
+      "constraints": ["Semantic Kernel v1.x is supported for at least one year after Agent Framework GA", "Release cadence is quarterly", "No new capability is required this year"],
+      "unknowns": ["Does any roadmap item need workflows, harness features or durable hosting?", "How many custom SK plugins and filters exist?", "Can the team absorb a minor release about every nine days upstream?"],
+      "question": "What migration approach do you recommend?",
+      "options": [
+        { "name": "Keep SK for existing agents, build new agents on Agent Framework, and move the old ones inside the support window", "verdict": "best", "why": "It keeps working code stable, uses the guaranteed support window (about 2027-04 at the earliest) and lets the team learn on greenfield work first.", "tradeoff": "Two stacks for several quarters and duplicated operational knowledge." },
+        { "name": "Migrate all 15 agents in one quarter with the migration assistants", "verdict": "good", "why": "One stack, fewer long-term costs, and the guide maps concepts directly.", "tradeoff": "High regression risk and a change-board load, with little business value this year." },
+        { "name": "Rewrite on a different open-source framework", "verdict": "poor", "why": "It throws away the official migration path and adds a third programming model.", "tradeoff": "Right only if the platform standard already mandates that framework for other reasons." }
+      ],
+      "flips": [
+        { "if": "A new requirement needs checkpointed workflows or durable human approvals", "then": "Move the affected agents first, because those are Agent Framework strengths." },
+        { "if": "The support window shrinks or SK stops receiving security fixes", "then": "Compress the migration schedule." }
+      ],
+      "takeaway": "Plan against the support window, migrate where new capability pays, and keep the rest stable."
+    },
+    {
+      "id": "w11-t01-s2",
+      "title": "Greenfield .NET service with a no-preview rule",
+      "situation": "A new internal assistant is planned in .NET on Azure. Policy forbids pre-release NuGet packages in production. The team wants to host it on Azure Functions.",
+      "constraints": ["Pre-release packages are banned in production", "Hosting target is Azure Functions", "Timeline is six months"],
+      "unknowns": ["Is durable state (sessions across restarts) required?", "Can the policy be waived for one package with a documented risk acceptance?", "Is Foundry hosted agents acceptable as the host instead?"],
+      "question": "How do you proceed?",
+      "options": [
+        { "name": "Build on the stable core (`Microsoft.Agents.AI`) with your own ASP.NET or Functions host and your own session store, and record the preview packages you avoid", "verdict": "best", "why": "The stable core covers agents, workflows and orchestrations. Hosting and durable packages are preview, so you own that thin layer and keep the policy intact.", "tradeoff": "You write session persistence and endpoint glue that the preview packages would provide." },
+        { "name": "Adopt the Durable Extension for Functions and request a policy waiver", "verdict": "good", "why": "It gives durable state and human-approval waits for little code.", "tradeoff": "The package is preview (1.16.0-preview at the check date): breaking changes and no support commitment." },
+        { "name": "Wait six months for every package to be stable", "verdict": "poor", "why": "No date is promised and the team would ship nothing.", "tradeoff": "Waiting fits only when the missing piece is truly blocking and the launch can slip." }
+      ],
+      "flips": [
+        { "if": "The compliance board accepts a documented risk for one preview package", "then": "Use the Durable Extension and pin the exact version." },
+        { "if": "Foundry hosted agents are allowed", "then": "Use the GA service with the preview `.Foundry.Hosting` package, again under a documented risk." }
+      ],
+      "takeaway": "Maturity is per package: build on the stable core and name every preview dependency."
+    }
+  ],
+  "quiz": [
+    { "id": "w11-t01-q1", "type": "single", "tag": "concept", "q": "Which statement about Agent Framework 1.0 (announced 2026-04-03) is correct?", "options": ["Every package, including hosting and durable, is stable", "It supports only Python", "It is a rename of Semantic Kernel with no new workflow model", "The core (agents, graph workflows, orchestrations, declarative, MCP) is stable while several extras remain Beta or preview"], "answer": 3, "explain": "The GA blog lists the core as stable and names DevUI, Foundry hosting, memory, observability and evaluations, AG-UI, skills and the Harness as preview at GA. It adds graph workflows, supports C# and Python, and is not a rename.", "ref": "tr41" },
+    { "id": "w11-t01-q2", "type": "match", "tag": "concept", "q": "Match each predecessor to what Agent Framework took from it.", "pairs": [ { "l": "AutoGen", "r": "Simple single- and multi-agent abstractions" }, { "l": "Semantic Kernel", "r": "Session state, type safety, middleware, telemetry" }, { "l": "Neither", "r": "Graph workflows with checkpoints" } ], "explain": "The overview states Agent Framework combines AutoGen's simple abstractions with Semantic Kernel's enterprise features and adds workflows.", "ref": "tr1" }
+  ],
+  "flashcards": [
+    { "front": "What are the four areas of Microsoft Agent Framework?", "back": "Agents, the Harness Agent, Workflows and Integrations (model providers, memory, hosting, UI, evaluation)." },
+    { "front": "How long is Semantic Kernel v1.x supported after Agent Framework GA?", "back": "At least one year, per the 2025-10-07 team blog. With GA on 2026-04-03 the earliest end is about 2027-04 (derived)." },
+    { "front": "Why is \"1.0 GA\" not a statement about the whole SDK?", "back": "Only the core is stable. Hosting, A2A, DevUI, durable, Foundry hosting and skills are Beta, preview or experimental." }
+  ],
+  "related": ["w11-t02", "w11-t27", "w11-t25", "w10-t01"],
+  "refs": ["tr1", "tr41", "tr42", "tr43", "tr44", "tr39", "tr40", "tr30", "tr35", "tr49"]
+}

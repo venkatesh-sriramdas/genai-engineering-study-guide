@@ -1,0 +1,108 @@
+{
+  "id": "w11-t08",
+  "order": 8,
+  "group": "Behaviour",
+  "title": "Planning, todos and agent modes",
+  "minutes": 7,
+  "difficulty": "core",
+  "summary": "Two Harness context providers give the agent a durable to-do list and a plan or execute operating mode. The list is injected before each run so work can resume. They record progress but do not re-invoke the agent.",
+  "useIf": "A task spans many steps or sessions and you want visible progress and a human review point before autonomous work.",
+  "avoidIf": "The task fits one short run, or the steps must follow a fixed order that you can encode as a workflow.",
+  "explain": [
+    { "t": "p", "md": "The **todo provider** (`TodoProvider`) stores work items and exposes five model-facing tools: `todos_add`, `todos_complete` (with a completion reason), `todos_remove`, `todos_get_remaining` and `todos_get_all`. It injects the current list before each run, so the agent can pick up outstanding work [[tr8]]." },
+    { "t": "p", "md": "The **agent mode provider** (`AgentModeProvider`) keeps the current mode in the session and exposes `mode_get` and `mode_set`. Two modes are built in: **plan** (interactive: analyse, create todos, ask clarifying questions, present a plan and ask before changing mode) and **execute** (autonomous: work through the plan, make reasonable choices when details are ambiguous, mark todos complete). Applications can switch mode directly, which queues a one-time mode-change notice for the next run [[tr8]]." },
+    { "t": "p", "md": "**Two honest limits.** The plan-to-execute confirmation is an instruction to the model, not a tool-approval request, and the todo and mode tools need no approval; if your host must enforce permission, change the mode from application code after you obtain it. And todo tracking does not re-invoke the agent: pair it with a bounded loop (see looping) when execute mode should continue until every todo is done [[tr8]]." },
+    { "t": "diagram", "id": "w11-t08-d1", "title": "Mode lifecycle", "alt": "The agent starts in plan mode, loops while clarifying and adding todos, moves to execute mode when the human approves, works through todos and ends when all are done.", "src": "stateDiagram-v2\n  [*] --> plan\n  plan --> plan: clarify and add todos\n  plan --> execute: human approves\n  execute --> execute: work the todos\n  execute --> [*]: all todos done" },
+    { "t": "tabs", "tabs": [
+      { "label": "C#", "blocks": [ { "t": "code", "lang": "csharp", "code": "var modes = new AgentModeProvider(new AgentModeProviderOptions { DefaultMode = \"plan\" });\nAIAgent agent = chatClient.AsAIAgent(new ChatClientAgentOptions\n{\n    AIContextProviders = [new TodoProvider(), modes],\n});\nAgentSession session = await agent.CreateSessionAsync();\n\n// after the human approves the plan:\nawait modes.SetModeAsync(session, \"execute\");\n\n// Harness: todo + mode are on by default; add a todo-driven loop\nHarnessAgent h = chatClient.AsHarnessAgent(new HarnessAgentOptions\n{\n    LoopEvaluators = [new TodoCompletionLoopEvaluator(\n        new TodoCompletionLoopEvaluatorOptions { Modes = [\"execute\"] })],\n    LoopAgentOptions = new LoopAgentOptions { MaxIterations = 10 },\n});" } ] },
+      { "label": "Python", "blocks": [ { "t": "code", "lang": "python", "code": "from agent_framework import (create_harness_agent, TodoProvider, TodoFileStore,\n    AgentModeProvider, set_agent_mode, todos_remaining, todos_remaining_message)\n\ntodo = TodoProvider(store=TodoFileStore('./todo-state'))\nmode = AgentModeProvider(default_mode='plan')\nagent = create_harness_agent(\n    client=client, todo_provider=todo, mode_provider=mode,\n    loop_should_continue=todos_remaining(looping_modes=['execute']),\n    loop_next_message=todos_remaining_message,\n    loop_max_iterations=10,\n)\nsession = agent.create_session()\n\n# after the human approves the plan:\nset_agent_mode(session, 'execute', source_id=mode.source_id,\n               available_modes=mode.available_modes)" } ] }
+    ] }
+  ],
+  "whereToUse": [
+    "Research and analysis agents that produce a plan a person reviews before work starts",
+    "Coding or migration agents that need a visible checklist across many tool calls",
+    "Resumable work: todos persist in the session (.NET `StateBag`, Python `TodoSessionStore` by default)",
+    "UIs that show progress by reading the todo list and the current mode"
+  ],
+  "whenToUse": {
+    "use": [
+      "The task has many steps and the model otherwise loses track",
+      "A human should agree the plan before autonomous execution",
+      "You want progress that survives session restore"
+    ],
+    "avoid": [
+      "Short tasks: the extra tools and instructions are overhead",
+      "You need an enforced gate before execute mode: do it in application code, not model instructions",
+      "The steps are a fixed pipeline: encode them as workflow edges"
+    ],
+    "flips": [
+      "The todo list must live outside the session payload: use `TodoFileStore` or a custom `TodoStore` (Python)",
+      "You supply your own mode UI: hide the built-in tools with `expose_mode_set=False` and `expose_mode_get=False`, and call `set_agent_mode(..., notify=False)` from your tool"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Todos plus modes (Harness)", "Long open-ended work with a plan review", "Fixed steps or tiny tasks", "Prompt weight; confirmation is instruction-level"],
+      ["Prompt-only checklist", "A few steps in one run", "Runs cross sessions", "State lives in the transcript and gets compacted away"],
+      ["Workflow with explicit steps", "Order is known and must be proven", "Steps are discovered during the run", "Design effort"],
+      ["Magentic task ledger", "Multi-agent plan with stall detection", "One agent is enough", "Planning cost, little validation outside Magentic-One"],
+      ["Background agents", "Parallel delegated subtasks", "Work must survive restarts", "Experimental; in-flight work is lost on restart"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "The agent stops with todos still open", "cause": "Todo tracking does not re-invoke the agent", "fix": "Add a bounded loop with a todo evaluator, limited to execute mode" },
+    { "symptom": "Plan mode instructions mention file memory but the agent cannot write the plan", "cause": "A manually composed agent has no file-memory tools; the default plan instructions write the plan to file memory", "fix": "Add a memory provider or customise the mode instructions" },
+    { "symptom": "The model switches to execute without permission", "cause": "The confirmation is an instruction, not a control; `mode_set` has no approval", "fix": "Hide `mode_set` and change mode from application code after the human approves" }
+  ],
+  "scenarios": [
+    {
+      "id": "w11-t08-s1",
+      "title": "Plan review before a risky migration",
+      "situation": "A coding agent will refactor a service. The lead wants to read the plan first. Once approved the agent should run alone for up to an hour.",
+      "constraints": ["Human review before execution", "Autonomous run after approval", "Single user session"],
+      "unknowns": ["Must the model be unable to start executing early?", "Do any tools need approval in execute mode?"],
+      "question": "How do you wire it?",
+      "options": [
+        { "name": "Plan mode by default, hide `mode_set`, flip to execute from your UI after approval, loop on todos with a cap", "verdict": "best", "why": "The gate is enforced in application code, todos track progress and the loop caps the run.", "tradeoff": "You build the UI and the loop is experimental." },
+        { "name": "Leave the built-in `mode_set` tool and trust the model to ask first", "verdict": "good", "why": "Zero extra code.", "tradeoff": "The confirmation is an instruction, so the model could switch without approval." },
+        { "name": "A workflow with a plan node and an execute node", "verdict": "poor", "why": "The execute step is open-ended, so a fixed graph adds little.", "tradeoff": "Right when planning and execution are separate, auditable stages." }
+      ],
+      "flips": [
+        { "if": "The execute phase calls irreversible tools", "then": "Keep per-call tool approval on those tools even in execute mode." },
+        { "if": "Plans must be stored for audit", "then": "Persist the todo list with a file or custom store, not only the session." }
+      ],
+      "takeaway": "A mode is a hint to the model. A gate that matters belongs in your code."
+    },
+    {
+      "id": "w11-t08-s2",
+      "title": "Weekly report generator",
+      "situation": "A scheduled job asks an agent to compile a weekly report from three data sources. The steps are always the same and nobody reviews a plan.",
+      "constraints": ["Fixed steps", "No human in the loop", "Cost per run matters"],
+      "unknowns": ["Does any step need judgment?", "How long does a run take?"],
+      "question": "Do you use todos and modes?",
+      "options": [
+        { "name": "No: build a short workflow or a plain agent with the steps in its instructions", "verdict": "best", "why": "Fixed steps need no discovered plan, and todo and mode tools add tokens.", "tradeoff": "Less flexible if sources change." },
+        { "name": "Harness with todos and execute mode only", "verdict": "good", "why": "Works and gives progress visibility.", "tradeoff": "Overhead for a simple job." },
+        { "name": "Magentic orchestration for planning", "verdict": "poor", "why": "Planning cost with no unknown path to plan.", "tradeoff": "Right for open-ended, multi-specialist tasks." }
+      ],
+      "flips": [
+        { "if": "Source count and order vary per customer", "then": "Use the Harness so the agent builds the todo list per run." },
+        { "if": "The report must pass an audit of step order", "then": "Use a workflow with explicit edges." }
+      ],
+      "takeaway": "Planning tools earn their cost only when the plan is not known in advance."
+    }
+  ],
+  "quiz": [
+    { "id": "w11-t08-q1", "type": "match", "tag": "concept", "q": "Match each tool to its provider role.", "pairs": [ { "l": "`todos_complete`", "r": "Marks items done with a reason" }, { "l": "`mode_set`", "r": "Changes plan or execute mode" }, { "l": "`todos_get_remaining`", "r": "Lists incomplete items" }, { "l": "`todos_remove`", "r": "Deletes items that no longer matter" } ], "explain": "The todo provider exposes add, complete, remove, get remaining and get all. The mode provider exposes `mode_get` and `mode_set`.", "ref": "tr8" },
+    { "id": "w11-t08-q2", "type": "single", "tag": "tradeoff", "q": "You need the agent to keep working in execute mode until every todo is complete. What is required beyond the todo provider?", "options": ["Nothing: the todo provider re-invokes the agent", "A second agent that polls the list", "A bounded agent loop with a todo-completion condition", "Tool approval on `todos_complete`"], "answer": 2, "explain": "Todo tracking records progress but does not re-invoke the agent. Pair it with `LoopAgent` or `AgentLoopMiddleware` and a todo evaluator, with a maximum.", "ref": "tr8" }
+  ],
+  "flashcards": [
+    { "front": "What are the two built-in agent modes?", "back": "`plan` (interactive: analyse, todos, clarify, present plan) and `execute` (autonomous: work the plan, mark todos complete)." },
+    { "front": "Is plan-to-execute confirmation enforced by the framework?", "back": "No. It is an instruction to the model; the mode and todo tools need no approval. Enforce gates from application code." },
+    { "front": "Where do todos live by default?", "back": ".NET: `AgentSession.StateBag`. Python: `TodoSessionStore` (session), or `TodoFileStore` / a custom store." }
+  ],
+  "related": ["w11-t09", "w11-t02", "w11-t06", "w10-t08", "w10-t15"],
+  "refs": ["tr8"]
+}

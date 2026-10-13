@@ -1,0 +1,101 @@
+{
+  "id": "w14-t04",
+  "order": 4,
+  "group": "Data",
+  "title": "Golden datasets",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "A golden dataset is a versioned set of inputs with expected behaviour (reference answers, relevant document ids, tool sequences or a rubric) that every candidate is scored against. Its value comes from who labelled it, how each row was made and whether it stays held out.",
+  "useIf": "You need a repeatable yardstick to compare versions of a prompt, retriever, model or agent.",
+  "avoidIf": "You treat a public benchmark as your yardstick, or you let the team tune on the same rows it reports on.",
+  "explain": [
+    { "t": "p", "md": "A **golden set** is the fixed set of cases you trust. Each row holds an input and a way to judge the result: a reference answer, relevant document ids for retrieval, an expected tool sequence, or a rubric. Four sources feed it, and each has a different failure profile." },
+    { "t": "table", "caption": "Four sources", "head": ["Source", "Wins when", "Loses when", "Watch for"], "rows": [
+      ["Hand-curated by an expert", "Quality of labels matters most", "Expert time is scarce", "Narrow coverage, one author's bias"],
+      ["Mined from production traces", "The product is live", "Before launch, or privacy blocks reuse", "Skewed to common queries, PII"],
+      ["Synthetic from documents or prompts", "Cold start, broad coverage", "Rows are unreviewed", "Easy or wrong rows"],
+      ["Public benchmark", "Shortlisting models", "You need your own data", "Saturation and leakage"]
+    ] },
+    { "t": "p", "md": "Start small. Anthropic advises that 20 to 50 simple tasks drawn from real failures is a great start, because early changes have large effects; mature agents need larger and harder sets to detect small ones [[r17]]. Record **how each row was made** (hand, trace, synthetic) and the **dataset version**. LangSmith creates dataset versions automatically when examples change, supports tags so CI can target one, and uses splits to group examples [[r29]]." },
+    { "t": "code", "lang": "json", "title": "One row, with provenance", "code": "{\"id\": \"c-0142\", \"input\": \"Can I carry over unused leave?\", \"reference\": \"Up to 5 days, expiring 31 March.\", \"relevant_docs\": [\"hr-leave-v3#4\"], \"source\": \"trace\", \"tags\": [\"policy\", \"edge\"], \"split\": \"heldout\", \"dataset_version\": \"2026-10-01\"}" },
+    { "t": "p", "md": "**Contamination** has two meanings. Models can have seen a public benchmark in training. GAIA withholds the answers to 300 of its 466 questions to power a leaderboard [[r33]], and SWE-bench Verified is a 500-sample human-validated subset of a 2,294-problem set [[r34]]. A survey describes benchmark data contamination as a significant issue that makes evaluation results unreliable [[tr7]]. Separately, your team can overfit its own set. Keep a **held-out** slice that no one tunes against and report on it." },
+    { "t": "callout", "kind": "note", "title": "Secondary source, checked 2026-10-13", "md": "A secondary write-up reports that OpenAI stopped evaluating on SWE-bench Verified in February 2026 after saturation and flawed tests [[r48]]. The primary page could not be fetched, so treat the numbers as unconfirmed." }
+  ],
+  "whereToUse": [
+    "A regression suite that gates every prompt, retriever or model change",
+    "Model selection and vendor-upgrade parity checks on your own tasks",
+    "A calibration set for judges, labelled by one accountable expert",
+    "The seed of an agent evaluation, with outcome checks per row",
+    "Foundry batch runs, within 2 MB per row and 100,000 rows per run [[r37]]"
+  ],
+  "whenToUse": {
+    "use": ["You can name real failures to seed it", "An expert can own the labelling guideline", "You will compare versions repeatedly"],
+    "avoid": ["Growing it to thousands of unreviewed rows before it has an owner", "Reporting on rows you also tuned against", "Mixing synthetic and real rows with no source tag"],
+    "flips": ["The product goes live: shift weight from hand-written to trace-mined rows", "Instructions or corpus change: regenerate and re-version the synthetic rows", "A public benchmark saturates or leaks: rely on your private held-out slice"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Private golden set (this topic)", "You need a trusted, repeatable yardstick", "You have no expert time at all", "Upkeep and labelling cost"],
+      ["Public benchmark", "Comparing base models", "Judging your product on your data", "Leakage, saturation"],
+      ["Live trace sampling with a judge", "Large traffic, no references", "You need a stable baseline", "The baseline moves with users"],
+      ["Rubric-only evaluation, no references", "Open-ended tasks with no single answer", "You need exact regression numbers", "Judge noise"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Dev scores climb but production quality is flat", "cause": "The team tuned prompts against the same rows it reports on", "fix": "Keep a held-out split, tune on dev only and refresh the held-out slice on a schedule" },
+    { "symptom": "Two experts disagree on half the labels", "cause": "The guideline is ambiguous and no one owns it", "fix": "Name one accountable expert, write the rubric, and keep disagreements as tagged ambiguous cases" },
+    { "symptom": "The set stops matching real queries", "cause": "No refresh path from production", "fix": "Add triaged failing traces on a cadence and drop retired cases with a version bump" }
+  ],
+  "scenarios": [
+    {
+      "id": "w14-t04-s1",
+      "title": "Pre-launch, two expert hours a week",
+      "situation": "A team is building an internal policy assistant. There are no traces, a corpus of 3,000 documents, and one policy expert with two hours a week.",
+      "constraints": ["No production data", "Scarce expert time", "Launch in a month"],
+      "unknowns": ["Which questions caused trouble in manual trials?", "Which documents change often?", "Is the expert willing to own the guideline?"],
+      "question": "How do you build the first golden set?",
+      "options": [
+        { "name": "30 expert-reviewed cases from observed failures, plus reviewed synthetic cases, with a held-out slice", "verdict": "best", "why": "It uses scarce expert time on the hardest rows and borrows synthetic breadth, with provenance tags so you can tell them apart.", "tradeoff": "Coverage is a guess until traces arrive." },
+        { "name": "2,000 synthetic cases with no review", "verdict": "poor", "why": "Unreviewed rows can be easy or wrong, so scores mean little.", "tradeoff": "Synthetic is fine at volume once a reviewed sample shows the generator is sound." },
+        { "name": "Adopt a public question-answering benchmark", "verdict": "good", "why": "Free and comparable across models.", "tradeoff": "It says little about your policies and may be leaked or saturated." }
+      ],
+      "flips": [
+        { "if": "Launch slips and a pilot produces traces", "then": "Mine the pilot traces for new rows." },
+        { "if": "Several experts are available", "then": "Double-label a sample and measure agreement." }
+      ],
+      "takeaway": "Few expert rows beat many unreviewed ones."
+    },
+    {
+      "id": "w14-t04-s2",
+      "title": "Live product, large trace volume, privacy rules",
+      "situation": "A customer assistant has run for six months with a million logged conversations. Content includes personal data, and the policy allows reuse only after redaction.",
+      "constraints": ["Plenty of traces", "PII must be removed before reuse", "The query mix shifts monthly"],
+      "unknowns": ["How reliable is redaction?", "Which segments matter most to the business?", "Are there known failure clusters?"],
+      "question": "How do you refresh the golden set?",
+      "options": [
+        { "name": "Stratified sample of redacted traces, expert-labelled, versioned monthly, with a frozen held-out core", "verdict": "best", "why": "Stratifying covers rare segments, redaction satisfies policy, and the frozen core keeps a stable baseline across months.", "tradeoff": "Ongoing labelling effort and redaction review." },
+        { "name": "Use the most frequent queries only", "verdict": "poor", "why": "It over-represents easy repeated queries and hides tail failures.", "tradeoff": "Right for a latency or caching study where frequency is what matters." },
+        { "name": "Keep the original set unchanged", "verdict": "good", "why": "A perfectly stable baseline.", "tradeoff": "It drifts away from real users and gives false comfort." }
+      ],
+      "flips": [
+        { "if": "Redaction cannot be trusted", "then": "Write synthetic look-alike cases from failure clusters instead of reusing text." },
+        { "if": "The product shifts to a new domain", "then": "Start a new set and retire the old one." }
+      ],
+      "takeaway": "Stratify, redact, version and keep a frozen core."
+    }
+  ],
+  "quiz": [
+    { "id": "w14-t04-q1", "type": "single", "tag": "concept", "q": "What is the purpose of a held-out slice?", "options": ["To report results on rows nobody tuned against", "To make the dataset larger", "To store the synthetic rows", "To speed up judge calls"], "answer": 0, "explain": "A held-out slice detects overfitting to your own set. Size, storage and speed are unrelated." },
+    { "id": "w14-t04-q2", "type": "numeric", "tag": "numeric", "q": "GAIA has 466 questions and withholds answers to 300 for its leaderboard. What percentage of questions is public developer data?", "answer": 35.6, "tolerancePct": 2, "unit": "%", "hint": "Public = total minus withheld.", "explain": "466 - 300 = 166 public questions. 166 / 466 = 0.356, so about 35.6%." },
+    { "id": "w14-t04-q3", "type": "multi", "tag": "tradeoff", "q": "Which practices keep a golden set trustworthy over time? Select all that apply.", "options": ["Tag each row as hand, trace or synthetic", "Version the dataset when examples change", "Add every production trace automatically", "Keep a held-out slice out of tuning"], "answers": [0, 1, 3], "explain": "Provenance, versioning and a held-out slice protect meaning. Adding every trace without triage fills the set with noise and PII." }
+  ],
+  "flashcards": [
+    { "front": "How large should a first golden set be?", "back": "20 to 50 simple tasks drawn from real failures is a strong start. Large early effects need small samples. Grow it as changes get subtler." },
+    { "front": "Two meanings of dataset contamination?", "back": "Models may have seen a public benchmark in training, and your team may overfit its own set. Withhold answers or keep a held-out slice to control both." },
+    { "front": "What should each golden row record?", "back": "Input, reference or rubric, source (hand, trace, synthetic), tags, split and dataset version." }
+  ],
+  "related": ["w14-t05", "w14-t12", "w14-t14", "w14-l2", "w04-t01"],
+  "refs": ["r17", "r29", "r33", "r34", "r37", "r48", "tr7"]
+}

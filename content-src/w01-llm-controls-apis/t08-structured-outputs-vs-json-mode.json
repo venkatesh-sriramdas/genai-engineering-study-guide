@@ -1,0 +1,116 @@
+{
+  "id": "w01-t08",
+  "order": 8,
+  "group": "Structured interaction",
+  "title": "Structured outputs vs JSON mode",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "JSON mode guarantees valid JSON. Structured outputs with a strict schema guarantee that the JSON matches your schema, within each platform's schema limits.",
+  "useIf": "Code parses the model output and a missing field or wrong type causes a failure.",
+  "avoidIf": "The output is free text for a human. A schema adds constraints and failure paths you do not need.",
+  "explain": [
+    { "t": "p", "md": "**JSON mode** (`{type: \"json_object\"}`) guarantees syntactically valid JSON and nothing about its shape. **Structured outputs** (`text.format: {type: \"json_schema\", strict: true, schema}` in Responses, `response_format` in Chat Completions) guarantee the output follows your schema. OpenAI recommends structured outputs whenever possible, and they need `gpt-4o-mini`, `gpt-4o-2024-08-06` or later. Safety refusals are detectable in the response [[r8]]." },
+    { "t": "code", "lang": "json", "title": "A strict schema (the value of `text.format`)", "code": "{\n  \"type\": \"json_schema\",\n  \"name\": \"ticket\",\n  \"strict\": true,\n  \"schema\": {\n    \"type\": \"object\",\n    \"properties\": {\n      \"queue\": { \"type\": \"string\", \"enum\": [\"billing\", \"tech\", \"other\"] },\n      \"due_date\": { \"type\": [\"string\", \"null\"] }\n    },\n    \"required\": [\"queue\", \"due_date\"],\n    \"additionalProperties\": false\n  }\n}", "caption": "Every field is required, and an optional field becomes a union with null." },
+    { "t": "table", "caption": "Schema limits differ by platform (check date 2026-10-13)", "head": ["Rule", "OpenAI", "Azure OpenAI"], "compact": true, "rows": [
+      ["Object properties", "Up to 5,000", "Up to 100"],
+      ["Nesting levels", "10", "5"],
+      ["String keywords", "`pattern`, `format`, `minimum`, `maximum`, `minItems`, `maxItems` supported, not on fine-tuned models", "`minLength`, `maxLength`, `pattern`, `format` unsupported"],
+      ["Required fields and extras", "All required, `additionalProperties: false` mandatory, root is an object", "Root cannot be `anyOf`"],
+      ["Parallel tool calls", "Strict works on non-fine-tuned models since 2025-05-20", "Page says set `parallel_tool_calls` to `false`"]
+    ] },
+    { "t": "p", "md": "On Anthropic, `output_config.format` with `type: \"json_schema\"` gives schema-valid output and `strict: true` on tools gives schema-valid tool inputs. Both are GA on the Claude API, Google Cloud and Microsoft Foundry, while Bedrock covers Opus 4.6 and earlier on its legacy integration [[r32]]. Use the Azure page for Azure limits [[r33]]. Design schemas for the model as well as the parser: use enums for categories, add short field descriptions, keep nesting shallow and put cross-field rules in application code, because a schema cannot express them." },
+    { "t": "callout", "kind": "gotcha", "title": "Valid JSON is not a valid answer", "md": "A strict schema fixes shape, not truth. A refusal, a response cut off by the output cap, or a plausible wrong value still reaches your code. Check for refusal and incomplete status before you parse, and validate business rules afterwards." }
+  ],
+  "whereToUse": [
+    "Extraction of fields from documents into database rows",
+    "Classification with an enum label that downstream code switches on",
+    "Agent steps that produce a plan object for a workflow engine",
+    "Tool arguments, through strict function calling",
+    "Any pipeline where a parse failure would page someone"
+  ],
+  "whenToUse": {
+    "use": [
+      "Code consumes the output and needs every field",
+      "You want to delete retry-and-repair parsing loops",
+      "A label must come from a fixed set"
+    ],
+    "avoid": [
+      "Free-form prose for people, where a schema forces odd structure",
+      "Schemas larger than the platform allows, especially on Azure",
+      "Treating schema validity as a quality guarantee"
+    ],
+    "flips": [
+      "You run on Azure with a large schema: split it into steps or flatten it to fit 100 properties and 5 levels",
+      "The model is fine-tuned: expect fewer supported keywords",
+      "Streaming UIs need early fields: stream, but act only on the final validated object"
+    ]
+  },
+  "alternatives": {
+    "title": "Ways to get machine-readable output",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Prompt only", "A prototype, any model", "Production parsing", "Brittle, needs repair loops"],
+      ["JSON mode", "You need valid JSON and the shape is loose", "Field names and types must match", "Valid JSON can still miss fields"],
+      ["Structured outputs (strict schema)", "The shape must match exactly", "The schema exceeds platform limits", "Schema design effort, refusal handling"],
+      ["Strict tool or function calling", "Output is arguments for an action", "No action is taken", "Tool overhead in tokens"],
+      ["Constrained decoding in self-hosted stacks", "You run open-weight models", "You use a hosted API", "Operational burden"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Azure rejects a schema that works on OpenAI", "cause": "Azure allows 100 properties and 5 levels and drops several string keywords", "fix": "Check the Azure limits page, flatten or split the schema, and move rules into application validation" },
+    { "symptom": "Parsing fails on a long answer", "cause": "The output cap cut the JSON mid-object", "fix": "Check for an incomplete status first and raise the cap or shrink the schema" },
+    { "symptom": "A field is empty because the model refused", "cause": "A safety refusal replaces the schema output", "fix": "Branch on the refusal signal before you parse" },
+    { "symptom": "An optional field breaks the schema", "cause": "Strict mode needs every field in `required`", "fix": "Model optional fields as a union with `null`" }
+  ],
+  "scenarios": [
+    {
+      "id": "w01-t08-s1",
+      "title": "A large schema on Azure",
+      "situation": "A contract-extraction schema has 260 properties across 7 nesting levels. It works on the OpenAI API but Azure rejects it.",
+      "constraints": ["Azure OpenAI deployment is required", "Every extracted field is needed", "Accuracy is audited"],
+      "unknowns": ["Can fields be grouped into independent passes?", "Which fields can be validated in code?"],
+      "question": "What do you do?",
+      "options": [
+        { "name": "Raise a support ticket to lift the 100 property limit", "verdict": "poor", "why": "The limits are documented platform rules, not a setting you can raise.", "tradeoff": "Asking is sensible only when a limit is not documented." },
+        { "name": "Use JSON mode with the full schema in the prompt", "verdict": "good", "why": "No schema size limit, and fields are described in the prompt.", "tradeoff": "Shape is no longer guaranteed, so you need validation and retries." },
+        { "name": "Split extraction into several strict-schema passes under 100 properties and 5 levels, and merge in code", "verdict": "best", "why": "It keeps guaranteed shape per pass and fits the Azure limits [[r33]].", "tradeoff": "More calls, higher cost and a merge step to test." }
+      ],
+      "flips": [
+        { "if": "The deployment can move to the OpenAI API", "then": "One strict schema fits within 5,000 properties and 10 levels." },
+        { "if": "Latency is tight", "then": "Run the passes in parallel." }
+      ],
+      "takeaway": "Know the platform's schema limits before you design the schema."
+    },
+    {
+      "id": "w01-t08-s2",
+      "title": "Rare broken parses at volume",
+      "situation": "A prompt-only extractor processes 500,000 documents a day. About 2% of outputs fail to parse, and a repair loop retries them.",
+      "constraints": ["High volume", "Retries add cost and latency", "OpenAI API, non-fine-tuned model"],
+      "unknowns": ["Are failures truncations or malformed JSON?", "What is the cost of a retry?"],
+      "question": "What is the best change?",
+      "options": [
+        { "name": "Switch to structured outputs with a strict schema, and handle refusal and incomplete status explicitly", "verdict": "best", "why": "It removes malformed output and the repair loop, and the remaining failures are visible signals you can route.", "tradeoff": "One-time schema design and tests." },
+        { "name": "Lower the temperature and keep the repair loop", "verdict": "good", "why": "Reduces some randomness and is a small change.", "tradeoff": "Does not guarantee shape, and retries stay in the pipeline." },
+        { "name": "Switch to JSON mode", "verdict": "poor", "why": "It fixes syntax but not field names or types, so downstream failures remain.", "tradeoff": "It suits loose shapes or models without schema support." }
+      ],
+      "flips": [
+        { "if": "Failures are truncations", "then": "Raise the output cap or shorten the schema before changing format." },
+        { "if": "The model lacks structured output support", "then": "Use JSON mode plus a validator and bounded retries." }
+      ],
+      "takeaway": "Guarantee the shape in the API, then route the rest."
+    }
+  ],
+  "quiz": [
+    { "id": "w01-t08-q1", "type": "single", "tag": "concept", "q": "What does JSON mode guarantee?", "options": ["The output matches your schema", "All fields are present", "The output is factually correct", "The output is syntactically valid JSON"], "answer": 3, "explain": "JSON mode guarantees valid JSON only. Schema adherence needs structured outputs, and neither guarantees truth." },
+    { "id": "w01-t08-q2", "type": "multi", "tag": "bug", "q": "Which are true for strict structured outputs on OpenAI?", "options": ["All fields must be required", "`additionalProperties: false` is mandatory", "The root can be `anyOf`", "Optional fields are modelled as a union with `null`"], "answers": [0, 1, 3], "explain": "Strict mode needs every field required and `additionalProperties: false`, and optional fields become a union with null. The root must be an object, not `anyOf`." },
+    { "id": "w01-t08-q3", "type": "order", "tag": "order", "q": "Order the checks your code should make on a structured response.", "items": ["Check for refusal", "Check for incomplete status", "Parse the JSON", "Validate business rules"], "explain": "A refusal or truncation makes parsing meaningless, so check them first. Parse, then apply rules that a schema cannot express." }
+  ],
+  "flashcards": [
+    { "front": "JSON mode vs structured outputs?", "back": "JSON mode guarantees valid JSON only. Structured outputs with `strict: true` guarantee the output follows your schema." },
+    { "front": "Azure vs OpenAI schema limits?", "back": "Azure allows 100 object properties and 5 nesting levels. OpenAI allows 5,000 properties and 10 levels." },
+    { "front": "How do you model an optional field in strict mode?", "back": "Keep it in `required` and make its type a union with `null`." },
+    { "front": "Where do Anthropic structured outputs live?", "back": "`output_config.format` with `type: \"json_schema\"`, plus `strict: true` on tools for schema-valid tool inputs." }
+  ],
+  "related": ["w01-t09", "w01-t13", "w01-l4", "w08-t05", "w06-t01"],
+  "refs": ["r8", "r33", "r32", "r12"]
+}

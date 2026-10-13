@@ -1,0 +1,13 @@
+{
+  "title": "Follow the Question",
+  "subtitle": "A dial-and-defend field guide to GenAI and AI engineering",
+  "version": "1.0.0",
+  "regions": [
+    { "id": "foundations", "label": "Foundations", "blurb": "How models behave, how you call them, and why latency and caching decide what is affordable." },
+    { "id": "knowledge", "label": "Knowledge", "blurb": "Get the right content in front of the model: ingestion, chunking, retrieval, guardrails and access control." },
+    { "id": "agents", "label": "Agents and protocols", "blurb": "Tools, MCP, A2A, agent patterns and the Microsoft stack that runs them." },
+    { "id": "senses", "label": "Senses and craft", "blurb": "Multimodal inputs, evaluation and observability: prove it works and see why it breaks." },
+    { "id": "operate", "label": "Operate and govern", "blurb": "Cost, reliability, oversight and the field notes that round out a senior answer." },
+    { "id": "finale", "label": "Finale", "blurb": "Mixed boss rounds that combine every region." }
+  ]
+}

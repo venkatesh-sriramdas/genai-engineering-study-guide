@@ -1,0 +1,133 @@
+{
+  "id": "w01-l3",
+  "order": 3,
+  "title": "Dial the thinking, then pick the model",
+  "kind": "problem",
+  "minutes": 18,
+  "brief": "A harder task gets a better answer when the model thinks longer, and you pay for that thinking in latency and output tokens. Decide how much to think, with which model, and whether a router or your own cascade should choose per request.",
+  "blocks": [
+    { "t": "h", "text": "What effort buys and what it costs", "level": 2 },
+    { "t": "table", "caption": "Effort controls by model (checked 2026-10-13)", "head": ["Model or API", "Control", "Accepted values", "Default and notes"], "rows": [
+      ["GPT-6 Astra", "`reasoning.effort` (Responses) or `reasoning_effort` (Chat)", "`low` to `max`", "`none` returns HTTP 400 [[r2]]."],
+      ["GPT-6.1 Sol", "Same", "`low` to `max`", "Default `medium`. No `none` or `minimal`."],
+      ["GPT-6 Sol and Luna", "Same", "`none` to `max`", "Default `medium`."],
+      ["`gpt-5.5`", "Same", "`none`, `low`, `medium`, `high`, `xhigh`", "Default `medium` [[r3]]."],
+      ["`gpt-5.4`", "Same", "Model dependent", "`none` is the default."],
+      ["Claude Fable 5.1, Opus 5.5, Sonnet 5.5, Haiku 5.5", "`output_config.effort`", "`low`, `medium`, `high`, `xhigh`, `max`", "GA, no beta header. Defaults: high, medium, high, medium in that order [[r18]] [[r31]]."],
+      ["Azure `gpt-chat-latest` (Preview)", "`reasoning_effort`", "Fixed nonzero level", "The effort cannot be changed. Microsoft does not recommend preview models in production [[r13]]."]
+    ], "highlightCol": 3 },
+    { "t": "compare", "title": "Four ways to buy quality", "intro": "They cost different things. Effort spends output tokens and time. A bigger model spends price per token.", "options": [
+      { "name": "Small non-reasoning model", "summary": "Fast, cheap, and still accepts sampling controls.", "pros": ["Lowest latency", "Sampling and logprobs available"], "cons": ["Weak when the task needs several steps"], "bestWhen": "Extraction, classification and rewriting.", "avoidWhen": "Planning, math or long tool loops.", "meta": [{ "k": "Latency", "v": "low" }, { "k": "Cost per task", "v": "low" }] },
+      { "name": "Same model, higher effort", "summary": "Raise `reasoning.effort` one level at a time.", "pros": ["One lever, same prompt and API"], "cons": ["Reasoning tokens bill as output and add latency [[r3]]", "More effort is not always better"], "bestWhen": "Evals show a measurable gain per step.", "avoidWhen": "The latency budget is tight or the task is shallow.", "meta": [{ "k": "Latency", "v": "medium to high" }, { "k": "Cost per task", "v": "grows with effort" }] },
+      { "name": "Pro mode", "tag": "GPT-5.6 and GPT-6", "summary": "`reasoning.mode` is `standard` (default) or `pro`, independent of effort [[r3]].", "pros": ["A second lever beside effort"], "cons": ["Limited to the GPT-5.6 and GPT-6 families", "Price and latency are not stated here, so measure them"], "bestWhen": "The hardest slice of traffic still fails evals at high effort.", "avoidWhen": "You run older models or have no eval set to justify it.", "meta": [{ "k": "Scope", "v": "GPT-5.6, GPT-6" }] },
+      { "name": "Larger model", "summary": "Move up a model tier and keep effort modest.", "pros": ["Higher ceiling on hard tasks"], "cons": ["Higher price per token and usually slower"], "bestWhen": "Small models plus effort fail evals on the hard cases.", "avoidWhen": "High-volume traffic where most requests are easy.", "meta": [{ "k": "Latency", "v": "medium" }, { "k": "Cost per task", "v": "high" }] }
+    ] },
+    { "t": "h", "text": "Pick the model, the effort and who decides", "level": 2 },
+    { "t": "dials", "id": "w01-l3-model", "title": "Model choice and routing", "prompt": "Change the task, the latency budget, the mix of queries and the platform rules. Watch the winner and the reasons move.",
+      "dials": [
+        { "id": "difficulty", "label": "Task difficulty", "values": [
+          { "id": "shallow", "label": "Shallow: extract, classify, rewrite" },
+          { "id": "multi", "label": "Multi-step reasoning" },
+          { "id": "agentic", "label": "Long tool loops" }
+        ] },
+        { "id": "latency", "label": "Latency budget", "values": [
+          { "id": "tight", "label": "Tight, a user is waiting" },
+          { "id": "loose", "label": "Loose or offline" }
+        ] },
+        { "id": "variance", "label": "Query mix", "values": [
+          { "id": "uniform", "label": "Uniform difficulty" },
+          { "id": "mixed", "label": "Easy and hard mixed" }
+        ] },
+        { "id": "platform", "label": "Platform rules", "values": [
+          { "id": "open", "label": "Global deployment, flexible" },
+          { "id": "strict", "label": "Fixed region or very long prompts" }
+        ] }
+      ],
+      "options": [
+        { "id": "small", "name": "Small non-reasoning model", "summary": "One fast model, no thinking." },
+        { "id": "lowfx", "name": "Mid model, low effort", "summary": "A little reasoning on every request." },
+        { "id": "highfx", "name": "Large model, high effort or pro", "summary": "Think hard on every request." },
+        { "id": "router", "name": "Managed model router", "summary": "Azure model router picks a model per request." },
+        { "id": "cascade", "name": "Own cascade", "summary": "Small model first, escalate when a check fails." }
+      ],
+      "scores": {
+        "small": {
+          "difficulty": { "shallow": { "s": 2, "why": "A small non-reasoning model is fast, cheap and accepts sampling controls." }, "multi": { "s": -2, "why": "Multi-step reasoning is where small non-reasoning models fall short. Confirm with evals." }, "agentic": { "s": -1, "why": "Errors compound across long tool loops." } },
+          "latency": { "tight": { "s": 2, "why": "No reasoning tokens, so the first visible token comes sooner." }, "loose": { "s": 0, "why": "Latency headroom is wasted on a model that cannot use it." } },
+          "variance": { "uniform": { "s": 1, "why": "If every query is easy, one small model is simplest." }, "mixed": { "s": -1, "why": "The hard queries are underserved." } },
+          "platform": { "open": { "s": 0, "why": "Works anywhere." }, "strict": { "s": 0, "why": "Works anywhere, and you choose the region." } }
+        },
+        "lowfx": {
+          "difficulty": { "shallow": { "s": 0, "why": "Reasoning overhead buys little on shallow tasks." }, "multi": { "s": 1, "why": "Low effort already helps multi-step tasks." }, "agentic": { "s": 1, "why": "A little reasoning helps tool choice." } },
+          "latency": { "tight": { "s": 1, "why": "Low effort keeps reasoning tokens small." }, "loose": { "s": 0, "why": "Neutral." } },
+          "variance": { "uniform": { "s": 1, "why": "One setting for similar queries is easy to evaluate." }, "mixed": { "s": 0, "why": "Easy queries overpay and hard ones may under-think." } },
+          "platform": { "open": { "s": 0, "why": "Neutral." }, "strict": { "s": 0, "why": "Neutral." } }
+        },
+        "highfx": {
+          "difficulty": { "shallow": { "s": -2, "why": "You pay for thinking the task does not need." }, "multi": { "s": 2, "why": "High effort or pro mode targets hard problems." }, "agentic": { "s": 2, "why": "More reasoning improves planning across tool calls." } },
+          "latency": { "tight": { "s": -2, "why": "Reasoning tokens add latency and bill as output." }, "loose": { "s": 2, "why": "Offline work can absorb the extra time." } },
+          "variance": { "uniform": { "s": 0, "why": "Fine if every query is hard." }, "mixed": { "s": -1, "why": "Easy queries pay hard-query prices." } },
+          "platform": { "open": { "s": 0, "why": "Neutral." }, "strict": { "s": 0, "why": "Neutral." } }
+        },
+        "router": {
+          "difficulty": { "shallow": { "s": 1, "why": "Easy requests can go to cheaper models." }, "multi": { "s": 0, "why": "Depends on which model the router picks." }, "agentic": { "s": -1, "why": "Prompt caching helps only when the same model serves consecutive requests, and loops need that." } },
+          "latency": { "tight": { "s": 0, "why": "Latency depends on the model chosen. Measure it." }, "loose": { "s": 1, "why": "Cost mode saves money when latency is not the constraint." } },
+          "variance": { "uniform": { "s": -1, "why": "A fixed model is simpler and caches better." }, "mixed": { "s": 2, "why": "Per-request choice matches the model to the difficulty. Balanced mode targets the cheapest model within about 1% to 2% of top quality." } },
+          "platform": { "open": { "s": 1, "why": "Works on Global Standard and Data Zone Standard deployments." }, "strict": { "s": -2, "why": "Only Global Standard and Data Zone Standard, and the usable window is the smallest in the pool." } }
+        },
+        "cascade": {
+          "difficulty": { "shallow": { "s": 1, "why": "Most requests stop at the small model." }, "multi": { "s": 0, "why": "Works if you can write a cheap pass check." }, "agentic": { "s": -1, "why": "Open-ended tool work is hard to validate step by step." } },
+          "latency": { "tight": { "s": -1, "why": "Escalated requests pay for two calls." }, "loose": { "s": 1, "why": "Extra calls are tolerable offline." } },
+          "variance": { "uniform": { "s": -1, "why": "No gain if every query needs the same model." }, "mixed": { "s": 2, "why": "Escalate only the hard cases." } },
+          "platform": { "open": { "s": 0, "why": "Neutral." }, "strict": { "s": 1, "why": "You choose the models, so you keep control of region, window and data zone." } }
+        }
+      },
+      "takeaway": "Effort, model size and routing are three separate levers. Start with the smallest setting that passes your evals and raise only where they fail." },
+    { "t": "diagram", "id": "w01-l3-cascade", "title": "An own cascade", "alt": "A request goes to a small model. A check passes the answer through or escalates to a larger model. Both paths end in an answer and the escalation rate is tracked.", "src": "flowchart LR\n  R[Request] --> S[Small model]\n  S --> C{Check passes}\n  C -- yes --> A[Answer]\n  C -- no --> L[Larger model]\n  L --> A\n  A --> T[Track escalation rate]", "caption": "The check is the product. Use schema validity, a groundedness test or logprobs, and evaluate the cascade as a whole." },
+    { "t": "tabs", "tabs": [
+      { "label": "Effort in code", "blocks": [
+        { "t": "code", "lang": "python", "title": "OpenAI Responses", "code": "resp = client.responses.create(\n    model=\"gpt-6-sol\",\n    input=prompt,\n    reasoning={\"effort\": \"low\", \"summary\": \"auto\"},\n    max_output_tokens=25000,\n)\nprint(resp.usage.output_tokens_details.reasoning_tokens)", "caption": "Illustrative. The 25,000 token cap follows the advice to reserve headroom at first [[r3]]. Summaries come back only if you request `reasoning.summary`." },
+        { "t": "code", "lang": "python", "title": "Anthropic Messages", "code": "msg = client.messages.create(\n    model=\"claude-sonnet-5-5\",\n    max_tokens=16000,\n    thinking={\"type\": \"adaptive\"},\n    output_config={\"effort\": \"medium\"},\n    messages=[{\"role\": \"user\", \"content\": prompt}],\n)", "caption": "Illustrative. Manual `budget_tokens` is not accepted on the newest models, and `max_tokens` includes thinking [[r31]]." }
+      ] },
+      { "label": "Azure model router", "blocks": [
+        { "t": "table", "caption": "Model router facts (checked 2026-10-13) [[r16]]", "head": ["Topic", "Detail"], "rows": [
+          ["Versions", "`2025-11-18` is active and updated in place, so the routed pool can change without a new version id. `2025-08-07` and `2025-05-19` are frozen."],
+          ["Modes", "Balanced (default) picks the cheapest model within about 1% to 2% of top quality. Cost allows about 5% to 6%. Quality favours quality. Microsoft gives the percentages as examples."],
+          ["Pool", "Spans OpenAI (including `gpt-6-astra`), Anthropic, xAI, DeepSeek, Meta and Fireworks models. Claude models must be deployed separately first."],
+          ["Subset and failover", "Model subset limits the pool and needs at least two models for failover. Failover is on by default."],
+          ["Deployment types", "Global Standard and Data Zone Standard only."],
+          ["Window and caching", "The effective window is the smallest in the pool. Prompt caching helps only when the same model serves consecutive requests. Session affinity for Chat Completions is Preview."]
+        ] }
+      ] },
+      { "label": "Batch and tiers", "blocks": [
+        { "t": "table", "caption": "Pay less for patience (checked 2026-10-13)", "head": ["Option", "Terms", "Notes"], "rows": [
+          ["OpenAI Batch", "50% discount. `completion_window` is only `24h`. Up to 50,000 requests and 200 MB per file. Separate rate-limit pool [[r37]].", "Not ZDR eligible."],
+          ["OpenAI Flex", "`service_tier: flex` at Batch rates. Slower and may be unavailable [[r38]].", "Beta as of 2026-10-13."],
+          ["OpenAI priority or fast", "2x price. `ultrafast` is access controlled.", "Fast mode for GPT-6 Astra has no latency SLA."],
+          ["Azure Batch", "24 hour target turnaround at 50% less than global standard, with separate quota [[r13]].", "Offline only."],
+          ["Anthropic Message Batches", "50% off. Up to 100,000 requests or 256 MB. Most finish within 1 hour and expire after 24 hours. Results are kept 29 days [[r39]].", "No streaming."]
+        ] }
+      ] }
+    ] },
+    { "t": "failure", "title": "Reasoning and routing failure modes", "items": [
+      { "symptom": "Azure `gpt-5.6-sol` on Chat Completions fails with \"Function tools with reasoning_effort are not supported\" although your code never sets effort", "cause": "The default effort is `medium`, and Chat Completions does not support tools with effort other than `none` from GPT-5.4 onward [[r15]].", "fix": "Call Responses for tools with reasoning, or set effort `none` where the model allows it." },
+      { "symptom": "HTTP 400 after switching to GPT-6 Astra or GPT-6.1 Sol", "cause": "Those models reject `reasoning.effort: none`, and GPT-6.1 Sol also lacks `minimal`.", "fix": "Use `low` as the starting point in place of `minimal`, then tune from evals [[r2]]." },
+      { "symptom": "Claude returns no thinking text after an upgrade to Fable 5", "cause": "Adaptive thinking is the only mode and `thinking.display` defaults to `omitted` [[r21]].", "fix": "Set `thinking.display` to `summarized` when your code reads the thinking." },
+      { "symptom": "Requests to Claude Opus 5.5 fail when code tries to turn thinking off", "cause": "Thinking cannot be disabled on Opus 5.5 and returns a 400.", "fix": "Lower `output_config.effort` instead of disabling thinking." },
+      { "symptom": "Long prompts fail only some of the time behind a managed router", "cause": "The effective window is the smallest in the routing pool, and a large call works only if the router picks a larger-window model.", "fix": "Restrict the model subset to models whose window fits your longest prompt." }
+    ] }
+  ],
+  "quiz": [
+    { "id": "w01-l3-q1", "type": "single", "tag": "tradeoff", "q": "Query difficulty ranges from trivial to hard, latency is moderate, and the team can write a pass or fail check on answers. They need per-request model choice but must keep a fixed regional deployment that the managed router does not support. What fits best?", "options": ["The largest model at maximum effort for every single request", "A small non-reasoning model for every request, with retries", "A fine-tuned model that replaces model choice entirely", "An own cascade with an escalation check"], "answer": 3, "explain": "A cascade gives per-request choice without the managed router, which is limited to Global Standard and Data Zone Standard deployments. The largest model overpays on easy queries, a single small model underserves hard ones, and fine-tuning does not choose a model per request.", "difficulty": 2, "ref": "r16" },
+    { "id": "w01-l3-q2", "type": "single", "tag": "diagnose", "q": "After moving to Azure `gpt-5.6-sol`, a Chat Completions call with tools fails with \"Function tools with reasoning_effort are not supported\". The code never sets `reasoning_effort`. Why?", "options": ["The tool schema holds an unsupported keyword, so `strict` must be removed", "Default effort is `medium`, which Chat Completions rejects with tools", "The api-version string is too old, so the deployment drops tool support", "The deployment type is Standard, and function tools need a provisioned deployment"], "answer": 1, "explain": "The default is `medium`, and from GPT-5.4 on Chat Completions does not support tool calling when effort is not none. A bad schema would produce a schema error. The v1 API needs no api-version, and deployment type does not control this rule.", "difficulty": 3, "ref": "r15" },
+    { "id": "w01-l3-q3", "type": "order", "tag": "order", "q": "Put the steps for tuning reasoning effort in a sensible order.", "items": ["Build an eval set with pass or fail checks", "Run at the lowest accepted effort and record quality, latency and reasoning tokens", "Raise effort one level and rerun the same set", "Stop when the quality gain no longer justifies the latency and cost, then set the output cap with headroom"], "explain": "Evals come first so every change is measured. Start low because effort costs output tokens and time, raise one step at a time to see the slope, and stop when the gain flattens. Set the cap last, from the measured reasoning tokens plus headroom.", "difficulty": 1, "ref": "r3" }
+  ],
+  "defend": null,
+  "refs": ["r2", "r3", "r13", "r15", "r16", "r18", "r21", "r31", "r37", "r38", "r39"],
+  "takeaways": [
+    "Effort, model size and routing are separate levers with different costs",
+    "Effort values differ by model: some reject `none`, some reject `minimal`, and Claude uses `output_config.effort`",
+    "A managed router shrinks the usable window to the smallest in the pool and weakens cache reuse",
+    "A cascade is only as good as its check, so evaluate the whole system"
+  ]
+}

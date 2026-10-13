@@ -1,0 +1,112 @@
+{
+  "id": "w11-t11",
+  "order": 11,
+  "group": "State and memory",
+  "title": "History providers",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "A history provider loads and stores the transcript for each run. The built-in one keeps messages in the session. You can swap in a database provider, add an audit provider and choose when persistence happens.",
+  "useIf": "Conversation history must live in your own store, be audited, shrink under a reducer, or be written after every model call.",
+  "avoidIf": "The provider already manages the conversation (Foundry agents, Responses with `store` on) and you do not need local copies.",
+  "explain": [
+    { "t": "p", "md": "**Two storage modes.** *Local session state*: full history in `AgentSession.state`, usually via `InMemoryHistoryProvider` (default source id `in_memory`, may be auto-added by `RawAgent`). *Service-managed*: the service keeps the conversation and the session holds a `service_session_id`. Configured local history providers are skipped when a session is service-managed [[tr11]]." },
+    { "t": "p", "md": "**Rules.** Configure only one history provider with `load_messages=True`. Add audit or evaluation providers with `load_messages=False` and `store_context_messages=True` so they also capture context other providers injected. A custom provider must not keep per-session data on the instance (one instance serves all sessions): keep database keys in session state. In .NET override `ProvideChatHistoryAsync` and `StoreChatHistoryAsync` of `ChatHistoryProvider` and use `ProviderSessionState<T>`; in Python implement `get_messages` and `save_messages` on `HistoryProvider` [[tr11]] [[tr12]]." },
+    { "t": "p", "md": "**When it persists.** By default local providers persist once after the whole run. With `require_per_service_call_history_persistence=True` (Python) they run around every model call, which helps if middleware can end a run right after a tool call. It raises an error if the run is bound to a service-managed conversation. The Harness requires the per-call mode [[tr11]]. To bound size, .NET `InMemoryChatHistoryProvider` takes a `ChatReducer` such as `MessageCountingChatReducer(20)`; compaction is the richer option [[tr13]]." },
+    { "t": "table", "caption": "Where history can live", "head": ["Place", "Compaction", "Switch models mid-chat", "Owner of retention"], "rows": [
+      ["In-memory in session", "Yes", "Yes", "You, via session persistence"],
+      ["Custom provider (database, Redis, Cosmos DB)", "Yes", "Yes", "You, with your schema"],
+      ["Service-managed (Foundry agents, Responses `store` on, Copilot Studio)", "No effect", "No (ids not portable)", "The service"]
+    ] },
+    { "t": "tabs", "tabs": [
+      { "label": "C#", "blocks": [ { "t": "code", "lang": "csharp", "code": "public sealed class DbHistoryProvider(IMessageDb db) : ChatHistoryProvider\n{\n    private readonly ProviderSessionState<State> _state = new(\n        _ => new State { Key = Guid.NewGuid().ToString() }, nameof(DbHistoryProvider));\n    public override string StateKey => _state.StateKey;\n\n    protected override async ValueTask<IEnumerable<ChatMessage>> ProvideChatHistoryAsync(\n        InvokingContext ctx, CancellationToken ct = default)\n        => await db.LoadAsync(_state.GetOrInitializeState(ctx.Session).Key, ct);\n\n    protected override async ValueTask StoreChatHistoryAsync(\n        InvokedContext ctx, CancellationToken ct = default)\n    {\n        var s = _state.GetOrInitializeState(ctx.Session);\n        _state.SaveState(ctx.Session, s);\n        await db.AppendAsync(s.Key, ctx.RequestMessages.Concat(ctx.ResponseMessages ?? []), ct);\n    }\n    public sealed class State { public string? Key { get; set; } }\n}" } ] },
+      { "label": "Python", "blocks": [ { "t": "code", "lang": "python", "code": "class DatabaseHistoryProvider(HistoryProvider):\n    def __init__(self, db):\n        super().__init__('db-history', load_messages=True)\n        self._db = db                       # a client, never a per-session key\n\n    async def get_messages(self, session_id, *, state=None, **kw):\n        key = (state or {}).get('history_key', session_id or 'default')\n        return [Message.from_dict(r) for r in await self._db.load_messages(key)]\n\n    async def save_messages(self, session_id, messages, *, state=None, **kw):\n        if messages:\n            key = state.setdefault('history_key', session_id or 'default') if state is not None else (session_id or 'default')\n            await self._db.save_messages(key, [m.to_dict() for m in messages])\n\nagent = Agent(client=client,\n    context_providers=[DatabaseHistoryProvider(db),\n                       InMemoryHistoryProvider('audit', load_messages=False,\n                                               store_context_messages=True)],\n    require_per_service_call_history_persistence=True)" } ] }
+    ] }
+  ],
+  "whereToUse": [
+    "Compliance: store full transcripts in your database with your retention rules",
+    "Multi-instance services where any node must load a conversation",
+    "Audit and evaluation capture beside the primary history",
+    "Long tool loops where each model call should be durable"
+  ],
+  "whenToUse": {
+    "use": [
+      "You must own retention, deletion and encryption of conversation data",
+      "You need compaction or provider switching, which require local history",
+      "A crash mid-run must not lose completed model calls"
+    ],
+    "avoid": [
+      "The provider's managed conversation is enough and policy permits it",
+      "Per-call persistence on a service-managed run: it raises an error",
+      "Putting a session key in a provider field: it leaks across sessions"
+    ],
+    "flips": [
+      "Provider-side retention is acceptable and you want the least code: use service-managed history and drop compaction",
+      "Transcripts must carry injected context for audit: add a second provider with `store_context_messages=True`"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["In-memory provider", "Prototypes, short sessions", "Restarts, scale-out", "State dies with the process unless the session is saved"],
+      ["Custom database provider", "Ownership, audit, shared access", "You want zero code", "Schema, scaling, security are yours"],
+      ["Service-managed history", "Least code, provider features", "Compaction, portability, local audit", "Compaction silently does nothing"],
+      ["Reducer or compaction on local history", "Context window pressure", "You need full fidelity", "Summaries lose detail"],
+      ["Workflow checkpoints", "Resume a graph", "Transcript queries", "Not a chat store"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Messages are duplicated or ordering is odd", "cause": "Two history providers both use `load_messages=True`", "fix": "Keep exactly one loader; make others audit-only" },
+    { "symptom": "Conversations mix across users", "cause": "A provider stored the database key in an instance field", "fix": "Store per-session keys in session state (`ProviderSessionState` or the Python `state` dict)" },
+    { "symptom": "Raises an error on start with per-call persistence", "cause": "`require_per_service_call_history_persistence=True` with a service-managed conversation", "fix": "Use it only with framework-managed local history" }
+  ],
+  "scenarios": [
+    {
+      "id": "w11-t11-s1",
+      "title": "Regulated transcripts with 7-year retention",
+      "situation": "A bank assistant must retain full transcripts for 7 years in its own database, deletable on request. Tool loops can run 20 model calls.",
+      "constraints": ["Own the data store", "Deletion on request", "Durability per model call"],
+      "unknowns": ["Is the transcript allowed to include injected context?", "Which database and region?", "Is PII redacted before storage?"],
+      "question": "How do you store history?",
+      "options": [
+        { "name": "Custom history provider backed by your database, per-call persistence on, an audit provider with context capture", "verdict": "best", "why": "You control retention and deletion, each model call is durable, and context injected by other providers is captured.", "tradeoff": "You build and test the provider and the schema." },
+        { "name": "Service-managed Responses conversations", "verdict": "poor", "why": "Retention and deletion are the provider's, and compaction cannot apply.", "tradeoff": "Fine when provider retention satisfies policy." },
+        { "name": "In-memory history saved as a session blob at the end of each run", "verdict": "good", "why": "Little code.", "tradeoff": "A crash mid-run loses the calls since the last save, and queries across conversations are hard." }
+      ],
+      "flips": [
+        { "if": "Privacy rules forbid storing tool results", "then": "Filter in the provider before saving, and keep the audit provider off." },
+        { "if": "Volume is tiny", "then": "A session blob in your database may suffice." }
+      ],
+      "takeaway": "Own the store when retention is a legal duty."
+    },
+    {
+      "id": "w11-t11-s2",
+      "title": "Prototype demo for a hackathon",
+      "situation": "A two-day prototype with three users. No data policy applies. The team wants speed.",
+      "constraints": ["Short life", "No compliance", "Speed first"],
+      "unknowns": ["Will it survive past the demo?", "Does it need to switch models?"],
+      "question": "What history setup?",
+      "options": [
+        { "name": "Default in-memory history in the session", "verdict": "best", "why": "Zero setup, portable across models, easy to upgrade later.", "tradeoff": "Loses state on restart; add persistence if the demo lives on." },
+        { "name": "A custom database provider from day one", "verdict": "poor", "why": "Premature work for a throwaway.", "tradeoff": "Right once real users and retention rules exist." },
+        { "name": "Service-managed conversation", "verdict": "good", "why": "State survives restarts without code.", "tradeoff": "Locks history to the provider and disables compaction." }
+      ],
+      "flips": [
+        { "if": "The prototype becomes a pilot", "then": "Replace the provider and add session persistence before onboarding real data." },
+        { "if": "Conversations get long", "then": "Add compaction on local history." }
+      ],
+      "takeaway": "Start in memory; move the store when state must outlive the process."
+    }
+  ],
+  "quiz": [
+    { "id": "w11-t11-q1", "type": "single", "tag": "bug", "q": "This Python agent shows each message twice in loaded history. What is wrong?", "code": { "lang": "python", "code": "agent = Agent(client=client, context_providers=[\n    DatabaseHistoryProvider(db),\n    InMemoryHistoryProvider('audit', load_messages=True),\n])" }, "options": ["Two history providers load messages; only one should use `load_messages=True`", "`context_providers` must be empty", "The audit provider needs a database", "`Agent` cannot take two providers"], "answer": 0, "explain": "Only one history provider should load messages. Audit providers use `load_messages=False` and `store_context_messages=True`.", "ref": "tr12" },
+    { "id": "w11-t11-q2", "type": "single", "tag": "diagnose", "q": "You enabled a compaction pipeline on an agent that uses Foundry service-managed history, yet token usage did not fall. Why?", "options": ["The pipeline order is wrong", "Summarization needs GPT-3", "Compaction applies only to agents that hold history in memory, and has no effect on service-managed history", "Compaction runs only in .NET"], "answer": 2, "explain": "The docs state compaction has no effect on Foundry agents, Responses with `store` on or Copilot Studio.", "ref": "tr13" }
+  ],
+  "flashcards": [
+    { "front": "How should audit history providers be configured?", "back": "`load_messages=False` and `store_context_messages=True`, so they capture injected context without loading it back." },
+    { "front": "What does per-service-call history persistence change?", "back": "History providers run around every model call instead of once per run. It errors on service-managed runs, and the Harness requires it." },
+    { "front": "Where must a custom provider keep a session's database key?", "back": "In session state, never on the provider instance, because one instance serves all sessions." }
+  ],
+  "related": ["w11-t10", "w11-t12", "w11-t13", "w10-t17"],
+  "refs": ["tr11", "tr12", "tr13"]
+}

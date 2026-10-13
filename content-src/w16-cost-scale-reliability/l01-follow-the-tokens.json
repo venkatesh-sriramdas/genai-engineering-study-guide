@@ -1,0 +1,89 @@
+{
+  "id": "w16-l1",
+  "order": 1,
+  "title": "Follow the tokens",
+  "kind": "concept",
+  "minutes": 15,
+  "brief": "Finance says the model bill doubled while traffic grew 20 percent. Before you cut anything, find where the tokens go and which lever fits. Prices, model mix, prompt shapes and the amount of agent looping are all unknown.",
+  "blocks": [
+    { "t": "h", "text": "Where tokens are spent", "level": 2 },
+    { "t": "table", "caption": "Six token sinks, how to see them and what moves them", "head": ["Sink", "Why it grows", "How you see it", "Levers"], "rows": [
+      ["**System prompt and tool definitions**", "Sent on every call, and each added tool adds tokens", "Prompt tokens split by section", "Prompt caching (reads at 0.1x), fewer and shorter tool definitions"],
+      ["**Retrieved context**", "Top-k times chunk size on every call", "Tokens per retrieval step", "Fewer, better chunks, reranking, prompt compression"],
+      ["**Conversation history**", "Re-sent every turn, so cumulative input grows with the square of turns", "Input tokens by turn index", "Append-only history with a cached prefix, rare compaction"],
+      ["**Output and reasoning tokens**", "Billed at the output rate and set latency. Hidden reasoning counts in completion tokens", "`reasoning_tokens` in usage details", "Output caps, stop sequences, reasoning effort, concise formats"],
+      ["**Agent loops and tool results**", "Each step re-sends context plus the previous tool output", "Calls per task, tokens per task", "Step and token budgets, smaller contexts for sub-agents"],
+      ["**Retries and duplicates**", "Every layer that retries repeats the whole call", "Requests per unique task id", "Attempt caps, one retry layer, idempotency keys"]
+    ], "highlightCol": 0 },
+    { "t": "formula", "title": "Cost per successful task", "expr": "cost_per_task = calls_per_task x (uncached_in x p_in + cached_in x p_cached + written_in x p_write + out x p_out) / success_rate", "vars": [
+      { "k": "calls_per_task", "v": "model calls per task, which agent loops multiply" },
+      { "k": "p_cached, p_write", "v": "cached read and cache write rates, for example 0.1x and 1.25x of p_in on GPT-5.6 and later" },
+      { "k": "out", "v": "output tokens including hidden reasoning tokens" },
+      { "k": "success_rate", "v": "share of tasks that finish correctly. A cheaper model with a lower rate costs more per success" }
+    ], "example": "A chat that re-sends full history across 20 turns of 500 tokens each sends 500 x (1 + 2 + ... + 20) = **105,000 input tokens** for 10,000 new ones. With an append-only prefix cached at 0.1x read and 1.25x write on the new tokens, the bill is about 95,000 x 0.1 + 10,000 x 1.25 = **22,000 token-equivalents**, roughly 79% less [[r25]]. Compaction or truncation rewrites the prefix and resets that saving." },
+    { "t": "compare", "title": "Four ways to pay less per request", "intro": "Dials: spread of query difficulty, quality of your eval set, how the cache interacts, latency of escalation and residency of the routed models.", "options": [
+      { "name": "Static rules by task", "summary": "Send classification to a small model and reasoning-heavy work to a large one, by task type you define.", "pros": ["Predictable and easy to audit", "No router overhead"], "cons": ["Rules drift as models change", "Misses difficulty variation inside a task type"], "bestWhen": "Clear task types and a small team.", "avoidWhen": "Difficulty varies widely inside one task type.", "meta": [{ "k": "Effort", "v": "low" }, { "k": "Risk", "v": "rule drift" }] },
+      { "name": "Trained router", "tag": "Azure model router: GA", "summary": "One deployment that picks a model per request. Azure's `Balanced` mode (default) targets the cheapest model within about 1% to 2% of the best quality, `Cost` within about 5% to 6%, and `Quality` favors accuracy [[r14]].", "pros": ["One endpoint for mixed difficulty", "RouteLLM-style routers cut cost by more than 2x in some cases with no quality loss [[r21]]"], "cons": ["Splits the prompt-cache prefix across models, so caching helps only when consecutive requests reach the same model", "Context window equals the smallest underlying model, and routing reads text only", "Current version 2025-11-18 updates in place, so the routed pool can change under you"], "bestWhen": "Mixed difficulty and an eval set you can compare against a fixed baseline.", "avoidWhen": "Uniformly hard tasks, or a strict residency or model pin.", "meta": [{ "k": "Deployment types", "v": "Global Standard, Data Zone Standard" }] },
+      { "name": "Cascade", "summary": "Try a cheap model, check the answer, and escalate to a stronger model only when the check fails.", "pros": ["FrugalGPT matched the best single LLM with up to 98% lower cost, or beat GPT-4 by 4% at equal cost (2023 prices) [[r20]]"], "cons": ["Escalation adds latency and doubles spend on hard queries", "Only as good as the verifier"], "bestWhen": "The cheap model is right most of the time and a reliable check exists.", "avoidWhen": "Most queries are hard, or no trustworthy verifier exists.", "meta": [{ "k": "Latency", "v": "adds a step on escalation" }] },
+      { "name": "Prompt compression", "summary": "Shrink long inputs before the call. LLMLingua reports up to 20x compression with little loss on GSM8K, BBH, ShareGPT and Arxiv-March23 [[r22]].", "pros": ["Cuts input tokens on very long, unique contexts"], "cons": ["Quality risk on exact quotations", "The compression step itself costs compute", "Breaks a stable cached prefix"], "bestWhen": "Very long unique inputs and cost-bound batch work.", "avoidWhen": "A stable prefix that caching already handles, or text that must be quoted exactly.", "meta": [{ "k": "Evidence", "v": "2023 benchmarks" }] }
+    ] },
+    { "t": "dials", "id": "w16-l1-lever", "title": "Pick the first cost lever", "prompt": "Flip the prompt shape, the difficulty spread and the timing. The best first lever changes.", "dials": [
+      { "id": "shape", "label": "Prompt shape", "values": [{ "id": "stable", "label": "Long stable prefix" }, { "id": "unique", "label": "Mostly unique long context" }] },
+      { "id": "diff", "label": "Difficulty", "values": [{ "id": "mixed", "label": "Mixed, many easy requests" }, { "id": "uniform", "label": "Uniformly hard" }] },
+      { "id": "timing", "label": "Timing", "values": [{ "id": "live", "label": "Interactive" }, { "id": "async", "label": "Nobody is waiting" }] }
+    ], "options": [
+      { "id": "cache", "name": "Prompt caching", "summary": "Read the stable prefix at a fraction of the price." },
+      { "id": "route", "name": "Router or cascade", "summary": "Send easy requests to cheaper models." },
+      { "id": "batch", "name": "Batch or Flex", "summary": "Half price for delay-tolerant work." },
+      { "id": "outcap", "name": "Output caps and concise format", "summary": "Cut output and reasoning tokens." },
+      { "id": "compress", "name": "Prompt compression", "summary": "Shrink long unique inputs." }
+    ], "scores": {
+      "cache": {
+        "shape": { "stable": { "s": 2, "why": "Reads at 0.1x beat uncached after two requests." }, "unique": { "s": -1, "why": "Writes at 1.25x are never read back." } },
+        "diff": { "mixed": { "s": 0, "why": "Works the same whatever the difficulty." }, "uniform": { "s": 0, "why": "Works the same whatever the difficulty." } },
+        "timing": { "live": { "s": 1, "why": "It also lowers time to first token." }, "async": { "s": 0, "why": "Saves cost only." } }
+      },
+      "route": {
+        "shape": { "stable": { "s": -1, "why": "Splits the cached prefix across models." }, "unique": { "s": 0, "why": "No cache to lose." } },
+        "diff": { "mixed": { "s": 2, "why": "Easy requests go to cheap models, so most spend drops." }, "uniform": { "s": -2, "why": "Nothing to route, and you pay router overhead." } },
+        "timing": { "live": { "s": -1, "why": "Escalation adds latency on hard queries." }, "async": { "s": 1, "why": "Escalation latency is hidden." } }
+      },
+      "batch": {
+        "shape": { "stable": { "s": 1, "why": "Discounts can stack with cached-token pricing, for example on Anthropic." }, "unique": { "s": 0, "why": "The 50% discount does not depend on prompt shape." } },
+        "diff": { "mixed": { "s": 0, "why": "Independent of difficulty." }, "uniform": { "s": 0, "why": "Independent of difficulty." } },
+        "timing": { "live": { "s": -2, "why": "A 24-hour target and no real-time SLA." }, "async": { "s": 2, "why": "About 50% off for work nobody waits for." } }
+      },
+      "outcap": {
+        "shape": { "stable": { "s": 0, "why": "Output limits do not touch the input side." }, "unique": { "s": 0, "why": "Output limits do not touch the input side." } },
+        "diff": { "mixed": { "s": 1, "why": "Easy requests rarely need long answers." }, "uniform": { "s": 1, "why": "Hidden reasoning tokens can dominate hard tasks." } },
+        "timing": { "live": { "s": 1, "why": "Output tokens drive latency as well as cost." }, "async": { "s": 1, "why": "Output is billed at the higher rate." } }
+      },
+      "compress": {
+        "shape": { "stable": { "s": -1, "why": "Compressing breaks the stable prefix that caching reuses." }, "unique": { "s": 2, "why": "Long unique context is where compression pays." } },
+        "diff": { "mixed": { "s": 0, "why": "Independent of difficulty." }, "uniform": { "s": 0, "why": "Independent of difficulty." } },
+        "timing": { "live": { "s": -1, "why": "The compression step adds compute and delay." }, "async": { "s": 0, "why": "Delay is tolerable." } }
+      }
+    }, "takeaway": "Start with the lever that matches the shape of the spend. Caching for stable prefixes, routing for mixed difficulty, batch for delay-tolerant work, caps for output, compression for long unique inputs." },
+    { "t": "stats", "items": [
+      { "label": "Batch and Flex discount", "value": "about 50%", "note": "24-hour target for Batch. Flex has no SLA" },
+      { "label": "Cache read and write", "value": "0.1x and 1.25x", "note": "OpenAI GPT-5.6 and later, Anthropic 5-minute" },
+      { "label": "Cascade evidence", "value": "up to 98%", "note": "FrugalGPT, 2023 benchmarks and prices" },
+      { "label": "Compression evidence", "value": "up to 20x", "note": "LLMLingua, little loss on listed tasks" }
+    ] },
+    { "t": "callout", "kind": "interview", "title": "Say this out loud", "md": "Measure cost per successful task, not per token. A cheaper model can need more retries, longer outputs or more agent steps. Attribute tokens by consumer and by section of the prompt before you choose a lever, and say which lever the spend shape points to." }
+  ],
+  "quiz": [
+    { "id": "w16-l1-q1", "type": "numeric", "tag": "numeric", "q": "A chat re-sends the whole history each turn. Each turn adds 500 tokens, so turn k sends 500 x k input tokens. How many input tokens are sent across 20 turns?", "answer": 105000, "tolerancePct": 1, "unit": "tokens", "hint": "500 x (1 + 2 + ... + 20)", "explain": "The sum 1 + 2 + ... + 20 is 210, so 500 x 210 = 105,000 input tokens. Only 10,000 of them are new content. The rest is re-reading, which is why an append-only prefix with caching, or compaction, changes the bill so much.", "difficulty": 2, "ref": "r25" },
+    { "id": "w16-l1-q2", "type": "single", "tag": "tradeoff", "q": "A nightly job scores 2 million documents against a long, shared instruction prompt. Nobody waits for the result, and a 24-hour turnaround is fine. Which approach lowers cost most?", "options": ["Priority processing, because it gives the lowest latency for a very large evaluation run", "A semantic cache across all documents, because they share one prefix", "Batch with the shared instruction prefix first, accepting the 24-hour target", "Provisioned throughput sized for the nightly peak and billed hourly, for stable speed"], "answer": 2, "explain": "Batch gives about 50% off for delay-tolerant work, and a stable prefix first can still earn cached-token pricing. Priority pays a premium for latency nobody needs. Documents differ, so a semantic cache would rarely match and could return the wrong document's answer. Provisioned capacity stays billed while idle, which is wasteful for a nightly job.", "difficulty": 2, "ref": "r12" },
+    { "id": "w16-l1-q3", "type": "multi", "tag": "diagnose", "q": "Tokens per task for an agent doubled after a release. Select every plausible driver.", "options": ["Conversation history is re-sent on every model call", "Tool results are appended to the context at each step", "Hidden reasoning tokens count in the completion tokens", "A shorter system prompt was shipped in the same release"], "answers": [0, 1, 2], "explain": "History, tool output and reasoning tokens all grow tokens per task, especially in loops. A shorter system prompt reduces tokens, so it cannot explain a doubling. Check calls per task and output tokens by step to see which one moved.", "difficulty": 1, "ref": "r25" }
+  ],
+  "defend": null,
+  "refs": ["r25", "r26", "r12", "r14", "r20", "r21", "r22"],
+  "takeaways": [
+    "Attribute tokens by sink and consumer before choosing a lever",
+    "Cost per successful task is the metric. Cost per token hides retries, loops and failures",
+    "History re-sent every turn grows with the square of the turn count, so keep the prefix append-only and cached",
+    "Routers split the prompt-cache prefix across models, so measure caching and routing together",
+    "Batch is the boring, large win for work nobody waits for"
+  ]
+}

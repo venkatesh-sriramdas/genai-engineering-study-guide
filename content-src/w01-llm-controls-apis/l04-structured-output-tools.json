@@ -1,0 +1,60 @@
+{
+  "id": "w01-l4",
+  "order": 4,
+  "title": "Make the output parse every time",
+  "kind": "problem",
+  "minutes": 18,
+  "brief": "A downstream parser breaks on one malformed response in a thousand. Decide how much structure to demand from the model, and whether the schema belongs on the answer or on a tool call.",
+  "blocks": [
+    { "t": "h", "text": "Four ways to get structure", "level": 2 },
+    { "t": "compare", "title": "From a polite request to enforced schemas", "intro": "Each step buys more guarantee and more rules to follow.", "options": [
+      { "name": "Prompt only", "summary": "Ask for JSON in the instructions and parse what comes back.", "pros": ["Works on any model and API"], "cons": ["No guarantee of valid JSON or the right fields"], "bestWhen": "Prototypes and cases where a retry is cheap.", "avoidWhen": "A production parser sits behind the call.", "meta": [{ "k": "Guarantee", "v": "none" }] },
+      { "name": "JSON mode", "tag": "GA", "summary": "`{type: \"json_object\"}` asks for syntactically valid JSON.", "pros": ["Simple", "Wide model support"], "cons": ["Only valid JSON is guaranteed, not your schema [[r8]]"], "bestWhen": "You need JSON but the shape is loose or the model lacks schema support.", "avoidWhen": "Specific fields and types must be present.", "meta": [{ "k": "Guarantee", "v": "valid JSON" }] },
+      { "name": "Structured outputs", "tag": "GA", "summary": "`text.format` with `type: \"json_schema\"` and `strict: true` (Chat: `response_format`).", "pros": ["Schema adherence", "Safety refusals are detectable in the response"], "cons": ["Schema subset rules", "Azure limits are tighter than OpenAI's [[r33]]"], "bestWhen": "The model's final answer must match a schema.", "avoidWhen": "Your schema needs features outside the supported subset.", "meta": [{ "k": "Guarantee", "v": "schema" }] },
+      { "name": "Strict function calling", "tag": "GA", "summary": "Tool arguments follow your schema. The model decides when to call and your code runs the function.", "pros": ["Schema-valid arguments", "Natural fit for actions and lookups"], "cons": ["Extra round trip", "Reasoning plus tools has API-specific limits"], "bestWhen": "The model should trigger an action or fetch data.", "avoidWhen": "You only want a formatted final answer, where structured outputs is simpler.", "meta": [{ "k": "Guarantee", "v": "valid arguments" }] }
+    ] },
+    { "t": "table", "caption": "Limits and rules by platform (checked 2026-10-13)", "head": ["Topic", "OpenAI", "Azure OpenAI", "Anthropic"], "rows": [
+      ["Enforce a schema", "`text.format` `{type: \"json_schema\", strict: true, schema}` in Responses, `response_format` in Chat [[r8]].", "Same feature with tighter limits [[r33]].", "`output_config.format` with `type: \"json_schema\"`, and `strict: true` on tools [[r32]]."],
+      ["Schema size", "Up to 5,000 object properties and 10 nesting levels. Names and enum values total at most 120,000 characters. At most 1,000 enum values.", "Up to 100 object properties and 5 nesting levels.", "Not compared here. Read the Claude page."],
+      ["Keywords", "`pattern`, `format`, `minimum`, `maximum`, `minItems`, `maxItems` supported, but not on fine-tuned models.", "`minLength`, `maxLength`, `pattern` and `format` unsupported.", "Read the Claude page for limits."],
+      ["Shape rules", "Every field required (emulate optional with a union with `null`). `additionalProperties: false` is mandatory. Root is an object, not `anyOf`.", "Root cannot be `anyOf`.", "Not compared here."],
+      ["`tool_choice`", "`auto` (default), `required`, a named function, `allowed_tools` or `none` [[r9]].", "Not compared here.", "`auto`, `any`, `tool` or `none`. `any` and `tool` return 400 on Opus 5.5, Sonnet 5.5, Fable 5.1 and Mythos 5.1, and with manual extended thinking [[r50]]."],
+      ["Parallel calls", "`parallel_tool_calls: false` gives zero or one call. Strict works with parallel calls on non-fine-tuned models since 2025-05-20 [[r12]].", "Docs say structured outputs are not supported with parallel calls, so set `parallel_tool_calls` to `false`.", "`disable_parallel_tool_use` defaults to `false`."],
+      ["Reasoning plus tools in Chat", "From GPT-5.4, Chat does not support tool calling when effort is not `none`. GPT-6 Astra and 6.1 Sol need Responses for tools [[r6]].", "`gpt-5.6-sol` fails with \"Function tools with reasoning_effort are not supported\" even when effort is omitted [[r15]].", "Not applicable."]
+    ], "highlightCol": 1 },
+    { "t": "diagram", "id": "w01-l4-toolloop", "title": "The function calling loop", "alt": "The app sends tool schemas to the model, the model returns a function call, the app runs the tool, returns the output with the call id, and the model answers.", "src": "sequenceDiagram\n  participant App\n  participant Model\n  participant Tool\n  App->>Model: Request with tool schemas\n  Model-->>App: function_call with arguments\n  App->>Tool: Run the function\n  Tool-->>App: Result\n  App->>Model: function_call_output with call_id\n  Model-->>App: Final answer", "caption": "Your app always runs the function. On GPT-6, `async: true` lets the model keep reasoning while the tool runs, and you return the result with the original `call_id` [[r2]]." },
+    { "t": "h", "text": "Same schema, three request shapes", "level": 2 },
+    { "t": "tabs", "tabs": [
+      { "label": "OpenAI Responses", "blocks": [
+        { "t": "code", "lang": "python", "title": "Structured output in Responses", "code": "resp = client.responses.create(\n    model=\"gpt-6-sol\",\n    input=prompt,\n    text={\"format\": {\n        \"type\": \"json_schema\",\n        \"name\": \"ticket\",\n        \"strict\": True,\n        \"schema\": {\n            \"type\": \"object\",\n            \"properties\": {\n                \"category\": {\"type\": \"string\", \"enum\": [\"billing\", \"bug\", \"other\"]},\n                \"priority\": {\"type\": [\"string\", \"null\"]},\n            },\n            \"required\": [\"category\", \"priority\"],\n            \"additionalProperties\": False,\n        },\n    }},\n)", "caption": "Illustrative. `priority` is optional in spirit, but strict mode needs it required, so it is a union with null." }
+      ] },
+      { "label": "Chat Completions", "blocks": [
+        { "t": "code", "lang": "python", "title": "The same schema in Chat", "code": "resp = client.chat.completions.create(\n    model=\"gpt-4.1\",\n    messages=messages,\n    response_format={\n        \"type\": \"json_schema\",\n        \"json_schema\": {\"name\": \"ticket\", \"strict\": True, \"schema\": ticket_schema},\n    },\n)", "caption": "Illustrative. Responses replaces `response_format` with `text.format` [[r6]]." }
+      ] },
+      { "label": "Anthropic Messages", "blocks": [
+        { "t": "code", "lang": "python", "title": "The same schema on Claude", "code": "msg = client.messages.create(\n    model=\"claude-sonnet-5-5\",\n    max_tokens=1024,\n    messages=messages,\n    output_config={\"format\": {\"type\": \"json_schema\", \"schema\": ticket_schema}},\n)", "caption": "Illustrative. Strict tool use is a separate switch: `strict: true` on the tool definition [[r32]]." }
+      ] }
+    ] },
+    { "t": "failure", "title": "Structure failure modes", "items": [
+      { "symptom": "The parser fails on a rare malformed response", "cause": "Prompt-only and JSON mode do not enforce your schema.", "fix": "Move to structured outputs or strict tools, and alert on parse failures so you see the rate." },
+      { "symptom": "A refusal sentence arrives where JSON should be", "cause": "A safety refusal replaces the schema output, and OpenAI makes refusals detectable in the response [[r8]].", "fix": "Check for a refusal before parsing and route it to a safe fallback." },
+      { "symptom": "A schema that works on OpenAI returns 400 on Azure", "cause": "Azure allows 100 properties and 5 nesting levels, and lists `minLength`, `maxLength`, `pattern` and `format` as unsupported.", "fix": "Flatten or split the schema, drop the keywords, and test on the Azure deployment." },
+      { "symptom": "The model skips the tool or picks the wrong one", "cause": "`tool_choice` is `auto`, so the model may answer directly. On Claude Opus 5.5, Sonnet 5.5, Fable 5.1 and Mythos 5.1 a forced `any` or `tool` returns 400.", "fix": "Use `required` or a named function on OpenAI. On those Claude models use `auto` with strict tools or structured outputs, and improve the tool descriptions." },
+      { "symptom": "Tool arguments are schema-invalid from a fine-tuned model", "cause": "A fine-tuned model that makes several calls in one turn loses strict mode [[r9]].", "fix": "Validate arguments in your code and retry, or avoid parallel calls with that model." }
+    ] },
+    { "t": "callout", "kind": "gotcha", "title": "Sources disagree on strict plus parallel calls", "md": "OpenAI's changelog says strict mode works with parallel tool calls on non-fine-tuned models since 2025-05-20 [[r12]]. The Azure page still says structured outputs are not supported with parallel function calls [[r33]]. Follow the page for the platform you deploy on, and test." }
+  ],
+  "quiz": [
+    { "id": "w01-l4-q1", "type": "single", "tag": "bug", "q": "This schema is sent to OpenAI with `strict: true`. What is wrong with it?", "code": { "lang": "json", "code": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"category\": { \"type\": \"string\" },\n    \"priority\": { \"type\": \"string\" }\n  },\n  \"required\": [\"category\"]\n}" }, "options": ["Strict mode needs an array at the root of the schema", "`type: \"string\"` is not allowed anywhere in strict mode", "Nothing, since optional fields are allowed in strict mode if they are left out of `required`", "Fields must all be required, and `additionalProperties` must be `false`"], "answer": 3, "explain": "Strict mode needs all fields in `required` and `additionalProperties: false`, and optional values are emulated with a union with null. The root must be an object, not an array, and string types are fine.", "difficulty": 2, "ref": "r8" },
+    { "id": "w01-l4-q2", "type": "multi", "tag": "concept", "q": "Select every statement that is true for structured outputs on Azure OpenAI as of 2026-10-13.", "options": ["It allows up to 100 object properties and 5 nesting levels", "`minLength`, `maxLength`, `pattern` and `format` are unsupported", "The root can be an `anyOf`", "Limits match OpenAI's 5,000 properties and 10 levels", "Docs advise `parallel_tool_calls: false` with structured outputs"], "answers": [0, 1, 4], "explain": "Azure documents 100 properties, 5 levels, those unsupported keywords and the advice to disable parallel calls. The root cannot be `anyOf` on either platform, and the OpenAI limits are far higher than Azure's.", "difficulty": 2, "ref": "r33" },
+    { "id": "w01-l4-q3", "type": "single", "tag": "flip", "q": "A service uses Chat Completions with function tools on GPT-5.4 or later at reasoning effort `medium`, and tool calls start failing. Which change is most justified?", "options": ["Use Responses, or set effort to `none` where allowed", "Raise `max_completion_tokens` so the tool call has more room", "Switch from strict mode to JSON mode for the arguments", "Add a `seed` so that the tool call repeats reliably"], "answer": 0, "explain": "From GPT-5.4, Chat Completions does not support tool calling when effort is not none, so the API surface or the effort must change. A larger cap, JSON mode or a seed do not change that rule.", "difficulty": 2, "ref": "r6" }
+  ],
+  "defend": null,
+  "refs": ["r2", "r6", "r8", "r9", "r12", "r15", "r32", "r33", "r50"],
+  "takeaways": [
+    "JSON mode guarantees valid JSON only. Structured outputs and strict tools guarantee your schema",
+    "Schema limits and keywords differ sharply between OpenAI and Azure, so test on the platform you deploy",
+    "Check for refusals before parsing, and validate arguments from fine-tuned models",
+    "Reasoning plus tools pushes you to Responses on GPT-5.4 and later"
+  ]
+}

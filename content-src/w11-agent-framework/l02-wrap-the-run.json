@@ -1,0 +1,82 @@
+{
+  "id": "w11-l2",
+  "order": 2,
+  "title": "Wrap the run: middleware, approvals and memory that fits",
+  "kind": "problem",
+  "minutes": 20,
+  "brief": "A request passes through several layers before the model sees it, and the transcript has to live somewhere and stay small. Decide what belongs in middleware, a context provider or a history provider, where history lives, and how it shrinks. The dials are not given.",
+  "blocks": [
+    { "t": "h", "text": "Three layers, three jobs", "level": 2 },
+    { "t": "diagram", "id": "w11-d1", "title": "Where one request travels", "alt": "A caller request passes agent middleware, context and history providers, then a function invocation loop. Chat middleware wraps each model call and function middleware wraps each tool call.", "src": "flowchart TB\n  U[Caller] --> AM[Agent middleware per run]\n  AM --> CP[Context and history providers]\n  CP --> FI[Function invocation loop]\n  FI --> CM[Chat middleware per model call]\n  CM --> M[Model]\n  FI --> FM[Function middleware per tool call]\n  FM --> T[Tool]", "caption": "Python layer order from the pipeline docs: agent middleware and telemetry wrap the agent, which runs the context providers, then the chat client runs the tool loop, chat middleware and the model [[r3]]. Topics w11-t03 and w11-t04." },
+    { "t": "table", "caption": "Which extension point for which job", "head": ["Job", "Put it in", "Why not the others"], "rows": [
+      ["Log, time or authorize a whole run, or reject a request before any model call", "Agent run middleware (`AgentContext`)", "It runs once per run and sees messages, session, options and result [[r4]]"],
+      ["Screen or rewrite the messages for every model call", "Chat-client middleware (`ChatContext`)", "It runs per model call, including each tool-loop iteration since 1.0.0rc5 (2026-03-19), so once-per-run logic belongs one layer up"],
+      ["Veto or alter one tool call, or stop the tool loop", "Function middleware (`FunctionInvocationContext`, `Terminate` in .NET)", "It sees the call and its arguments, not the whole run"],
+      ["Add instructions, retrieved documents, tools or per-run middleware", "Context provider (`before_run`, `after_run`)", "One instance serves every session, so per-session data goes in `session.state` keyed by `source_id`"],
+      ["Load and store the transcript, or keep an audit copy", "History provider", "Only one loader (`load_messages=True`). Audit copies use `load_messages=False` and `store_context_messages=True` [[r18]]"]
+    ], "highlightCol": 1 },
+    { "t": "h", "text": "Dial board: where does history live?", "level": 2 },
+    { "t": "dials", "id": "w11-l2-history", "title": "Choose where the transcript lives", "prompt": "Local memory, your own store or a service-managed thread. Flip the constraints and the ranking and the reasons update (topics w11-t10, w11-t11, w11-t13).",
+      "dials": [
+        { "id": "switch", "label": "Model or provider", "values": [ { "id": "fixed", "label": "Stays the same" }, { "id": "switch", "label": "May switch mid-conversation" } ] },
+        { "id": "compact", "label": "Conversation length", "values": [ { "id": "long", "label": "Long, compaction needed" }, { "id": "short", "label": "Short, no compaction" } ] },
+        { "id": "own", "label": "Who owns retention and tenancy", "values": [ { "id": "platform", "label": "The platform may" }, { "id": "mine", "label": "We must, with tenant checks and deletion" } ] }
+      ],
+      "options": [
+        { "id": "mem", "name": "Local in-memory history", "summary": "The default `InMemoryHistoryProvider` in the process." },
+        { "id": "store", "name": "Custom history provider on your store", "summary": "Database, Redis or Cosmos DB behind a history provider." },
+        { "id": "svc", "name": "Service-managed history", "summary": "A Foundry agent, Responses API with `store` on, or Copilot Studio holds the thread." }
+      ],
+      "scores": {
+        "mem": {
+          "switch": { "fixed": { "s": 0, "why": "Nothing about the provider changes, so the question does not arise." }, "switch": { "s": 1, "why": "Caller-managed history can follow you to another model or provider." } },
+          "compact": { "long": { "s": 2, "why": "Compaction applies to history the agent holds in memory." }, "short": { "s": 0, "why": "No compaction is needed, so every option works." } },
+          "own": { "platform": { "s": 1, "why": "Good for a dev loop or a single process." }, "mine": { "s": -2, "why": "Process memory is lost on restart, cannot be deleted on request across instances and has no tenant check." } }
+        },
+        "store": {
+          "switch": { "fixed": { "s": 0, "why": "You pay for portability you do not use." }, "switch": { "s": 2, "why": "History is caller-managed, so another model or provider can read it. Service ids such as `resp_*` are not portable." } },
+          "compact": { "long": { "s": 2, "why": "The provider loads the transcript into the run, so compaction can trim it before the model call." }, "short": { "s": 0, "why": "Extra code and infrastructure for a short chat." } },
+          "own": { "platform": { "s": 0, "why": "You build and run a store the platform would otherwise run." }, "mine": { "s": 2, "why": "You choose retention, deletion and the tenant check, and map client-visible ids to your own records [[r17]]." } }
+        },
+        "svc": {
+          "switch": { "fixed": { "s": 0, "why": "Service-managed state works while the provider stays fixed." }, "switch": { "s": -2, "why": "Ids such as `resp_*` are not portable across providers or scopes." } },
+          "compact": { "long": { "s": -2, "why": "Compaction has no effect on Foundry agents, Responses with `store` on or Copilot Studio [[r5]]." }, "short": { "s": 1, "why": "Least code: the service holds the thread." } },
+          "own": { "platform": { "s": 1, "why": "The platform owns storage and retention, which is the point of choosing it." }, "mine": { "s": -2, "why": "Service ids are scoped to the key or project and are not an authorization boundary. You must map them to your own store and check the tenant first." } }
+        }
+      },
+      "takeaway": "Where history lives decides what you can do to it. Compaction, model switching and tenant checks all work only on history you hold." },
+    { "t": "table", "caption": "Compaction strategies, gentlest first. Triggers (`TokensExceed`, `MessagesExceed`, `TurnsExceed`, `GroupsExceed`, `HasToolCalls`, `Always`, `Never`, joined with `All` or `Any`) say when to start. The target says when to stop. System messages are always kept [[r5]].", "head": ["Strategy", "What it does", "Cost and loss"], "rows": [
+      ["ToolResult collapse (`keep_last_tool_call_groups`)", "Collapses old tool-call groups", "No model call. Tool output is bulky, so this saves the most for the least fidelity loss"],
+      ["SelectiveToolCall (Python only)", "Drops old tool-call groups", "No model call. The evidence behind earlier answers is gone"],
+      ["Summarization", "Replaces old groups with a Summary group", "An extra model call and lossy by design"],
+      ["SlidingWindow (`keep_last_groups`)", "Keeps only the last N groups", "No model call. Recent turns survive and older ones do not"],
+      ["Truncation", "Drops the oldest groups until the target is met", "No model call. The bluntest instrument, so use it last"],
+      ["Pipeline (`PipelineCompactionStrategy` in .NET, `TokenBudgetComposedStrategy` in Python)", "Runs strategies in order, with a fallback that excludes the oldest groups", "More configuration. Order the layers from gentle to aggressive"]
+    ] },
+    { "t": "failure", "title": "Failure modes in the wrap", "items": [
+      { "symptom": "Compaction is configured but tokens per call keep climbing.", "cause": "History is held by a service (Foundry agent, Responses with `store` on, Copilot Studio). Compaction applies only to history the agent holds in memory.", "fix": "Hold history locally or in your own provider, or use the platform's own limits. Check the token counts per call in telemetry (chapter w15)." },
+      { "symptom": "A guardrail acts twice, or acts again on every tool-loop turn.", "cause": "Chat middleware runs per model call, including each tool-loop iteration, and old code assumed one call per run.", "fix": "Move once-per-run logic to agent middleware. Keep chat middleware idempotent." },
+      { "symptom": "Users see each other's notes, or one session's state leaks into another.", "cause": "A context provider keeps per-session data on `self`, but one provider instance serves every session.", "fix": "Keep per-session data in `session.state` keyed by `source_id`." },
+      { "symptom": "A team sets `disable_tool_auto_approval=True` and still gets approval prompts for a risky tool.", "cause": "That flag removes the standing-approval middleware. It does not remove the approval requirement, which is a property of the tool [[r16]].", "fix": "Set the approval mode per tool by risk tier, and treat standing approvals as a convenience on top (topic w11-t06)." }
+    ] },
+    { "t": "accordion", "items": [
+      { "title": "Go deeper: skills, planning, todos and looping", "blocks": [
+        { "t": "p", "md": "**Skills** are folders with a `SKILL.md` (frontmatter `description` up to 1,024 characters) plus optional `scripts/`, `references/` and `assets/`. They disclose progressively: about 100 tokens per skill advertised, under 5,000 tokens loaded through `load_skill`, then `read_skill_resource` and `run_skill_script`. In the Harness all three skill tools require approval by default. The skills API is experimental and had breaking changes in Python 1.3.0 and 1.4.0 (May 2026) [[r28]]." },
+        { "t": "p", "md": "**Planning and looping** (topics w11-t08 and w11-t09): `TodoProvider` exposes `todos_add`, `todos_complete`, `todos_remove`, `todos_get_remaining` and `todos_get_all`. `AgentModeProvider` has `plan` (interactive) and `execute` (autonomous) modes. Looping re-invokes an agent until a condition holds (`LoopAgent` in .NET, `AgentLoopMiddleware` in Python), with a default maximum of 10 invocations, and it returns when a tool approval is pending. Looping is experimental [[r23]]. Always cap it, because an evaluator that never says done is a cost leak." }
+      ] }
+    ] }
+  ],
+  "quiz": [
+    { "id": "w11-l2-q1", "type": "order", "tag": "order", "difficulty": 2, "q": "Put the layers a Python agent request passes through in order, outermost first.", "items": ["Agent middleware (once per run)", "Context and history providers (before the call)", "Function invocation loop", "Chat middleware (once per model call)", "The model"], "explain": "Agent middleware and telemetry wrap the agent, which runs the context providers. The chat client then runs the function invocation loop, whose iterations call chat middleware and the model. Function middleware sits inside the loop around each tool call.", "ref": "r3" },
+    { "id": "w11-l2-q2", "type": "single", "tag": "diagnose", "difficulty": 2, "q": "A `TokensExceed` compaction trigger is configured, yet tokens per call keep climbing. The agent is a Foundry agent with a service-managed conversation. What explains it?", "options": ["The trigger fires only on `MessagesExceed`, so token triggers are ignored unless a summarizer is configured first", "Summarization needs a second model, and none is configured", "Tool-call groups are atomic, so none of them can ever be removed", "Compaction applies only to history held in memory, and the service holds this conversation"], "answer": 3, "explain": "The docs state that compaction has no effect on Foundry agents, Responses with `store` on or Copilot Studio. A token trigger is valid, a missing summarizer would raise an error instead of silently doing nothing, and atomic tool-call groups are removed whole, not never.", "ref": "r5" },
+    { "id": "w11-l2-q3", "type": "single", "tag": "security", "difficulty": 3, "q": "Users report seeing another user's notes. The context provider sets `self.notes = []` in its constructor and appends to it after each run. What is the cause and the fix?", "options": ["The history provider is configured with `load_messages=True` twice, so drop one", "One provider instance serves every session, so instance fields are shared. Use `session.state` keyed by `source_id`", "Chat middleware runs once per model call and duplicates the notes, so move it to agent middleware", "Compaction merged two sessions' message groups when both crossed the trigger together, so raise the trigger and the target"], "answer": 1, "explain": "A context provider instance is shared by all sessions, so anything stored on it is shared too. Two loaders cause duplicated history, not cross-user notes. Chat middleware frequency and compaction do not move data between sessions.", "ref": "r17" }
+  ],
+  "defend": null,
+  "refs": ["r3", "r4", "r5", "r16", "r17", "r18", "r23", "r28"],
+  "takeaways": [
+    "Match the job to the layer: agent middleware per run, chat middleware per model call, function middleware per tool call, providers for context and transcript.",
+    "Per-session data belongs in `session.state` keyed by `source_id`, never on a provider instance.",
+    "Where history lives decides what you can do to it: compaction, model switching and tenant checks only work on history you hold.",
+    "Approval is a property of the tool. The Harness's standing approvals are a convenience layer on top of it."
+  ]
+}

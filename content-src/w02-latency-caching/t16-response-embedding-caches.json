@@ -1,0 +1,119 @@
+{
+  "id": "w02-t16",
+  "order": 16,
+  "group": "Other caches and budgets",
+  "title": "Response and embedding caches",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "An exact-match response cache returns a stored answer for an identical request. An embedding cache reuses vectors for unchanged text. Both save calls, and both are only as safe as their keys and invalidation rules.",
+  "useIf": "The same exact inputs repeat, as in retries, re-runs, re-ingestion of unchanged documents or fixed tool and resource lists.",
+  "avoidIf": "Inputs rarely repeat exactly, answers must vary or stay fresh, or you cannot build a key that carries scope and versions.",
+  "explain": [
+    { "t": "p", "md": "An **exact-match response cache** hashes a normalised request and returns the stored answer on a match. The key must include everything that changes the answer: model ID, messages, sampling parameters, tools, prompt template version and the caller's scope. It needs no embedding and cannot return a near-miss, which makes it far safer than a semantic cache. It still replaces sampling, so tasks that need fresh variation should not use it [[r17]]." },
+    { "t": "p", "md": "An **embedding cache** keys on a hash of the content and stores the vector. It saves embedding calls when a pipeline re-ingests mostly unchanged chunks, and when the same query text is embedded repeatedly. The key must also carry the embedding model and its version, because vectors from different models are not comparable. This is a design rule inferred from the Redis tutorial's practice of keying semantic caches by embedding model ID, not a vendor recommendation for embedding caches [[r17]]." },
+    { "t": "table", "caption": "Cache layers at a glance", "head": ["Layer", "Key", "Saves", "Main risk"], "rows": [
+      ["Provider prompt cache", "Prefix tokens", "Prefill and input cost", "Silent misses, write premium"],
+      ["Exact response cache", "Hash of normalised request plus scope and versions", "The whole call", "Stale answers, no sampling variance"],
+      ["Semantic cache", "Embedding of the prompt plus partition", "The whole call for paraphrases", "Wrong, stale or leaked answers"],
+      ["Embedding cache", "Content hash plus embedding model and version", "Embedding calls", "Stale vectors if the model changes"],
+      ["MCP list and resource cache", "Server plus `cacheScope` and authorization", "Round trips", "A private entry crossing users"]
+    ] },
+    { "t": "p", "md": "**Tool and resource caching in MCP.** The 2026-07-28 revision lets servers mark results as cacheable with `ttlMs` (like `max-age`, must be 0 or more, absent means 0) and `cacheScope` (`public` or `private`) on `server/discover`, `tools/list`, `prompts/list`, `resources/list`, `resources/templates/list` and `resources/read`. `input_required` results are not cacheable. Servers SHOULD return tools in a deterministic order, which also protects LLM prompt caches [[r18]]." },
+    { "t": "callout", "kind": "gotcha", "title": "Invalidate on every dimension that changes the answer", "md": "Expire entries by TTL and also by version: model, prompt template, tool configuration, embedding model and safety policy. Add an event-based flush when the underlying data changes. A cache without a version in the key serves yesterday's logic after a deploy." }
+  ],
+  "whereToUse": [
+    "Idempotent retries, so a retried request returns the stored answer instead of a second paid call",
+    "Evaluation and regression runs that replay fixed prompts against a fixed model",
+    "Classification or extraction of strings that recur exactly, such as product titles",
+    "Nightly re-ingestion pipelines where most chunks are unchanged",
+    "Agent platforms that call `tools/list` and `resources/read` on every turn"
+  ],
+  "whenToUse": {
+    "use": [
+      "Inputs repeat exactly and the answer is a pure function of the key",
+      "You can include scope, model and template versions in the key",
+      "Embedding the same text again would produce the same vector"
+    ],
+    "avoid": [
+      "Free-form chat where the exact request almost never repeats",
+      "Tasks that need a different sample each time, such as brainstorming",
+      "Answers built from live or permissioned data without a scope in the key"
+    ],
+    "flips": [
+      "The embedding model or its version changes: invalidate the whole embedding cache",
+      "A prompt template or safety policy changes: bump the version in the key",
+      "MCP `cacheScope` is `private`: key the entry by authorization context"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Exact response cache", "Identical requests, retries, replays", "Wording varies", "Stale answers, low hit rate on chat"],
+      ["Semantic cache", "Paraphrased repeats, shared answers", "Personalised or live answers", "Near-miss errors and leakage"],
+      ["Embedding cache", "Re-ingestion and repeated query text", "Mostly new text", "Stale vectors across model versions"],
+      ["Prompt (prefix) cache", "Long stable prefix, new questions", "Short prompts", "Does not skip the decode"],
+      ["MCP `ttlMs` and `cacheScope`", "Stable tool and resource lists", "Lists that change per call", "Private entries must not cross users"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "After a deploy, users still get old-style answers", "cause": "The key omits the prompt template and model versions", "fix": "Add template, model, tool and policy versions to the key, and flush on deploy [[r17]]" },
+    { "symptom": "Search quality drops after switching embedding models", "cause": "Cached vectors from the old model are mixed with new ones", "fix": "Key on embedding model and version, and rebuild the cache and index together" },
+    { "symptom": "One user sees another's tool list or resource", "cause": "A `private` MCP result was cached without an authorization scope", "fix": "Respect `cacheScope` and key private entries per authorization context [[r18]]" }
+  ],
+  "scenarios": [
+    {
+      "id": "w02-t16-s1",
+      "title": "Nightly re-ingestion of two million chunks",
+      "situation": "A pipeline re-embeds 2,000,000 chunks every night. About 3% change on a typical day. The embedding model is upgraded roughly twice a year. Embedding cost is the largest line in the ingestion bill.",
+      "constraints": ["Mostly unchanged text", "Rare model upgrades", "Cost is the driver, not latency"],
+      "unknowns": ["Is chunking deterministic, so unchanged text yields identical chunks?", "How is the vector store keyed?"],
+      "question": "How do you cut embedding cost?",
+      "options": [
+        { "name": "Cache vectors by content hash plus embedding model and version", "verdict": "best", "why": "About 97% of chunks hit the cache, so only 60,000 are embedded. A model upgrade changes the key and refreshes everything.", "tradeoff": "You store hashes and vectors, and chunking must be deterministic." },
+        { "name": "Re-embed everything every night", "verdict": "good", "why": "It is simple and always consistent.", "tradeoff": "You pay for 1.94 million unneeded calls every night." },
+        { "name": "Key the cache on chunk id only", "verdict": "poor", "why": "An edited chunk keeps its id, so a stale vector is served after the text changes.", "tradeoff": "Right only if ids change whenever content changes." }
+      ],
+      "flips": [
+        { "if": "Chunk boundaries shift when a document changes", "then": "Hash chunks after chunking, or hash at document level and re-chunk changed documents." },
+        { "if": "The model changes", "then": "Treat all cached vectors as invalid and rebuild." }
+      ],
+      "takeaway": "Key on content and model version, not on ids."
+    },
+    {
+      "id": "w02-t16-s2",
+      "title": "Agent platform and 30 MCP servers",
+      "situation": "An agent platform calls tools/list on 30 MCP servers at the start of every turn, adding hundreds of milliseconds. Some servers return different tools depending on who is signed in. The servers send ttlMs and cacheScope.",
+      "constraints": ["Many servers", "Some lists vary by authorization", "Servers declare caching hints"],
+      "unknowns": ["Which servers mark results private?", "How does the platform identify an authorization context?"],
+      "question": "How do you cache the lists?",
+      "options": [
+        { "name": "Honour ttlMs and cacheScope, key private results by authorization context", "verdict": "best", "why": "It removes most round trips, follows the server's own freshness hints and never mixes users.", "tradeoff": "A small cache layer and a per-context key to maintain." },
+        { "name": "One shared cache for all users with a fixed 60 second TTL", "verdict": "poor", "why": "It ignores `cacheScope`, so a private list for one user can reach another.", "tradeoff": "Safe only for servers that mark everything public." },
+        { "name": "Do not cache and call every turn", "verdict": "good", "why": "It is always fresh and simple.", "tradeoff": "It pays the round trips on every turn and ignores the servers' hints." }
+      ],
+      "flips": [
+        { "if": "A server omits ttlMs", "then": "Treat it as 0, so do not cache." },
+        { "if": "A list changes mid-session", "then": "Refresh when the server signals a change, and keep the tool order deterministic for prompt caching." }
+      ],
+      "takeaway": "Use the server's cache hints and scope."
+    }
+  ],
+  "quiz": [
+    { "id": "w02-t16-q1", "type": "numeric", "tag": "numeric", "q": "A pipeline re-embeds 2,000,000 chunks nightly and 3% change. With a content-hash embedding cache, how many embedding calls are avoided on a normal night?", "answer": 1940000, "tolerancePct": 1, "unit": "calls", "hint": "97% of 2,000,000", "explain": "3% of 2,000,000 is 60,000 chunks that must be embedded, so 1,940,000 calls are avoided. A model upgrade changes the key and invalidates the whole cache.", "difficulty": 1, "ref": "r17" },
+    { "id": "w02-t16-q2", "type": "single", "tag": "bug", "q": "After switching embedding models, search quality drops although the cache hit rate is 99%. What is the most likely cause?", "options": ["The vector store index is too small", "The cache returns old-model vectors because the key omits the embedding model", "Cosine similarity is unsupported", "The TTL is too long for queries"], "answer": 1, "explain": "Vectors from different models live in different spaces, so mixing them breaks similarity. The cache key must carry the embedding model and version. The other options do not explain a drop that coincides with a model change.", "difficulty": 2, "ref": "r17" },
+    { "id": "w02-t16-q3", "type": "match", "tag": "concept", "q": "Match each MCP cache element to its meaning.", "pairs": [
+      { "l": "ttlMs", "r": "Freshness lifetime in milliseconds, like max-age. Absent means 0" },
+      { "l": "cacheScope public", "r": "May be shared across callers" },
+      { "l": "cacheScope private", "r": "Must not cross authorization contexts" },
+      { "l": "input_required result", "r": "Not cacheable" }
+    ], "explain": "These come from the 2026-07-28 MCP revision. They let clients cache list and read results safely and also help keep tool order stable for prompt caches.", "difficulty": 2, "ref": "r18" }
+  ],
+  "flashcards": [
+    { "front": "What must an exact-match response cache key include?", "back": "Model ID, messages, sampling parameters, tools, template version and the caller's scope. Anything that changes the answer." },
+    { "front": "What must an embedding cache key include?", "back": "A content hash plus the embedding model and its version, since vectors from different models are not comparable." },
+    { "front": "What are ttlMs and cacheScope in MCP?", "back": "ttlMs is the freshness lifetime in ms, like max-age. cacheScope is public or private, and private entries must not cross authorization contexts." }
+  ],
+  "related": ["w02-t15", "w02-t14", "w02-t17", "w02-l6"],
+  "refs": ["r17", "r18", "r16"]
+}

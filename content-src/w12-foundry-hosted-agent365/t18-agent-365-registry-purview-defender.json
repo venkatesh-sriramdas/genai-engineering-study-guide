@@ -1,0 +1,106 @@
+{
+  "id": "w12-t18",
+  "order": 18,
+  "group": "Identity and governance",
+  "title": "Agent 365 registry, Purview and Defender",
+  "minutes": 8,
+  "difficulty": "advanced",
+  "summary": "The Agent 365 registry is the unified inventory of agents. Purview audits, classifies and protects the data they touch, and Defender discovers agents and detects threats. Entra stays the identity layer through Agent ID.",
+  "useIf": "You administer or secure agents and need to know what you can see, what is on by default and what needs separate onboarding.",
+  "avoidIf": "You only need to build an agent: use the runtime topics first.",
+  "explain": [
+    { "t": "p", "md": "**Registry.** In the Microsoft 365 admin center go to Agents, All Agents, Registry. It lists four types: Microsoft agents, External partner-built agents, Published by your org and Shared by creator [[r16]]. The summary shows total agents, **agents without owners** and **unmanaged agents** (created or managed outside Agent 365, without its risk protection and observability). You can filter by status, publisher type, channel, platform and data source [[r16]]. One Copilot Studio agent can appear more than once with different publisher types. That is by design, not an inventory error, and removing one entry does not remove the other [[r16]]. Agent 365 is the unified registry and control plane, while Entra keeps agent identity, Conditional Access and governance [[r29]]." },
+    { "t": "diagram", "id": "w12-t18-d1", "title": "Who does what for an agent instance", "alt": "An agent instance appears in the Agent 365 registry and map. Purview audits and classifies its activity. Defender discovers it and detects threats. Entra provides identity and Conditional Access.", "src": "flowchart LR\n  A[Agent instance] --> R[Registry and map]\n  A --> P[Purview: audit and classification]\n  A --> D[Defender: discovery and threat detection]\n  A --> E[Entra Agent ID: identity and Conditional Access]" },
+    { "t": "p", "md": "**Purview.** When you create an agent instance for Agent 365 it is automatically enabled for audit, sensitive-data detection with data classification, and the Compliance Manager assessments for AI regulations. For other capabilities (DLP, Insider Risk Management, communication compliance, eDiscovery, data lifecycle) you include the instance in policies as you would a user [[tr13]]. Audit covers agent-to-human, human-to-agent, agent-to-tools and agent-to-agent interactions, with prompts and responses in the unified audit log. Encryption without sensitivity labels is not supported, and labeled encrypted content needs the EXTRACT usage right as well as VIEW for AI to return it [[tr13]]." },
+    { "t": "p", "md": "**Defender.** After you onboard to Agent 365, security for AI agents (discovery, posture assessment, threat detection) is enabled automatically. Add the Microsoft 365 connector (Entra ID Management events and Microsoft 365 activities) for investigation and advanced hunting. Copilot Studio **real-time protection** scans tool invocations for suspicious behavior and cross-prompt injection and blocks malicious actions, and it needs a Power Platform admin with the same App ID. **Local agents** are onboarded separately through Defender for Endpoint in active mode [[tr14]]." },
+    { "t": "callout", "kind": "preview", "title": "Roles, licensing and status, checked 2026-10-13", "md": "Seeing all agents needs the **AI Reader** role (recommended least privilege) or AI Administrator and no specific license. Managing identities needs Agent ID Administrator. Conditional Access and identity governance need the Entra Agent ID licensing [[r29]]. Discovery of local and shadow agents through Defender and Intune was announced as preview [[r20]]. Product-level licensing for Purview and Defender capabilities beyond what these pages state is **UNVERIFIED**." }
+  ],
+  "whereToUse": [
+    "An AI admin reviewing the full agent inventory and agents without owners",
+    "A compliance team auditing agent prompts, responses and tool interactions in Purview",
+    "A SOC investigating agent activity and blocking prompt injection in Copilot Studio agents",
+    "An identity team managing blueprints, permissions and Conditional Access in Entra"
+  ],
+  "whenToUse": {
+    "use": [
+      "Use the registry as the source of truth for what agents exist, and the Entra admin center for identity actions",
+      "Include agent instances in Purview policies the same way you include users",
+      "Turn on the Microsoft 365 connector so Defender alerts and hunting have data"
+    ],
+    "avoid": [
+      "Do not read duplicate-looking rows as errors and delete one: they are separate lifecycle records",
+      "Do not assume local agents are covered by cloud onboarding",
+      "Do not assume blueprints created earlier appear automatically in the registry"
+    ],
+    "flips": [
+      "Agents run only on Microsoft platforms: native integration may cover the inventory with no code",
+      "You need controls on agents outside Microsoft platforms: use the SDK or registry sync, and expect lighter coverage",
+      "A GA-only policy applies: treat local and shadow discovery as a labeled pilot"
+    ]
+  },
+  "alternatives": {
+    "title": "Where each task lives",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Agent 365 registry (M365 admin center)", "Full inventory, owners, unmanaged agents", "You need to edit identities and policies", "Needs AI Reader or higher [[r29]]"],
+      ["Entra admin center", "Agent identities, blueprints, Conditional Access, governance", "You need agents that have no Entra agent identity", "Shows only agents with an Entra Agent ID [[r29]]"],
+      ["Purview", "Audit, classification, DLP and compliance for agent data", "You need runtime threat blocking", "Capabilities beyond audit and classification need policies [[tr13]]"],
+      ["Defender", "Threat detection, hunting, Copilot Studio real-time protection", "You need data governance records", "Connector, Power Platform admin and endpoint onboarding needed [[tr14]]"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Defender shows no alerts for a Copilot Studio agent that was blocked", "cause": "Real-time protection still blocks without the Microsoft 365 connector, but alerts and incidents do not appear", "fix": "Connect the Microsoft 365 connector so alerts and hunting have data [[tr14]]." },
+    { "symptom": "Local agents are missing from Defender", "cause": "Local agents are onboarded separately from cloud agents", "fix": "Set up AI agent runtime protection in Defender for Endpoint, in active mode [[tr14]]." },
+    { "symptom": "A blueprint created earlier is not in the registry", "cause": "Some previously created blueprints may not appear", "fix": "Register the blueprint in the Agent 365 registry as described in the Entra guidance [[r29]]." }
+  ],
+  "scenarios": [
+    {
+      "id": "w12-t18-s1",
+      "title": "Agents without owners",
+      "situation": "The registry shows many agents without owners and a growing count of unmanaged agents. Leadership asks for a plan.",
+      "constraints": ["Owners left the company", "Some agents run on other platforms", "Compliance review is due"],
+      "unknowns": ["Which platforms host the unmanaged agents?", "Are sponsors set on Entra blueprints?"],
+      "question": "What is your first move?",
+      "options": [
+        { "name": "Assign owners and sponsors, register blueprints, and bring unmanaged agents under Agent 365 through native integration, SDK or registry sync", "verdict": "best", "why": "It fixes accountability and brings agents under risk protection and observability.", "tradeoff": "Cross-team effort and some code changes for framework-built agents." },
+        { "name": "Block every unmanaged agent", "verdict": "good", "why": "Stops risk quickly.", "tradeoff": "Breaks business processes and hides which agents mattered." },
+        { "name": "Delete duplicate-looking rows to clean the list", "verdict": "poor", "why": "Duplicates are separate lifecycle records by design, and removing one does not remove the other.", "tradeoff": "Cleanup is right only after you confirm a row is truly stale." }
+      ],
+      "flips": [
+        { "if": "An agent is confirmed abandoned and risky", "then": "Block or remove it after notifying stakeholders." },
+        { "if": "All agents are on Foundry", "then": "Native integration and Entra sponsors cover most of it." }
+      ],
+      "takeaway": "Fix ownership first, then coverage."
+    },
+    {
+      "id": "w12-t18-s2",
+      "title": "Injection protection for maker-built agents",
+      "situation": "The security team wants cross-prompt injection blocked in Copilot Studio agents and wants alerts in the Defender portal. Some employees run local agents too.",
+      "constraints": ["Real-time blocking and alerts", "Power Platform admin available", "Local agents exist"],
+      "unknowns": ["Is Defender for Endpoint in active mode?", "Who owns the Power Platform App ID?"],
+      "question": "How do you set up Defender coverage?",
+      "options": [
+        { "name": "Onboard Agent 365, connect the Microsoft 365 connector, enable Copilot Studio real-time protection with the Power Platform admin, and onboard local agents through Defender for Endpoint", "verdict": "best", "why": "Each population has its own onboarding, and the connector gives alerts and hunting.", "tradeoff": "Several teams must coordinate, and one App ID must match across portals." },
+        { "name": "Rely on the default enablement after Agent 365 onboarding", "verdict": "good", "why": "Discovery, posture and threat detection are on automatically.", "tradeoff": "No Copilot Studio real-time protection and no local agents until you onboard them." },
+        { "name": "Assume local agents are covered by cloud onboarding", "verdict": "poor", "why": "Local agents are onboarded separately and need Defender for Endpoint in active mode.", "tradeoff": "Right only after the endpoint setup is done." }
+      ],
+      "flips": [
+        { "if": "Power Platform admin is unavailable", "then": "Defer real-time protection and rely on detection, noting the gap." },
+        { "if": "Policy forbids preview discovery", "then": "Report local discovery as a pilot." }
+      ],
+      "takeaway": "Cloud, Copilot Studio and local agents each need their own onboarding step."
+    }
+  ],
+  "quiz": [
+    { "id": "w12-t18-q1", "type": "multi", "tag": "concept", "q": "Which are enabled automatically when you create an agent instance for Agent 365, according to the Purview page?", "options": ["Audit", "Detection of sensitive data with data classification", "Compliance Manager assessments for AI regulations", "DLP policies applied without configuration"], "answers": [0, 1, 2], "explain": "Audit, data classification and the Compliance Manager assessments are automatic. DLP and the other capabilities need the agent instance included in policies.", "ref": "tr13" },
+    { "id": "w12-t18-q2", "type": "single", "tag": "diagnose", "q": "Copilot Studio real-time protection blocked an action, but no alert appears in Defender. What is the likely cause?", "options": ["Real-time protection is disabled", "The agent is a local agent", "Agent 365 is not GA", "The Microsoft 365 connector is not connected"], "answer": 3, "explain": "Without the Microsoft 365 connector, real-time protection continues to block, but alerts and incidents do not show. A disabled protection would not block, and local agents use a separate path.", "ref": "tr14" },
+    { "id": "w12-t18-q3", "type": "single", "tag": "tradeoff", "q": "Which role does the registry guidance recommend for viewing all agents with least privilege?", "options": ["Global Administrator", "AI Reader", "Agent ID Administrator", "Security Administrator"], "answer": 1, "explain": "AI Reader is the recommended least-privilege role for viewing. Agent ID Administrator manages identities, and the others are broader.", "ref": "r29" }
+  ],
+  "flashcards": [
+    { "front": "Four agent types in the Agent 365 registry?", "back": "Microsoft agents, External partner-built agents, Published by your org, Shared by creator. One Copilot Studio agent can appear under more than one type by design." },
+    { "front": "Agent 365 registry vs Entra admin center?", "back": "Registry: complete inventory, including agents without an Entra identity. Entra: agents with Agent IDs, blueprints, Conditional Access and governance." },
+    { "front": "Which Defender coverage needs separate onboarding?", "back": "Local agents on endpoints (Defender for Endpoint in active mode) and Copilot Studio real-time protection (Power Platform admin, matching App ID)." }
+  ],
+  "related": ["w12-t15", "w12-t17", "w07-t12", "w17-t03", "w17-t07", "w12-l6"],
+  "refs": ["r16", "r20", "r29", "tr13", "tr14"]
+}

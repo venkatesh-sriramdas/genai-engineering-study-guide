@@ -1,0 +1,114 @@
+{
+  "id": "w11-t13",
+  "order": 13,
+  "group": "State and memory",
+  "title": "Compaction",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "Compaction shrinks locally held history before it hits the context limit: collapse old tool results, summarise, slide a window, truncate. Strategies work on atomic message groups and run from gentle to aggressive.",
+  "useIf": "History is held in memory (local session or your store) and long tool-heavy runs approach the model's context window or cost budget.",
+  "avoidIf": "History is service-managed (Foundry agents, Responses with `store` on, Copilot Studio): compaction has no effect there.",
+  "explain": [
+    { "t": "p", "md": "Messages form **atomic groups**: System (always kept), User, AssistantText, ToolCall (assistant tool calls plus their results, never split) and Summary. Dropping half a tool call pair would break provider APIs, so strategies exclude whole groups [[tr13]]." },
+    { "t": "p", "md": "Every strategy has a **trigger** (when to start) and a **target** (when to stop; default is the inverse of the trigger). Triggers: `Always`, `Never`, `TokensExceed`, `MessagesExceed`, `TurnsExceed`, `GroupsExceed` and `HasToolCalls`, combined with `All` or `Any`. Strategies: **Truncation**, **SlidingWindow** (`keep_last_groups`), **ToolResult** collapse (`keep_last_tool_call_groups`), **Summarization** (a model call, lossy), **SelectiveToolCall** (Python only) and pipelines: `PipelineCompactionStrategy` (.NET) or `TokenBudgetComposedStrategy` (Python, with a built-in fallback that excludes the oldest groups). The docs recommend layering gentle to aggressive [[tr13]]." },
+    { "t": "flow", "title": "A layered pipeline (gentle to aggressive)", "steps": [
+      { "title": "Collapse tool results", "md": "Old, bulky tool output shrinks first." },
+      { "title": "Summarise", "md": "Older spans become a Summary group, using a cheaper model." },
+      { "title": "Sliding window", "md": "Keep the last N turns or groups." },
+      { "title": "Truncate", "md": "Emergency backstop: drop the oldest groups." }
+    ] },
+    { "t": "p", "md": "**Where it runs matters.** In .NET register `CompactionProvider` on the `ChatClientBuilder` with `UseAIContextProviders(...)`: it compacts only the in-flight messages before each model call and leaves stored history unchanged. Registered through `ChatClientAgentOptions.AIContextProviders` it is not engaged inside the tool loop and its synthetic summaries can be persisted into history. The Harness wires compaction itself and turns it on only when you set both `MaxContextWindowTokens` and `MaxOutputTokens` (or `max_context_window_tokens` and `max_output_tokens`) or supply a strategy [[tr13]]." },
+    { "t": "tabs", "tabs": [
+      { "label": "C#", "blocks": [ { "t": "code", "lang": "csharp", "code": "PipelineCompactionStrategy pipeline = new(\n    new ToolResultCompactionStrategy(CompactionTriggers.TokensExceed(0x200)),\n    new SummarizationCompactionStrategy(summarizerClient, CompactionTriggers.TokensExceed(0x500)),\n    new SlidingWindowCompactionStrategy(CompactionTriggers.TurnsExceed(4)),\n    new TruncationCompactionStrategy(CompactionTriggers.TokensExceed(0x8000)));\n\nAIAgent agent = agentChatClient.AsBuilder()\n    .UseAIContextProviders(new CompactionProvider(pipeline))   // in-flight only\n    .BuildAIAgent(new ChatClientAgentOptions { Name = \"ShoppingAssistant\" });\n\n// Harness shortcut\nvar h = chatClient.AsHarnessAgent(new HarnessAgentOptions\n    { MaxContextWindowTokens = 128_000, MaxOutputTokens = 16_384 });" } ] },
+      { "label": "Python", "blocks": [ { "t": "code", "lang": "python", "code": "tok = CharacterEstimatorTokenizer()\nstrategy = TokenBudgetComposedStrategy(\n    token_budget=16_000, tokenizer=tok,\n    strategies=[\n        ToolResultCompactionStrategy(keep_last_tool_call_groups=1),\n        SummarizationStrategy(client=summarizer_client, target_count=4, threshold=2),\n        SlidingWindowStrategy(keep_last_groups=20),\n    ])\nagent = Agent(client=client, compaction_strategy=strategy, tokenizer=tok)\n\n# one-off override\nawait agent.run('Summarize the rollout risks.',\n    compaction_strategy=TruncationStrategy(max_n=8_000, compact_to=4_000), tokenizer=tok)\n\n# Harness: both limits must be set\nagent = create_harness_agent(client, max_context_window_tokens=128_000,\n                             max_output_tokens=16_384)" } ] }
+    ] }
+  ],
+  "whereToUse": [
+    "Tool-heavy agents where bulky tool results dominate the context",
+    "Long chats on models with a limited context window",
+    "Harness agents that run for hours and need compaction between model calls",
+    "Cost control: fewer input tokens per call on every turn"
+  ],
+  "whenToUse": {
+    "use": [
+      "History is local and grows beyond the window or the budget",
+      "Tool results are large and old ones are rarely needed verbatim",
+      "A cheap summarizer model is acceptable for the lossy step"
+    ],
+    "avoid": [
+      "Service-managed history: no effect, you only add complexity",
+      "Legal or exact-quote needs: summaries lose fidelity, so keep a full audit transcript elsewhere",
+      "Short chats: compaction adds latency and risk for no gain"
+    ],
+    "flips": [
+      "You must keep exact earlier facts: store them in memory (a context provider) instead of relying on summaries",
+      "Prompt-cache hit rate matters: aggressive compaction rewrites the prefix and can reduce cache hits, so compact in larger, less frequent steps"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Tool-result collapse", "Bulky tool output", "Results are needed later", "Loses raw results"],
+      ["Summarization", "Long dialogue where gist matters", "Exact wording matters", "Extra model call, lossy, can drift"],
+      ["Sliding window", "Recent turns matter most", "Early instructions or facts matter", "Silent forgetting"],
+      ["Truncation", "Emergency backstop", "As the main strategy", "Abrupt loss of oldest groups"],
+      ["Memory provider (long-term)", "Recall across sessions", "Pure window pressure inside one run", "Extra store, write policy"],
+      ["Bigger context model", "Budget allows", "Cost or latency matter", "Pays for every token on every call"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Tokens do not drop after enabling compaction", "cause": "The agent uses service-managed history, or the trigger threshold is above the real size", "fix": "Confirm history is local and log token counts at the trigger" },
+    { "symptom": "Summary messages appear in stored history", "cause": "(.NET) `CompactionProvider` was registered through `ChatClientAgentOptions` instead of on the builder", "fix": "Register on `ChatClientBuilder.UseAIContextProviders` to compact only in-flight messages" },
+    { "symptom": "The Harness never compacts", "cause": "Compaction is off unless both token limits (or a strategy) are provided", "fix": "Set `max_context_window_tokens` and `max_output_tokens`, or pass a strategy" }
+  ],
+  "scenarios": [
+    {
+      "id": "w11-t13-s1",
+      "title": "Coding agent with huge tool outputs",
+      "situation": "A coding agent runs shell and search tools. Each result is 10 to 40 KB. After 15 calls the context is full. Early instructions must stay.",
+      "constraints": ["Tool results dominate size", "System prompt must be kept", "History is local"],
+      "unknowns": ["Do later steps reread old outputs?", "Is a cheaper summarizer model available?", "Is the full transcript stored elsewhere?"],
+      "question": "Which compaction strategy do you lead with?",
+      "options": [
+        { "name": "A pipeline that collapses old tool results first, then summarises, then a sliding window as backstop", "verdict": "best", "why": "Collapsing the bulky results frees most of the space at low loss, and System messages are always kept.", "tradeoff": "Later steps cannot reread collapsed raw results; a cheaper model adds summarization calls." },
+        { "name": "Sliding window of the last 5 groups only", "verdict": "poor", "why": "Drops the middle of the task and loses decisions, with no summary.", "tradeoff": "Acceptable for chatty dialogue where only recent turns matter." },
+        { "name": "Switch to a model with a larger context window", "verdict": "good", "why": "No quality loss from compaction.", "tradeoff": "Higher cost per call and still bounded." }
+      ],
+      "flips": [
+        { "if": "Agents often need the raw output again", "then": "Write outputs to files and keep paths in history." },
+        { "if": "Prompt caching is important", "then": "Compact in large steps so the stable prefix survives longer." }
+      ],
+      "takeaway": "Layer from lossless-ish to lossy, and shrink the biggest items first."
+    },
+    {
+      "id": "w11-t13-s2",
+      "title": "Hosted agent on a managed service",
+      "situation": "An agent runs on Foundry with the service storing conversation state. Users report rising latency in long chats.",
+      "constraints": ["Service-managed history", "No local transcript", "Long chats"],
+      "unknowns": ["Can history be held locally instead?", "Is the platform's own context handling enough?"],
+      "question": "What do you do about long chats?",
+      "options": [
+        { "name": "Do not rely on framework compaction; use the service features, start a new conversation with a summary, or move to local history", "verdict": "best", "why": "Compaction has no effect on service-managed history, so the fix lies elsewhere.", "tradeoff": "Moving history local means you own storage and retention." },
+        { "name": "Add a `CompactionProvider` and expect savings", "verdict": "poor", "why": "It does nothing for service-managed history.", "tradeoff": "Right once history is local." },
+        { "name": "Raise the token limit", "verdict": "good", "why": "Removes truncation errors.", "tradeoff": "Cost and latency still grow with each turn." }
+      ],
+      "flips": [
+        { "if": "You need provider switching and compaction", "then": "Hold history in your own store." },
+        { "if": "The service later documents managed compaction", "then": "Re-evaluate and prefer it." }
+      ],
+      "takeaway": "Check where history lives before choosing a compaction tool."
+    }
+  ],
+  "quiz": [
+    { "id": "w11-t13-q1", "type": "order", "tag": "order", "q": "Order a recommended compaction pipeline from gentlest to most aggressive.", "items": ["Tool-result collapse", "Summarization", "Sliding window", "Truncation"], "explain": "The docs layer strategies from gentle to aggressive, ending with truncation as the emergency backstop.", "ref": "tr13" },
+    { "id": "w11-t13-q2", "type": "single", "tag": "concept", "q": "Why are tool call groups never split by compaction?", "options": ["A tool call and its result form one atomic group, and dropping one half would break provider APIs", "To keep logs shorter", "Because summaries cannot contain tools", "Because tools are always system messages"], "answer": 0, "explain": "Message groups are atomic. A call without its result (or the reverse) is invalid for provider APIs.", "ref": "tr13" }
+  ],
+  "flashcards": [
+    { "front": "Trigger vs target in a compaction strategy?", "back": "Trigger decides when compaction starts. Target decides when it stops. If you give no target it is the inverse of the trigger." },
+    { "front": "When does the Harness compact?", "back": "Only when you set both max context window tokens and max output tokens, or supply a strategy. `disable_compaction` turns it off." },
+    { "front": "Where should .NET `CompactionProvider` be registered to keep stored history unchanged?", "back": "On the `ChatClientBuilder` with `UseAIContextProviders(...)`, which compacts only in-flight messages." }
+  ],
+  "related": ["w11-t11", "w11-t12", "w10-t18", "w02-t01"],
+  "refs": ["tr13"]
+}

@@ -1,0 +1,164 @@
+{
+  "id": "w15-t09",
+  "order": 9,
+  "group": "Platforms",
+  "title": "Agent Framework built-in telemetry",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "Agent Framework emits OpenTelemetry spans and metrics for agent runs, model calls and tool calls. You supply the exporter. Python instrumentation is on by default since python-1.6.0, .NET needs a wrapper, and sensitive content stays off unless you enable it.",
+  "useIf": "You build agents or workflows with Agent Framework and want traces and metrics in any OpenTelemetry backend.",
+  "avoidIf": "You assume telemetry flows by default: spans are created, but no exporter is installed automatically.",
+  "explain": [
+    { "t": "p", "md": "The framework follows the OTel GenAI conventions. Spans: `invoke_agent <agent_name>` at the top, `chat <model_name>` per model call and `execute_tool <function_name>` per tool. Metrics: `gen_ai.client.operation.duration` (histogram, seconds), `gen_ai.client.token.usage` (histogram, tokens) and `agent_framework.function.invocation.duration` (histogram, seconds). Workflows add `workflow.build`, `workflow.session` (.NET and Go) or `workflow.run` (Python), `workflow_invoke`, `executor.process {executor_id}`, `edge_group.process` and `message.send`. The docs' sample trace is dated 2025-09-25 and predates the current convention names, and which build emits which attribute and metric names is UNVERIFIED [[r10]] [[r11]]." },
+    { "t": "tabs", "tabs": [
+      { "label": "Python", "blocks": [
+        { "t": "p", "md": "`configure_otel_providers()` reads the standard `OTEL_EXPORTER_OTLP_*` variables, or set `ENABLE_CONSOLE_EXPORTERS=true`. You can also pass your own exporters, or configure your own SDK and call `enable_instrumentation(enable_sensitive_data=False)`. Instrumentation became on by default in python-1.6.0 (2026-05-21), but no exporter is installed automatically [[r10]] [[tr6]]." },
+        { "t": "code", "lang": "bash", "title": "Environment variables from the docs (defaults in comments)", "code": "ENABLE_INSTRUMENTATION=true          # default true\nENABLE_SENSITIVE_DATA=false          # default false\nENABLE_CONSOLE_EXPORTERS=false       # default false\nOTEL_SERVICE_NAME=support-agent      # default agent_framework\nOTEL_EXPORTER_OTLP_PROTOCOL=grpc     # docs list grpc or http, default grpc\nOTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317" }
+      ] },
+      { "label": ".NET", "blocks": [
+        { "t": "p", "md": "Wrap the chat client or the agent with `.AsBuilder().UseOpenTelemetry(sourceName, cfg => cfg.EnableSensitiveData = ...)`. The default source name is `Experimental.Microsoft.Agents.AI`, and the tracer and meter providers must call `AddSource` with the same name. Instrumenting both layers duplicates prompts and responses when sensitive data is on, so pick one. The Harness wraps both layers by default (`OpenTelemetrySourceName`, `DisableOpenTelemetry`) [[r10]]." }
+      ] }
+    ] },
+    { "t": "p", "md": "**Sensitive data** means prompts, responses, tool arguments and tool results, and it is off by default. Turn instrumentation off with `ENABLE_INSTRUMENTATION=false`, `enable_instrumentation=False` on the agent or `disable_instrumentation()`. For local work, run the standalone Aspire Dashboard in Docker, set `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317` and open `http://localhost:18888` [[r10]]." },
+    { "t": "callout", "kind": "gotcha", "title": "MCP context only for sessions the agent opens", "md": "In Python the framework injects W3C trace context into `params._meta` for `MCPStreamableHTTPTool`, `MCPStdioTool` and `MCPWebsocketTool` sessions it opens itself, not for hosted or provider-managed MCP tools. .NET behavior is UNVERIFIED because the docs describe it for Python only [[r10]]." }
+  ],
+  "whereToUse": [
+    "Local development with the Aspire Dashboard to see agent, model and tool spans",
+    "Production export to Application Insights, Langfuse, LangSmith, Phoenix or any OTLP endpoint",
+    "Workflow debugging with executor and edge spans",
+    "Cost dashboards from the framework's duration and token metrics",
+    "Teams that must keep content off spans by default"
+  ],
+  "whenToUse": {
+    "use": [
+      "Configure an exporter explicitly, because the framework does not install one",
+      "Leave `ENABLE_SENSITIVE_DATA` false in production and capture content through a governed path",
+      "Instrument one layer in .NET, and let the Harness do both only when you use it"
+    ],
+    "avoid": [
+      "Do not assume spans reach a backend because instrumentation is on by default",
+      "Do not point the default gRPC exporter at a backend that accepts only OTLP over HTTP",
+      "Do not build dashboards on metric names you have not seen in your backend"
+    ],
+    "flips": [
+      "The backend accepts only HTTP OTLP (for example Langfuse): set the protocol to http",
+      "You run through Foundry hosted agents: use Foundry server-side tracing for the hosted part and framework telemetry for your own code",
+      "Telemetry overhead is a concern: disable it for hot paths or sample traces and keep metrics"
+    ]
+  },
+  "alternatives": {
+    "title": "Ways to get agent telemetry",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Framework built-in telemetry", "Agent Framework apps, any OTLP backend", "Agents run outside the framework", "Names may differ from the newest conventions"],
+      ["Provider SDK instrumentation", "Model-call spans for any code", "You need agent and tool structure", "No run-level nesting"],
+      ["Foundry server-side tracing", "Agents hosted in Foundry", "Self-hosted agents", "Preview paths for some agent types [[r12]]"],
+      ["Hand-written spans", "A niche step nobody instruments", "Anything the framework already covers", "Naming drift and maintenance"]
+    ]
+  },
+  "pitfalls": [
+    {
+      "symptom": "Nothing arrives in the backend even though instrumentation is on",
+      "cause": "Spans are created by default, but no exporter is configured",
+      "fix": "Set `OTEL_EXPORTER_OTLP_*`, enable console exporters for a check, or pass exporters in code [[r10]]"
+    },
+    {
+      "symptom": "Langfuse shows nothing from a default Python agent",
+      "cause": "The framework's default OTLP protocol is gRPC and Langfuse accepts only OTLP over HTTP (HTTP/JSON or HTTP/protobuf)",
+      "fix": "Set the protocol to http and use the `/api/public/otel` endpoint with the required headers [[r17]]"
+    },
+    {
+      "symptom": "Prompts are duplicated in .NET traces",
+      "cause": "Both the chat client and the agent were wrapped with sensitive data on",
+      "fix": "Instrument one layer only [[r10]]"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "w15-t09-s1",
+      "title": "A laptop workflow with a new agent",
+      "situation": "A developer builds an agent with Agent Framework and wants to see spans and token counts while iterating. Data is synthetic and the machine has Docker.",
+      "constraints": ["Local development", "Synthetic data", "Fast feedback"],
+      "unknowns": ["Python or .NET?", "Is the developer behind a proxy that blocks local ports?"],
+      "question": "How do you view telemetry?",
+      "options": [
+        { "name": "Run the Aspire Dashboard in Docker and point the OTLP endpoint at localhost:4317", "verdict": "best", "why": "It shows traces, logs and metrics locally with no cloud setup.", "tradeoff": "Local only, so it does not replace a production backend." },
+        { "name": "Console exporters", "verdict": "good", "why": "Zero infrastructure.", "tradeoff": "Hard to read nested spans in a terminal." },
+        { "name": "Export straight to the production backend with sensitive data on", "verdict": "poor", "why": "Development prompts mix into production telemetry and may expose test data.", "tradeoff": "Fine only for a dedicated dev project in the backend." }
+      ],
+      "flips": [
+        { "if": "No Docker is available", "then": "Use console exporters or a hosted dev project." },
+        { "if": "The team wants shared traces", "then": "Use a shared dev backend with restricted access." }
+      ],
+      "takeaway": "Use a local viewer while iterating and keep content on only there."
+    },
+    {
+      "id": "w15-t09-s2",
+      "title": "Sending Agent Framework traces to Langfuse",
+      "situation": "A team wants Agent Framework Python traces in Langfuse for prompt and eval tooling. The first attempt produced no data.",
+      "constraints": ["Backend accepts OTLP over HTTP only", "Framework default exporter is gRPC", "Basic authentication required"],
+      "unknowns": ["Cloud region or self-hosted endpoint?", "Where are the keys stored?"],
+      "question": "What is the fix?",
+      "options": [
+        { "name": "Set the OTLP protocol to http, use the Langfuse `/api/public/otel` endpoint and its auth header", "verdict": "best", "why": "It matches what Langfuse accepts: OTLP over HTTP, not gRPC.", "tradeoff": "This follows from the two docs pages, not from a vendor statement, so verify with a test span." },
+        { "name": "Run an OpenTelemetry Collector that receives gRPC and exports HTTP to Langfuse", "verdict": "good", "why": "Works with the default exporter and gives you tail sampling too.", "tradeoff": "One more component to run." },
+        { "name": "Keep gRPC and point it at Langfuse", "verdict": "poor", "why": "Langfuse does not support gRPC, so exports fail.", "tradeoff": "Right for backends that accept gRPC OTLP." }
+      ],
+      "flips": [
+        { "if": "You already run a collector", "then": "Send gRPC to it and let it export HTTP." },
+        { "if": "Content must stay out of Langfuse", "then": "Keep `ENABLE_SENSITIVE_DATA` false and check what the attributes hold." }
+      ],
+      "takeaway": "Match the exporter protocol to the backend."
+    }
+  ],
+  "quiz": [
+    {
+      "id": "w15-t09-q1",
+      "type": "single",
+      "tag": "bug",
+      "q": "Python instrumentation is on by default, yet no data reaches the backend. Why?",
+      "options": [
+        "No exporter is installed automatically, so spans are created but not exported",
+        "Instrumentation turns off after one hour",
+        "The framework only exports to Application Insights",
+        "Sensitive data must be on to export anything"
+      ],
+      "answer": 0,
+      "explain": "Spans are created but nothing is exported until you configure an exporter. The framework is backend-neutral and the sensitive-data flag only controls content."
+    },
+    {
+      "id": "w15-t09-q2",
+      "type": "match",
+      "tag": "concept",
+      "q": "Match each setting to its documented default.",
+      "pairs": [
+        { "l": "`ENABLE_INSTRUMENTATION`", "r": "true" },
+        { "l": "`ENABLE_SENSITIVE_DATA`", "r": "false" },
+        { "l": "`OTEL_SERVICE_NAME`", "r": "agent_framework" },
+        { "l": "`OTEL_EXPORTER_OTLP_PROTOCOL`", "r": "grpc" }
+      ],
+      "explain": "These are the Python defaults in the docs checked 2026-10-13. Instrumentation became default-on in python-1.6.0, and content is off by default."
+    },
+    {
+      "id": "w15-t09-q3",
+      "type": "single",
+      "tag": "tradeoff",
+      "q": "In .NET you wrap both the chat client and the agent with `UseOpenTelemetry` and sensitive data is on. What happens?",
+      "options": [
+        "Traces are sampled twice as heavily",
+        "The second wrapper is ignored",
+        "Metrics are dropped",
+        "Prompts and responses appear on both spans, duplicating content"
+      ],
+      "answer": 3,
+      "explain": "Instrumenting both layers duplicates content on both spans when sensitive data is on, so pick one layer. The Harness wraps both layers by default."
+    }
+  ],
+  "flashcards": [
+    { "front": "Which spans does Agent Framework emit?", "back": "`invoke_agent <agent_name>`, `chat <model_name>` and `execute_tool <function_name>`, plus workflow, executor and edge spans." },
+    { "front": "What changed in python-1.6.0 (2026-05-21) for telemetry?", "back": "Instrumentation became on by default. Spans are created, but no exporter is installed and sensitive data stays off." },
+    { "front": "Why can a default Python agent send nothing to Langfuse?", "back": "The default OTLP protocol is gRPC and Langfuse accepts only OTLP over HTTP. Set the protocol to http." }
+  ],
+  "related": ["w15-t03", "w15-t06", "w15-t08", "w15-t12", "w11-t26"],
+  "refs": ["r10", "r11", "r12", "r17", "tr6"]
+}

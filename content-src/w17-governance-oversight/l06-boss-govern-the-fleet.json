@@ -1,0 +1,86 @@
+{
+  "id": "w17-l6",
+  "order": 6,
+  "title": "Boss: govern the fleet",
+  "kind": "boss",
+  "minutes": 22,
+  "brief": "An interviewer asks you to set up governance for a fleet of agents, with every dial unspecified. Practise the five steps of Dial-and-Defend: clarify, list options, pick and flip, name failures, name metrics and rollout.",
+  "blocks": [
+    { "t": "h", "text": "The interview prompt", "level": 2 },
+    { "t": "scenario", "title": "What you know and what to ask", "known": ["About 60 agents across Foundry, Copilot Studio and a self-hosted runtime in another cloud", "A handful can send email or change customer records", "One supports a hiring workflow"], "ask": ["Which regulations and customers apply, and are we provider or deployer?", "Which actions are irreversible or externally visible, and how many a day?", "Who owns each agent, and which identity does it use?", "Which platforms and licences do we hold?", "What do we log today, and what incidents have we had?"], "tension": "Tight control slows teams, and loose control hides risk. Say which dial you trade and for which tier." },
+    { "t": "diagram", "id": "w17-l6-d1", "title": "A governance loop for a fleet", "alt": "An inventory sweep feeds a tiering step by action risk. Each tier gets its own oversight. Lifecycle reviews follow, evidence and incidents feed back into the tiers.", "src": "flowchart LR\n  I[Inventory sweep] --> T[Tier by action risk]\n  T --> O[Oversight per tier]\n  O --> L[Lifecycle reviews]\n  L --> E[Evidence and incidents]\n  E --> T", "caption": "Evidence from reviews and incidents moves agents between tiers." }
+  ],
+  "quiz": [
+    { "id": "w17-l6-q1", "type": "multi", "tag": "tradeoff", "q": "Select every dial you use to tier an agent's oversight.", "options": ["Reversibility of its actions", "Reach of its actions", "Which framework logo the vendor shows", "Whether the use falls in an Annex III area", "The agent's token cost per request"], "answers": [0, 1, 3], "explain": "Oversight follows what can go wrong and how bad it is: how reversible the action is, how many people or outside parties it reaches and whether the use is high-risk under the AI Act. A vendor logo and token cost say nothing about harm, although cost matters elsewhere in capacity planning.", "difficulty": 2, "ref": "r5" },
+    { "id": "w17-l6-q2", "type": "single", "tag": "tradeoff", "q": "Reviewers approve 98% of agent requests in about three seconds each. Which change fits best?", "options": ["Add a second approver to every request", "Remove the approval step because it is ignored", "Tier by reversibility and seed known-bad items", "Hire more reviewers to shorten the queue"], "answer": 2, "explain": "A near-total approval rate at three seconds signals rubber-stamping. Tiering moves reversible actions to sampled review, keeps approval for the risky slice and seeded bad items measure whether reviewers still catch errors. A second approver doubles the friction, removing the gate drops oversight and more reviewers do not fix the screen or the volume.", "difficulty": 2, "ref": "r5" },
+    { "id": "w17-l6-q3", "type": "order", "tag": "order", "q": "Put the first moves of a governance programme for an unknown fleet in order.", "items": ["Sweep and inventory every agent with a sponsor", "Tier agents by reversibility, reach, data and regulatory class", "Set oversight and permissions per tier", "Schedule reviews, evidence collection and incident drills"], "explain": "You cannot tier what you have not found, you cannot set oversight before you know the tier, and reviews and drills only make sense once oversight and permissions exist.", "difficulty": 1, "ref": "r17" }
+  ],
+  "defend": {
+    "prompt": "You are asked to set up governance for a fleet of 60 agents. Some run on Foundry, some in Copilot Studio and a few are self-hosted in another cloud. A handful can send email or change customer records, and one supports a hiring workflow. Walk me through how you would govern them.",
+    "timebox": "6 min",
+    "clarify": [
+      "Which regulations and customers apply: EU users, procurement that asks for ISO/IEC 42001, sector rules?",
+      "Are we the provider or the deployer of each system, and which uses fall in Annex III areas such as employment?",
+      "Which actions are irreversible or externally visible, and how many happen per day?",
+      "Who owns each agent today, and which identity and credentials does each one use?",
+      "Which platforms and licences do we hold: Agent 365, Entra, Purview, Defender?",
+      "What do we log today, and what incidents or near misses have we had?"
+    ],
+    "options": [
+      { "name": "Central control plane: Agent 365 with Entra Agent ID, Purview and Defender", "when": "Most agents run on Microsoft platforms or can register, and the licences are in place.", "tradeoff": "Per-user licensing, other clouds need registry synchronization or the SDK, and shadow-agent discovery was announced as preview." },
+      { "name": "Federated model: teams own agents, a shared policy-as-code gate and a lightweight registry", "when": "A mixed or sovereign estate that no single control plane reaches.", "tradeoff": "You build discovery, reviews and retirement, and registry drift is a constant risk." },
+      { "name": "Certification-led programme: ISO/IEC 42001 first", "when": "Procurement asks for a certificate and many teams build AI.", "tradeoff": "Heavy to run, and it certifies the organization's management system, not each agent." },
+      { "name": "Per-team checklists", "when": "A handful of low-risk agents during a pilot.", "tradeoff": "No discovery or enforcement, and stale within weeks." }
+    ],
+    "modelAnswer": [
+      { "t": "p", "md": "**1. Clarify the dials.** I would ask which laws and customers apply, whether we are provider or deployer per system, which actions are irreversible or externally visible, who owns each agent and which identity it uses, which platforms and licences we hold, and what we log today." },
+      { "t": "p", "md": "**2. Options.** A central control plane (Agent 365 with Entra Agent ID, Purview and Defender), a federated model with a shared gate and a lightweight registry, a certification-led programme, or per-team checklists as the boring baseline." },
+      { "t": "p", "md": "**3. Choice for assumed dials.** Assume mixed platforms, EU users, five agents that send email or change records and one hiring agent in an Annex III area. I would start with a 30 day inventory sweep, tier every agent by reversibility, reach, data sensitivity and regulatory class, then set oversight per tier:" },
+      { "t": "table", "head": ["Tier", "Example", "Oversight", "Why"], "rows": [
+        ["0", "Read-only internal assistant", "Log and alert", "Reversible, low reach"],
+        ["1", "Reversible internal writes", "Sampled review with undo", "High volume, easy undo"],
+        ["2", "Sends email or changes customer records", "Approval before action, gated by action class", "Externally visible or costly to undo"],
+        ["3", "Hiring workflow (Annex III employment)", "Approval with evidence and an override and stop control, event logs and incident readiness", "High-risk class, duties from 2027-12-02"]
+      ] },
+      { "t": "list", "style": "ul", "items": [
+        "Every agent has a registered sponsor. No sponsor, no deployment, enforced by a CI gate.",
+        "One identity per agent, autonomous or on-behalf-of mode chosen per agent, least-privilege access, Conditional Access where licensed.",
+        "Sponsor reviews on a schedule and after material change, and a Sensitive Uses style review for tier 3 at least annually.",
+        "A retirement checklist: disable the identity, revoke credentials, delete memory and data, close the registry entry."
+      ] },
+      { "t": "p", "md": "**Frameworks and law.** I would date duties by role: Article 50 disclosure from 2026-08-02, marking for systems already on the market by 2026-12-02 and Annex III by 2027-12-02. ISO/IEC 42001 only if procurement demands it, and NIST AI RMF with AI 600-1 as the working vocabulary. **Incidents.** Staged remediation: contain in the first hour, expand in 24 hours, fix at source over days or weeks, with Article 73 clocks of 15, 2 or 10 days for any high-risk system." },
+      { "t": "p", "md": "**4 and 5. Failure modes, metrics and rollout.** I would watch for orphaned agents, permission creep, shadow agents and rubber-stamped approvals. Metrics: share of agents with a sponsor and their own identity, access-review completion, approval latency and seeded-error catch rate, time to contain in drills and unregistered agents found per month. Rollout: sweep, tier, enforce gates for tiers 2 and 3, then extend." },
+      { "t": "callout", "kind": "preview", "title": "Say the status out loud", "md": "Agent 365 was generally available on 2026-05-01 for the Commercial segment. Discovery of local and shadow agents was announced as preview, and Entra agent users need the Frontier preview program [[r24]]." },
+      { "t": "p", "md": "**What would flip it.** An all-Microsoft estate with licences flips me to the central plane. A procurement certificate requirement with many teams flips me to ISO/IEC 42001 first. A handful of low-risk agents flips me to checklists. A surge in irreversible actions flips me to automated policy checks and tighter triggers rather than more reviewers." }
+    ],
+    "rubric": [
+      { "pt": "Clarifies jurisdiction, role, risky uses, owners, platforms and incident history before designing", "w": 3 },
+      { "pt": "Tiers agents by reversibility, reach, data and regulatory class, not by team", "w": 3 },
+      { "pt": "Sets different oversight per tier and avoids approval everywhere or logging everywhere", "w": 3 },
+      { "pt": "Covers the full lifecycle with sponsors, reviews and retirement", "w": 2 },
+      { "pt": "Dates EU AI Act duties correctly and justifies the framework choice", "w": 2 },
+      { "pt": "Covers incident response: staged remediation, records and Article 73 for high-risk systems", "w": 2 },
+      { "pt": "Names metrics and a rollout order", "w": 2 },
+      { "pt": "Labels preview features and states what would flip the choice", "w": 1 }
+    ],
+    "followUps": [
+      { "q": "Reviewers approve 98% of requests in three seconds. What do you change?", "a": "That is rubber-stamping. Show evidence and arguments, seed known-bad items and track the catch rate, and move reversible actions to sampled review so reviewers face only the risky slice." },
+      { "q": "A customer asks for ISO/IEC 42001 evidence. What do you say?", "a": "It certifies our AI management system, not one agent. I show the certificate scope plus agent-level evidence: registry, reviews, approval logs, evals and incident drills." },
+      { "q": "An agent's sponsor leaves the company. What happens?", "a": "Offboarding flags sponsored agents, a new sponsor is assigned (supported groups or two sponsors), and an access review runs. Agents without a sponsor are disabled until someone accepts accountability." }
+    ],
+    "redFlags": [
+      "Applies one oversight level to every agent.",
+      "Treats an ISO certificate or the NIST framework as proof that each agent is safe or legal.",
+      "Quotes 2026-08-02 as the Annex III high-risk date.",
+      "Has no inventory, sponsor or retirement step, or no incident drill."
+    ]
+  },
+  "refs": ["r1", "r10", "r12", "r17", "r21", "r24", "r25", "r26"],
+  "takeaways": [
+    "Tier agents by reversibility, reach, data and regulatory class, then set oversight per tier.",
+    "A sponsor, an identity, reviewed access and a retirement step for every agent.",
+    "Date the law by role, and say what ISO 42001 and NIST are and are not.",
+    "Contain in the first hour, expand in 24 hours, fix at source, and keep the records.",
+    "Study next: Govern AI usage with Microsoft Purview and the responsible generative AI module in Foundry."
+  ]
+}

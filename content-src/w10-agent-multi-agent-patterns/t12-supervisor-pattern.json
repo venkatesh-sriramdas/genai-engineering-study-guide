@@ -1,0 +1,94 @@
+{
+  "id": "w10-t12",
+  "order": 12,
+  "group": "Multi-agent",
+  "title": "Supervisor pattern",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "A central supervisor agent talks to the user and calls specialist agents as tools. Control always returns to the supervisor, which stays accountable for the final result.",
+  "useIf": "One agent must own the outcome, audit trail and conversation, while specialists supply expertise, tools or isolated context.",
+  "avoidIf": "A specialist should take over and talk to the user directly, or every result flowing through one context would overflow it.",
+  "explain": [
+    { "t": "p", "md": "In the **supervisor** pattern (also called manager or agent-as-tool) the main agent exposes each specialist as a tool. LangChain describes it as subagents: the main agent calls subagents as tools, and all routing passes through it [[r32]]. OpenAI's guide names the same shape the manager pattern and contrasts it with decentralised handoffs [[r19]]. Microsoft's handoff documentation states the difference in ownership: with agent-as-tools the primary agent keeps ownership and control returns to it, whereas in a handoff the receiving agent takes full ownership [[r11]]." },
+    { "t": "diagram", "id": "w10-t12-d1", "title": "Supervisor with specialists as tools", "alt": "The user talks to a supervisor. The supervisor calls specialist agents as tools and receives their results. Large outputs are stored as artifacts and referenced.", "src": "flowchart TB\n  U[User] <--> S[Supervisor agent]\n  S -->|brief| A[Specialist A]\n  S -->|brief| B[Specialist B]\n  S -->|brief| C[Specialist C]\n  A -->|summary + artifact id| S\n  B -->|summary + artifact id| S\n  C -->|summary + artifact id| S\n  S --> R[(Artifact store)]" },
+    { "t": "p", "md": "The supervisor's strength is also its limit. Everything passes through one context, so it needs the right level of detail. If specialists return long free text, the supervisor's window fills and quality falls. If it paraphrases results, detail is lost: Cognition's first principle is to share full agent traces, not only messages [[r3]]. A practical split is a short structured result plus an artifact reference that the supervisor can open when it needs the details. Each specialist call is also a model round trip, and Anthropic found that synchronous subagents created bottlenecks [[r2]], so independent specialists should run in parallel with timeouts." },
+    { "t": "callout", "kind": "tip", "title": "What a specialist tool contract holds", "md": "A clear name and description for routing, an input schema with the objective and constraints, an output schema with a status, a short summary and artifact ids, and the specialist's own budget and timeout." }
+  ],
+  "whereToUse": [
+    "Assistants that must keep one conversation and one accountable answer",
+    "Regulated flows where an audit trail needs a single owner of the decision",
+    "Enterprise assistants that wrap several domain agents behind one front door",
+    "Workflows where specialists differ in tools, models or permissions",
+    "Systems that want to add or retire specialists without changing the user experience"
+  ],
+  "whenToUse": {
+    "use": ["The caller must stay accountable and see every result", "Specialists have distinct tools, prompts or permissions", "Results can be summarised without losing what the next step needs"],
+    "avoid": ["The user should converse with the specialist directly", "Latency budget cannot absorb an extra hop per delegation", "Outputs are huge and cannot be summarised or referenced"],
+    "flips": ["Users need to talk to specialists directly: use handoff", "The supervisor's context overflows: return artifact references and summaries, or add a second tier", "Only a few simple tools: collapse the specialists back into one agent"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Supervisor (this topic)", "One owner, audit trail, specialists as tools", "Specialist must converse with the user", "Hub bottleneck, extra hop per call"],
+      ["Handoff", "A specialist should take over the user", "You need one accountable owner", "Loops and bouncing [[r9]]"],
+      ["Orchestrator-workers", "Subtasks are decided at run time", "Roles are fixed and named", "Dynamic briefs, 15x tokens [[r2]]"],
+      ["Single agent with skills", "One agent loads on-demand prompts and knowledge", "Specialists need different tools or identities", "One context carries it all [[r32]]"],
+      ["Group chat", "Review and debate of a draft", "Clear delegation is enough", "Transcript cost grows [[r9]]"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "The supervisor loses track as results arrive", "cause": "Each specialist returns long free text into one context", "fix": "Return a status, a short summary and an artifact id, and let the supervisor fetch details on demand." },
+    { "symptom": "Answers contradict specialist findings", "cause": "The supervisor paraphrased results and dropped details [[r3]]", "fix": "Pass structured fields and artifact references, and quote evidence rather than restating it." },
+    { "symptom": "Every request pays for a supervisor hop it does not need", "cause": "Simple requests are routed through the full delegation loop", "fix": "Route obvious cases directly, or let the supervisor answer simple ones itself." }
+  ],
+  "scenarios": [
+    {
+      "id": "w10-t12-s1",
+      "title": "One accountable owner",
+      "situation": "An assistant coordinates a refund decision across policy, order history and fraud-check specialists. The company must be able to show who decided and why, and users expect one consistent voice.",
+      "constraints": ["Single accountable owner", "Specialists have different tools and permissions", "Audit trail required", "Moderate latency tolerance"],
+      "unknowns": ["Can each specialist return structured evidence?", "Which actions need human approval?"],
+      "question": "Which topology do you choose?",
+      "options": [
+        { "name": "Supervisor calling the specialists as tools and recording each result", "verdict": "best", "why": "Control returns to one owner, so the decision and its inputs sit in one trace, and each specialist keeps its own permissions.", "tradeoff": "An extra hop per specialist and a hub that must not be overloaded." },
+        { "name": "Handoff mesh among the three specialists", "verdict": "poor", "why": "Ownership moves between agents, which muddies accountability and risks bouncing.", "tradeoff": "Right when the user should talk directly to whichever specialist takes over." },
+        { "name": "One agent holding all three toolsets", "verdict": "good", "why": "Simplest and fastest.", "tradeoff": "One identity holds every permission, which enlarges the blast radius of an injection." }
+      ],
+      "flips": [
+        { "if": "The three domains share one trust boundary and few tools", "then": "A single agent is simpler and cheaper." },
+        { "if": "The user must debate the outcome with a specialist", "then": "Hand off to that specialist, with the supervisor keeping the audit record." }
+      ],
+      "takeaway": "When one party must own the outcome, keep control at the hub."
+    },
+    {
+      "id": "w10-t12-s2",
+      "title": "A hub that fills up",
+      "situation": "A supervisor calls a dozen research specialists that each return several thousand tokens of findings. Answer quality has fallen and runs are slow, but the specialists themselves score well in isolation.",
+      "constraints": ["Many specialists with large outputs", "Hub quality degrades with context size", "Latency is climbing"],
+      "unknowns": ["Which findings does the supervisor actually need verbatim?", "Can specialists run in parallel?"],
+      "question": "What do you change?",
+      "options": [
+        { "name": "Specialists return status, a short summary and artifact ids, run in parallel, and the supervisor opens artifacts only when needed", "verdict": "best", "why": "It keeps the hub's context small while keeping full detail retrievable, and parallel calls cut wall-clock time.", "tradeoff": "More engineering for artifact storage and a risk that the summary omits a needed fact." },
+        { "name": "Keep passing full outputs and switch to a larger context window", "verdict": "poor", "why": "Quality degrades with length well below advertised windows, and cost and latency rise.", "tradeoff": "Fine for short runs where the total stays small." },
+        { "name": "Replace the supervisor with a handoff mesh", "verdict": "good", "why": "No single hub to fill.", "tradeoff": "You lose the central owner and add loop risk, and each agent still carries the shared history." }
+      ],
+      "flips": [
+        { "if": "A summary keeps dropping critical facts", "then": "Add structured fields the specialist must always fill." },
+        { "if": "Specialists number over twenty", "then": "Add a router tier so each supervisor sees fewer tools." }
+      ],
+      "takeaway": "Keep the hub's context for decisions, and keep the evidence in storage."
+    }
+  ],
+  "quiz": [
+    { "id": "w10-t12-q1", "type": "single", "tag": "concept", "q": "In an agent-as-tool design, who owns the conversation after the specialist returns?", "options": ["The specialist, which talks to the user", "The user, who chooses the next agent", "The primary agent, since control returns to it", "No one, ownership is shared in the transcript"], "answer": 2, "explain": "With agent-as-tools the primary agent keeps ownership and control returns to it. In a handoff, the receiving agent takes full ownership. [[r11]]", "ref": "r11", "difficulty": 1 },
+    { "id": "w10-t12-q2", "type": "multi", "tag": "diagnose", "q": "A supervisor's answers get worse as it calls more specialists. Which causes are plausible?", "options": ["Specialist outputs are long and fill its context", "It paraphrases results and loses details", "Specialists run in parallel", "The supervisor has too many overlapping specialist tools to choose from"], "answers": [0, 1, 3], "explain": "Context fill, lossy paraphrase and tool overload all degrade a hub. Running independent specialists in parallel reduces latency and does not by itself reduce quality. [[r3]][[r19]]", "difficulty": 2 }
+  ],
+  "flashcards": [
+    { "front": "Supervisor versus handoff in one line?", "back": "Supervisor: specialists are tools and control returns to the primary agent. Handoff: the receiving agent takes full ownership [[r11]]." },
+    { "front": "What should a specialist return to a supervisor?", "back": "A status, a short structured summary and artifact references, so the hub keeps its context small and can open details on demand." },
+    { "front": "What is the supervisor's main bottleneck?", "back": "All routing and results pass through one context and one model hop per delegation, so overload and latency grow with the number of specialists [[r32]]." }
+  ],
+  "related": ["w10-l3", "w10-t05", "w10-t11", "w10-t13"],
+  "refs": ["r32", "r19", "r11", "r3", "r2", "r9"]
+}

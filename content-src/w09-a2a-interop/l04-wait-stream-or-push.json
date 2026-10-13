@@ -1,0 +1,101 @@
+{
+  "id": "w09-l04",
+  "order": 4,
+  "title": "Wait, stream or push",
+  "kind": "problem",
+  "minutes": 18,
+  "brief": "A remote agent's job takes anywhere from two seconds to two days, and your caller may sit behind a firewall, on a phone or in a serverless function. Duration, reachability and update frequency are open. Choose how updates arrive, and learn how bindings and versions affect that choice.",
+  "blocks": [
+    { "t": "h", "text": "Three ways to hear back", "level": 2 },
+    { "t": "compare", "title": "Update delivery in A2A", "intro": "The spec offers three complementary mechanisms [[r1]] [[r7]].", "options": [
+      { "name": "Polling", "tag": "Always available", "summary": "Call `GetTask` periodically.", "pros": ["Simple and works with every binding", "Works behind restrictive firewalls"], "cons": ["Higher latency and wasted requests", "Load grows with callers times polling rate"], "bestWhen": "Infrequent updates, simple clients or no inbound connectivity.", "avoidWhen": "Many callers need frequent progress.", "meta": [{ "k": "Needs", "v": "nothing declared" }, { "k": "Connection", "v": "short" }] },
+      { "name": "Streaming (SSE or native)", "tag": "Needs streaming capability", "summary": "`SendStreamingMessage` or `SubscribeToTask` delivers events in order as they happen.", "pros": ["Low latency and efficient for frequent updates", "Reconnect to a live task with `SubscribeToTask`, whose first event is the current Task"], "cons": ["Needs a persistent connection", "Proxies can buffer or cut streams"], "bestWhen": "Interactive apps, dashboards and live progress.", "avoidWhen": "Tasks run for hours or the client cannot hold a connection.", "meta": [{ "k": "Needs", "v": "`capabilities.streaming`" }, { "k": "Connection", "v": "persistent" }] },
+      { "name": "Push notifications", "tag": "Needs push capability", "summary": "The agent POSTs updates to a webhook the client registered.", "pros": ["No persistent connection", "Suits minutes, hours or days"], "cons": ["The client must be reachable over HTTPS", "Adds SSRF, replay and forgery defenses"], "bestWhen": "Server-to-server integrations and very long tasks.", "avoidWhen": "Mobile or firewalled clients that cannot receive inbound calls.", "meta": [{ "k": "Needs", "v": "`capabilities.pushNotifications`" }, { "k": "Connection", "v": "none held" }] }
+    ] },
+    { "t": "dials", "id": "w09-l04-delivery", "title": "Pick a delivery mode", "prompt": "Flip task duration, whether the callee can reach you and how much progress you need.",
+      "dials": [
+        { "id": "duration", "label": "Task duration", "values": [ { "id": "seconds", "label": "Seconds" }, { "id": "minutes", "label": "Minutes" }, { "id": "days", "label": "Hours or days" } ] },
+        { "id": "reach", "label": "Callee can POST to your webhook", "values": [ { "id": "no", "label": "No (firewall, mobile)" }, { "id": "yes", "label": "Yes" } ] },
+        { "id": "updates", "label": "Updates you need", "values": [ { "id": "final", "label": "Final result only" }, { "id": "progress", "label": "Frequent progress" } ] }
+      ],
+      "options": [
+        { "id": "block", "name": "Blocking SendMessage", "summary": "The default: wait for a terminal or interrupted state." },
+        { "id": "poll", "name": "Poll with GetTask", "summary": "Return immediately, then ask." },
+        { "id": "stream", "name": "Stream", "summary": "Hold a connection and receive events." },
+        { "id": "push", "name": "Push webhook", "summary": "Let the agent call you." }
+      ],
+      "scores": {
+        "block": {
+          "duration": { "seconds": { "s": 2, "why": "A short call returns before any timeout." }, "minutes": { "s": -1, "why": "Connections and proxies time out." }, "days": { "s": -2, "why": "No connection survives that long." } },
+          "reach": { "no": { "s": 0, "why": "Needs only an outbound call." }, "yes": { "s": 0, "why": "Not used." } },
+          "updates": { "final": { "s": 1, "why": "One answer is all you need." }, "progress": { "s": -2, "why": "No progress until the end." } }
+        },
+        "poll": {
+          "duration": { "seconds": { "s": -1, "why": "Extra round trips for a quick answer." }, "minutes": { "s": 1, "why": "A modest polling rate is cheap." }, "days": { "s": 1, "why": "Works, with a long interval." } },
+          "reach": { "no": { "s": 2, "why": "Works behind firewalls and on every binding." }, "yes": { "s": 0, "why": "Works, though push may be cheaper." } },
+          "updates": { "final": { "s": 1, "why": "Fine when you need only the result." }, "progress": { "s": -1, "why": "Latency and wasted polls." } }
+        },
+        "stream": {
+          "duration": { "seconds": { "s": 0, "why": "Neutral." }, "minutes": { "s": 2, "why": "Ideal for live progress while a connection is practical." }, "days": { "s": -1, "why": "Holding a connection for hours is fragile. Reconnect with `SubscribeToTask`." } },
+          "reach": { "no": { "s": 1, "why": "Only the client opens a connection." }, "yes": { "s": 0, "why": "Neutral." } },
+          "updates": { "final": { "s": 0, "why": "More than you need." }, "progress": { "s": 2, "why": "Events arrive in order as they happen." } }
+        },
+        "push": {
+          "duration": { "seconds": { "s": -2, "why": "Webhook setup for a quick call." }, "minutes": { "s": 0, "why": "Works, but a stream is often simpler." }, "days": { "s": 2, "why": "No connection to hold across hours or days." } },
+          "reach": { "no": { "s": -2, "why": "Cannot receive webhooks." }, "yes": { "s": 2, "why": "Designed for reachable server-to-server clients." } },
+          "updates": { "final": { "s": 1, "why": "One notification on completion." }, "progress": { "s": 0, "why": "Possible, but each event is a POST." } }
+        }
+      },
+      "takeaway": "Duration and reachability decide between a held connection and a webhook. Polling is the baseline that always works." },
+    { "t": "diagram", "id": "w09-l04-d1", "title": "Push notification flow", "alt": "The client sends a message with a push configuration and asks to return immediately. The agent returns a submitted task and later posts status and completion events to the client's webhook, which answers 2xx.", "src": "sequenceDiagram\n  participant C as Client\n  participant A as Agent\n  participant W as Webhook\n  C->>A: SendMessage with taskPushNotificationConfig\n  A-->>C: Task in SUBMITTED state\n  A->>W: POST statusUpdate with credentials\n  W-->>A: 2xx\n  A->>W: POST task with artifacts on completion\n  W-->>A: 2xx", "caption": "The push configuration can ride in `SendMessageConfiguration.taskPushNotificationConfig`, with an empty task id, or be created later with the push configuration operations. Payloads use the same `StreamResponse` format as streaming [[r1]]." },
+    { "t": "callout", "kind": "gotcha", "title": "SendMessage waits by default", "md": "`SendMessageConfiguration.returnImmediately` defaults to false. The call then waits until the task reaches a terminal or interrupted state. Set it to true to get the task back at once and then poll, stream or rely on push. The flag has no effect when the agent answers with a direct Message, or for streaming calls. The operation summary in section 3.1.1 phrases the return more loosely than the configuration section, so test your SDK's behavior [[r1]]." },
+    { "t": "failure", "title": "Failure modes and how to detect them", "items": [
+      { "symptom": "The caller hangs for the whole job on `SendMessage`", "cause": "The default blocking mode was used for a long task", "fix": "Set `returnImmediately` to true and poll, stream or use push. Alert on call durations above your timeout budget" },
+      { "symptom": "A dropped stream loses the result", "cause": "The client treated the stream as the task. Task lifecycle is independent of any stream", "fix": "Reconnect with `SubscribeToTask`, which returns the current Task first so no update is missed, or fall back to `GetTask`" },
+      { "symptom": "The agent's webhook calls reach internal services", "cause": "Client-supplied webhook URLs were trusted. That is an SSRF and DDoS amplification risk", "fix": "Reject private, loopback and link-local ranges, use allowlists or ownership challenges, and apply egress controls [[r7]]" },
+      { "symptom": "Duplicate or forged notifications change state", "cause": "The receiver did not verify credentials, task id or freshness", "fix": "Verify credentials, check the task id, reply 2xx, process idempotently and reject stale timestamps or reused ids" },
+      { "symptom": "A 0.3 client fails to parse replies from a 1.0 agent", "cause": "Enum casing, the `kind` discriminator and operation names changed, and the version was not negotiated", "fix": "Send `A2A-Version` on every request and keep a dual-support phase while clients migrate" }
+    ] },
+    { "t": "accordion", "items": [
+      { "title": "Three bindings, one behavior", "blocks": [
+        { "t": "table", "caption": "All supported bindings MUST be functionally equivalent [[r1]]", "head": ["Binding", "Wire format", "Streaming", "Notes"], "rows": [
+          ["JSON-RPC 2.0 over HTTP", "`application/json`, PascalCase method names", "SSE", "`SendMessage`, `GetTask` and so on"],
+          ["gRPC", "Protocol buffers at `host:port`", "Native streams", "Same operations and error mapping"],
+          ["HTTP+JSON", "REST paths such as `POST /message:send`. `application/a2a+json` SHOULD be used", "SSE", "Patch 1.0.1 clarified the media type"]
+        ] },
+        { "t": "p", "md": "Service parameters `A2A-Version` and `A2A-Extensions` travel as HTTP headers. Clients choose any binding the card declares and SHOULD fall back to another when one fails. A `tenant` field lets one endpoint host many agents [[r1]]." }
+      ] },
+      { "title": "Versions and migrating from 0.3 to 1.0", "blocks": [
+        { "t": "list", "style": "ul", "items": [
+          "Clients send `A2A-Version: Major.Minor`. An empty header means 0.3, and an unsupported version returns `VersionNotSupportedError`. Patch numbers are never negotiated [[r1]].",
+          "Enum values became SCREAMING_SNAKE_CASE with prefixes such as `TASK_STATE_` and `ROLE_`. The `kind` discriminator and the `final` flag on status events were removed [[r2]].",
+          "Operations were renamed, for example `message/send` to `SendMessage`. `protocolVersion` moved into each interface. `supportsAuthenticatedExtendedCard` became `capabilities.extendedAgentCard`. `ListTasks`, `tenant` and cursor pagination are new [[r2]].",
+          "The migration guide suggests three phases: a compatibility layer, dual support, then v1.0 only [[r2]].",
+          "The migration page says the implicit and password OAuth flows were removed, while the normative spec still lists them as Deprecated. The spec is authoritative [[r1]] [[r2]]."
+        ] }
+      ] },
+      { "title": "Verifying webhooks with JWT and JWKS", "blocks": [
+        { "t": "list", "style": "ol", "items": [
+          "The client registers `authentication.scheme` of `Bearer` and an optional expected issuer or audience.",
+          "The agent signs a JWT with `iss`, `aud`, `iat`, `exp`, `jti` and `taskId`, and publishes its public keys at a JWKS endpoint.",
+          "The webhook reads the `kid`, fetches the key (cache it), verifies the signature and validates the claims.",
+          "The webhook also checks the `token` from the push configuration, rejects stale timestamps and refuses reused `jti` values [[r7]]."
+        ] }
+      ] }
+    ] }
+  ],
+  "quiz": [
+    { "id": "w09-l04-q1", "type": "numeric", "tag": "numeric", "q": "1,000 callers each poll `GetTask` every 5 seconds while a 3-hour task runs. How many `GetTask` requests per hour does the agent absorb?", "answer": 720000, "tolerancePct": 2, "unit": "requests per hour", "hint": "callers x (3600 / interval)", "explain": "Each caller makes 3,600 divided by 5, or 720, requests per hour. Times 1,000 callers is 720,000 per hour. Push or streaming replaces this constant load with events only when state changes, which is why long tasks favor push.", "difficulty": 2, "ref": "r1" },
+    { "id": "w09-l04-q2", "type": "single", "tag": "diagnose", "q": "A caller's `SendMessage` blocks for 40 minutes. The card declares `pushNotifications: true` and the request set no configuration. What explains it?", "options": ["Push notifications must first be activated by a separate administrator call before any message can return a task handle", "`returnImmediately` defaults to false, so the call waits for a terminal or interrupted state", "The agent is using the gRPC binding, which is always synchronous", "A2A forbids tasks longer than 30 minutes"], "answer": 1, "explain": "With the default blocking mode the operation waits until the task is terminal or interrupted. Setting `returnImmediately: true` returns the task at once. Push configuration does not change blocking, gRPC is not synchronous by nature, and the spec sets no task duration limit.", "difficulty": 2, "ref": "r1" },
+    { "id": "w09-l04-q3", "type": "multi", "tag": "security", "q": "Select every defense that fits A2A push notifications.", "options": ["The agent rejects webhook URLs that point to private, loopback or link-local addresses", "The receiver verifies the credentials and that the task id is one it created", "The receiver processes notifications idempotently because duplicates can occur", "The agent follows redirects to internal hosts so delivery always succeeds", "The agent removes timeouts so slow webhooks never fail"], "answers": [0, 1, 2], "explain": "URL validation prevents SSRF, receiver verification prevents forgery, and idempotent handling tolerates retries. Following redirects to internal hosts defeats SSRF controls, and the spec recommends 10 to 30 second timeouts with exponential backoff.", "difficulty": 2, "ref": "r7" },
+    { "id": "w09-l04-q4", "type": "single", "tag": "flip", "q": "The callee runs 20-minute jobs. Your client sits behind a corporate firewall that blocks inbound calls and needs only the final result. Which delivery mode fits best?", "options": ["Push notifications to a public webhook", "A held SSE stream for the full 20 minutes", "Blocking `SendMessage` with the default settings", "`SendMessage` with `returnImmediately: true`, then poll `GetTask` at a modest interval"], "answer": 3, "explain": "A firewall blocks webhooks and a 20-minute stream or blocking call is fragile. Returning immediately and polling needs only outbound connectivity, and a modest interval keeps load low when only the final result matters.", "difficulty": 2, "ref": "r1" }
+  ],
+  "defend": null,
+  "refs": ["r1", "r2", "r7"],
+  "takeaways": [
+    "Polling always works, streaming suits live progress, push suits long tasks and reachable callers.",
+    "`SendMessage` waits by default. Set `returnImmediately: true` for a handle.",
+    "Webhooks need SSRF, authenticity and replay defenses. Reconnect streams with `SubscribeToTask`.",
+    "Send `A2A-Version` on every request and plan dual support when clients move from 0.3 to 1.0."
+  ]
+}

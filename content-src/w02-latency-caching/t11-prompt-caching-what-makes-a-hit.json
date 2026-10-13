@@ -1,0 +1,123 @@
+{
+  "id": "w02-t11",
+  "order": 11,
+  "group": "Prompt caching",
+  "title": "Prompt caching: what makes a hit",
+  "minutes": 9,
+  "difficulty": "core",
+  "summary": "A provider prompt cache reuses the stored KV state of a repeated prefix. It changes cost and time to first token, never the answer. A hit needs four things at once: enough tokens, an identical prefix, the right machine and a request inside the lifetime.",
+  "useIf": "Requests share a long, stable prefix such as a system prompt, tool list, reference text or growing chat history.",
+  "avoidIf": "Prompts are short or unique, or reuse is so sparse that writes cost more than reads save.",
+  "explain": [
+    { "t": "p", "md": "A **prompt cache** stores the KV tensors computed for a prefix, not the text or the answer. A later request that starts with the same tokens skips prefill for that part, so the first token arrives sooner and cached tokens are billed at a discount. Sampling still runs, so the output is unchanged [[r1]]. Caching is on by default on OpenAI, Azure OpenAI and Gemini 2.5 and later. Anthropic needs a `cache_control` marker, either one top-level marker for automatic mode or markers on blocks [[r1]] [[r2]] [[r3]] [[tr1]]." },
+    { "t": "flow", "title": "Four gates to a hit", "direction": "h", "steps": [
+      { "title": "Long enough", "md": "OpenAI and Azure GPT-5.6+: 1,024 visible tokens. Anthropic: 512 to 4,096 by model. Shorter prompts run uncached with no error.", "tag": "size" },
+      { "title": "Identical prefix", "md": "One differing character inside the cached region voids the match. Order is tools, system, messages.", "tag": "content" },
+      { "title": "Right machine", "md": "Caches live on single machines. Above about 15 requests per minute per prefix and key, traffic can overflow and miss.", "tag": "routing" },
+      { "title": "In lifetime", "md": "OpenAI and Azure GPT-5.6+: at least 30 minutes. Anthropic: 5 minutes or 1 hour, refreshed on use.", "tag": "time" }
+    ] },
+    { "t": "formula", "title": "Break-even for a write premium", "expr": "cost(N) = w + r x (N - 1) versus N", "vars": [
+      { "k": "w", "v": "write multiplier: 1.25 on OpenAI GPT-5.6+ and Anthropic 5-minute entries, 2 for the Anthropic 1-hour entry" },
+      { "k": "r", "v": "read multiplier: 0.1 for most models (0.05 on GPT-6.1 Sol and some Anthropic models)" },
+      { "k": "N", "v": "requests that reuse the prefix inside its lifetime" }
+    ], "example": "At w = 1.25 and r = 0.1, one request costs 1.25x, which is 25% worse than no caching. Two cost 1.35x versus 2x. Ten cost 2.15x versus 10x, the OpenAI documentation example [[r1]]." },
+    { "t": "table", "caption": "Where to read hits", "head": ["Provider", "Hit field", "Write field"], "rows": [
+      ["OpenAI and Azure OpenAI", "`cached_tokens` (`prompt_tokens_details` on Azure)", "`cache_write_tokens` on Azure GPT-5.6+"],
+      ["Anthropic", "`cache_read_input_tokens`", "`cache_creation_input_tokens`"],
+      ["Gemini Developer API", "`usage.total_cached_tokens`", "Implicit, none"],
+      ["Gemini on Google Cloud", "`cachedContentTokenCount`", "Explicit caches bill storage"]
+    ] },
+    { "t": "p", "md": "**Scope and retention.** Entries are not shared across OpenAI organisations or Azure subscriptions, and Google isolates caches by project. OpenAI organisations with Zero Data Retention default to in-memory entries, and Google advises scoping caches to end-user permission boundaries in agent workloads. Check data-handling terms before you cache a sensitive prefix [[r1]] [[r2]] [[r5]]." },
+    { "t": "callout", "kind": "gotcha", "title": "What changes the prefix without looking like content", "md": "On OpenAI the `model`, `tools`, `parallel_tool_calls`, `text.format`, `reasoning.effort`, `text.verbosity` and `context_management` all affect the cached prefix, and summarisation or truncation of history resets reuse [[r1]]. On Anthropic, toggling thinking settings or `output_config.effort` invalidates the messages portion [[r3]]." }
+  ],
+  "whereToUse": [
+    "Assistants with a long system prompt, policies and tool definitions on every call",
+    "RAG or document Q&A where the same reference text precedes each question",
+    "Multi-turn chat and agent loops that resend a growing history",
+    "Few-shot classification with a long fixed example block",
+    "Batch prompts that share one instruction block, when items arrive close together"
+  ],
+  "whenToUse": {
+    "use": [
+      "A large share of input tokens is identical across requests",
+      "Requests for one prefix arrive within the cache lifetime, ideally several per lifetime",
+      "You can keep the stable part first and the variable part last"
+    ],
+    "avoid": [
+      "Prefixes are under the minimum, or change on nearly every request",
+      "A prefix is reused only once or twice per lifetime on a provider that charges for writes",
+      "Strict isolation forbids shared infrastructure state and the provider scope does not satisfy it"
+    ],
+    "flips": [
+      "A write premium applies (GPT-5.6+, Anthropic) and reuse is sparse: turn caching off or lengthen retention only if reuse justifies it",
+      "Traffic for one prefix exceeds about 15 requests per minute: shard across stable keys",
+      "Gaps are 5 to 60 minutes on Anthropic: the 1-hour entry may pay, the 5-minute one will not"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with other caches",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Provider prompt cache", "Long stable prefix, varied questions", "Short or unique prompts", "Write premium, silent misses"],
+      ["Engine prefix cache (self-hosted)", "You run the engine", "You use a hosted API", "Timing leaks across tenants unless salted"],
+      ["Exact response cache", "Identical requests repeat", "Inputs vary", "Stale answers"],
+      ["Semantic cache", "Paraphrased repeats, same answer for all", "Answers differ by user or change often", "Wrong or leaked answers"],
+      ["No cache", "Sparse reuse with a write premium", "Steady reuse", "Pays full prefill every time"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Cached tokens are zero on long prompts", "cause": "A timestamp, user name or reordered tool list sits inside the first part of the prompt", "fix": "Put dynamic text last, sort tool definitions, and compare consecutive prompts byte by byte [[r1]]" },
+    { "symptom": "The cached count is lower than the prefix length you expected", "cause": "Before GPT-5.6 counts round down to a multiple of 128, and hidden tokens are excluded", "fix": "Expect rounding on older models and compare only to the visible prefix [[r1]]" },
+    { "symptom": "Anthropic hit ratio looks tiny", "cause": "`input_tokens` counts only tokens after the last breakpoint, so dividing by it misstates the ratio", "fix": "Hit ratio is `cache_read_input_tokens` over the sum of input, read and creation tokens [[r3]]" }
+  ],
+  "scenarios": [
+    {
+      "id": "w02-t11-s1",
+      "title": "Sparse reuse on GPT-5.6",
+      "situation": "A nightly job sends a 9,000-token instruction block with each of three documents, spaced several hours apart on a GPT-5.6 deployment. The default caching mode is on. The bill for input tokens is 20% above the no-cache estimate.",
+      "constraints": ["Writes cost 1.25x on this model", "Reuse gaps exceed the 30 minute lifetime", "Latency does not matter"],
+      "unknowns": ["Can the job run in the batch tier?", "Can the three calls be grouped inside 30 minutes?"],
+      "question": "What do you change?",
+      "options": [
+        { "name": "Leave the default implicit caching on", "verdict": "poor", "why": "Every call writes an entry that expires before the next call, so you pay the premium and never read.", "tradeoff": "Right when several calls for one prefix land inside the lifetime." },
+        { "name": "Turn caching off with explicit mode and no breakpoints", "verdict": "best", "why": "Explicit mode with no breakpoints means no caching and no write charge, which matches reuse that never happens.", "tradeoff": "You give up savings if the schedule later clusters the calls." },
+        { "name": "Move the work to the batch tier", "verdict": "good", "why": "Batch gives a 50% discount for 24 hour work.", "tradeoff": "Results arrive within 24 hours and queueing is outside your control." }
+      ],
+      "flips": [
+        { "if": "The three calls can be sent within a few minutes of each other", "then": "Keep caching on. Two uses already beat no cache." },
+        { "if": "The work is delay-tolerant and large", "then": "Batch usually beats any caching tweak." }
+      ],
+      "takeaway": "A write premium turns sparse reuse into a loss. Count reuses per lifetime."
+    },
+    {
+      "id": "w02-t11-s2",
+      "title": "Tenant prefixes with 15 minute gaps",
+      "situation": "On Anthropic, each of 400 tenants has a 12,000-token prefix. A given tenant sends a request roughly every 15 minutes during business hours, four requests per hour.",
+      "constraints": ["5-minute default lifetime, 1-hour option", "Write is 1.25x (5-minute) or 2x (1-hour), read is 0.1x", "Per-tenant prefixes"],
+      "unknowns": ["Is traffic steady across the business day?", "Is the model's minimum size met?"],
+      "question": "Which setting do you choose?",
+      "options": [
+        { "name": "Default 5-minute entries", "verdict": "poor", "why": "Each 15 minute gap lets the entry expire, so every request writes at 1.25x and never reads.", "tradeoff": "Right when requests for one prefix arrive more often than every 5 minutes." },
+        { "name": "1-hour entries", "verdict": "best", "why": "Every use refreshes the entry, so with 15 minute gaps one 2x write covers the whole day: 32 requests in 8 hours cost 2 + 31 x 0.1 = 5.1x versus 32x uncached.", "tradeoff": "The first request pays 2x, and a tenant that goes quiet for over an hour pays that write again for nothing." },
+        { "name": "No caching", "verdict": "good", "why": "It is simple and safe.", "tradeoff": "It forgoes the saving for tenants with steady traffic." }
+      ],
+      "flips": [
+        { "if": "A tenant is silent for more than an hour between requests", "then": "Each request writes at 2x and never reads. Turn caching off for that tenant." },
+        { "if": "A tenant sends a request every 2 minutes", "then": "The 5-minute entry stays alive for free and is the cheaper choice." }
+      ],
+      "takeaway": "Match the lifetime to the gap between requests, not to a default."
+    }
+  ],
+  "quiz": [
+    { "id": "w02-t11-q1", "type": "numeric", "tag": "numeric", "q": "On a model with a 1.25x write and a 0.1x read, ten requests reuse one prefix inside its lifetime. What is the total input cost for the prefix, in units of one uncached request (ten uncached requests would cost 10)?", "answer": 2.15, "tolerancePct": 2, "unit": "x of one uncached request", "hint": "1.25 + 0.1 x 9", "explain": "One write at 1.25 plus nine reads at 0.1 is 1.25 + 0.9 = 2.15, versus 10 uncached. The documentation uses this same example.", "difficulty": 1, "ref": "r1" },
+    { "id": "w02-t11-q2", "type": "multi", "tag": "concept", "q": "Which are required for a prompt cache hit?", "options": ["A prefix at or above the minimum size", "The same first tokens up to the cached region", "The same user id on both requests", "The next request arrives inside the cache lifetime"], "answers": [0, 1, 3], "explain": "Size, identical prefix and arrival inside the lifetime are required, along with reaching the machine that holds the entry. A user id is not part of the match.", "difficulty": 1, "ref": "r1" },
+    { "id": "w02-t11-q3", "type": "single", "tag": "diagnose", "q": "Anthropic usage shows input_tokens: 40, cache_read_input_tokens: 11,900 and cache_creation_input_tokens: 0. What does it mean?", "options": ["Caching failed because input_tokens is only 40", "The 11,900-token prefix was read from cache and only 40 tokens were uncached", "A cache entry was written for 40 tokens", "The prompt was shorter than the minimum size"], "answer": 1, "explain": "input_tokens counts only tokens after the last breakpoint. A large cache_read value with zero creation is a clean hit. Failure would show zero in both cache fields.", "difficulty": 2, "ref": "r3" }
+  ],
+  "flashcards": [
+    { "front": "What does a provider prompt cache store?", "back": "The KV tensors for a prefix, not text or answers. Hits change cost and TTFT, never the output." },
+    { "front": "What are the four conditions for a prompt cache hit?", "back": "Enough tokens, an identical prefix, routing to the machine holding it, and arrival inside the lifetime." },
+    { "front": "How many reuses does a 1.25x write need to break even?", "back": "Two. One request costs 1.25x versus 1x, but two cost 1.35x versus 2x." }
+  ],
+  "related": ["w02-t12", "w02-t13", "w02-t14", "w02-l4"],
+  "refs": ["r1", "r2", "r3", "tr1", "r5"]
+}

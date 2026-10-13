@@ -1,0 +1,93 @@
+{
+  "id": "w08-t07",
+  "order": 7,
+  "group": "Client features",
+  "title": "Sampling and roots",
+  "minutes": 7,
+  "difficulty": "core",
+  "summary": "Sampling let a server borrow the client's model and roots let a client tell a server which folders matter. Both are Deprecated in 2026-07-28 but still work, so know what they did and how to migrate.",
+  "useIf": "You maintain a server or client that already uses them and need a migration plan before the earliest removal.",
+  "avoidIf": "You are starting a new design. New implementations SHOULD NOT adopt either feature.",
+  "explain": [
+    { "t": "p", "md": "**Sampling** (`sampling/createMessage`) lets a server ask the client's LLM for a completion. The request carries `messages`, `systemPrompt`, `maxTokens` and `modelPreferences`. Since 2025-11-25 a server can also pass `tools` and `toolChoice` if the client declares `sampling.tools`. The appeal was that the server needs no model key, and a human SHOULD be able to review and deny each request [[tr3]]." },
+    { "t": "p", "md": "**Roots** (`roots/list`) let a client tell a server which directories and files it considers relevant. The spec says they are informational guidance, not access control: the protocol does not force a server to stay inside them [[tr4]]." },
+    { "t": "p", "md": "In 2026-07-28 both are **Deprecated** (SEP-2577), together with Logging. They remain in the spec and still function, now carried by Multi Round-Trip Requests instead of server pushes. A deprecated feature stays at least twelve months, and the earliest removal is the first revision released on or after 2027-07-28. No feature has been Removed yet. Actual removal is a maintainer decision and may come later [[r9]] [[r25]]." },
+    { "t": "table", "caption": "Deprecated in 2026-07-28 and how to migrate", "head": ["Feature", "Deprecated in", "Migration", "Earliest removal"], "rows": [["Sampling", "2026-07-28", "Call the model provider API directly", "First revision on or after 2027-07-28"], ["Roots", "2026-07-28", "Pass paths in tool parameters, resource URIs or server config", "First revision on or after 2027-07-28"], ["Logging", "2026-07-28", "`stderr` on stdio, or OpenTelemetry", "First revision on or after 2027-07-28"], ["`includeContext`: `thisServer`, `allServers`", "2025-11-25", "Omit the field or use `none`", "Follows Sampling"]] },
+    { "t": "callout", "kind": "note", "title": "Read vendor dates carefully", "md": "Microsoft Agent Framework documentation warns that sampling and `sampling_callback` are deprecated and says removal comes no later than 2027-07-28. That is stricter wording than the spec's earliest-removal date, so plan to the earlier one [[r26]]." }
+  ],
+  "whereToUse": [
+    "Auditing existing servers that call `sampling/createMessage` or `roots/list`",
+    "Planning a dual-path release: keep the legacy feature for old hosts, add the migration path for new ones",
+    "Reviewing vendor SDK upgrade notes for the date a feature is dropped",
+    "Explaining to stakeholders why a working feature needs replacement work"
+  ],
+  "whenToUse": {
+    "use": ["Keep using it only to support hosts you cannot change yet", "Wrap it behind an interface so the replacement is a swap", "Track the deprecation registry each revision"],
+    "avoid": ["Adding sampling or roots to a new server", "Treating roots as a security boundary", "Assuming deprecated means removed today"],
+    "flips": ["Every client moves to a modern host with provider access: remove the legacy path", "A vendor SDK drops support earlier than the spec: follow the SDK date"]
+  },
+  "alternatives": {
+    "title": "Replacements compared",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Call the provider API from the server", "Server needs its own model output", "You cannot hold keys or budget", "You own cost, keys and safety"],
+      ["Return raw data and let the host model reason", "Reasoning can happen in the host", "A stable server-side artifact is needed", "Less control over prompts"],
+      ["Paths as tool parameters or resource URIs", "Scope is per call", "Scope should follow a workspace automatically", "Server must validate paths itself"],
+      ["Server configuration for allowed directories", "Admin sets scope once", "Scope changes per task", "Static allow-list drift"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A server read files outside the project the user opened", "cause": "Roots were treated as enforcement but they are only informational", "fix": "Enforce allowed base paths in the server and use OS-level sandboxing" },
+    { "symptom": "A server upgrade breaks sampling in an old host", "cause": "The modern path sends sampling requests through Multi Round-Trip Requests, not pushed requests", "fix": "Keep the legacy transport path for hosts that still use `initialize`, and test both eras" },
+    { "symptom": "A planned release assumes sampling will exist in 2028", "cause": "The earliest removal date was read as a guarantee", "fix": "Plan migration within the twelve-month window and watch the deprecated registry" }
+  ],
+  "scenarios": [
+    {
+      "id": "w08-t07-s1",
+      "title": "A new server that must summarise",
+      "situation": "A greenfield server stores meeting notes and must generate a stored summary for each one. The team can hold a model deployment and budget. Hosts vary.",
+      "constraints": ["Greenfield design", "Server needs its own stored artifact", "Team can manage model access"],
+      "unknowns": ["Is the summary cost billed to the server owner or the customer?", "Which model deployment and gateway apply?"],
+      "question": "How does the server get model output?",
+      "options": [
+        { "name": "Call the model provider API from the server through a gateway", "verdict": "best", "why": "No dependence on a Deprecated feature or on a host that declares sampling, and you control prompts, cost and safety.", "tradeoff": "You own keys, spend and content-safety controls." },
+        { "name": "Return raw notes and let the host model summarise at read time", "verdict": "good", "why": "Needs no model access on the server.", "tradeoff": "No stored artifact and the result varies by host and model." },
+        { "name": "Use `sampling/createMessage`", "verdict": "poor", "why": "New implementations SHOULD NOT adopt it, and it only works with hosts that declare the sampling capability.", "tradeoff": "Reasonable only to keep an existing integration alive for legacy hosts." }
+      ],
+      "flips": [
+        { "if": "The server owner cannot hold model access and a customer's host supplies it", "then": "Return data for the host model, since sampling is on its way out." },
+        { "if": "Summaries are only needed ad hoc at read time", "then": "Skip the stored artifact and let the host model summarise on demand." }
+      ],
+      "takeaway": "Do not build on a feature that is already scheduled for removal."
+    },
+    {
+      "id": "w08-t07-s2",
+      "title": "A shipped server using sampling",
+      "situation": "A server used by many customers relies on sampling for one feature. Some customers run older hosts and some run the 2026-07-28 revision. The current release window is a few months.",
+      "constraints": ["Mixed host fleet", "Feature is in production", "Removal is at least a year away"],
+      "unknowns": ["How much traffic uses the feature?", "Can customers supply provider access?"],
+      "question": "What do you do now?",
+      "options": [
+        { "name": "Add a provider-API path, keep sampling for legacy hosts and set a retirement date", "verdict": "best", "why": "Avoids breaking customers while moving off the Deprecated feature inside the window.", "tradeoff": "Two code paths and extra testing until retirement." },
+        { "name": "Delete sampling immediately", "verdict": "poor", "why": "Breaks hosts that rely on it for no benefit today.", "tradeoff": "Right once usage metrics show no legacy traffic." },
+        { "name": "Do nothing until removal is announced", "verdict": "good", "why": "No work now.", "tradeoff": "Leaves migration to a deadline and risks an SDK dropping it earlier." }
+      ],
+      "flips": [
+        { "if": "Metrics show no legacy host uses the feature", "then": "Remove the sampling path now." },
+        { "if": "An SDK you depend on announces earlier removal", "then": "Move the retirement date up." }
+      ],
+      "takeaway": "Migrate on a schedule you control, with metrics deciding when the old path dies."
+    }
+  ],
+  "quiz": [
+    { "id": "w08-t07-q1", "type": "single", "tag": "security", "q": "A server uses the client's roots as its only protection against reading outside a project. What is wrong?", "options": ["Roots only work over stdio", "Roots are informational and the protocol does not enforce them", "Roots are Removed in 2026-07-28", "Roots require OAuth scopes"], "answer": 1, "explain": "The spec calls roots guidance rather than access control. They are Deprecated, not Removed, and they are not tied to stdio or scopes. Enforce paths in the server." },
+    { "id": "w08-t07-q2", "type": "match", "tag": "concept", "q": "Match each Deprecated feature to its migration path.", "pairs": [{ "l": "Sampling", "r": "Call the model provider API directly" }, { "l": "Roots", "r": "Pass paths via tool parameters or resource URIs" }, { "l": "Logging", "r": "Write to stderr or use OpenTelemetry" }, { "l": "`includeContext` thisServer", "r": "Omit the field or use none" }], "explain": "These are the migrations in the deprecated features registry. Earliest removal for Sampling, Roots and Logging is the first revision released on or after 2027-07-28." }
+  ],
+  "flashcards": [
+    { "front": "What is the status of sampling, roots and logging?", "back": "Deprecated in 2026-07-28 (SEP-2577). Still functional. Earliest removal is the first revision released on or after 2027-07-28. Nothing is Removed yet." },
+    { "front": "How should a server replace sampling?", "back": "Call the model provider API directly (or return data for the host's model). New implementations SHOULD NOT adopt sampling." },
+    { "front": "Are roots an access-control mechanism?", "back": "No. They are informational guidance and the protocol does not enforce them. Enforce allowed paths in the server." }
+  ],
+  "related": ["w08-t06", "w08-t08", "w08-t10", "w08-l03"],
+  "refs": ["tr3", "tr4", "r9", "r25", "r26"]
+}

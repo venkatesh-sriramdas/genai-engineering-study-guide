@@ -1,0 +1,102 @@
+{
+  "id": "w14-t07",
+  "order": 7,
+  "group": "Metrics",
+  "title": "RAGAS metrics",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "RAGAS defines LLM-judged metrics for RAG: faithfulness and answer relevancy for the generator, context precision, context recall and entities recall for the retriever, and noise sensitivity for how irrelevant context corrupts answers. Each has inputs it needs and a blind spot.",
+  "useIf": "You need readable RAG metric definitions and have few or no relevance labels.",
+  "avoidIf": "You expect a faithfulness score to prove the answer is true, or you compare scores across different judge or embedding models.",
+  "explain": [
+    { "t": "p", "md": "RAGAS splits RAG quality into the retriever half and the generator half, and scores most items with an LLM judge [[r20]]. Read each metric by what it divides by what." },
+    { "t": "table", "caption": "RAGAS metrics (docs for ragas 0.4.x, checked 2026-10-13)", "head": ["Metric", "Score", "Needs", "Blind spot"], "highlightCol": 0, "rows": [
+      ["**Faithfulness**", "Claims in the response supported by retrieved context / claims in the response", "`user_input`, `response`, `retrieved_contexts`", "Consistency, not truth: wrong context gives a faithful wrong answer"],
+      ["**Answer (Response) relevancy**", "Mean cosine similarity between the question and N questions an LLM generates from the response (default 3)", "Response, plus an embedding model", "Does not judge facts, and the score can leave 0 to 1"],
+      ["**Context precision**", "Mean of precision@k over ranks that hold a relevant chunk, so order matters", "Reference answer (`ContextUtilization` uses the response)", "Needs a reference, judged by an LLM"],
+      ["**Context recall**", "Claims in the reference attributable to the retrieved context / claims in the reference", "Always a reference", "Cannot run without references"],
+      ["**Context entities recall**", "Entities shared by reference and context / entities in the reference", "Reference", "Suited to fact-heavy use cases only"],
+      ["**Noise sensitivity**", "Share of response claims that are wrong against the reference while attributable to the context. Lower is better. `mode` is `relevant` (default) or `irrelevant`", "Input, response, reference, contexts", "Needs all four inputs"]
+    ] },
+    { "t": "p", "md": "Map symptoms to metrics. Low **context recall** says the evidence never reached the prompt: fix retrieval. High recall with low **faithfulness** says the generator ignored or invented beyond the context. High **noise sensitivity** says irrelevant chunks led the model to wrong claims. Low **answer relevancy** says the response drifted off the question." },
+    { "t": "p", "md": "Run each metric where its inputs exist. Faithfulness and answer relevancy need only the question, the response and the retrieved contexts (plus an embedding model for relevancy), so they also work on live traces. Context recall, context entities recall and noise sensitivity need a reference, so they belong to the offline golden set. Because an LLM judge and an embedding model produce the numbers, pin both and re-baseline when either changes." },
+    { "t": "callout", "kind": "gotcha", "title": "API and naming drift", "md": "ragas 0.4.3 was released on 2026-01-13. The docs show the collections API (`ragas.metrics.collections`, `ascore` and `score`). The legacy `SingleTurnSample` API is deprecated in 0.4 and removed in 1.0. The docs title says Response Relevancy while the class is `AnswerRelevancy` [[r20]]." },
+    { "t": "p", "md": "Foundry's evaluators label the same two halves a **precision aspect** (Groundedness) and a **recall aspect** (Response Completeness, preview, needs `ground_truth`) [[r4]]. DeepEval offers Contextual Relevancy, Precision, Recall, Answer Relevancy and Faithfulness [[r28]]. Names differ across tools, so compare definitions, not labels." }
+  ],
+  "whereToUse": [
+    "Diagnosing whether a bad RAG answer is a retrieval or a generation fault",
+    "Regression runs after a chunking, retriever or prompt change",
+    "Sampling production traces for faithfulness without references",
+    "Teaching teams a shared vocabulary for RAG quality"
+  ],
+  "whenToUse": {
+    "use": ["Few relevance labels exist but reference answers do", "You want one metric per failure type", "You can afford judge calls on a sample"],
+    "avoid": ["Using faithfulness alone as a correctness gate", "Mixing scores across different judge or embedding models", "Running reference metrics on traces that have no reference"],
+    "flips": ["No references: use faithfulness, answer relevancy and ContextUtilization only", "Exact regression numbers needed: prefer rank metrics with labels for retrieval", "High stakes: add a reference-based correctness check and human review"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["RAGAS metrics", "You want readable definitions and open source", "You need an Azure-native portal and SLA", "Judge cost, API changes between versions"],
+      ["Foundry RAG evaluators", "You live in Foundry and want portal results", "You need open definitions you can fork", "Several are preview"],
+      ["Rank metrics with qrels", "You have retrieval labels", "Labels are missing", "Labelling cost"],
+      ["DeepEval RAG metrics", "You want pytest-style tests and thresholds", "You need Azure integration", "Default threshold 0.5 may not fit your bar"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Faithfulness is 0.95 but the answer is wrong", "cause": "The retrieved document was wrong or outdated, and the answer matched it", "fix": "Pair faithfulness with context recall and a reference-based correctness check" },
+    { "symptom": "Scores jumped after a library upgrade", "cause": "Metric implementation or default prompts changed, or the judge model changed", "fix": "Pin the library, the judge and the embedding model, and re-baseline after any change" },
+    { "symptom": "Answer relevancy is high for a confident wrong answer", "cause": "It measures topical match to the question, not accuracy", "fix": "Never use it as a correctness gate" }
+  ],
+  "scenarios": [
+    {
+      "id": "w14-t07-s1",
+      "title": "Hallucination complaints, labelled references",
+      "situation": "Users report invented details in a policy assistant. A reference answer exists for 300 test questions. The team suspects retrieval but cannot prove it.",
+      "constraints": ["References exist", "Need a quick diagnosis", "Judge budget for 300 items"],
+      "unknowns": ["Is context recall high or low?", "Do wrong claims appear in the retrieved text?"],
+      "question": "Which metrics split the cause?",
+      "options": [
+        { "name": "Context recall, faithfulness and noise sensitivity on the 300 items", "verdict": "best", "why": "Low recall points to retrieval, high recall with low faithfulness points to the generator, and noise sensitivity shows whether irrelevant chunks mislead.", "tradeoff": "Three judged metrics cost judge calls for 300 items." },
+        { "name": "Answer relevancy alone", "verdict": "poor", "why": "It measures topical match and ignores both facts and context.", "tradeoff": "Useful for catching answers that dodge the question." },
+        { "name": "Faithfulness alone", "verdict": "good", "why": "Detects claims unsupported by context.", "tradeoff": "It cannot say whether the context itself was complete or right." }
+      ],
+      "flips": [
+        { "if": "No reference answers exist", "then": "Use faithfulness and ContextUtilization, and start writing references for the worst cases." },
+        { "if": "Context recall is high and faithfulness is high", "then": "Check that the reference and corpus are not outdated." }
+      ],
+      "takeaway": "Pair a generator metric with a retriever metric to localise the fault."
+    },
+    {
+      "id": "w14-t07-s2",
+      "title": "Production monitoring, no references, tight budget",
+      "situation": "A support assistant handles 50,000 conversations a day. There are no reference answers. Finance caps judge spend, and security allows reading only a redacted sample.",
+      "constraints": ["No references", "Spend cap", "Redacted samples only"],
+      "unknowns": ["What sampling rate fits the budget?", "Which topics are riskiest?"],
+      "question": "Which RAGAS-style metrics do you run on live traffic?",
+      "options": [
+        { "name": "Faithfulness and answer relevancy on a sampled, redacted slice", "verdict": "best", "why": "Both run without references and flag unsupported or off-topic answers at a cost you control by sampling.", "tradeoff": "They cannot tell when retrieval missed the right document." },
+        { "name": "Context recall and noise sensitivity on all traffic", "verdict": "poor", "why": "Both need references that live traffic lacks, and full coverage breaks the budget.", "tradeoff": "They suit the offline golden set where references exist." },
+        { "name": "Sample 1% for human review only", "verdict": "good", "why": "High-quality labels and no judge cost.", "tradeoff": "Slow, and low coverage of rare failures." }
+      ],
+      "flips": [
+        { "if": "The budget grows", "then": "Increase the sample and add ContextUtilization for retrieval health." },
+        { "if": "Traffic is sensitive and cannot be read", "then": "Score metadata and safety signals only." }
+      ],
+      "takeaway": "Without references, use the reference-free metrics and sample."
+    }
+  ],
+  "quiz": [
+    { "id": "w14-t07-q1", "type": "single", "tag": "concept", "q": "What does RAGAS faithfulness actually measure?", "options": ["Whether the answer is true in the world", "Whether the retrieved chunks were ranked well", "Whether the answer addresses the question", "Whether the response's claims are supported by the retrieved context"], "answer": 3, "explain": "Faithfulness divides context-supported claims by total claims. It checks consistency with context, not truth, ranking or relevance to the question." },
+    { "id": "w14-t07-q2", "type": "single", "tag": "diagnose", "q": "Context recall is 0.35, faithfulness is 0.92. Where do you look first?", "options": ["Retrieval: the needed evidence rarely reaches the prompt", "The generation prompt", "The embedding model used for answer relevancy", "The judge temperature"], "answer": 0, "explain": "Faithful answers over missing evidence mean the generator is following weak context. Low recall means the reference claims are not in the retrieved context." },
+    { "id": "w14-t07-q3", "type": "multi", "tag": "tradeoff", "q": "Which RAGAS metrics need a reference answer? Select all that apply.", "options": ["Context recall", "Faithfulness", "Noise sensitivity", "Context precision (reference variant)"], "answers": [0, 2, 3], "explain": "Context recall, noise sensitivity and the reference variant of context precision need a reference. Faithfulness needs only the input, response and retrieved contexts." }
+  ],
+  "flashcards": [
+    { "front": "Faithfulness formula?", "back": "Claims in the response supported by the retrieved context divided by total claims in the response. It checks consistency with context, not truth." },
+    { "front": "How is answer (response) relevancy computed?", "back": "An LLM generates N questions (default 3) from the response. The score is the mean cosine similarity of their embeddings to the user question. It needs an embedding model and ignores facts." },
+    { "front": "What does noise sensitivity measure?", "back": "The share of response claims that are wrong against the reference yet attributable to retrieved context. Lower is better. Modes: relevant (default) and irrelevant." }
+  ],
+  "related": ["w14-t06", "w14-t08", "w14-t09", "w14-l3", "w06-t02"],
+  "refs": ["r20", "r4", "r28", "r14"]
+}

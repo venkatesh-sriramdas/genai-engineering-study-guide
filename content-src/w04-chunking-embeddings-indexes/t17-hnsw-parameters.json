@@ -1,0 +1,111 @@
+{
+  "id": "w04-t17",
+  "order": 17,
+  "group": "Indexes",
+  "title": "HNSW parameters",
+  "minutes": 8,
+  "difficulty": "advanced",
+  "summary": "HNSW has three knobs: m (links per node), efConstruction (build-time effort) and efSearch (query-time effort). They trade recall against memory, build time and latency, and the defaults differ by product.",
+  "useIf": "You run an HNSW index and need to tune recall, latency or memory with evidence instead of guessing.",
+  "avoidIf": "You have no exact-search baseline. Without it you cannot tell whether a change improved recall.",
+  "explain": [
+    { "t": "p", "md": "**HNSW** (Hierarchical Navigable Small World) is a layered graph where each vector links to some neighbours [[tr20]]. A query enters at the top layer, hops greedily toward the query, drops a layer, and at the bottom layer keeps a candidate list of the best vectors found so far. The size of that list is `efSearch`. The graph quality is set when you build it, by `m` and `efConstruction`." },
+    { "t": "p", "md": "The costs land at different times. Raising `m` connects each node better, which helps on clustered or high-dimension data, but every vector pays for it in memory. Raising `efConstruction` costs build time once. Raising `efSearch` costs time on every query. That asymmetry is why you tune `efSearch` first: it is the cheap knob to turn when you see a recall or latency problem." },
+    { "t": "table", "caption": "The three knobs", "head": ["Parameter", "Meaning", "Raise it and you get", "Cost"], "rows": [
+      ["`m`", "Bi-directional links per node", "Better recall on hard data, a more connected graph", "More memory (overhead above float32 vectors is 1 to 20% and grows with `m` [[tr32]]), slower build"],
+      ["`efConstruction`", "Candidates considered while inserting each vector", "A better graph, so higher recall at any `efSearch`", "Slower build. No query-time cost, but fixed after build"],
+      ["`efSearch`", "Candidate list size during a query", "Higher recall", "Higher query latency. Affects queries only"]
+    ] },
+    { "t": "table", "caption": "Defaults differ, so numbers are not comparable across products (checked 2026-10-13)", "head": ["Store", "`m`", "`efConstruction`", "`efSearch`"], "rows": [
+      ["Azure AI Search", "4 (range 4 to 10)", "400 (100 to 1,000)", "500 (100 to 1,000)"],
+      ["pgvector", "16", "64 (`ef_construction`)", "40 (`hnsw.ef_search`)"],
+      ["Qdrant", "16", "100 (`ef_construct`)", "Not covered in the checked source"]
+    ] },
+    { "t": "p", "md": "AI Search takes `metric` of `cosine`, `dotProduct`, `euclidean` or `hamming` and offers `hnsw` or `exhaustiveKnn` as algorithm kinds [[tr10]]. The pgvector and Qdrant defaults come from their documentation [[tr12]] [[tr35]]. An `efSearch` of 40 is normal in pgvector and below the minimum of 100 in AI Search, so copying a number between engines is a mistake." },
+    { "t": "code", "lang": "json", "title": "AI Search algorithm configuration", "code": "\"algorithms\": [{\n  \"name\": \"hnsw-1\",\n  \"kind\": \"hnsw\",\n  \"hnswParameters\": { \"m\": 4, \"efConstruction\": 400, \"efSearch\": 500, \"metric\": \"cosine\" }\n}]", "caption": "Names follow the Create Index documentation [[tr10]]." },
+    { "t": "code", "lang": "sql", "title": "pgvector equivalent", "code": "CREATE INDEX ON items USING hnsw (embedding vector_cosine_ops)\n  WITH (m = 16, ef_construction = 64);\nSET hnsw.ef_search = 100;  -- per session, no rebuild", "caption": "Parameter names follow the pgvector README [[tr12]]." },
+    { "t": "flow", "title": "Tuning loop", "steps": [
+      { "title": "Ground truth", "md": "Run exact search on a sample of real queries to get true neighbours." },
+      { "title": "Sweep efSearch", "md": "Keep defaults for the build, sweep the query knob, record recall at k and p95 latency." },
+      { "title": "Rebuild only if needed", "md": "If recall plateaus below target, raise `m` and `efConstruction`, rebuild, repeat." },
+      { "title": "Re-test with filters", "md": "Run the same sweep with your real filters on, because filters change recall." }
+    ], "direction": "h" }
+  ],
+  "whereToUse": [
+    "Tuning an AI Search, pgvector, Qdrant, Elasticsearch or OpenSearch HNSW index for production",
+    "Explaining why latency rose after a recall fix, or why memory grew after raising `m`",
+    "Capacity planning, since `m` changes memory and `efConstruction` changes build time",
+    "Comparing engines fairly, by tuning each to the same recall target"
+  ],
+  "whenToUse": {
+    "use": ["Sweep `efSearch` first because it needs no rebuild in most stores", "Raise `m` and `efConstruction` when recall plateaus below target", "Tune against recall at k measured on real queries"],
+    "avoid": ["Tuning without exact ground truth", "Raising `m` to fix latency, since it adds memory and does not speed queries", "Copying parameter values from another engine"],
+    "flips": ["Memory is tight: keep `m` low and use quantization with rescoring", "Writes are heavy: keep `efConstruction` modest to limit build cost", "Filters are selective: tune with filters on and consider exact search for the subset"]
+  },
+  "alternatives": {
+    "title": "Fixing recall or latency: which lever",
+    "head": ["Lever", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Raise `efSearch`", "Recall below target, latency has headroom", "Latency already at the limit", "More compute per query"],
+      ["Raise `m` and `efConstruction`", "Recall plateaus even at high `efSearch`", "Memory or build time is constrained", "Rebuild, more memory"],
+      ["Lower `efSearch`", "Recall exceeds target and latency is high", "Recall is borderline", "Recall loss"],
+      ["Quantization with rescoring", "Memory is the limit", "Dimensions are small", "Extra field, rescoring step"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Recall will not improve however high `efSearch` goes", "cause": "The graph was built with low `m` or `efConstruction`, so some neighbours are unreachable", "fix": "Raise `m` and `efConstruction` and rebuild, then re-sweep `efSearch`" },
+    { "symptom": "Query latency doubled after a recall fix", "cause": "`efSearch` was raised, so each query explores more candidates", "fix": "Find the lowest `efSearch` that meets the recall target on your sample" },
+    { "symptom": "Filtered queries return fewer than k rows in pgvector", "cause": "With default `hnsw.ef_search` of 40, filters apply after the index scan and discard most candidates", "fix": "Raise `ef_search`, enable iterative scans (0.8.0 and later) or use another filter strategy" },
+    { "symptom": "A pgvector index build takes far longer after raising `ef_construction`", "cause": "Each insert explores more candidates", "fix": "Raise it only if recall demands it and plan build windows" }
+  ],
+  "scenarios": [
+    {
+      "id": "w04-t17-s1",
+      "title": "Recall is fine, latency is not",
+      "situation": "An HNSW index meets a recall target of 0.95 against exact search. Measured recall at the current setting is 0.99 and p95 latency exceeds the budget.",
+      "constraints": ["Recall 0.99 against a 0.95 target", "Latency over budget", "Memory has no headroom", "Labelled sample available"],
+      "unknowns": ["How far above the target is recall at lower settings?", "Is the latency from the index or the network?"],
+      "question": "What do you change?",
+      "options": [
+        { "name": "Lower `efSearch` step by step while tracking recall against the 0.95 target", "verdict": "best", "why": "It spends the surplus recall on latency, needs no rebuild and the sample shows where to stop.", "tradeoff": "Recall falls toward the target and the margin shrinks." },
+        { "name": "Add replicas or a bigger tier", "verdict": "good", "why": "Lowers latency under load without touching recall.", "tradeoff": "Higher cost, and it does not help single-query latency." },
+        { "name": "Rebuild with a higher `m` and `efConstruction`", "verdict": "poor", "why": "Improves recall that is already enough and adds memory, which has no headroom.", "tradeoff": "Right when recall is below target at the highest acceptable `efSearch`." }
+      ],
+      "flips": [
+        { "if": "Latency is dominated by the embedding call, not search", "then": "Tune the query embedding path before touching HNSW." },
+        { "if": "Recall target rises to 0.99", "then": "Keep `efSearch` and revisit `m` and `efConstruction`." }
+      ],
+      "takeaway": "Spend surplus recall on latency with the query-time knob first."
+    },
+    {
+      "id": "w04-t17-s2",
+      "title": "Recall plateaus at 0.90",
+      "situation": "On a 12 million vector index recall stays near 0.90 even with `efSearch` at 1,000, the product maximum. The target is 0.95. Memory has some headroom.",
+      "constraints": ["12 million vectors", "Recall 0.90 at maximum efSearch", "Target 0.95", "Some memory headroom"],
+      "unknowns": ["What are the current `m` and `efConstruction`?", "Are filters in use during the test?"],
+      "question": "What is the next step?",
+      "options": [
+        { "name": "Raise `m` and `efConstruction`, rebuild, then re-sweep `efSearch`", "verdict": "best", "why": "A recall plateau at the top of the query range signals a weak graph, and the build knobs fix that.", "tradeoff": "More memory, a longer build and a rebuild." },
+        { "name": "Add oversampling and rescoring if the field is quantized", "verdict": "good", "why": "Recovers precision lost to compression if that is the cause.", "tradeoff": "Does not help if the graph itself is the limit." },
+        { "name": "Keep raising `efSearch`", "verdict": "poor", "why": "It is already at the maximum, so there is nothing left to raise.", "tradeoff": "Right when `efSearch` is still far below its cap." }
+      ],
+      "flips": [
+        { "if": "The index uses binary quantization without rescoring", "then": "Enable rescoring first, since compression may cause the plateau." },
+        { "if": "Memory has no headroom", "then": "Combine a moderate `m` with quantization and rescoring." }
+      ],
+      "takeaway": "When the query knob is exhausted, the build knobs are the lever."
+    }
+  ],
+  "quiz": [
+    { "id": "w04-t17-q1", "type": "match", "tag": "concept", "q": "Match each HNSW parameter to its main effect.", "pairs": [ { "l": "`m`", "r": "Links per node, affects recall and memory" }, { "l": "`efConstruction`", "r": "Build-time candidates, affects graph quality and build time" }, { "l": "`efSearch`", "r": "Query-time candidate list, affects recall and latency" }, { "l": "`metric`", "r": "The similarity measure, such as cosine" } ], "explain": "The three ef and m knobs act at different times: `m` and `efConstruction` at build, `efSearch` at query. `metric` chooses the similarity function." },
+    { "id": "w04-t17-q2", "type": "single", "tag": "diagnose", "q": "Recall plateaus at 0.90 even with `efSearch` at its maximum. Which change most likely helps?", "options": ["Lower efSearch", "Switch the metric from cosine to dotProduct", "Add replicas", "Raise `m` and `efConstruction` and rebuild"], "answer": 3, "explain": "A plateau at the top of the query range means the graph is the limit, which the build parameters control. Lowering efSearch reduces recall, changing the metric changes semantics, and replicas affect throughput." },
+    { "id": "w04-t17-q3", "type": "multi", "tag": "bug", "q": "Which statements about HNSW defaults are correct?", "options": ["AI Search `efSearch` defaults to 500", "pgvector `hnsw.ef_search` defaults to 40", "A given `efSearch` value means the same in every engine", "pgvector `m` defaults to 16"], "answers": [0, 1, 3], "explain": "The defaults are 500 in AI Search, 40 in pgvector and an `m` of 16 in pgvector. Values are not comparable across engines." }
+  ],
+  "flashcards": [
+    { "front": "What are the Azure AI Search HNSW defaults?", "back": "`m` 4 (range 4 to 10), `efConstruction` 400 (100 to 1,000), `efSearch` 500 (100 to 1,000)." },
+    { "front": "What are the pgvector HNSW defaults?", "back": "`m` 16, `ef_construction` 64 and `hnsw.ef_search` 40." },
+    { "front": "Which HNSW knob is the first to turn, and why?", "back": "`efSearch`, because it affects only queries and needs no rebuild in most stores. Raise `m` and `efConstruction` only if recall plateaus." }
+  ],
+  "related": ["w04-t16", "w04-t18", "w04-t14", "w04-t19", "w04-l4"],
+  "refs": ["tr10", "tr12", "tr20", "tr32", "tr35"]
+}

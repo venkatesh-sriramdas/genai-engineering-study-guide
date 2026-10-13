@@ -1,0 +1,116 @@
+{
+  "id": "w00-t04",
+  "order": 4,
+  "group": "Answering well",
+  "title": "Reading and answering scenario questions",
+  "minutes": 7,
+  "difficulty": "core",
+  "summary": "A scenario card gives a few fixed constraints and hides the rest. You choose an option, then check its verdict, reason and trade-off against the constraints.",
+  "useIf": "You practise with scenario cards and want to learn from the verdicts, not only collect a score.",
+  "avoidIf": "You want a single memorised answer per card. Verdicts change when the dials change.",
+  "explain": [
+    { "t": "p", "md": "Every scenario card has the same parts. The **situation** gives facts, and facts it gives are real. The **constraints** list the dial values that are fixed in this card. The **unknowns** are questions a strong candidate would ask, and they mark dials you must not assume. The **options** each carry a verdict, a reason and a trade-off. After you choose, you see all of them, plus the **flips**: changed constraints that would change the winner." },
+    { "t": "flow", "title": "How to read a card", "direction": "h", "steps": [
+      { "title": "Mark constraints", "md": "Underline every fixed dial value." },
+      { "title": "Read the unknowns", "md": "Do not assume them. Note which could change your pick." },
+      { "title": "Cross out", "md": "Drop options that break a stated constraint." },
+      { "title": "Pick by cost of error", "md": "Among the rest, choose the one that is cheapest to be wrong about." },
+      { "title": "Check the flips", "md": "Ask what you would change if one flip happened." }
+    ] },
+    { "t": "p", "md": "The card is **answerable from the stated constraints**. If you need a fact it does not give, that fact is an unknown, and the right move is to say how the answer would change, not to invent a value. Choose in two passes. First eliminate: an option that breaks a stated constraint is out, whatever its reputation. Then compare the survivors by the cost of being wrong, including how hard each is to reverse. Write one sentence of reasoning before you reveal, because the reveal is only useful if you can compare it with your own logic." },
+    { "t": "table", "caption": "What the verdicts mean", "head": ["Verdict", "Meaning", "How to use it when revising"], "rows": [
+      ["best", "Fits every stated constraint at an acceptable cost. Exactly one per card.", "Learn the constraint that made it win and its stated trade-off."],
+      ["good", "Acceptable, with a cost the best option avoids.", "Know the cost, because a flip can promote it to best."],
+      ["poor", "Fails a stated constraint or adds cost the constraints do not need.", "Read where it would be right, because it is usually best somewhere else."]
+    ] },
+    { "t": "callout", "kind": "tip", "title": "Poor options are not wrong options", "md": "Every poor option explains the situation where it would win. Revise those sentences: they are your flip conditions for the interview." }
+  ],
+  "whereToUse": [
+    "Every topic page in this guide ends with scenario cards that follow this format",
+    "Group sessions, where pairs commit to an option before the reveal",
+    "Self-testing: write your reason first, then compare it with the card's reason",
+    "Interview practice: turn the card's constraints into the clarifying questions you would ask"
+  ],
+  "whenToUse": {
+    "use": [
+      "You can name the constraint that rules out at least one option",
+      "You want to practise trade-off language such as 'this costs us X'",
+      "You review a topic and need a quick test of whether you understood the dials"
+    ],
+    "avoid": [
+      "You are guessing: a lucky pick teaches nothing, so write your reason before you reveal",
+      "You carry a favourite tool into every card: the card tests the constraints, not the tool",
+      "You only want the score: the value sits in the reasons and the flips, which the score hides"
+    ],
+    "flips": [
+      "You consistently pick the sophisticated option: re-read the cost column of each card",
+      "You always pick the cheap one: look for the constraint, such as per-user permissions, that rules it out",
+      "A card feels unanswerable: read the unknowns, they list what the card deliberately leaves open"
+    ]
+  },
+  "alternatives": {
+    "title": "Ways to practise a trade-off",
+    "head": ["Method", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Scenario card with verdicts", "You need fast feedback on constraint reading", "You need to practise speaking", "Can become a guessing game if you skip your own reason"],
+      ["Dial board", "You want to see how the ranking moves when one dial changes", "You need a single committed answer", "Scores are authored judgements, not measurements"],
+      ["Boss round with rubric", "You want a full spoken answer scored on structure", "You have under 10 minutes", "Needs time and honest self-scoring"],
+      ["Quiz item", "A fact or mechanism has one right answer", "The right answer depends on dials", "Tests recall more than judgement"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "You choose an option and then explain why the card is wrong", "cause": "You added an assumption the card did not state", "fix": "Reread the constraints and the unknowns, and treat unstated facts as open questions" },
+    { "symptom": "You treat 'good' as a wrong answer", "cause": "You read verdicts as a score instead of a cost statement", "fix": "Read the trade-off of the good option: it names the cost, and a flip can make it the best" },
+    { "symptom": "You pick the most advanced option every time", "cause": "Sophistication feels safer", "fix": "Check whether a stated constraint needs it, and prefer the cheapest option that meets every constraint" }
+  ],
+  "scenarios": [
+    {
+      "id": "w00-t04-s1",
+      "title": "Small stable corpus, tight latency",
+      "situation": "A team needs an assistant over about 150,000 tokens of documentation. Answers must arrive within 3 seconds at p95.",
+      "constraints": ["One tenant, no per-user permissions", "Content changes monthly", "p95 latency of 3 seconds", "Low risk"],
+      "unknowns": ["How much accuracy drops deep inside a long prompt on this model?", "How many questions per day reuse the same prefix?"],
+      "question": "Which option fits the stated constraints?",
+      "options": [
+        { "name": "RAG with hybrid search", "verdict": "good", "why": "Scales and gives citations.", "tradeoff": "Adds ingestion, an index and retrieval tuning for a corpus that fits the window." },
+        { "name": "Fine-tune a model on the documentation", "verdict": "poor", "why": "Studies found retrieval beats fine-tuning for injecting knowledge [[r27]].", "tradeoff": "Fine-tuning is right for tone, format or a smaller model, not for facts." },
+        { "name": "Put the documents in the prompt and use prompt caching", "verdict": "best", "why": "The corpus is under the roughly 200,000 token level Anthropic suggests can go straight into a prompt [[r26]], it is stable, and a cached prefix keeps latency and cost down.", "tradeoff": "Accuracy can fall for facts buried deep in a long input, so test with a golden set at different depths." }
+      ],
+      "flips": [
+        { "if": "The corpus grows to several million tokens", "then": "RAG wins, because the corpus no longer fits." },
+        { "if": "Each user may see only some documents", "then": "Choose retrieval with access filters." }
+      ],
+      "takeaway": "Constraints rule options out, then cost picks among the rest."
+    },
+    {
+      "id": "w00-t04-s2",
+      "title": "Two options fit every constraint",
+      "situation": "On a card, two options both satisfy every stated constraint. One is simpler and easy to reverse. The other is more capable but needs new infrastructure.",
+      "constraints": ["Both options meet the stated dials", "The team is small", "Requirements are expected to change"],
+      "unknowns": ["Which unstated dial would favour the more capable option?"],
+      "question": "How do you choose and justify?",
+      "options": [
+        { "name": "Ask for more information and decide after the answer", "verdict": "good", "why": "Reasonable in a live conversation.", "tradeoff": "On a card or with a time limit you must still commit and state your assumption." },
+        { "name": "Choose the simpler, reversible option, and name the unknown that would flip you", "verdict": "best", "why": "Cost of being wrong is lowest, and naming the flip shows you know when the other option wins.", "tradeoff": "If the flip happens you will migrate later." },
+        { "name": "Choose the more capable option because it covers more cases", "verdict": "poor", "why": "It adds infrastructure that no stated constraint needs.", "tradeoff": "It is right once an unstated dial, such as rapid growth, is confirmed." }
+      ],
+      "flips": [
+        { "if": "Requirements are fixed and the capable option has a known payoff", "then": "The capable option wins." },
+        { "if": "The team has already run the infrastructure for other products", "then": "The cost gap narrows and the capable option can win." }
+      ],
+      "takeaway": "When two fit, take the cheaper to reverse and name the flip."
+    }
+  ],
+  "quiz": [
+    { "id": "w00-t04-q1", "type": "single", "tag": "concept", "q": "What does a 'good' verdict mean on a scenario card?", "options": ["The option is wrong but close", "The option is the best in another situation", "The option scores half a point", "The option is acceptable, with a cost the best option avoids"], "answer": 3, "explain": "Good means acceptable with a cost. A poor option is the one that fails a constraint and states where it would be right. Verdicts are not scores." },
+    { "id": "w00-t04-q2", "type": "order", "tag": "order", "q": "Order the steps for reading a card.", "items": ["Mark the fixed constraints", "Read the unknowns without assuming them", "Cross out options that break a constraint", "Pick the cheapest option to be wrong about", "Check the flips"], "explain": "Constraints come first because they eliminate options. Cost of error decides among the survivors, and the flips test your pick." },
+    { "id": "w00-t04-q3", "type": "multi", "tag": "diagnose", "q": "Which habits make you misread scenario cards?", "options": ["Adding facts the card did not state", "Choosing the most sophisticated option by default", "Writing your reason before the reveal", "Ignoring the unknowns list"], "answers": [0, 1, 3], "explain": "Assumptions, a bias toward sophistication and skipping the unknowns all cause misreads. Writing your reason first is the habit that fixes them." }
+  ],
+  "flashcards": [
+    { "front": "What do the constraints on a scenario card tell you?", "back": "Which dials are fixed in this card. Facts not listed are open, and the unknowns name the questions you would ask." },
+    { "front": "How do you use a poor option when revising?", "back": "Read where it would be right. That sentence is a flip condition you can say in an interview." },
+    { "front": "Two options both fit every constraint. What do you do?", "back": "Pick the cheaper one to reverse and name the unknown that would flip you to the other." }
+  ],
+  "related": ["w00-t03", "w00-t01", "w00-l2", "w01-t14"],
+  "refs": ["r26", "r27"]
+}

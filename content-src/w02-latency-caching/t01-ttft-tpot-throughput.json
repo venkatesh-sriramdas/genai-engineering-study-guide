@@ -1,0 +1,119 @@
+{
+  "id": "w02-t01",
+  "order": 1,
+  "group": "Latency fundamentals",
+  "title": "TTFT, TPOT, throughput and queueing",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "Four numbers describe an LLM call: time to first token, time per output token, total latency and throughput. Each has a different driver, so name the one the product is judged on before you fix anything.",
+  "useIf": "Someone says the assistant feels slow and you must decide what to measure and which stage to attack.",
+  "avoidIf": "You already have per-stage traces with token counts and a metric the product is judged on. Go straight to the lever.",
+  "explain": [
+    { "t": "p", "md": "A request passes through four stages: **queue** (waiting for capacity), **prefill** (the model reads the whole prompt), **decode** (it emits one token at a time) and the **network** back to the client. Three numbers fall out of that. **TTFT** (time to first token) covers queueing, prefill and network time, and grows with prompt length. **TPOT**, also called **ITL** (inter-token latency), is the average gap between output tokens. **TTLT** (total latency) is TTFT plus the generation time. Azure writes it as `TTLT = TTFT + (TBT x tokens generated)` [[r13]] [[r14]]." },
+    { "t": "formula", "title": "Latency from parts", "expr": "e2e = TTFT + TPOT x (output_tokens - 1)", "vars": [
+      { "k": "TTFT", "v": "queue + prefill + network, in seconds" },
+      { "k": "TPOT", "v": "(e2e - TTFT) / (output_tokens - 1), the same quantity as ITL" },
+      { "k": "output_tokens", "v": "includes hidden reasoning tokens on reasoning models" }
+    ], "example": "A 4.2 s call with 0.6 s TTFT and 181 output tokens has TPOT = (4.2 - 0.6) / 180 = 20 ms, about 50 tokens per second per user." },
+    { "t": "table", "caption": "Which number answers which question", "head": ["Metric", "Question it answers", "Main driver", "Typical SLO form"], "rows": [
+      ["TTFT", "How long until the first word?", "Prompt length, queueing, cache hits", "p95 under 1.5 s"],
+      ["TPOT or ITL", "How smooth is the stream?", "Model size, batch load, KV size", "p95 under 50 ms"],
+      ["TTLT", "How long for the whole answer?", "Output tokens first, then TPOT", "p95 per output-length bucket"],
+      ["System TPS", "How much work per GPU or deployment?", "Batching, saturation", "Cost per million tokens"]
+    ] },
+    { "t": "p", "md": "**Throughput** has two meanings. System tokens per second is total output tokens over the benchmark window. Per-user tokens per second is output length over e2e latency and tends to `1/ITL`. As concurrency rises, system TPS climbs to a saturation point while per-user TPS falls [[r13]]. A fleet run hot is cheap per token and slow per user." },
+    { "t": "p", "md": "**Queueing** is where load becomes latency. Textbook M/M/1 arithmetic (general queueing theory, not from the vendor docs) puts the mean wait at about `rho / (1 - rho)` service times at utilization rho: 1 at 50%, 9 at 90%, 19 at 95%. Batching changes the constants but not the shape, so p99 breaks first as utilization nears 100%." },
+    { "t": "p", "md": "**Percentiles** matter because users meet the tail. If each of 100 parallel calls is slow 1% of the time, 63% of user requests hit at least one slow call [[tr4]]. Track p50 and p95, add p99 for fan-out paths, and always pair latency with output token counts, because a longer answer is not a regression [[r14]]." },
+    { "t": "callout", "kind": "gotcha", "title": "Tools define ITL differently", "md": "GenAI-Perf leaves TTFT out of its ITL average and LLMPerf includes it, so numbers from the two do not compare [[r13]]. Pin the definition in your SLO." }
+  ],
+  "whereToUse": [
+    "Setting an SLO for a chat or copilot UI: TTFT p95 plus TPOT p95",
+    "Reading a vendor or benchmark claim: check which ITL definition and which prompt and output lengths it used",
+    "Triage after a release that feels slower: compare TTFT, TPOT and output token counts before and after",
+    "Capacity planning: find the concurrency where per-user TPS still meets the target",
+    "Batch pipelines, where system TPS and cost per token matter more than TTFT"
+  ],
+  "whenToUse": {
+    "use": [
+      "The product is interactive and users watch for the first word (lead with TTFT)",
+      "Answers are long, so TPOT and output length dominate total time",
+      "Load is spiky and you need to see where queueing starts (percentiles under load)"
+    ],
+    "avoid": [
+      "Do not average latency across short and long outputs. Bucket by output tokens",
+      "Do not hold a job nobody watches to a TTFT target. Use throughput, cost and success rate",
+      "Do not compare numbers from two tools without checking how each defines ITL"
+    ],
+    "flips": [
+      "Output tokens double (reasoning model, longer format): TTLT moves and TTFT does not, so TTLT becomes the headline metric",
+      "Utilization passes roughly 80%: p95 TTFT grows faster than the mean, so alert on queue depth, not averages",
+      "The consumer is a program, not a person: drop TTFT and target TTLT and success rate"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["TTFT p95", "Interactive, streaming UI", "Output-dominated jobs or non-streaming callers", "Needs prompt length alongside it"],
+      ["TPOT or ITL", "Judging stream smoothness and long answers", "Short answers where TTFT dominates", "Definitions differ between tools"],
+      ["TTLT p95 by output bucket", "Non-streaming or programmatic callers", "You care about the first word", "Needs token counts on every request"],
+      ["System TPS and cost per token", "Batch and offline work", "Interactive users, where it hides slow streams", "Rewards running hot"],
+      ["Average latency", "A first dashboard", "Any skewed distribution", "Hides the tail users feel"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Latency 'regressed' after a release", "cause": "Answers got longer or reasoning tokens grew. TTFT did not change", "fix": "Chart TTLT against output tokens before you touch infrastructure [[r14]]" },
+    { "symptom": "Two benchmark tools disagree on ITL for the same run", "cause": "One includes TTFT in the average and the other excludes it", "fix": "Pin one definition in the SLO and use one tool for comparisons [[r13]]" },
+    { "symptom": "p50 looks fine and users still complain", "cause": "Queueing under load or a fan-out tail", "fix": "Alert on p95 and p99, queue depth and utilization, not on the mean" }
+  ],
+  "scenarios": [
+    {
+      "id": "w02-t01-s1",
+      "title": "The chat that feels slow",
+      "situation": "Users of an interactive assistant say it feels slow. Dashboards show one number: average end-to-end latency, flat for a month. Answers stream to the screen.",
+      "constraints": ["Interactive, streamed UI", "Only average e2e latency is collected today", "No capacity change is planned"],
+      "unknowns": ["Did typical output length change?", "Is the complaint about the first word or the pace of the text?", "What is p95 TTFT at peak?"],
+      "question": "What do you measure first?",
+      "options": [
+        { "name": "TTFT p95 and ITL p95, charted with output token counts", "verdict": "best", "why": "It separates the wait for the first word from the pace of the stream and rules out longer answers as the cause.", "tradeoff": "You must add per-request token counts and percentile collection." },
+        { "name": "Average e2e latency by hour", "verdict": "poor", "why": "It is the number that already hides the problem: it mixes queueing, prefill and answer length.", "tradeoff": "Fine for a first glance at a batch system where only the total matters." },
+        { "name": "System tokens per second per GPU", "verdict": "good", "why": "It shows whether the fleet is saturated, which explains a TTFT rise.", "tradeoff": "It is a capacity number. It cannot tell you what an individual user waits for." }
+      ],
+      "flips": [
+        { "if": "The product is not streamed and a program consumes the answer", "then": "TTLT p95 by output bucket becomes the primary metric." },
+        { "if": "Users say text appears fast but the answer arrives late", "then": "Output length is the cause, so chart output tokens first." }
+      ],
+      "takeaway": "Pick the metric that matches what the user perceives, then break the total into parts."
+    },
+    {
+      "id": "w02-t01-s2",
+      "title": "p99 explodes at peak",
+      "situation": "Load tests show a flat p50 and p95 up to 70% of capacity. Past 90% the p99 grows tenfold. Marketing plans a campaign that will push traffic to 95% of current capacity.",
+      "constraints": ["Fixed capacity today", "A campaign with a known date", "Timeouts are currently 30 s"],
+      "unknowns": ["Can capacity be added before the date?", "Can low-priority traffic be shed or delayed?"],
+      "question": "What do you do?",
+      "options": [
+        { "name": "Add capacity or shed low-priority traffic so peak utilization stays below the knee", "verdict": "best", "why": "Queueing delay rises steeply near saturation. Moving off the knee is the only fix that removes the cause.", "tradeoff": "It costs money or drops some work." },
+        { "name": "Raise client timeouts", "verdict": "poor", "why": "It hides failures while users wait longer in the same queue.", "tradeoff": "Right only for background jobs that tolerate delay." },
+        { "name": "Cap max output tokens", "verdict": "good", "why": "Shorter answers free capacity sooner and lower per-request time.", "tradeoff": "It changes the product, and may truncate answers." }
+      ],
+      "flips": [
+        { "if": "The campaign is cancelled and traffic stays near 60%", "then": "No change is needed. Keep an alert on queue depth." },
+        { "if": "Traffic is bursty, not sustained", "then": "A queue with admission control may be cheaper than permanent capacity." }
+      ],
+      "takeaway": "Latency is a function of utilization. Plan below the knee."
+    }
+  ],
+  "quiz": [
+    { "id": "w02-t01-q1", "type": "numeric", "tag": "numeric", "q": "A streamed call finishes in 4.2 s. TTFT was 0.6 s and the model produced 181 output tokens. What is the TPOT in milliseconds?", "answer": 20, "tolerancePct": 5, "unit": "ms", "hint": "(e2e - TTFT) / (tokens - 1)", "explain": "(4.2 - 0.6) / (181 - 1) = 3.6 / 180 = 0.02 s, which is 20 ms. Dividing by 181 instead of 180 gives 19.9 ms, which the tolerance still accepts.", "difficulty": 1, "ref": "r13" },
+    { "id": "w02-t01-q2", "type": "single", "tag": "diagnose", "q": "Two tools report ITL for the same benchmark run and the numbers differ by 15%. What is the most likely cause?", "options": ["One tool uses a different tokenizer for the system prompt", "ITL is random and varies by run", "One tool includes TTFT in the ITL average and the other excludes it", "One tool measures network latency only"], "answer": 2, "explain": "GenAI-Perf excludes TTFT from the ITL average and LLMPerf includes it. A tokenizer difference would change counts, not definitions, ITL is deterministic given a trace, and network-only latency is a different metric.", "difficulty": 2, "ref": "r13" },
+    { "id": "w02-t01-q3", "type": "order", "tag": "order", "q": "Order the stages of one streamed request from first to last.", "items": ["Queue for capacity", "Prefill the prompt", "Emit the first token", "Decode the remaining tokens"], "explain": "The request waits, then the whole prompt is processed, which yields the first token, and only then does the decode loop emit tokens one at a time.", "difficulty": 1, "ref": "r13" }
+  ],
+  "flashcards": [
+    { "front": "What does TTFT include and what grows it?", "back": "Queueing, prefill and network time. It grows with prompt length and with load." },
+    { "front": "Write ITL in terms of e2e latency and TTFT.", "back": "ITL = (e2e latency - TTFT) / (total output tokens - 1). It is the same as TPOT." },
+    { "front": "Why can raising concurrency hurt users while lowering cost?", "back": "System TPS rises to a saturation point while per-user TPS falls, and queueing grows near full utilization." }
+  ],
+  "related": ["w02-t02", "w02-t03", "w02-t17", "w02-l1"],
+  "refs": ["r13", "r14", "r15", "tr4"]
+}

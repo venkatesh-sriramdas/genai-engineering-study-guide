@@ -1,0 +1,95 @@
+{
+  "id": "w01-l7",
+  "order": 7,
+  "title": "Boss: choose the API and model strategy",
+  "kind": "boss",
+  "minutes": 20,
+  "brief": "A team is about to build a new assistant and asks you to pick the API and the model strategy. The dials are not given. Ask for them, offer options and defend a choice.",
+  "blocks": [
+    { "t": "h", "text": "Map every dial to a decision", "level": 2 },
+    { "t": "scenario", "title": "The interviewer's setup", "known": ["A new text assistant that answers questions and may call tools", "The team wants one recommendation with reasons, not a survey", "Nothing is fixed yet: vendor, retention rule, corpus, traffic or budget"], "ask": ["Which platforms are allowed, and do residency or zero data retention rules apply?", "Does it call tools, and does it need reasoning with those tools?", "How big and how fast-changing is the knowledge, and who may see which part?", "How hard and how mixed are the queries, and what is the latency budget per turn?", "Who consumes the output: a person or a parser, and is repeatability required?"], "tension": "A single answer needs dials you do not have yet. The skill is to ask for them in the right order and say what would change your pick." },
+    { "t": "table", "caption": "Dial to decision map for this world", "head": ["Dial", "Decision it moves", "Where you met it"], "rows": [
+      ["Prompt length and tool count", "Token budget, price steps, whether to compact or retrieve", "Level 1"],
+      ["Repeatability and consumer of the output", "Sampling controls, schema enforcement", "Levels 2 and 4"],
+      ["Query difficulty mix and latency budget", "Effort, model size, router or cascade, batch or Flex", "Level 3"],
+      ["Retention rule, tools with reasoning, portability", "API surface and who owns state", "Levels 4 and 5"],
+      ["Corpus size, change rate, permission model", "Long context, RAG, cache-augmented generation or tuning", "Level 6"],
+      ["Model lifecycle", "Pin versions, keep evals, plan replacements before retirement dates", "Levels 3 and 5"]
+    ], "highlightCol": 1 }
+  ],
+  "quiz": [
+    { "id": "w01-l7-q1", "type": "order", "tag": "order", "q": "Put the decisions for an API and model strategy in a sensible dependency order.", "items": ["Fix retention, residency and vendor constraints", "Choose the API surface and who owns state", "Choose the knowledge approach: prompt, RAG, cache or tuning", "Pick model, effort and routing against an eval set", "Set output structure and sampling controls, then roll out"], "explain": "Constraints such as ZDR decide which APIs and state options are even allowed. Knowledge strategy decides prompt size and cost, which feeds model and effort choice. Output structure and sampling depend on the model you chose, and rollout comes last.", "difficulty": 2, "ref": "r10" },
+    { "id": "w01-l7-q2", "type": "multi", "tag": "diagnose", "q": "A service upgrades to a newer Claude model and starts returning 400 for the same payload. Select every field that can cause the error.", "code": { "lang": "json", "code": "{\n  \"model\": \"claude-sonnet-5-5\",\n  \"max_tokens\": 4096,\n  \"temperature\": 0.3,\n  \"top_k\": 40,\n  \"thinking\": { \"type\": \"enabled\", \"budget_tokens\": 2000 },\n  \"stop_sequences\": [\"END\"],\n  \"messages\": [{ \"role\": \"user\", \"content\": \"...\" }]\n}" }, "options": ["`temperature: 0.3`", "`top_k: 40`", "`thinking` with `budget_tokens`", "`max_tokens: 4096`", "`stop_sequences`"], "answers": [0, 1, 2], "explain": "Models released after Opus 4.6 accept only temperature 1.0 and top_p of 0.99 or higher, reject `top_k`, and no longer accept manual `budget_tokens`. `max_tokens` is required and valid, and `stop_sequences` is supported.", "difficulty": 3, "ref": "r19" },
+    { "id": "w01-l7-q3", "type": "single", "tag": "tradeoff", "q": "Query difficulty is mixed, a global Azure deployment is acceptable, prompts stay under 100K tokens, and the team wants the least operational work with automatic failover. Which strategy fits?", "options": ["Azure model router in Balanced mode", "A hand-built cascade with its own validation service", "The largest model at maximum effort for every request", "A fine-tuned small model used for all traffic"], "answer": 0, "explain": "The managed router chooses per request, fails over by default and runs on Global Standard. A cascade adds work you must evaluate yourself, the largest model overpays on easy queries, and a fine-tuned small model does not choose per request.", "difficulty": 2, "ref": "r16" },
+    { "id": "w01-l7-q4", "type": "single", "tag": "flip", "q": "After launch, a customer contract requires zero data retention. The assistant used the Conversations API for threads. What must change?", "options": ["Hold threads yourself, set `store` to false and replay all items", "Nothing, because ZDR only affects how logs are written", "Switch the threads to the Assistants API, which stores state for you", "Chain turns with `previous_response_id` on stored responses instead"], "answer": 0, "explain": "The Conversations endpoint is not ZDR eligible and ZDR forces store to false, so you hold state yourself and replay items. Chaining needs stored responses, and the Assistants API was sunset on 2026-08-26.", "difficulty": 3, "ref": "r10" }
+  ],
+  "defend": {
+    "prompt": "A team is building a new assistant and asks you to choose the API and the model strategy. Walk me through how you would decide.",
+    "timebox": "5 min",
+    "clarify": [
+      "Which platforms and vendors are allowed, and do residency or zero data retention rules apply?",
+      "Does the assistant call tools, and does it need reasoning together with tools?",
+      "How large and how fast-changing is the knowledge, and who may see which part?",
+      "How hard and how mixed are the queries, and what is the latency budget per turn?",
+      "Who consumes the output, a person or a parser, and is repeatability required?",
+      "What are the expected volume and the budget per task?"
+    ],
+    "options": [
+      { "name": "Responses with server state", "when": "New build, reasoning with tools, built-in tools, background jobs, and normal retention.", "tradeoff": "Least code, but earlier input tokens bill again on chained turns and ZDR rules it out." },
+      { "name": "Responses, stateless replay", "when": "ZDR or strict retention, or you want full control over trimming and compaction.", "tradeoff": "You own the history store and replay every item, encrypted reasoning included." },
+      { "name": "Chat Completions with app-held history", "when": "Many OpenAI-compatible vendors, non-reasoning models, simple state.", "tradeoff": "No built-in tools, and tools with reasoning are rejected on GPT-5.4 and later." },
+      { "name": "Anthropic Messages", "when": "Claude models, adaptive thinking, 1M context, strict tool use.", "tradeoff": "Stateless and a different shape, so a second code path if you also run OpenAI models." },
+      { "name": "Router or cascade on top", "when": "Query difficulty is mixed and a quality check exists.", "tradeoff": "A router shrinks the window to the smallest in the pool and weakens caching. A cascade needs a trustworthy check." }
+    ],
+    "modelAnswer": [
+      { "t": "p", "md": "**1. Clarify the dials.** I would ask which platforms are allowed and whether residency or zero data retention applies, whether the assistant calls tools and needs reasoning with them, how big and how fast-changing the knowledge is and who may see which part, how hard and how mixed the queries are, what consumes the output, and the budget per task." },
+      { "t": "p", "md": "**2. List the options, including the boring one.** The boring option is one mid-size model behind Chat Completions with history in the app. The alternatives are below." },
+      { "t": "table", "head": ["Choice", "Wins when", "Loses when"], "rows": [
+        ["Chat Completions, app history", "Portability across vendors, non-reasoning models", "Tools with reasoning on GPT-5.4 and later, built-in tools"],
+        ["Responses, server state", "New builds, reasoning with tools, durable threads", "ZDR, cross-vendor portability"],
+        ["Responses, stateless", "ZDR, control of trimming", "You carry the plumbing and resend tokens"],
+        ["Knowledge: prompt or CAG", "Small, stable, one audience", "Large corpus or per-user permissions"],
+        ["Knowledge: RAG", "Large or changing corpus, ACLs, citations", "Tiny stable corpus"],
+        ["Model: router or cascade", "Mixed difficulty", "Uniform queries, fixed region, long prompts"]
+      ] },
+      { "t": "p", "md": "**3. Pick for the stated dials, and say what flips it.** With no more information I would assume Azure or OpenAI, normal retention, tools with reasoning, a corpus in the millions of tokens with per-user access, and mixed query difficulty. I would choose Responses with `previous_response_id` or Conversations for state, RAG with per-user filters for knowledge, a mid model at low effort, structured outputs for the consumer, and a cascade for the hard slice. Fine-tuning would only be for format or tool behaviour, never to teach facts." },
+      { "t": "list", "style": "ul", "items": [
+        "ZDR required: stateless Responses with replay, no Conversations API.",
+        "Corpus under about 200,000 tokens, stable, one audience: put it in the prompt with prompt caching.",
+        "Pure extraction: a small non-reasoning model with low temperature and a strict schema.",
+        "Many vendors must work: Chat Completions with app-held history.",
+        "Fixed region or very long prompts: skip the managed router."
+      ] },
+      { "t": "p", "md": "**4. Name failure modes and how I would detect them.** Reasoning tokens eat the output cap, shown as `status: incomplete` and a rising share of empty answers. A model upgrade rejects sampling values or budgets, shown as 400s by parameter, so I pin versions and run contract tests. Prompts cross 272K tokens on GPT-6 models, shown in the p99 of input tokens and a cost jump. Schema refusals reach the parser, shown in a refusal rate. A router picks a small-window model, shown as intermittent long-prompt failures." },
+      { "t": "p", "md": "**5. Name metrics and the rollout.** I would build an eval set with pass or fail checks first, then track quality per task, p95 latency, tokens per task including reasoning, cost per task, schema failure rate and cascade escalation rate. Start at the lowest effort that passes. Roll out in shadow, then canary, and watch retirement dates so replacements are tested before the old model goes." }
+    ],
+    "rubric": [
+      { "pt": "Asks about retention, tools with reasoning, knowledge size and permissions before naming an API", "w": 3 },
+      { "pt": "Compares at least two API surfaces and says who owns state in each", "w": 2 },
+      { "pt": "Chooses the knowledge approach from corpus size, change rate and permissions, and rejects fine-tuning for facts", "w": 2 },
+      { "pt": "Treats effort, model size and routing as separate levers and starts low against evals", "w": 2 },
+      { "pt": "Names concrete failure modes with detection signals, such as incomplete status, parameter 400s and token price steps", "w": 2 },
+      { "pt": "States explicit flip conditions, such as ZDR, tiny stable corpus or multi-vendor need", "w": 3 },
+      { "pt": "Names metrics, a rollout plan and model lifecycle handling", "w": 2 }
+    ],
+    "followUps": [
+      { "q": "Legal requires zero data retention after launch. What changes?", "a": "Move to stateless Responses: `store` false, your own thread store, replay every output item with encrypted reasoning. Drop the Conversations API, which is not ZDR eligible, and do not rely on response chaining. Re-check every endpoint you use, because batches and files are not eligible either." },
+      { "q": "After you raised reasoning effort, p95 latency doubled and some answers are empty. What do you check?", "a": "Compare `reasoning_tokens` with the output cap and look for `status: incomplete`. Lower effort, raise the cap with headroom, and consider a cascade so only hard requests pay for deep reasoning. Verify the effort default, because omitting it can mean `medium`." },
+      { "q": "The model you chose retires in six months. What is your plan?", "a": "OpenAI gives at least 6 months of notice for GA models [[r11]] and Anthropic at least 60 days [[r55]], and Azure sets its own dates. Pin versions, keep an eval set, test the replacement early, and check for changed parameters or tokenizer behaviour before the cutover." }
+    ],
+    "redFlags": [
+      "Names a model or an API before asking about retention, tools and permissions",
+      "Says temperature 0 gives determinism, or relies on `seed` as a guarantee",
+      "Proposes fine-tuning to teach the model company documents",
+      "Treats the context window as fully usable and ignores output and reasoning tokens",
+      "Treats Chat Completions and Responses as the same API under a new name"
+    ]
+  },
+  "refs": ["r10", "r11", "r16", "r19", "r29", "r55"],
+  "takeaways": [
+    "Ask for the dials in the order they constrain each other: retention first, then state, knowledge, model and output",
+    "Offer the boring option, then show the dial that flips to each alternative",
+    "Name failure modes with a detection signal, not only a fix",
+    "End with metrics, a rollout plan and a lifecycle plan"
+  ]
+}

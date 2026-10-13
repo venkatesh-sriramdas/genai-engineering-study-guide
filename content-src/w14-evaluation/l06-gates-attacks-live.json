@@ -1,0 +1,149 @@
+{
+  "id": "w14-l6",
+  "order": 6,
+  "title": "Gate it, attack it, watch it",
+  "kind": "problem",
+  "minutes": 20,
+  "brief": "A change is ready to ship. The harm if it is worse, the traffic you have and the quality signal you trust are all unspecified. Design the gate that blocks it, the attack that probes it and the live watch that follows it.",
+  "blocks": [
+    { "t": "h", "text": "A gate is a rule plus a noise budget", "level": 2 },
+    { "t": "p", "md": "A CI gate needs a rule and a noise budget. The rule is a fixed threshold or a baseline comparison with a significance test. Foundry's compare view reports Improved or Degraded as Strong when p <= 0.001 and Weak when 0.001 < p <= 0.05 against a baseline run [[r39]]. The preview GitHub Action `microsoft/ai-agent-evals` evaluates Foundry agents given as `name:version` against an optional `baseline-agent-id`, and its output includes confidence intervals and a significance test [[r9]].\n\nThe noise budget comes from suite size and trials. Block on safety and regression suites, keep capability suites advisory, and run a small suite on every pull request with a large one nightly." },
+    { "t": "diagram", "id": "w14-l6-d1", "title": "From pull request to production and back", "alt": "A pull request runs a fast subset, compares with a baseline, and passes through a gate that blocks or merges. After merge a nightly full suite runs, then online sampling, and failing traces return to the golden set.", "src": "flowchart LR\n  PR[Pull request] --> F[Fast subset]\n  F --> C[Compare to baseline]\n  C --> G{Gate}\n  G -->|safety or regression fails| B[Block merge]\n  G -->|pass| M[Merge]\n  M --> N[Nightly full suite]\n  N --> O[Online sampling]\n  O --> T[Failing traces to golden set]\n  T --> F", "caption": "Foundry evaluations are preview in several places, so keep a code-first harness such as pytest-style or promptfoo runs as the fallback." },
+    { "t": "dials", "id": "w14-l6-online", "title": "Pick the online method", "prompt": "Flip the harm, the traffic and the signal you trust. The ranking shows which online method fits.", "dials": [
+      { "id": "harm", "label": "If the new version is worse", "values": [{ "id": "low", "label": "Users barely notice" }, { "id": "high", "label": "Users are harmed" }] },
+      { "id": "traffic", "label": "Traffic volume", "values": [{ "id": "low", "label": "Low" }, { "id": "high", "label": "High" }] },
+      { "id": "signal", "label": "Live quality signal", "values": [{ "id": "none", "label": "None trusted yet" }, { "id": "trusted", "label": "Calibrated judge or business metric" }] }
+    ], "options": [
+      { "id": "shadow", "name": "Shadow traffic", "summary": "Mirror requests to the candidate, show users nothing." },
+      { "id": "canary", "name": "Canary rollout", "summary": "Send a small share of users to the candidate." },
+      { "id": "ab", "name": "A/B test", "summary": "Split users between versions and compare a metric." },
+      { "id": "cont", "name": "Continuous sampled evaluation", "summary": "Score a sample of live traces." },
+      { "id": "feedback", "name": "User feedback triage", "summary": "Use ratings, edits, retries and escalations." }
+    ], "scores": {
+      "shadow": {
+        "harm": { "low": { "s": 0, "why": "A direct rollout may be acceptable, so the extra safety buys little." }, "high": { "s": 2, "why": "Users never see the candidate's answers." } },
+        "traffic": { "low": { "s": 1, "why": "Mirroring all requests is cheap at low volume." }, "high": { "s": -1, "why": "Duplicate inference adds up. Azure ML mirroring caps mirrored traffic at 50%." } },
+        "signal": { "none": { "s": 0, "why": "You can still read paired outputs, but reading is slow." }, "trusted": { "s": 2, "why": "Score both versions on the same requests and compare them paired." } }
+      },
+      "canary": {
+        "harm": { "low": { "s": 1, "why": "Limited exposure is acceptable." }, "high": { "s": -1, "why": "Real users see a possibly worse version." } },
+        "traffic": { "low": { "s": -1, "why": "A small slice yields too few samples." }, "high": { "s": 1, "why": "Even a small percentage gives many samples." } },
+        "signal": { "none": { "s": -1, "why": "Without a trusted metric you cannot tell whether the canary is worse." }, "trusted": { "s": 2, "why": "Watch the metric and roll back on a drop." } }
+      },
+      "ab": {
+        "harm": { "low": { "s": 2, "why": "The cleanest causal read when exposure is acceptable." }, "high": { "s": -2, "why": "Half the users may get the worse version." } },
+        "traffic": { "low": { "s": -2, "why": "Detecting a small gap needs about a thousand samples per arm." }, "high": { "s": 2, "why": "Enough users to detect small differences." } },
+        "signal": { "none": { "s": -1, "why": "It needs a primary metric such as task success or a business outcome." }, "trusted": { "s": 2, "why": "A trusted primary metric is exactly what it tests." } }
+      },
+      "cont": {
+        "harm": { "low": { "s": 1, "why": "Monitors without changing behaviour." }, "high": { "s": 1, "why": "A safety net after release, though not a pre-release guard." } },
+        "traffic": { "low": { "s": 1, "why": "Low volume lets you score most traces." }, "high": { "s": 0, "why": "Sampling rate and run caps bound coverage, 100 runs per hour by default in Foundry." } },
+        "signal": { "none": { "s": -1, "why": "Reference-free judges need calibration before you trust them." }, "trusted": { "s": 2, "why": "Scores every sampled trace with no reference answers." } }
+      },
+      "feedback": {
+        "harm": { "low": { "s": 1, "why": "A cheap signal for triage." }, "high": { "s": 0, "why": "It arrives after the harm happened." } },
+        "traffic": { "low": { "s": -1, "why": "Few voters, and a vocal minority dominates." }, "high": { "s": 1, "why": "More voters smooth the bias a little." } },
+        "signal": { "none": { "s": 2, "why": "Works when you have nothing else. Treat it as triage, not a metric." }, "trusted": { "s": 0, "why": "Biased toward vocal users, so use it to find new golden cases." } }
+      }
+    }, "takeaway": "Shadow first when a worse version could harm users, A/B when exposure is fine and traffic is large, and sampled scoring always, once the judge is calibrated." },
+    { "t": "compare", "title": "Red teaming approaches", "intro": "Microsoft's guidance is to combine automated scans with expert human analysis. The Attack Success Rate is scored by a generative model, so a person reviews findings before anyone mitigates.", "options": [
+      { "name": "Local PyRIT scan", "tag": "Preview", "summary": "`azure-ai-evaluation[redteam]` with `RedTeam(...)` and `await scan(target=...)`, run from your own code [[r6]]. The engine underneath is PyRIT [[r26]].", "pros": ["Scriptable and repeatable in CI", "Attack strategies grouped by complexity: EASY (Base64, Flip, Morse), MODERATE (Tense), DIFFICULT (Tense composed with Base64)"], "cons": ["Text-only risk categories, synthetic data, mock tools that return data only", "Preview, and not compatible with the new Foundry portal and SDK", "Python 3.10 to 3.13 only"], "bestWhen": "You want repeatable scans of a model or an app callback early, in a purple environment (non-production with production-like resources).", "avoidWhen": "You need agentic risk categories, or you work on the new Foundry portal path.", "meta": [{ "k": "num_objectives", "v": "10 by default" }, { "k": "Example size", "v": "4 categories x 1 objective x 4 strategies = 20 pairs" }] },
+      { "name": "Cloud red teaming of Foundry agents", "tag": "Preview", "summary": "Adds agentic categories: Prohibited actions, Sensitive data leakage, Task adherence and indirect prompt injection (XPIA).", "pros": ["Targets agent-specific risks", "Can be scheduled as part of post-production monitoring"], "cons": ["Only Foundry prompt agents and hosted container agents with Azure tool calls are supported", "Not supported: workflow agents, non-Foundry agents, function tool calls, browser automation, connected agents, computer use", "Sensitive data leakage is single turn, English only and synthetic", "Two Learn pages list different regions"], "bestWhen": "Your agent is a Foundry prompt or hosted agent that uses Azure tools.", "avoidWhen": "Your agent relies on function tool calls, workflows or browser automation.", "meta": [{ "k": "SDK", "v": "azure-ai-projects 2.0.0 or later" }, { "k": "REST", "v": "api-version 2025-11-15-preview" }] },
+      { "name": "Manual expert red team", "summary": "People with domain and security knowledge probe the system with creative, contextual attacks.", "pros": ["Finds attacks no template contains", "Judges real business harm"], "cons": ["Slow and costly", "Hard to repeat release after release"], "bestWhen": "Pre-launch for high-risk systems, and to review automated findings.", "avoidWhen": "It is the only recurring control.", "meta": [{ "k": "Cost", "v": "high per finding" }] },
+      { "name": "Public suites: HarmBench and AgentDojo", "summary": "HarmBench compares 18 red-teaming methods on 33 target LLMs and defenses [[r43]]. AgentDojo has 97 tasks and 629 security test cases for prompt injection against tool-using agents [[r47]].", "pros": ["Standardized and comparable across systems", "AgentDojo targets injection through tool data"], "cons": ["Public attacks are known and can be trained against", "They do not cover your tools and data"], "bestWhen": "You compare models or defenses.", "avoidWhen": "They stand in for tests on your own tools and documents.", "meta": [{ "k": "Use", "v": "benchmarking, not sign-off" }] }
+    ] },
+    { "t": "formula", "title": "Cost of one evaluation run", "expr": "judge_calls = items x evaluators x trials\njudge_tokens = judge_calls x tokens_per_call", "vars": [
+      { "k": "items", "v": "rows in the dataset" },
+      { "k": "evaluators", "v": "criteria scored by separate judge calls" },
+      { "k": "trials", "v": "repeats per item for pass^k or noise control" }
+    ], "example": "300 items x 4 evaluators x 3 trials = **3,600** judge calls. At about 2,500 tokens each that is about **9 million** tokens per run. This is an illustrative estimate, not a vendor formula. Foundry's target cost view excludes evaluator model usage, so budget the judge separately [[r39]]." },
+    { "t": "failure", "title": "Gate, red team and online failure modes", "items": [
+      { "symptom": "The same commit passes, then fails", "cause": "Non-determinism with too few items or trials, and thresholds that sit inside the noise", "fix": "Compare with a baseline using a confidence interval and a significance test, add trials, and enlarge the set before tightening thresholds." },
+      { "symptom": "A harmless change is blocked at p = 0.04", "cause": "Weak significance across many metrics gives many chances of a false alarm", "fix": "Gate on a few chosen metrics and treat weak results as a prompt for review." },
+      { "symptom": "Continuous evaluation results go missing", "cause": "`max_hourly_runs` defaults to 100, and runs are skipped when the cap is reached", "fix": "Raise `max_hourly_runs` or use Intelligent sampling, and alert on skipped runs." },
+      { "symptom": "A red team scan reads 6% and the team treats it as exact", "cause": "A generative model scores ASR, so it can be non-deterministic with false positives", "fix": "Review the successful attacks by hand before mitigating, rescan after the fix and compare trends." },
+      { "symptom": "The scan is clean and an indirect injection still works", "cause": "Local scans use text-only categories, synthetic data and mock tools", "fix": "Add the cloud XPIA category where supported, add AgentDojo-style tasks, and test real tools in a purple environment." },
+      { "symptom": "Shadow testing drops requests or doubles cost", "cause": "Azure ML mirroring caps mirrored traffic at 50%, allows one shadow deployment per endpoint and is not supported on Kubernetes online endpoints. No Foundry-native shadow feature was found on 2026-10-13.", "fix": "Mirror at the gateway for LLM endpoints, mirror a sample, and budget the duplicate inference." },
+      { "symptom": "The thumbs-down rate looks fine while quality falls", "cause": "Feedback is biased toward vocal users", "fix": "Use feedback as triage input for new golden cases, not as the only metric." }
+    ] },
+    { "t": "accordion", "items": [
+      { "title": "Go deeper: sample sizes for an A/B test", "blocks": [
+        { "t": "p", "md": "For two arms, unpaired, with alpha 0.05 and power 0.80, the samples per arm are about n = 2 x (1.96 + 0.84)^2 x p x (1 - p) / d^2, where d is the gap you want to detect. Near an 80% pass rate that gives about **251** per arm for a 10-point gap, about **1,004** for 5 points and about **2,788** for 3 points. Paired designs need fewer. These are computed estimates that use the same variance in both arms (the formula in the error-bars paper [[r24]] with that simplification); an unpooled 80% against 70% comparison needs about 290 per arm." }
+      ] },
+      { "title": "Go deeper: keeping evaluation cost under control", "blocks": [
+        { "t": "list", "style": "ul", "items": [
+          "Batch several criteria into one judge call with `builtin.output_quality` or `builtin.tool_use_quality` (preview).",
+          "Sample live traffic with Random or Intelligent sampling. Intelligent sampling dedupes, filters broken traces, aggregates, then picks diverse traces with MinHash farthest-first selection on local compute, with no extra model calls (preview) [[r40]].",
+          "Use a cheaper judge only after you validate agreement with human labels.",
+          "Run a small suite on pull requests and a large one nightly.",
+          "Cache unchanged targets so only changed systems are re-run."
+        ] }
+      ] },
+      { "title": "Go deeper: continuous evaluation and Foundry limits", "blocks": [
+        { "t": "p", "md": "Continuous evaluation uses `ContinuousEvaluationRuleAction(eval_id=..., max_hourly_runs=100)`. The project managed identity needs the Foundry User role. Recurring evaluation, red team scans and alerts are also preview as of 2026-10-13 [[r7]]. A batch evaluation run accepts at most 100,000 rows and 2 MB per row, and run creation is rate limited at tenant, subscription and project level with a `retry-after` header [[r37]]." }
+      ] },
+      { "title": "Go deeper: the GitHub Action inputs", "blocks": [
+        { "t": "list", "style": "ul", "items": [
+          "`azure-ai-project-endpoint` and `deployment-name` select the project and the judge model.",
+          "`data-path` points at the dataset of queries.",
+          "`agent-ids` lists agents as `name:version`, comma separated.",
+          "`baseline-agent-id` is optional and turns the output into a comparison with confidence intervals and a significance test.",
+          "An Azure DevOps version is also preview [[r9]]. Promptfoo offers config-driven evals and red teaming in CI if you prefer a vendor-neutral harness [[r27]]."
+        ] }
+      ] }
+    ] }
+  ],
+  "quiz": [
+    {
+      "id": "w14-l6-q1", "type": "order", "tag": "order", "difficulty": 2, "ref": "r9",
+      "q": "Put the steps of a CI gate and its feedback loop in order.",
+      "items": [
+        "A pull request triggers a small fast suite",
+        "Results are compared with a baseline run using a confidence interval and significance test",
+        "Safety and regression suites block the merge when they degrade",
+        "A nightly job runs the full suite with more trials",
+        "Failing cases are added to the golden set"
+      ],
+      "explain": "The fast subset runs first because it is cheap and runs on every change. A baseline comparison turns raw scores into a decision with noise accounted for. Blocking applies to safety and regression suites, while capability suites stay advisory. The nightly full suite catches what the subset misses, and failing cases feed the golden set for the next cycle."
+    },
+    {
+      "id": "w14-l6-q2", "type": "single", "tag": "flip", "difficulty": 2, "ref": "r36",
+      "q": "The candidate might be worse, the harm could be serious, traffic is moderate, and no calibrated live metric exists yet. Which online step comes first?",
+      "options": [
+        "A 5% canary rollout, because real users give the cleanest and fastest signal about whether it is worse",
+        "Shadow the candidate on mirrored requests and compare outputs before any user sees it",
+        "A 50/50 A/B test for two weeks, chosen to maximize statistical power on a business metric",
+        "Full release with a thumbs-up and thumbs-down widget so users report any problems quickly"
+      ],
+      "answer": 1,
+      "explain": "Shadow traffic copies live requests to the candidate without changing what users receive, so a worse version costs nothing in exposure [[r36]]. A canary and an A/B test both expose real users to a possibly worse version, and without a trusted metric you cannot tell whether it is worse. A thumbs widget on a full release arrives after the harm and is biased toward vocal users."
+    },
+    {
+      "id": "w14-l6-q3", "type": "numeric", "tag": "numeric", "difficulty": 3, "ref": "r24",
+      "q": "About how many tasks per arm do you need to detect a 5-point gap near an 80% pass rate, unpaired, with alpha 0.05 and power 0.80?",
+      "answer": 1004, "tolerancePct": 3, "unit": "tasks per arm", "hint": "n = 2 x (1.96 + 0.84)^2 x p x (1 - p) / d^2, with p = 0.8 and d = 0.05.",
+      "explain": "(1.96 + 0.84)^2 is 7.84, and p x (1 - p) is 0.16. So n = 2 x 7.84 x 0.16 / 0.0025, which is about 1,004. Halving the gap to detect roughly quadruples the sample. This is why small suites cannot gate small changes, and why paired designs and larger gaps matter."
+    },
+    {
+      "id": "w14-l6-q4", "type": "single", "tag": "security", "difficulty": 3, "ref": "r5",
+      "q": "A local red team scan reports an Attack Success Rate of 6% across text-only categories. What is the right next step?",
+      "options": [
+        "Report 6% as the exact vulnerability rate and ship, since the scanner is Microsoft tooling",
+        "Discard the scan, because its data is synthetic and so carries no information",
+        "Rerun the scan until the rate reads 0%, then ship the build that produced it",
+        "Review the successful attacks by hand, because a model scores ASR and can produce false positives, then mitigate and rescan"
+      ],
+      "answer": 3,
+      "explain": "The documentation says ASR is scored by a generative model, so it can be non-deterministic with false positives, and findings need review before mitigation [[r5]]. Treating 6% as exact ignores that. Synthetic data limits coverage but still reveals real weaknesses. Rerunning until the number is zero optimizes the metric rather than the system. Combine scans with expert analysis, as Microsoft advises."
+    }
+  ],
+  "defend": null,
+  "refs": ["r5", "r6", "r7", "r9", "r15", "r24", "r26", "r27", "r36", "r37", "r39", "r40", "r43", "r47"],
+  "takeaways": [
+    "A gate needs a rule and a noise budget. A baseline comparison with an interval beats a fixed threshold.",
+    "Block on safety and regression suites, keep capability suites advisory, and run a small suite per pull request with a large one nightly.",
+    "Red team scores come from a model judge. Review attacks by hand and combine scans with expert analysis.",
+    "Shadow first when a worse version could harm users. Use A/B when exposure is fine and traffic is large.",
+    "Budget the judge as items x evaluators x trials x tokens, and sample live traffic."
+  ]
+}

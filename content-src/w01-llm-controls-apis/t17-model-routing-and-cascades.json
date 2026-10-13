@@ -1,0 +1,140 @@
+{
+  "id": "w01-t17",
+  "order": 17,
+  "group": "Adapting models",
+  "title": "Model routing and cascades",
+  "minutes": 8,
+  "difficulty": "advanced",
+  "summary": "A router picks a model per request, and a cascade tries a cheap model first and escalates on low confidence or a failed check. Both save cost only if you evaluate them against single-model baselines.",
+  "useIf": "Traffic mixes easy and hard requests and one model is either too costly or too weak for all of it.",
+  "avoidIf": "Traffic is uniform, volume is low, or you have no eval set. A single model also gives the best prompt-cache reuse.",
+  "explain": [
+    { "t": "p", "md": "Routing comes in four forms. **Rules** use task type or input length. A **learned router** is a classifier that predicts which model will do. An **LLM router** asks a small model to choose. A **cascade** runs a cheap model first and escalates when a validator fails or confidence is low. A managed option is the **Azure model router**, a deployable model that picks from a pool per request [[r16]]." },
+    { "t": "diagram", "id": "w01-t17-d1", "title": "A confidence-based cascade", "alt": "A request goes to a small model. If the output is valid and confident it is returned, otherwise the request goes to a large model whose answer is returned.", "src": "flowchart LR\n  Q[Request] --> S[Small model]\n  S --> V{Valid and confident}\n  V -->|Yes| A[Answer]\n  V -->|No| L[Large model]\n  L --> A" },
+    { "t": "table", "caption": "Azure model router facts (check date 2026-10-13)", "head": ["Topic", "Detail"], "compact": true, "rows": [
+      ["Versions", "`2025-11-18` is active and updated in place. `2025-08-07` and `2025-05-19` are frozen"],
+      ["Modes", "Balanced (default, cheapest model within about 1% to 2% of top quality), Cost (about 5% to 6%), Quality. Microsoft gives the bands as examples"],
+      ["Subset and failover", "Model subset limits the pool and needs at least two models for failover. Failover is on by default"],
+      ["Deployment types", "Global Standard and Data Zone Standard only"],
+      ["Pool", "OpenAI (including `gpt-6-astra`), Anthropic, xAI, DeepSeek, Meta and Fireworks models. Claude models must be deployed separately first"],
+      ["Side effects", "Effective context window is the smallest in the pool. Prompt caching helps only when the same model serves consecutive requests. Session affinity for Chat Completions is Preview"]
+    ] },
+    { "t": "p", "md": "A cascade you build yourself needs an **escalation signal**: a schema or rule check, a logprob threshold on a label (see the logprobs topic), a verifier model or agreement across samples. You must evaluate it, because the router itself can be wrong in two ways: it sends hard requests to the small model, or it escalates easy ones and wastes money." },
+    { "t": "callout", "kind": "tip", "title": "Evaluate a router like a model", "md": "Replay the same traffic through always-small, always-large and the router. Report quality at equal cost (or cost at equal quality), escalation rate, router errors by segment, p95 latency including escalations, and cache hit rate. A router that wins on average can lose on one customer segment." }
+  ],
+  "whereToUse": [
+    "Support and chat traffic where most questions are simple and a few are hard",
+    "Extraction pipelines with a validator that can reject a weak answer",
+    "Platforms that front several teams and want one cost-controlled endpoint",
+    "Failover across models in a pool when one is rate limited",
+    "Interview answers about cost control without lowering the quality ceiling"
+  ],
+  "whenToUse": {
+    "use": [
+      "Difficulty varies widely and you can measure it",
+      "A cheap check can catch a bad answer",
+      "Volume is high enough that the cost gap matters",
+      "You accept a managed router's pool and deployment limits"
+    ],
+    "avoid": [
+      "Routing without a baseline comparison",
+      "Long-context requests through a pool that includes smaller windows",
+      "Cache-heavy workloads where model switching breaks prefix reuse"
+    ],
+    "flips": [
+      "You need regional or provisioned deployments: the Azure router does not fit, so use rules or your own cascade",
+      "Prompt-cache savings exceed routing savings: pin one model",
+      "Requests exceed the smallest window in the pool: restrict the subset or route by length"
+    ]
+  },
+  "alternatives": {
+    "title": "Router types compared",
+    "head": ["Type", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Single model", "Traffic is uniform, caching matters", "Difficulty varies widely", "Simplest, best cache reuse"],
+      ["Rule-based routing", "Task type or length predicts difficulty", "Difficulty is hidden in content", "Rules drift, brittle"],
+      ["Cascade with validator", "A cheap check detects weak answers", "No reliable check, tight latency", "Escalations add latency and cost"],
+      ["Learned or LLM router", "You have labelled routing data", "Routes are few or unstable", "The router itself needs evals and adds a hop"],
+      ["Azure model router", "Global or Data Zone Standard, low ops", "Regional or provisioned deployments, long contexts", "Pool changes in place, smaller windows, cache loss"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Large requests fail only through the router", "cause": "The effective window is the smallest model in the pool", "fix": "Use a model subset with large-window models, or route long inputs by rule" },
+    { "symptom": "Cache hit rate and savings drop after adopting a router", "cause": "Prompt caching helps only when the same model serves consecutive requests", "fix": "Use session affinity where available (Chat Completions, Preview) or pin one model for cache-heavy flows" },
+    { "symptom": "Behaviour changes without a deployment change", "cause": "Version `2025-11-18` is updated in place and the pool can change", "fix": "Pin a subset, monitor quality continuously and re-run evals on a schedule" },
+    { "symptom": "Costs rise after adding a cascade", "cause": "Too many requests escalate, paying for both models", "fix": "Tune the threshold on labelled data and track the escalation rate" }
+  ],
+  "scenarios": [
+    {
+      "id": "w01-t17-s1",
+      "title": "Mixed traffic with a managed option available",
+      "situation": "A support assistant sees mostly simple questions and a tail of hard ones. The team runs on Azure with a Global Standard deployment and wants low operational overhead.",
+      "constraints": ["Global Standard deployment is allowed", "Quality must stay within about 2% of the large model", "Small ops team", "Eval set exists"],
+      "unknowns": ["Which models may be in the pool?", "How cache-heavy is the traffic?"],
+      "question": "What do you adopt?",
+      "options": [
+        { "name": "Send everything to the large model", "verdict": "poor", "why": "It meets quality but pays the top price for easy traffic.", "tradeoff": "Right for low volume, or when nothing meets the quality bar." },
+        { "name": "Build your own cascade with validators", "verdict": "good", "why": "Full control over thresholds and models.", "tradeoff": "More engineering, and you evaluate and maintain the router." },
+        { "name": "Azure model router in Balanced mode with a model subset limited to models that pass your evals, then compare it with the large-only baseline", "verdict": "best", "why": "Balanced picks the cheapest model within about 1% to 2% of top quality and adds failover, with little ops work [[r16]].", "tradeoff": "The pool can change in place, prompt-cache reuse drops and the window is the smallest in the pool." }
+      ],
+      "flips": [
+        { "if": "Traffic is dominated by repeated long prefixes", "then": "Pin one model to protect caching." },
+        { "if": "A regional deployment is mandatory", "then": "The router is unavailable, so use a cascade." }
+      ],
+      "takeaway": "A managed router trades control for low operations, so measure it against baselines."
+    },
+    {
+      "id": "w01-t17-s2",
+      "title": "Regional deployment required",
+      "situation": "A regulated team must run on regional Standard deployments in one country. Traffic has a clear easy and hard split, and a schema check catches weak answers.",
+      "constraints": ["Regional deployments only", "Validator available", "Cost pressure"],
+      "unknowns": ["Escalation rate at the chosen threshold", "Latency budget for escalated requests"],
+      "question": "How do you route?",
+      "options": [
+        { "name": "Own two-tier cascade: small model first, escalate when the schema check fails, evaluated against a large-only baseline", "verdict": "best", "why": "The managed router is limited to Global Standard and Data Zone Standard, while a cascade runs on any deployment and has a clear escalation signal.", "tradeoff": "You build, tune and monitor it, and escalated requests pay both models." },
+        { "name": "A single mid-size model for all traffic", "verdict": "good", "why": "Simple and cache-friendly.", "tradeoff": "Overpays for easy traffic or underperforms on hard traffic." },
+        { "name": "Azure model router", "verdict": "poor", "why": "It supports only Global Standard and Data Zone Standard deployments.", "tradeoff": "It suits teams that can use those deployment types." }
+      ],
+      "flips": [
+        { "if": "Data zone residency satisfies the regulation", "then": "The managed router becomes an option." },
+        { "if": "The validator misses many errors", "then": "Add a logprob or verifier signal before escalating." }
+      ],
+      "takeaway": "Residency can rule out managed routing, and a cascade is the portable fallback."
+    },
+    {
+      "id": "w01-t17-s3",
+      "title": "Occasional 600,000 token requests",
+      "situation": "Most requests are short, but about 2% carry 600,000 tokens of documents. The router pool includes models with 400,000 token windows.",
+      "constraints": ["Long requests must succeed", "Most traffic is short", "Cost matters"],
+      "unknowns": ["Can long requests be routed by length before the router?", "Which pool models have 1M windows?"],
+      "question": "How do you keep long requests working?",
+      "options": [
+        { "name": "Let the router decide with no restrictions", "verdict": "poor", "why": "The effective window is the smallest in the pool, so large calls can fail when a small-window model is picked.", "tradeoff": "Fine when every request fits the smallest window." },
+        { "name": "Restrict the model subset to large-window models, or route long inputs by rule to a pinned large-window model", "verdict": "best", "why": "It guarantees a model that can take the input, and short traffic keeps the cheaper path.", "tradeoff": "Long requests pay a higher price, and the subset reduces routing options." },
+        { "name": "Truncate every input to fit the smallest window", "verdict": "good", "why": "No failures.", "tradeoff": "Drops content the task needs." }
+      ],
+      "flips": [
+        { "if": "Long requests are 20% of traffic", "then": "Reassess retrieval to shorten inputs." },
+        { "if": "All pool models have 1M windows", "then": "No restriction is needed." }
+      ],
+      "takeaway": "Check the smallest window in the pool before you route long inputs."
+    }
+  ],
+  "quiz": [
+    { "id": "w01-t17-q1", "type": "multi", "tag": "diagnose", "q": "Which are true about the Azure model router?", "options": ["The effective window is the smallest in the pool", "It works on regional Standard deployments", "Prompt caching helps only when the same model serves consecutive requests", "Claude models must be deployed separately before they can be in the pool"], "answers": [0, 2, 3], "explain": "The window is the smallest in the pool, caching needs the same model and Claude models need a separate deployment. The router supports only Global Standard and Data Zone Standard." },
+    { "id": "w01-t17-q2", "type": "single", "tag": "tradeoff", "q": "What is the strongest evidence that a cascade saves money without hurting quality?", "options": ["The small model is cheaper", "A replay of the same traffic shows equal quality at lower cost against always-large", "The router has a high escalation rate", "The large model is fast"], "answer": 1, "explain": "Only a same-traffic comparison with baselines shows quality at cost. A high escalation rate can increase cost, and price alone says nothing about quality." },
+    { "id": "w01-t17-q3", "type": "match", "tag": "concept", "q": "Match each Azure router mode to its description.", "pairs": [
+      { "l": "Balanced (default)", "r": "Cheapest model within about 1% to 2% of top quality" },
+      { "l": "Cost", "r": "Cheapest model within about 5% to 6%" },
+      { "l": "Quality", "r": "Favours the best model" },
+      { "l": "Model subset", "r": "Limits the pool, at least two models for failover" }
+    ], "explain": "Microsoft gives the quality bands as examples. A subset restricts the pool, and failover needs at least two models in it." }
+  ],
+  "flashcards": [
+    { "front": "Name four router types.", "back": "Rules, a learned router, an LLM router and a cascade. Azure also offers a managed model router." },
+    { "front": "Which deployments support the Azure model router?", "back": "Global Standard and Data Zone Standard only." },
+    { "front": "How do you evaluate a router?", "back": "Replay the same traffic through always-small, always-large and the router, then compare quality at cost, escalation rate, router errors by segment, p95 latency and cache hit rate." }
+  ],
+  "related": ["w01-t16", "w01-t07", "w01-t03", "w16-t03", "w02-t14", "w01-l3"],
+  "refs": ["r16", "r13", "r15"]
+}

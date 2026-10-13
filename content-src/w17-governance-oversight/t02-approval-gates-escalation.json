@@ -1,0 +1,114 @@
+{
+  "id": "w17-t02",
+  "order": 2,
+  "group": "Oversight",
+  "title": "Approval gates and escalation",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "An approval gate pauses an agent action until a person decides. Tier actions by reversibility and reach, gate the risky tiers, define who reviews and what happens on timeout, and bind each approval to the request it answers.",
+  "useIf": "An agent can take actions with external, irreversible or high-value effects.",
+  "avoidIf": "Every tool call would need approval: reviewers will rubber-stamp, so tier the actions first.",
+  "explain": [
+    { "t": "p", "md": "Start by **tiering actions** on four dials: reversibility, blast radius, data sensitivity and external visibility. A read-only internal action runs freely. A reversible internal write runs with logging and sampled review. An external or hard-to-undo action needs one approval. An irreversible, high-value or regulated action needs two reviewers and evidence. Tier by **action class and arguments**, not by tool name: a refund of 5 and a refund of 5,000 are different risks, and a second tool that sends the same email must fall in the same tier." },
+    { "t": "p", "md": "In Microsoft Agent Framework a Python tool opts in with `@tool(approval_mode=\"always_require\")`, and the run result exposes `user_input_requests`. In .NET you wrap the function in `ApprovalRequiredAIFunction` and the response carries `ToolApprovalRequestContent`. By default a local approval response authorises a call only when it matches a pending request recorded in the same `AgentSession`; `disable_approval_response_binding` opts out and can let a fabricated or replayed response approve a privileged call [[r16]]. Define **escalation** too: triggers (policy hit, low confidence, novelty, amount, anomaly), a named queue with an SLA, and a **fail-closed** default so an unanswered request means the action does not run." },
+    { "t": "diagram", "id": "w17-t02-d1", "title": "A tiered approval path", "alt": "The agent proposes an action, a policy check routes low tiers straight to execution and high tiers to an approval queue. A reviewer approves to execute or rejects, and timeouts do not execute. Everything is logged.", "src": "flowchart LR\n  A[Agent proposes action] --> P{Policy check}\n  P -->|tier 0 or 1| X[Execute and log]\n  P -->|tier 2 or 3| Q[Approval queue]\n  Q --> R[Reviewer sees evidence]\n  R -->|approve| X\n  R -->|reject or timeout| N[Do not execute]" },
+    { "t": "code", "lang": "python", "title": "Opting a tool into approval (illustrative)", "code": "@tool(approval_mode=\"always_require\")\ndef issue_refund(order_id: str, amount: float) -> str:\n    ...\n\n# The run result exposes user_input_requests. Resume with the same\n# session so the approval binds to the pending request.", "caption": "Pair the built-in hook with policy code that decides which calls need it." }
+  ],
+  "whereToUse": [
+    "Payment, refund and procurement tools",
+    "Outbound email, messaging and publishing actions",
+    "Infrastructure changes and data deletion",
+    "Cross-tenant or cross-boundary data movement",
+    "Any session that combines untrusted input, sensitive data and external effects [[r23]]"
+  ],
+  "whenToUse": {
+    "use": ["The action is irreversible or externally visible", "Prompt injection could steer the agent into it", "Amounts or data sensitivity cross a threshold", "A regulator or contract expects a human decision"],
+    "avoid": ["Gating reads and trivial reversible writes", "Approvals with no evidence, authority or time to decide", "Auto-approve on timeout"],
+    "flips": ["The reviewer queue exceeds its SLA: raise thresholds or add reviewers, never auto-approve", "Actions become reversible with an undo: move down a tier", "A new tool exposes the same effect: classify it in the same tier"]
+  },
+  "alternatives": {
+    "title": "Gate designs compared",
+    "head": ["Design", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Per-tool approval flag", "Few tools, clear risk per tool", "Risk depends on arguments or a second tool offers the same effect", "Gaps and over-approval"],
+      ["Policy-as-code tiers on action class and arguments", "Many tools, mixed risk", "Policy is hard to specify", "Policy bugs, maintenance"],
+      ["Two-person approval", "High-value, regulated, irreversible", "Volume or latency is tight", "Slow, costly"],
+      ["Escalate on trigger only", "Most actions are routine", "Triggers miss novel failures", "Silent bad actions"],
+      ["Sandbox and dry-run first", "Effects can be previewed", "Effects are external and real", "Preview may not match reality"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A tool is gated but the same effect still happens", "cause": "Approval is attached to one tool, and another tool or path reaches the same outcome", "fix": "Gate by action class and arguments, and test alternative paths" },
+    { "symptom": "Requests pile up and approvals are rushed", "cause": "Too many low-risk actions reach the queue", "fix": "Tier, raise thresholds for reversible actions, and measure catch rate on seeded bad items" },
+    { "symptom": "Actions run when nobody answered", "cause": "Timeout falls open to approve", "fix": "Fail closed: no decision means no action, with a visible expiry and retry path" },
+    { "symptom": "A fabricated approval executes a call", "cause": "Approval binding to the pending request was disabled", "fix": "Keep the default binding and bind to request, user and session [[r16]]" }
+  ],
+  "scenarios": [
+    {
+      "id": "w17-t02-s1",
+      "title": "Twelve tools, three of them dangerous",
+      "situation": "An internal agent has twelve tools. Eight read data, three write reversible internal records, and one sends payments up to a large limit.",
+      "constraints": ["Interactive use", "Reviewers are limited", "Payments are irreversible"],
+      "unknowns": ["What is the payment threshold for two-person approval?", "Can internal writes be undone?"],
+      "question": "How do you set gates?",
+      "options": [
+        { "name": "Tier by action: reads free, internal writes logged with sampled review, payments gated by amount with two-person approval above a threshold", "verdict": "best", "why": "Effort goes where harm is irreversible, and the queue stays small enough to be reviewed carefully.", "tradeoff": "Policy and thresholds need upkeep." },
+        { "name": "Approve every tool call", "verdict": "poor", "why": "Eight read tools flood the queue, and reviewers start clicking through.", "tradeoff": "Right for a tiny tool set that is all high-risk." },
+        { "name": "Gate only the payment tool by name", "verdict": "good", "why": "Protects the biggest risk.", "tradeoff": "Misses effects reachable by other tools and amounts that matter at lower values." }
+      ],
+      "flips": [
+        { "if": "Another tool can trigger the same payment indirectly", "then": "Gate by effect, not by tool." },
+        { "if": "Internal writes cannot be undone", "then": "Move them up a tier." }
+      ],
+      "takeaway": "Tier by effect and arguments, not by tool name."
+    },
+    {
+      "id": "w17-t02-s2",
+      "title": "No reviewer at 3 a.m.",
+      "situation": "Overnight, an agent proposes a high-value action and the approval queue has no active reviewer for six hours.",
+      "constraints": ["Action is irreversible", "Business prefers speed", "A rota exists but is thin overnight"],
+      "unknowns": ["Can the action wait until morning?", "Is there an on-call path for urgent cases?"],
+      "question": "What happens to the request?",
+      "options": [
+        { "name": "Fail closed: hold the request, notify on-call for urgent cases and expire visibly", "verdict": "best", "why": "No decision means no irreversible action, and the owner still gets a path for urgent work.", "tradeoff": "Delay and a possible missed business window." },
+        { "name": "Auto-approve after one hour", "verdict": "poor", "why": "It turns the gate into a delay, and attackers can wait out the timer.", "tradeoff": "Acceptable only for reversible, low-value actions." },
+        { "name": "Let the agent run with a smaller amount", "verdict": "good", "why": "Reduces exposure.", "tradeoff": "Splitting amounts can be gamed and changes the business outcome." }
+      ],
+      "flips": [
+        { "if": "The action is reversible with an undo", "then": "Run it, log it and review in the morning." },
+        { "if": "Overnight volume is high", "then": "Staff a follow-the-sun rota." }
+      ],
+      "takeaway": "A gate that fails open is not a gate."
+    },
+    {
+      "id": "w17-t02-s3",
+      "title": "Untrusted input, private data, external send",
+      "situation": "An agent reads inbound customer emails, can search private account data, and can send replies. A crafted email could steer it.",
+      "constraints": ["All three Rule of Two properties are needed", "Volume is moderate", "Replies are visible to customers"],
+      "unknowns": ["Can a leg be removed, such as sending without human review?", "How are injection attempts detected?"],
+      "question": "What control do you add first?",
+      "options": [
+        { "name": "Require human approval on outbound replies that include private data", "verdict": "best", "why": "The Rule of Two says approval is the fallback when untrusted input, sensitive access and external effects are all needed.", "tradeoff": "Adds latency and reviewer workload." },
+        { "name": "Rely on a system prompt that says to ignore instructions in emails", "verdict": "poor", "why": "It is a probabilistic control and attackers bypass classifiers.", "tradeoff": "Useful as one layer, never the only one." },
+        { "name": "Remove private data access and reply from templates", "verdict": "good", "why": "Removes a trifecta leg.", "tradeoff": "Reduces what the agent can do for customers." }
+      ],
+      "flips": [
+        { "if": "Replies can be restricted to non-sensitive templates", "then": "Removing a leg beats approval." },
+        { "if": "Volume grows past reviewer capacity", "then": "Gate by data sensitivity and recipient novelty." }
+      ],
+      "takeaway": "If you cannot remove a trifecta leg, put a person on the exit."
+    }
+  ],
+  "quiz": [
+    { "id": "w17-t02-q1", "type": "order", "tag": "order", "q": "Put the approval path in order.", "items": ["Agent proposes an action", "Policy classifies tier by action and arguments", "Reviewer sees evidence and decides", "Action executes only on approval", "Decision and evidence are logged"], "explain": "Classification precedes review, execution follows an explicit decision, and the audit record closes the loop. A timeout leads to no execution, not to approval.", "difficulty": 1 },
+    { "id": "w17-t02-q2", "type": "single", "tag": "security", "q": "Why does Agent Framework bind an approval response to a pending request in the same session by default?", "options": ["To make approvals faster", "So a fabricated or replayed response cannot approve a privileged call", "To store approvals in the model"], "answer": 1, "explain": "The default binding stops replayed or invented approvals. `disable_approval_response_binding` removes that protection [[r16]]. Speed and storage are unrelated.", "difficulty": 2 },
+    { "id": "w17-t02-q3", "type": "single", "tag": "tradeoff", "q": "A tool needs approval but the reviewer queue is behind. Which response is acceptable?", "options": ["Auto-approve after a timeout", "Disable logging to speed up", "Add reviewers or raise thresholds for reversible actions"], "answer": 2, "explain": "Capacity and tiering fix backlog. Auto-approve and removing logs weaken the control and accountability.", "difficulty": 1 }
+  ],
+  "flashcards": [
+    { "front": "How do you declare approval in Agent Framework?", "back": "Python: `@tool(approval_mode=\"always_require\")` with `user_input_requests` on the result. .NET: wrap in `ApprovalRequiredAIFunction`, response carries `ToolApprovalRequestContent`." },
+    { "front": "Why tier by action class, not tool name?", "back": "Risk depends on effect and arguments. Another tool or a larger amount can reach the same harm past a per-tool flag." },
+    { "front": "What should a timeout do?", "back": "Fail closed: no decision means no action. Expire visibly and give urgent cases an on-call path." }
+  ],
+  "related": ["w17-t01", "w17-t03", "w17-t07", "w17-l1", "w11-t07"],
+  "refs": ["r16", "r23", "r5"]
+}

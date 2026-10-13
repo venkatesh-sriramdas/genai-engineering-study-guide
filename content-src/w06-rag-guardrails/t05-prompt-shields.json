@@ -1,0 +1,109 @@
+{
+  "id": "w06-t05",
+  "order": 5,
+  "group": "Azure AI Content Safety",
+  "title": "Prompt Shields",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "Prompt Shields detects two attack families: user prompt attacks typed by the caller and document attacks hidden in content the model reads. It is a probabilistic classifier, one layer of a defence in depth.",
+  "useIf": "Your model reads text you do not control: user input, retrieved documents, web pages, emails or tool output.",
+  "avoidIf": "You expect it to be a complete defence: pair it with least privilege, Spotlighting where available and deterministic blocks on exfiltration paths.",
+  "explain": [
+    { "t": "p", "md": "**User prompt attacks** (formerly jailbreak risk detection) try to override the system rules. The documented subtypes are changing system rules, conversation mockup, role-play and encoding. **Document attacks** (indirect attacks) hide instructions in content such as a retrieved page or an email: the subtypes include manipulated content, system access, information gathering, availability, fraud and malware, plus the four user-attack types. Prompt Shields has been GA since August 2024 [[r3]]." },
+    { "t": "table", "caption": "Two shields, where they look", "head": ["Shield", "Scans", "Foundry scan points", "Standalone API"], "rows": [["User prompt attacks", "What the caller typed", "User input", "One `userPrompt`"], ["Document attacks", "Retrieved or tool-returned text", "User input and tool response", "Up to five `documents` per call"]] },
+    { "t": "p", "md": "In Foundry guardrails the annotations carry `detected` and `filtered` booleans. In the standalone API you send one `userPrompt` and up to five `documents` and read `attackDetected`. The prompt limit is 10K characters, and Prompt Shields was tested on English only, so test other languages yourself [[r3]] [[r10]]. A top-12 retrieval therefore needs three calls, which you can run in parallel to protect latency." },
+    { "t": "p", "md": "**Spotlighting** is a separate, Azure preview feature for document attacks. It marks documents as lower trust by base64 encoding them. It is off by default, works with the Chat Completions API on models only (not agents), raises token counts and can push a long document over the input limit, and the model may mention base64 in answers [[r3]]. The Microsoft paper reports attack success falling from above 50 percent to below 2 percent on GPT-family models with minimal task impact [[r12]]. The MSRC defence in depth guidance combines prompt hardening, Spotlighting, Prompt Shields and deterministic blocking of exfiltration paths [[r11]]." }
+  ],
+  "whereToUse": [
+    "RAG assistants that retrieve from wikis, tickets, shared drives or the web",
+    "Mail and calendar copilots where content comes from outside senders",
+    "Agents whose tools return web or file content",
+    "Public chat endpoints that face deliberate jailbreak attempts",
+    "Security reviews that map untrusted inputs to a scan point"
+  ],
+  "whenToUse": {
+    "use": [
+      "Use the user-attack shield on every public prompt",
+      "Use the document-attack shield on retrieved chunks and tool responses when sources are not fully trusted",
+      "Use Spotlighting on models where preview is acceptable and token cost is fine",
+      "Combine with least-privilege tools and deterministic exfiltration blocks"
+    ],
+    "avoid": [
+      "Avoid relying on the shield alone: it is probabilistic and tested on English",
+      "Avoid Spotlighting for very long documents near the input limit",
+      "Avoid assuming Spotlighting protects agents: it is not supported for them"
+    ],
+    "flips": [
+      "Sources are a curated internal library: sample or relax document scanning, keep user-attack scanning",
+      "The workload is an agent rather than a model call: use the tool-response control instead of Spotlighting",
+      "Traffic is not English: build a local attack test set and add heuristics or classifiers"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Defence", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Prompt Shields", "Managed detection of user and document attacks", "Non-English or novel attacks", "Probabilistic, English-tested, extra call"],
+      ["Spotlighting", "Documents are lower trust and fit the limit", "Agents, long documents", "Preview, base64 tokens, models only"],
+      ["Prompt hardening alone", "Zero-cost baseline", "Determined attackers", "Weak by itself"],
+      ["Least privilege and egress blocks", "Tools can act or leak", "Pure Q&A with no tools", "Design effort, restricts features"],
+      ["Open-source or LLM classifier", "Self-hosted or custom attack types", "No evaluation data", "You calibrate and operate it"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A planted instruction in a retrieved page changes the answer", "cause": "Only the user prompt was scanned", "fix": "Pass retrieved chunks as `documents` or enable the indirect attack control on tool responses" },
+    { "symptom": "Long documents fail after enabling Spotlighting", "cause": "Base64 encoding raises token count past the input limit", "fix": "Shorten or chunk the documents, or skip Spotlighting for those requests" },
+    { "symptom": "Answers mention base64", "cause": "The model sees encoded text and sometimes refers to it", "fix": "Instruct the model about the encoding and test output wording" },
+    { "symptom": "Non-English attacks pass", "cause": "Prompt Shields was tested on English only", "fix": "Create a multilingual attack test set and add complementary controls" }
+  ],
+  "scenarios": [
+    {
+      "id": "w06-t05-s1",
+      "title": "Q&A over scraped web pages, no tools",
+      "situation": "An assistant answers from web pages the team crawls. It has no tools and returns 12 chunks per query. Latency budget is two seconds. Some pages may carry hidden instructions.",
+      "constraints": ["Untrusted pages", "No tools", "12 chunks per query", "2 second budget"],
+      "unknowns": ["Is the model in the Chat Completions API?", "How long are the chunks?"],
+      "question": "What do you add for document attacks?",
+      "options": [
+        { "name": "Scan chunks with the document shield in three parallel calls of up to five, plus an output guard", "verdict": "best", "why": "It matches the five-documents-per-call limit and parallelism keeps the added latency near one call.", "tradeoff": "Three calls per query and some false positives on benign pages." },
+        { "name": "Spotlighting only", "verdict": "good", "why": "Lowers attack success in the research and costs nothing per call.", "tradeoff": "Preview, adds base64 tokens and does not detect or report attacks." },
+        { "name": "Tell the model in the system prompt to ignore document instructions", "verdict": "poor", "why": "It is the weakest control and attackers target exactly this.", "tradeoff": "Fine as one layer, never as the only layer." }
+      ],
+      "flips": [
+        { "if": "Pages come from a curated internal library", "then": "Sample scanning or scan only new documents." },
+        { "if": "Chunks are very long", "then": "Skip Spotlighting for them and rely on shield scanning." }
+      ],
+      "takeaway": "Scan what the model reads, in parallel batches that match the API limits."
+    },
+    {
+      "id": "w06-t05-s2",
+      "title": "Foundry agent that calls a web-fetch tool",
+      "situation": "An agent in Foundry Agent Service fetches web pages through a tool and can write notes to a shared store. Preview features are acceptable for this pilot.",
+      "constraints": ["Foundry agent, not a bare model", "Tool returns untrusted text", "Write access to a shared store", "Preview acceptable"],
+      "unknowns": ["Which domains may the tool fetch?", "Who reads the shared store?"],
+      "question": "Which controls do you rely on?",
+      "options": [
+        { "name": "Indirect-attack control on tool responses, tool-call controls and a domain and write allow list", "verdict": "best", "why": "The document shield scans tool responses in Foundry, and tool-call checks plus allow lists limit damage if one slips.", "tradeoff": "Tool-level controls are preview, and allow lists restrict flexibility." },
+        { "name": "Prompt hardening plus output filtering", "verdict": "good", "why": "Easy and adds a layer.", "tradeoff": "The side effect (writing to the store) happens before output is checked." },
+        { "name": "Spotlighting on the underlying model", "verdict": "poor", "why": "Spotlighting is not supported for agents.", "tradeoff": "Right for plain model calls on the Chat Completions API." }
+      ],
+      "flips": [
+        { "if": "Preview features are not allowed", "then": "Implement tool response scanning and allow lists in your own code with the standalone API." },
+        { "if": "The tool becomes read-only and the store is private", "then": "Reduce to tool-response scanning." }
+      ],
+      "takeaway": "For agents, scan tool responses and limit what a hijacked agent can do."
+    }
+  ],
+  "quiz": [
+    { "id": "w06-t05-q1", "type": "numeric", "tag": "numeric", "q": "The standalone Prompt Shields API accepts up to five documents per call. How many calls do you need to scan 12 retrieved chunks?", "answer": 3, "tolerancePct": 0, "unit": "calls", "explain": "12 divided by 5 is 2.4, so 3 calls (5, 5 and 2). They can run in parallel, so added latency is about one call.", "ref": "r3" },
+    { "id": "w06-t05-q2", "type": "single", "tag": "security", "q": "In Foundry, where are document (indirect) attacks scanned?", "options": ["At user input and tool response", "At model output only", "At the embedding step", "Only at tool call"], "answer": 0, "explain": "User attacks are scanned at user input, and document attacks at user input and tool response. Output and embedding steps are not documented scan points for the shield, and tool call is a separate control.", "ref": "r3" },
+    { "id": "w06-t05-q3", "type": "multi", "tag": "tradeoff", "q": "Which are true about Spotlighting in Azure?", "options": ["It is off by default", "It base64 encodes documents", "It works with agents", "It can raise token counts and push long documents over the limit"], "answers": [0, 1, 3], "explain": "Spotlighting is off by default, base64 encodes documents and raises token counts. It is supported for models on the Chat Completions API, not agents.", "ref": "r3" }
+  ],
+  "flashcards": [
+    { "front": "Two Prompt Shields attack families?", "back": "User prompt attacks (formerly jailbreak detection) and document attacks (indirect), the latter hidden in retrieved or tool-returned content." },
+    { "front": "Standalone Prompt Shields request shape?", "back": "One `userPrompt` and up to five `documents`. The response carries `attackDetected`. Prompt limit 10K characters." },
+    { "front": "Spotlighting trade-offs?", "back": "Preview, base64 encodes documents, models only (not agents), raises tokens. Paper: attack success from above 50% to below 2%." }
+  ],
+  "related": ["w06-t01", "w06-t07", "w06-t10", "w07-t02", "w07-t17", "w06-l3"],
+  "refs": ["r3", "r10", "r11", "r12"]
+}

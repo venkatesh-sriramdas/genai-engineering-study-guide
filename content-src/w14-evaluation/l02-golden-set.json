@@ -1,0 +1,100 @@
+{
+  "id": "w14-l2",
+  "order": 2,
+  "title": "Plant the golden set",
+  "kind": "problem",
+  "minutes": 14,
+  "brief": "You have no labelled data and one domain expert with a free afternoon. The stage, the traffic and the drift you can tolerate are unspecified. Decide where cases come from and how you keep them honest.",
+  "blocks": [
+    { "t": "h", "text": "Four sources, four failure profiles", "level": 2 },
+    { "t": "compare", "title": "Where golden cases come from", "intro": "Most strong sets mix sources. Pick the first source by stage, then add the others as traffic and budget appear.", "options": [
+      { "name": "Expert hand-written", "summary": "A domain expert writes questions, expected answers and, for retrieval, the relevant chunks.", "pros": ["Highest label quality", "Targets the cases the business cares about"], "cons": ["Expert time is the scarcest resource", "Small sets carry the author's blind spots"], "bestWhen": "The first 20 to 50 cases, drawn from real failures, or any high-stakes domain.", "avoidWhen": "You need hundreds of cases by next week.", "meta": [{ "k": "Label cost", "v": "high" }, { "k": "Drift", "v": "none" }] },
+      { "name": "Mined from production traces", "summary": "Pick real queries from logged traces, then label them.", "pros": ["Reflects how users actually behave", "Failing traces become regression cases"], "cons": ["Needs privacy and retention rules before reuse", "Moves with users, so scores across refreshes are not comparable"], "bestWhen": "Traffic exists and you want the set to follow real use.", "avoidWhen": "You are pre-launch, or you need a frozen baseline.", "meta": [{ "k": "Label cost", "v": "medium" }, { "k": "Drift", "v": "tracks users" }] },
+      { "name": "Synthetic from prompt and documents", "summary": "Foundry data generation from an agent definition, an inline prompt or a reference file, as Simple QnA or multi-turn Simulation seed.", "pros": ["Works before launch", "Stable baseline that does not drift with traffic", "Expands edge-case coverage"], "cons": ["Mirrors the generating prompt and can look uniform", "Goes stale when instructions change", "Needs hand review"], "bestWhen": "You are pre-launch, traffic is low, or you need a regression baseline.", "avoidWhen": "It is the only source, or nobody reviews the rows.", "meta": [{ "k": "max_samples", "v": "1 to 1,000" }, { "k": "SDK", "v": "azure-ai-projects 2.8.0 or later" }] },
+      { "name": "Public benchmark", "summary": "A published suite such as GAIA, SWE-bench Verified or tau-bench used as a sanity check.", "pros": ["Comparable across systems", "No labelling effort"], "cons": ["Saturates and can leak into training data", "Does not cover your data or tools", "Versions can change grading"], "bestWhen": "You are choosing a base model or tracking field-level capability.", "avoidWhen": "It stands in for a test on your own data.", "meta": [{ "k": "GAIA", "v": "466 questions, 300 answers withheld" }] }
+    ] },
+    { "t": "flow", "title": "Golden set lifecycle", "direction": "h", "steps": [
+      { "title": "Seed", "md": "Write 20 to 50 cases from real failures. Large early effects need few samples.", "tag": "hand" },
+      { "title": "Generate", "md": "Make a small synthetic batch from the agent definition and reference files. Review rows by hand, then scale.", "tag": "synthetic" },
+      { "title": "Label", "md": "One accountable expert adds expected answers, relevant chunk ids and written critiques." },
+      { "title": "Version", "md": "Tag each dataset version and record how each row was made: hand, trace or synthetic.", "tag": "versioned" },
+      { "title": "Split", "md": "Separate regression, capability and held-out slices. Nobody tunes on the held-out slice." },
+      { "title": "Refresh", "md": "Add failing production traces. Regenerate synthetic rows and bump the version when instructions change.", "tag": "traces" }
+    ] },
+    { "t": "code", "lang": "json", "title": "One golden row that serves retrieval and answer metrics", "code": "{\n  \"id\": \"q-0142\",\n  \"user_input\": \"How long do I have to request a refund on an annual plan?\",\n  \"reference\": \"Annual plans can be refunded within 30 days of purchase.\",\n  \"retrieval_ground_truth\": [\n    { \"document_id\": \"refund-policy#c2\", \"query_relevance_label\": 2 },\n    { \"document_id\": \"refund-policy#c5\", \"query_relevance_label\": 1 }\n  ],\n  \"origin\": \"trace\",\n  \"slice\": \"regression\",\n  \"dataset_version\": \"2026-10-13.1\"\n}", "caption": "Illustrative row. The first three keys follow the field names RAGAS and the Foundry Document Retrieval evaluator read. `origin`, `slice` and `dataset_version` are your own bookkeeping, and the policy text is invented." },
+    { "t": "stats", "items": [
+      { "label": "Starter set", "value": "20 to 50", "note": "Simple tasks drawn from real failures" },
+      { "label": "Synthetic rows per job", "value": "1 to 1,000", "note": "The max_samples range" },
+      { "label": "Batch evaluation limits", "value": "100,000 rows", "note": "At most 2 MB per row" },
+      { "label": "GAIA withheld answers", "value": "300 of 466", "note": "166 form the public development set" },
+      { "label": "SWE-bench Verified", "value": "500 samples", "note": "Human-validated subset. The original SWE-bench has 2,294 problems from 12 Python repositories" }
+    ] },
+    { "t": "failure", "title": "Failure modes of golden sets", "items": [
+      { "symptom": "A benchmark score is high and the product disappoints", "cause": "Public suites saturate, leak into training data and do not cover your data", "fix": "Keep a private, held-out slice built from your own failures. Use public suites for model selection only." },
+      { "symptom": "Synthetic cases all look alike and every system passes", "cause": "One generator prompt, never reviewed", "fix": "Generate a small batch, review rows by hand, steer difficulty with a prompt plus a reference file, and add trace-derived cases." },
+      { "symptom": "Scores jump after a prompt edit with no real behaviour change", "cause": "The synthetic set mirrors the old instructions", "fix": "Regenerate and version the set when instructions change materially, and rerun the baseline on both versions." },
+      { "symptom": "The gate passes, then production regresses", "cause": "The gate set doubled as the tuning set", "fix": "Keep a held-out slice nobody tunes on, and refresh it from new traces." },
+      { "symptom": "A leaderboard result cannot be reproduced", "cause": "The benchmark changed grading between versions", "fix": "Pin the benchmark version. Scores from before tau-bench v1.0.1 (July 2026) are not comparable on banking_knowledge tasks." }
+    ] },
+    { "t": "callout", "kind": "gotcha", "title": "Benchmarks age", "md": "OpenAI reportedly stopped evaluating on SWE-bench Verified in February 2026. The reasons given were score saturation (the top score moved from 74.9% to 80.9% in six months) and an audit of 138 hard tasks in which 59.4% had flawed tests or problem statements, plus signs of training-data leakage. The primary page blocked automated fetch on 2026-10-13, so these numbers come from a secondary write-up [[r48]]. GAIA took the opposite approach and withholds the answers to 300 of its 466 questions [[r33]]." }
+  ],
+  "quiz": [
+    {
+      "id": "w14-l2-q1", "type": "single", "tag": "flip", "difficulty": 1, "ref": "r8",
+      "q": "You launch in two weeks, have no production traces, and need a baseline that will not drift as users change behaviour. Which source should supply the first set?",
+      "options": [
+        "Synthetic cases from the agent definition and reference files, reviewed by hand",
+        "Traces mined from production logs, labelled by a domain expert after the first week",
+        "A public benchmark score for the chosen base model",
+        "Thumbs-up and thumbs-down ratings collected after launch"
+      ],
+      "answer": 0,
+      "explain": "Synthetic generation works before launch and gives a stable regression baseline that does not move with traffic [[r8]]. Production traces do not exist yet and would drift once they do. A public benchmark score describes the base model, not your data or tools. Ratings arrive after launch, are biased toward vocal users and are not labelled test cases."
+    },
+    {
+      "id": "w14-l2-q2", "type": "single", "tag": "bug", "difficulty": 2, "ref": "r8",
+      "q": "A teammate plans to submit these illustrative job settings to generate a first dataset. Which problem matters most?",
+      "code": { "lang": "json", "code": "{\n  \"task\": \"simple_qna\",\n  \"source\": \"agent_definition\",\n  \"max_samples\": 2500\n}" },
+      "options": [
+        "The job exceeds the 100,000-row limit that applies to batch evaluation runs and will be rejected outright",
+        "max_samples is outside the documented 1 to 1,000 range, and a first batch should be reviewable",
+        "Simple QnA cannot take an agent definition as its source, only an inline prompt or a file",
+        "Synthetic generation requires an uploaded reference file in every job"
+      ],
+      "answer": 1,
+      "explain": "Evaluation jobs accept max_samples from 1 through 1,000, and the guidance is to start small and review rows manually before scaling [[r8]]. The 100,000-row figure is a different limit, on batch evaluation runs [[r37]]. Simple QnA needs an agent or prompt source, so an agent definition is allowed, and the reference file is optional."
+    },
+    {
+      "id": "w14-l2-q3", "type": "match", "tag": "concept", "difficulty": 2,
+      "q": "Match each golden-set source to its defining trade-off.",
+      "pairs": [
+        { "l": "Expert hand-written", "r": "Highest label quality, scarcest expert time" },
+        { "l": "Mined from production traces", "r": "Follows real users but needs privacy rules and moves over time" },
+        { "l": "Synthetic from prompt and documents", "r": "Stable baseline that must be regenerated when instructions change" },
+        { "l": "Public benchmark", "r": "Comparable across systems but can saturate or leak into training data" }
+      ],
+      "explain": "Each source pays for its strength somewhere else. Expert labels cost scarce hours. Traces bring realism and privacy duties, and the set drifts with users. Synthetic rows give a stable baseline but mirror the prompt that made them. Public suites compare systems but saturate, as the reported SWE-bench Verified retirement and GAIA's withheld answers show."
+    },
+    {
+      "id": "w14-l2-q4", "type": "multi", "tag": "tradeoff", "difficulty": 2, "ref": "r8",
+      "q": "Select the practices Foundry guidance gives for synthetic evaluation datasets.",
+      "options": [
+        "Generate a small batch first and review the rows by hand before scaling",
+        "Mirror the instructions your production agent actually runs",
+        "Regenerate and version the dataset when the agent's instructions change materially",
+        "Generate the maximum rows first, because a strong generator makes review unnecessary"
+      ],
+      "answers": [0, 1, 2],
+      "explain": "The guidance lists all three: a small first batch with manual review, instructions that match production because drift weakens the signal, and regeneration with a new version when the prompt changes [[r8]]. The fourth option fails because generator strength does not remove the need to spot-check rows, and an unreviewed maximum batch hides uniform or off-topic cases."
+    }
+  ],
+  "defend": null,
+  "refs": ["r8", "r12", "r17", "r18", "r29", "r33", "r34", "r35", "r37", "r48"],
+  "takeaways": [
+    "Start with 20 to 50 cases from real failures. Expert time, not volume, is the constraint.",
+    "Record how each row was made and which dataset version it belongs to.",
+    "Synthetic rows give a stable pre-launch baseline and traces give realism. Use both.",
+    "Keep a held-out slice nobody tunes on, and pin benchmark versions.",
+    "Public benchmarks help pick a base model. Your own set gates your releases."
+  ]
+}

@@ -1,0 +1,105 @@
+{
+  "id": "w12-t14",
+  "order": 14,
+  "group": "Publish and operate",
+  "title": "Tracing, evaluation and the agent optimizer",
+  "minutes": 8,
+  "difficulty": "advanced",
+  "summary": "Foundry traces every agent run into Application Insights using OpenTelemetry conventions. The agent optimizer (limited preview) closes the loop by evaluating an agent against a dataset and proposing better instructions, tool descriptions, skills or models.",
+  "useIf": "You need to see why an agent behaved as it did, and turn that evidence into measured improvements.",
+  "avoidIf": "You need only a quick prototype with no quality bar, or your policy forbids limited-preview features in the improvement loop.",
+  "explain": [
+    { "t": "p", "md": "**Tracing.** Foundry captures inputs, outputs, tool usage, retries, latencies and cost for each agent run, using OpenTelemetry semantic conventions, and stores the telemetry in Azure Monitor Application Insights [[tr3]]. Tracing is **GA for prompt and hosted agents**, and preview for workflow and external agents [[tr3]]. To view traces you need a tracing-enabled project, access to the connected Application Insights resource and the Log Analytics reader role [[tr3]]. Telemetry storage can incur costs by volume and retention [[tr3]]." },
+    { "t": "p", "md": "**The optimizer.** It automatically improves prompt and hosted agents by evaluating behavior and generating candidates. It scores the baseline against a dataset, generates candidates (rewritten instructions, skills, tool descriptions, model choices), evaluates them on the same dataset, ranks by a composite score from 0.0 to 1.0 and marks the best [[r25]]. Prompt agents start from an Optimize wizard in the portal and promote the winner to a new version. Hosted agents need optimizer-ready code (`load_config()`), then you apply the candidate locally and redeploy [[r25]]. Datasets can be generated from traces [[r25]]." },
+    { "t": "diagram", "id": "w12-t14-d1", "title": "From traces to a better agent", "alt": "Traces become an evaluation dataset. The optimizer scores the baseline, generates and scores candidates, ranks them, and the winner is promoted as a new prompt-agent version or applied and redeployed for a hosted agent.", "src": "flowchart LR\n  T[Traces in App Insights] --> D[Dataset]\n  D --> B[Score baseline]\n  B --> C[Generate candidates]\n  C --> E[Score candidates]\n  E --> R[Rank by 0.0 to 1.0 score]\n  R --> P[Promote or redeploy]" },
+    { "t": "callout", "kind": "warn", "title": "Optimizer runs execute your tools", "md": "The optimizer invokes the agent against every task in the dataset, so external calls (APIs, databases, third-party services) run on each evaluation. Use test endpoints or mocks to avoid charges, state changes or rate limits [[r25]]. Function-calling tools run on the client side, so the optimizer can improve their descriptions but cannot evaluate their execution [[r25]]." },
+    { "t": "callout", "kind": "preview", "title": "Status, checked 2026-10-13", "md": "The agent optimizer is **limited preview** [[r25]]. Voice-based agents have monitoring that needs Application Insights, a single trace-oriented view, full-conversation evaluation only and no dataset-from-traces action [[r1]]. The Agent 365 Observability SDK is deprecated for new work. Use the **Microsoft OpenTelemetry Distro** (.NET, Node.js, Python), which also targets Foundry, Azure Monitor and any OTLP backend [[r26]]. Evaluator catalogs and metric design are covered in the evaluation chapter." }
+  ],
+  "whereToUse": [
+    "Debugging a wrong answer by walking the trace to the step that introduced the error",
+    "Building regression datasets from real traces",
+    "Tuning instructions, tool descriptions or model choice against a measured score",
+    "Reviewing latency, retries and token use across tool-heavy agents"
+  ],
+  "whenToUse": {
+    "use": [
+      "Always turn tracing on for prompt and hosted agents in anything beyond a prototype",
+      "Use the optimizer when you have representative tasks and clear evaluators",
+      "Use traces to build datasets so tests reflect real use"
+    ],
+    "avoid": [
+      "Running the optimizer against live tools that charge money or mutate state",
+      "Treating the optimizer score as ground truth when the dataset or evaluators are weak",
+      "Capturing sensitive content in traces without a retention and access policy"
+    ],
+    "flips": [
+      "Policy forbids limited-preview features: tune manually with your own evaluation harness",
+      "The agent is not a Foundry agent: use the Microsoft OpenTelemetry Distro to send traces to Foundry or another backend",
+      "Voice agent: evaluate full conversations, since single-turn and simulated evaluation are unavailable"
+    ]
+  },
+  "alternatives": {
+    "title": "Ways to improve and observe agents",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Foundry tracing in Application Insights", "Prompt or hosted agents on Foundry", "You need a vendor-neutral backend", "Telemetry costs; Log Analytics reader role required [[tr3]]"],
+      ["Agent optimizer", "Measured prompt, tool-description and model tuning", "Tools have side effects, weak datasets", "Limited preview; candidate runs spend model tokens [[r25]]"],
+      ["Manual prompt iteration", "Small changes, no dataset yet", "Many scenarios and regressions", "Slow, subjective"],
+      ["OpenTelemetry Distro to any backend", "Mixed estates, Agent 365 or Azure Monitor", "You want Foundry-only portal views", "You manage exporters and retention [[r26]]"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Traces are missing in the Foundry portal", "cause": "Tracing is not enabled for the project, or you lack access to Application Insights or the Log Analytics reader role", "fix": "Enable tracing, connect Application Insights and grant the reader role [[tr3]]." },
+    { "symptom": "Optimizer run creates real orders or sends emails", "cause": "Tools call live endpoints for every dataset task", "fix": "Point tools at test endpoints or mocks before running [[r25]]." },
+    { "symptom": "Optimizer reports no gain for tool failures", "cause": "Function-calling tools run client side, so execution is not evaluated, only descriptions", "fix": "Test tool execution in your own harness and use the optimizer for descriptions [[r25]]." }
+  ],
+  "scenarios": [
+    {
+      "id": "w12-t14-s1",
+      "title": "Prompt agent that calls a payment tool",
+      "situation": "A prompt agent mis-selects tools. The team has a month of traces and wants a measured improvement. One tool issues refunds.",
+      "constraints": ["Limited preview is acceptable", "A tool changes real state", "Representative traces exist"],
+      "unknowns": ["Is there a test endpoint for the refund tool?", "Which evaluators match the failure?"],
+      "question": "How do you run the optimizer?",
+      "options": [
+        { "name": "Build a dataset from traces, point tools at a test endpoint or mock, then optimize", "verdict": "best", "why": "Uses real tasks and avoids live refunds, since every dataset task executes the tools.", "tradeoff": "You maintain a mock and must keep it faithful to production behavior." },
+        { "name": "Iterate prompts by hand", "verdict": "good", "why": "No preview dependency and no tool side effects.", "tradeoff": "Slow and hard to prove gains across many scenarios." },
+        { "name": "Run the optimizer against the live refund endpoint", "verdict": "poor", "why": "Each evaluation executes real refunds.", "tradeoff": "Fine for read-only tools." }
+      ],
+      "flips": [
+        { "if": "Tools are read-only", "then": "Live endpoints are acceptable if rate limits allow." },
+        { "if": "Policy forbids limited preview", "then": "Manual iteration with your own evaluation harness." }
+      ],
+      "takeaway": "Optimizer runs are test runs that execute tools, so isolate side effects first."
+    },
+    {
+      "id": "w12-t14-s2",
+      "title": "Observability code on a deprecated SDK",
+      "situation": "A team instrumented an agent with the Agent 365 Observability SDK a year ago and now needs telemetry in Azure Monitor and Foundry.",
+      "constraints": ["Mixed runtime estate", "New work must not use deprecated packages", "Backends include Azure Monitor"],
+      "unknowns": ["Which languages are used?", "Do we need an OTLP backend as well?"],
+      "question": "What do you instrument with?",
+      "options": [
+        { "name": "Microsoft OpenTelemetry Distro", "verdict": "best", "why": "It replaces the deprecated SDK for new work and targets Foundry, Azure Monitor and any OTLP backend.", "tradeoff": "A migration of existing instrumentation, and language coverage is .NET, Node.js and Python." },
+        { "name": "Keep the Agent 365 Observability SDK", "verdict": "poor", "why": "It is deprecated for new work.", "tradeoff": "Acceptable only as a short bridge during migration." },
+        { "name": "Hand-roll OpenTelemetry spans", "verdict": "good", "why": "Vendor-neutral and under your control.", "tradeoff": "You maintain semantic conventions and exporters yourself." }
+      ],
+      "flips": [
+        { "if": "Your language is not covered by the Distro", "then": "Use plain OpenTelemetry for that service." },
+        { "if": "Only Foundry-hosted agents are involved", "then": "Foundry tracing may be sufficient." }
+      ],
+      "takeaway": "Instrument once with OpenTelemetry and route to the backends you need."
+    }
+  ],
+  "quiz": [
+    { "id": "w12-t14-q1", "type": "single", "tag": "concept", "q": "How does the agent optimizer rank candidates?", "options": ["By a composite score between 0.0 and 1.0, marking the best with a star", "By token count only", "By user votes in Teams", "By latency alone"], "answer": 0, "explain": "The optimizer ranks results by composite score from 0.0 to 1.0 and marks the best candidate. It is not based only on token count, votes or latency.", "ref": "r25" },
+    { "id": "w12-t14-q2", "type": "multi", "tag": "tradeoff", "q": "Which statements about tracing in Foundry are supported on 2026-10-13?", "options": ["It is GA for prompt and hosted agents", "It stores telemetry in Application Insights", "It is GA for external agents", "Viewing needs the Log Analytics reader role"], "answers": [0, 1, 3], "explain": "Workflow and external agents are preview. GA applies to prompt and hosted agents, telemetry goes to Application Insights and you need the Log Analytics reader role to view it.", "ref": "tr3" },
+    { "id": "w12-t14-q3", "type": "single", "tag": "bug", "q": "An optimizer run on a hosted agent triggered real emails. Why?", "options": ["The optimizer was GA and bypassed guardrails", "Hosted agents cannot be sandboxed", "Traces replayed old emails", "The optimizer invokes the agent on every dataset task, so live tools execute"], "answer": 3, "explain": "The optimizer evaluates by invoking the agent per task, which runs external tool calls. Use test endpoints or mocks. It is limited preview, not GA, and traces are not replayed.", "ref": "r25" }
+  ],
+  "flashcards": [
+    { "front": "What does the Foundry agent optimizer change for prompt vs hosted agents?", "back": "Prompt: instructions, function-calling tool descriptions, model selection. Hosted: also skills. Limited preview. Prompt candidates promote to a new version. Hosted candidates are applied locally and redeployed." },
+    { "front": "Which package replaces the deprecated Agent 365 Observability SDK?", "back": "The Microsoft OpenTelemetry Distro for .NET, Node.js and Python. It targets Foundry, Azure Monitor and any OTLP backend." }
+  ],
+  "related": ["w14-t08", "w14-t11", "w15-t08", "w11-t26", "w12-t17", "w12-l6"],
+  "refs": ["r1", "r25", "r26", "tr3"]
+}

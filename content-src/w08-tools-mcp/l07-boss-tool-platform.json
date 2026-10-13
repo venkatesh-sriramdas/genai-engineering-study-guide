@@ -1,0 +1,95 @@
+{
+  "id": "w08-l07",
+  "order": 7,
+  "title": "Boss: build the tool platform",
+  "kind": "boss",
+  "minutes": 22,
+  "brief": "An interviewer asks you to design a tool platform that many agents and teams will share. They give you nothing else. Run the Dial-and-Defend method: clarify, list options, choose, name failure modes, then metrics and rollout.",
+  "blocks": [
+    { "t": "h", "text": "Before you answer", "level": 2 },
+    { "t": "scenario", "title": "The prompt", "known": ["Many agents will call tools owned by many teams", "Some servers will be built by people you do not control", "Hosts and SDKs may sit on different MCP revisions", "The interviewer will not volunteer constraints"], "ask": ["Which MCP revisions do hosts and SDKs speak, and can they move to 2026-07-28?", "Who calls: signed-in people, unattended jobs or both?", "How many teams publish servers and how many tools does one agent reach?", "How strict is central policy: quotas, audit, credential custody, approval of new servers?", "Are tools enough, or do resources and prompts have to pass through?"], "tension": "Central control makes the platform safe and slow to join. Direct connections are fast to join and impossible to govern." },
+    { "t": "diagram", "id": "w08-l07-d1", "title": "A reference shape for the platform", "alt": "Agents call a gateway. The gateway reaches three servers and sends traces to a tracing store. A private registry and an identity provider feed the gateway. One server calls downstream APIs.", "src": "flowchart LR\n  AG[Agents] --> GW[Gateway]\n  GW --> S1[Server A]\n  GW --> S2[Server B]\n  GW --> S3[Server C]\n  REG[Private registry] -.-> GW\n  IDP[Identity provider] -.-> GW\n  GW --> OBS[Tracing and metrics]\n  S1 --> API[Downstream APIs]", "caption": "Draw the control points first: registry, identity, gateway policy, per-call authorization in each server, token exchange downstream." },
+    { "t": "table", "caption": "Where each step of the answer draws on this world", "head": ["Step", "What you say", "Levels"], "rows": [
+      ["1. Clarify the dials", "Revisions, callers, team count, policy strictness, protocol surface", "1, 3, 5, 6"],
+      ["2. List the options", "Direct connections, gateway, bundle, own proxy. Include the boring one", "6"],
+      ["3. Pick and say what flips it", "Choose for the stated dials. Name the dial that would change the pick", "2, 3, 4, 5, 6"],
+      ["4. Failure modes and detection", "Poisoning, rug pulls, passthrough, cache leaks, handle hijacking, deprecation drift", "2, 4, 5, 6"],
+      ["5. Metrics and rollout", "Selection accuracy, definition tokens, cache hits, 401 and 403 rates, version mix", "2, 3, 6"]
+    ] },
+    { "t": "callout", "kind": "interview", "title": "What gets points", "md": "Ask before you name a product. Say which spec era you target and why. Treat descriptions, annotations and results as untrusted. Name flip conditions out loud, for example \"if resources must pass through, API Management stops fitting\"." }
+  ],
+  "quiz": [
+    { "id": "w08-l07-q1", "type": "numeric", "tag": "numeric", "q": "A host loads 150 tool definitions that average 380 tokens each into a 128,000 token window. What percentage of the window do the definitions take?", "answer": 44.5, "tolerancePct": 5, "unit": "percent", "hint": "share = tools x tokens per definition / context window", "explain": "150 times 380 is 57,000 tokens. 57,000 divided by 128,000 is about 44.5 percent. MCP client guidance suggests switching to progressive discovery at roughly 1% to 5%, so this host is far past the line. The 380 token average is illustrative and should be measured.", "difficulty": 2, "ref": "r8" },
+    { "id": "w08-l07-q2", "type": "multi", "tag": "security", "q": "Select every red flag in a proposed tool platform design.", "options": ["The gateway forwards the caller's access token unchanged to every backend", "Hosts skip approval for any tool that carries `readOnlyHint: true`", "Approved tool definitions are hashed and re-approved when they change", "New servers are built on the HTTP+SSE transport", "Each call to a handle-based tool checks that the handle belongs to the caller"], "answers": [0, 1, 3], "explain": "Token passthrough and trusting annotations are both called out by the spec. HTTP+SSE is Deprecated, so new work should use Streamable HTTP. Hash and re-approve, and per-call handle authorization, are good controls rather than red flags.", "difficulty": 2, "ref": "r5" },
+    { "id": "w08-l07-q3", "type": "order", "tag": "order", "q": "Put a pragmatic plan for moving a fleet of 2025-11-25 servers to 2026-07-28 in order.", "items": ["Inventory use of deprecated features and session-dependent logic", "Add modern request handling alongside the legacy path (dual-era)", "Move session state to authorized handles and server-initiated asks to MRTR with protected `requestState`", "Watch per-version request counters as hosts upgrade", "Retire the legacy path when legacy traffic reaches zero"], "explain": "Inventory first, because deprecated features and session state shape the work. Dual-era lets old hosts keep working while modern ones move. Handle and MRTR changes make the modern path correct. Counters decide when it is safe to remove the legacy path.", "difficulty": 2, "ref": "r24" },
+    { "id": "w08-l07-q4", "type": "single", "tag": "flip", "q": "You chose API Management as the MCP gateway. Which new requirement most strongly flips you away from it?", "options": ["Agents must reach servers that publish MCP resources and prompts as well as tools", "Admins want rate limits applied per subscription key, with quotas that reset daily for each team", "Teams need to register servers in a catalog", "Callers present Entra tokens that must be validated"], "answer": 0, "explain": "API Management supports MCP server tools but not resources or prompts, so a need for the full protocol pushes you toward direct connections or your own proxy. Rate limits, catalog registration through API Center and Entra token validation are things the gateway does.", "difficulty": 2, "ref": "r17" }
+  ],
+  "defend": {
+    "prompt": "Design a tool platform that many agents and teams can share. Walk me through the options and tell me what you would choose.",
+    "timebox": "5 min",
+    "clarify": [
+      "Which MCP revisions do your hosts and SDKs speak, and can they all move to 2026-07-28?",
+      "Who calls: signed-in people, unattended jobs or both, and must downstream systems see the real user?",
+      "How many teams will publish servers, and how many tools will one agent reach?",
+      "How strict is central policy: quotas, audit, credential custody, approval of new servers?",
+      "Do you need resources or prompts through the platform, or only tools?",
+      "Do any calls run longer than a minute or need user input midway?"
+    ],
+    "options": [
+      { "name": "Direct connections with a shared allow list", "when": "Few teams, light policy and the full protocol surface is needed.", "tradeoff": "Every agent repeats auth, limits and approval logic. Nothing enforces policy centrally." },
+      { "name": "API Management MCP gateway with API Center", "when": "Many teams, strict central policy, Entra identity and tools only.", "tradeoff": "Tools only. No resources or prompts. You operate and tune policies, and the gateway must not forward tokens it does not own." },
+      { "name": "Foundry Toolbox bundles", "when": "Agents live in Foundry and teams want governed, versioned bundles behind one endpoint.", "tradeoff": "Ties you to Foundry. Tool search and skills are Preview as of 2026-10-13." },
+      { "name": "In-house MCP proxy", "when": "You need the full protocol and custom policy that no product gives you.", "tradeoff": "You build and patch a security-critical component." }
+    ],
+    "modelAnswer": [
+      { "t": "p", "md": "**1. Clarify.** I would ask which MCP revisions the hosts speak, whether callers are people or jobs, how many teams publish servers, how strict central policy is, and whether we need more than tools. I will assume a mixed host fleet, many teams, strict policy, Entra identity, tools only, and a few calls that run for minutes." },
+      { "t": "table", "head": ["Option", "Wins when", "Loses when"], "rows": [
+        ["Direct connections plus allow list", "Few teams and light policy", "Many teams or strict policy"],
+        ["API Management gateway plus API Center", "Many teams, strict policy, tools only", "Resources or prompts must pass through"],
+        ["Foundry Toolbox", "Foundry-centric agents wanting versioned bundles", "Runtime is not Foundry, or you rely on Preview features you cannot accept"],
+        ["In-house proxy", "Full protocol and custom policy", "Small team that cannot own a security component"]
+      ] },
+      { "t": "p", "md": "**3. Choose, and say what flips it.** For those dials I would front remote Streamable HTTP servers with an API Management MCP gateway, and register them in API Center as the private registry. People authenticate with per-user OAuth through Entra. The gateway and each server validate the token audience, and nothing forwards a token it did not mint. Downstream calls use token exchange or the gateway's credential manager, so the backend sees a token issued for it. Unattended jobs use the client credentials extension. Servers run dual-era until legacy traffic is gone, with state held in authorized handles and asks routed through MRTR. Long jobs use the Tasks extension where hosts support it and start-and-poll tools where they do not." },
+      { "t": "list", "style": "ul", "items": [
+        "Flip to direct connections with an allow list if only a few teams publish and policy is light.",
+        "Flip to your own proxy if resources or prompts must pass through, since the gateway supports tools only.",
+        "Flip to Toolbox bundles if agents run in Foundry and versioned bundles matter more than portability.",
+        "Flip to modern-only servers when no legacy host remains. Plan migration off sampling, roots, logging and Dynamic Client Registration, which are Deprecated."
+      ] },
+      { "t": "p", "md": "**4. Failure modes and detection.** Tool poisoning and rug pulls: hash approved definitions, diff on every `tools/list`, alert and pause on change. Token passthrough: a synthetic test with a token for another audience must return 401. Cache leaks: key gateway caches by caller and honor `cacheScope`. Cache busting: deterministic `tools/list` order and appended discovery. Handle hijacking: keyed by verified user id. Deprecation drift: count requests that use deprecated features." },
+      { "t": "p", "md": "**5. Metrics and rollout.** Track tool selection accuracy on a task set, definition tokens per agent against the 1% to 5% guidance, prompt cache hit rate, p95 latency and error rate per server, audience and scope failures, changed-hash alerts, and the request share per protocol version. Roll out with two pilot teams in shadow mode with full logging, then gate new servers behind review, then open self-service." },
+      { "t": "callout", "kind": "tip", "md": "Close by restating the one dial that would change your pick. It shows you chose, not guessed." }
+    ],
+    "rubric": [
+      { "pt": "Asks about revisions, callers, team count, policy strictness and protocol surface before choosing", "w": 3 },
+      { "pt": "Compares at least three real options, including direct connections", "w": 2 },
+      { "pt": "Chooses for stated dials and names what flips the choice", "w": 3 },
+      { "pt": "Covers authorization: per-user OAuth, audience validation, no token passthrough, downstream exchange", "w": 3 },
+      { "pt": "Treats descriptions, annotations and results as untrusted and names poisoning and rug pull controls", "w": 2 },
+      { "pt": "Handles tool-list cost: namespaces or tool search, deterministic order, cache effects", "w": 2 },
+      { "pt": "Explains the stateless 2026-07-28 model, dual-era migration and the deprecated features", "w": 2 },
+      { "pt": "Names concrete metrics and a staged rollout", "w": 2 }
+    ],
+    "followUps": [
+      { "q": "A team needs a 20-minute export that needs one approval halfway. What do you do?", "a": "Use the Tasks extension when hosts support `io.modelcontextprotocol/tasks`: the server returns a task handle, the status moves to `input_required` for the approval and the client answers through `tasks/update`. If hosts lack the extension, use start-and-poll tools with authorized handles. Never block one request that long." },
+      { "q": "The gateway caches `tools/list`. What can go wrong?", "a": "A `private` result could be served across callers if the cache key ignores identity, and stale lists persist if `ttlMs` or list-changed signals are ignored. Reordering tools also busts the model's prompt cache. Key by caller, honor `ttlMs` and `cacheScope`, and keep order deterministic." },
+      { "q": "A partner wants to connect an agent they run. MCP or A2A?", "a": "If it is an opaque agent owned by another team or organization, it is a peer, so A2A fits. MCP stays for tools and data inside each agent. The next world covers that boundary." },
+      { "q": "How do you migrate without breaking old hosts?", "a": "Run dual-era: modern requests are stateless and legacy `initialize` clients keep working. Watch per-version counters and retire the legacy path when they reach zero. A modern-only server returns a 400 to legacy clients with no fall-forward." }
+    ],
+    "redFlags": [
+      "Names a product before asking who calls and how many teams publish",
+      "Forwards the caller's token to backends unchanged",
+      "Trusts tool annotations or descriptions without verification",
+      "Builds new work on sessions, sampling or HTTP+SSE without mentioning they are deprecated or gone",
+      "Loads hundreds of tool definitions into every prompt with no budget"
+    ]
+  },
+  "refs": ["r1", "r5", "r8", "r17", "r24"],
+  "takeaways": [
+    "Open with the dials: revisions, callers, team count, policy strictness and protocol surface.",
+    "Pick the gateway, bundle, proxy or direct path by those dials and say what flips it.",
+    "Authorization is audience-bound per-user OAuth, with exchange rather than passthrough downstream.",
+    "Treat the catalog as an injection channel: hash, diff and re-approve definitions.",
+    "Measure definition tokens, cache hits, selection accuracy and the version mix, then roll out in stages."
+  ]
+}

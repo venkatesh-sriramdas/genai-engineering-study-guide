@@ -1,0 +1,118 @@
+{
+  "id": "w12-t04",
+  "order": 4,
+  "group": "Foundry Agent Service",
+  "title": "Hosted agent protocols",
+  "minutes": 7,
+  "difficulty": "core",
+  "summary": "A hosted agent can expose Responses, Invocations, Invocations (WebSocket), Activity and A2A. The protocol decides the payload your container receives and how much session, streaming and background work the platform manages for you.",
+  "useIf": "You are choosing how clients, channels or other systems will call a hosted agent.",
+  "avoidIf": "The agent is a prompt agent, where the platform picks the protocol for you.",
+  "explain": [
+    { "t": "p", "md": "A hosted agent container can expose one or more protocols, each provided by a lightweight library that handles the HTTP or WebSocket server, health checks and OpenTelemetry [[r2]]. **Responses** is an OpenAI-compatible `/responses` contract where the platform manages conversation history, streaming events and background execution. **Invocations** takes arbitrary JSON at `/invocations`: you define the schema, manage sessions and write raw SSE. **Invocations (WebSocket)** is a persistent bidirectional connection for real-time voice. **Activity** serves Teams and Microsoft 365 channels, and the platform bridges Responses to Activity when you publish, so no separate wiring is needed. **A2A** handles agent-to-agent delegation, with v1.0 GA and v0.3 preview [[r2]]." },
+    { "t": "p", "md": "The choice is not permanent: one agent can support several protocols. The docs say to start with Responses and add an Invocations endpoint later [[r2]]. Declare protocols in the `azure.ai.agent` service in `azure.yaml` when using `azd`, or with `protocol_versions` in the SDK. Only the declared protocols have active endpoints [[r2]]." },
+    { "t": "diagram", "id": "w12-t04-d1", "title": "Picking a protocol", "alt": "Decision tree: chat-style client leads to Responses. Real-time voice or two-way streaming leads to Invocations WebSocket. Webhooks, batch work and custom payloads lead to Invocations. Teams publishing adds Activity through an automatic bridge.", "src": "flowchart TB\n  Q{Who calls the agent?} -->|Chat client| R[Responses]\n  Q -->|Voice or two-way stream| W[Invocations WebSocket]\n  Q -->|Webhook, batch, custom payload| I[Invocations]\n  R --> T[Activity bridge for Teams and M365]" },
+    { "t": "code", "lang": "text", "title": "Endpoint shapes from the docs (checked 2026-10-13)", "code": "Responses:   {project_endpoint}/agents/{name}/endpoint/protocols/openai/responses\nInvocations: {project_endpoint}/agents/{name}/endpoint/protocols/invocations\nWebSocket:   wss://{account}.services.ai.azure.com/api/projects/{project}/agents/{name}/endpoint/protocols/invocations_ws?api-version=v1\nA2A:         {project_endpoint}/agents/{name}/endpoint/protocols/a2a", "caption": "Each hosted agent gets its own endpoint at deploy time. Publishing is not needed for programmatic access [[r2]]." },
+    { "t": "table", "caption": "Responses versus Invocations", "head": ["Dial", "Responses", "Invocations"], "rows": [
+      ["Payload", "OpenAI-compatible", "Arbitrary JSON you define"],
+      ["Client", "Any OpenAI-compatible SDK", "A custom client"],
+      ["Session history", "Platform-managed through a conversation ID", "You manage it (memory, Cosmos DB and so on)"],
+      ["Streaming", "Platform-managed events", "Raw SSE you write"],
+      ["Background work", "`background: true`, polling and cancellation built in", "Resilient tasks in the AgentServer SDK, you define polling or streaming"]
+    ] }
+  ],
+  "whereToUse": [
+    "Chat assistants and RAG with tools: Responses",
+    "Webhook receivers from systems that send their own payload: Invocations",
+    "Classification, extraction and batch jobs with structured input: Invocations",
+    "AG-UI and other custom streaming protocols: Invocations",
+    "Browser or phone voice clients paired with Pipecat, LiveKit or Voice Live in the container: Invocations (WebSocket)"
+  ],
+  "whenToUse": {
+    "use": [
+      "Responses when the caller is conversational and you want platform-managed history and background mode",
+      "Invocations when the caller has a payload you cannot change or you need raw streaming control",
+      "WebSocket when audio flows both ways on one connection"
+    ],
+    "avoid": [
+      "Invocations for a plain chat bot, since you take on session handling and SSE formatting for no gain",
+      "Responses for a webhook, since the sender will not match the `/responses` contract",
+      "Invocations WebSocket for ordinary request and response calls, since you then manage a long-lived connection you do not need"
+    ],
+    "flips": [
+      "Publishing to Teams or Microsoft 365 pushes you toward Responses, which the platform bridges to Activity",
+      "A second client type later is fine: add an Invocations endpoint to the same agent",
+      "Needing recovery after a process restart adds the resilient-execution opt-in on top of either protocol (preview)"
+    ]
+  },
+  "alternatives": {
+    "title": "Protocols compared",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Responses", "Chat, RAG with tools, Teams or Microsoft 365", "Caller has its own payload", "Fits the OpenAI contract only"],
+      ["Invocations", "Webhooks, batch, AG-UI, protocol bridges", "Simple chat", "You own sessions and SSE"],
+      ["Invocations (WebSocket)", "Real-time voice, two-way streaming", "Request and response work", "Long-lived connections, more client work"],
+      ["Activity", "Teams and Microsoft 365 delivery", "Anything else", "Bridged from Responses, not hand-wired [[r2]]"],
+      ["A2A", "Other agents delegate to this one", "Human chat clients", "Version negotiation: v1.0 GA, v0.3 preview"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A webhook sender gets 400 errors from the agent", "cause": "The agent only declares Responses, so the sender's payload does not match", "fix": "Declare Invocations in `azure.yaml` or `protocol_versions` and parse the sender's schema." },
+    { "symptom": "History is lost between calls on an Invocations agent", "cause": "Invocations leaves session history to you", "fix": "Persist sessions yourself, or use Responses with a conversation ID if the caller is conversational [[r2]]." },
+    { "symptom": "Background work vanishes after the process restarts", "cause": "Background mode keeps work alive after the request returns but does not recover after the process stops", "fix": "Opt into resilient execution for stored background responses (preview) and keep progress in durable checkpoints [[tr2]]." }
+  ],
+  "scenarios": [
+    {
+      "id": "w12-t04-s1",
+      "title": "Ticketing system calls the agent",
+      "situation": "An external system posts events in its own JSON format and cannot change them. The agent classifies each event and returns structured JSON.",
+      "constraints": ["Payload is fixed by the sender", "No chat, no human in the loop", "Medium volume"],
+      "unknowns": ["Does the sender expect a synchronous answer?", "How long can classification take?"],
+      "question": "Which protocol do you declare?",
+      "options": [
+        { "name": "Invocations", "verdict": "best", "why": "Arbitrary JSON in and out matches webhooks and structured extraction.", "tradeoff": "You define the schema and manage any session state." },
+        { "name": "Responses behind a translating service you run", "verdict": "good", "why": "Keeps the OpenAI contract inside Foundry.", "tradeoff": "An extra hop and component to operate." },
+        { "name": "Responses directly", "verdict": "poor", "why": "The sender cannot change its payload to match `/responses`.", "tradeoff": "Right when the caller is a chat client." }
+      ],
+      "flips": [
+        { "if": "The same agent must also serve a chat UI", "then": "Expose both Responses and Invocations on one agent." },
+        { "if": "Work takes minutes and must survive restarts", "then": "Use resilient tasks (preview) and a polling endpoint." }
+      ],
+      "takeaway": "Invocations is the door for callers whose payload you do not control."
+    },
+    {
+      "id": "w12-t04-s2",
+      "title": "Chat assistant published to Teams",
+      "situation": "A chat assistant with RAG and tools must appear in Teams and Microsoft 365 and support long answers that stream.",
+      "constraints": ["Conversational", "Teams and Microsoft 365 publishing", "Small team"],
+      "unknowns": ["Any custom streaming UI?", "Do answers run longer than a request timeout?"],
+      "question": "What do you pick?",
+      "options": [
+        { "name": "Responses", "verdict": "best", "why": "Platform-managed history and streaming, any OpenAI-compatible SDK as client, and the platform bridges it to Activity for channels.", "tradeoff": "You accept the OpenAI contract shape." },
+        { "name": "Invocations only", "verdict": "poor", "why": "You would manage sessions and raw SSE and lose the automatic Activity bridge from Responses.", "tradeoff": "Right for AG-UI or other custom streaming UIs." },
+        { "name": "Responses plus Invocations", "verdict": "good", "why": "Covers Teams and a custom client.", "tradeoff": "Two contracts to test and secure." }
+      ],
+      "flips": [
+        { "if": "A custom AG-UI front end is added", "then": "Add Invocations for that client." },
+        { "if": "The assistant becomes voice-first", "then": "Add Invocations (WebSocket)." }
+      ],
+      "takeaway": "Default to Responses, and add endpoints as clients appear."
+    }
+  ],
+  "quiz": [
+    { "id": "w12-t04-q1", "type": "match", "tag": "concept", "q": "Match each caller to the protocol the docs recommend.", "pairs": [
+      { "l": "Conversational chatbot", "r": "Responses" },
+      { "l": "Webhook from a third-party system", "r": "Invocations" },
+      { "l": "Microphone in, speech out", "r": "Invocations (WebSocket)" },
+      { "l": "Teams or Microsoft 365 channel delivery", "r": "Activity (bridged from Responses)" }
+    ], "explain": "Responses suits chat, Invocations handles payloads you do not control, the WebSocket variant carries bidirectional audio, and Activity is bridged automatically from Responses for channels.", "ref": "r2" },
+    { "id": "w12-t04-q2", "type": "single", "tag": "concept", "q": "On a hosted agent, which A2A versions are GA and preview?", "options": ["v1.0 preview and v0.3 GA", "v1.0 GA and v0.3 preview", "Both are GA", "Both are preview"], "answer": 1, "explain": "The hosted agents page marks A2A v1.0 as GA and v0.3 as preview.", "ref": "r2" },
+    { "id": "w12-t04-q3", "type": "single", "tag": "diagnose", "q": "Your Invocations agent returns an answer that forgets the previous turn. Which statement explains it?", "options": ["Invocations leaves session history to your code", "Invocations deletes sessions after 2 minutes", "The Activity bridge strips history", "A2A is overriding it"], "answer": 0, "explain": "With Invocations you manage sessions yourself, for example in memory or Cosmos DB. Responses is the protocol where the platform keeps history by conversation ID.", "ref": "r2" }
+  ],
+  "flashcards": [
+    { "front": "Default advice for choosing a hosted agent protocol?", "back": "Start with Responses. A hosted agent can expose several protocols, so you can add Invocations later." },
+    { "front": "Where do you declare the protocols of a hosted agent?", "back": "In the `azure.ai.agent` service in `azure.yaml` with `azd`, or with `protocol_versions` in the SDK. Only declared protocols have active endpoints." }
+  ],
+  "related": ["w12-t03", "w12-t05", "w12-t13", "w09-t10", "w11-t25", "w12-l3"],
+  "refs": ["r2", "r5", "tr2"]
+}

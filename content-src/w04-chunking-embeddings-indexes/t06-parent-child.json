@@ -1,0 +1,100 @@
+{
+  "id": "w04-t06",
+  "order": 6,
+  "group": "Chunking",
+  "title": "Parent-child (small-to-big) retrieval",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "Match the query against small child chunks for precision, then return the larger parent section, page or window to the model for context.",
+  "useIf": "Small chunks find the answer but the model needs the surrounding section to use it.",
+  "avoidIf": "Retrieval must be a single cheap lookup with a tiny prompt, or documents are so short that a single chunk size already works.",
+  "explain": [
+    { "t": "p", "md": "**Parent-child** (also called small-to-big) separates the two roles of a chunk. **Children** are small (a sentence, a paragraph or about 128 to 256 tokens) and are the only things embedded, so matching is sharp. A **parent** is the larger unit the child came from: a section, a page or a window of neighbours. At query time the retriever finds the best children, looks up their parents, removes duplicates and sends the parents to the model." },
+    { "t": "diagram", "id": "w04-t06-d1", "title": "Small-to-big retrieval", "alt": "A query searches the child chunk index. Top children are grouped by parent id and duplicates are removed. The parents are fetched and sent to the model.", "src": "flowchart LR\n  Q[\"Query\"] --> S[\"Search child chunks\"]\n  S --> G[\"Group by parent id\"]\n  G --> D[\"Dedupe and rank parents\"]\n  D --> P[\"Fetch parent text\"]\n  P --> M[\"Model\"]" },
+    { "t": "p", "md": "There are three common shapes. **Parent lookup** returns the whole section or page. **Window expansion** returns the matched chunk plus the neighbours before and after it, using the ordinal position (the Text Split skill outputs `ordinalPositions` and offsets [[tr2]]). **Auto-merging** replaces several matched siblings with their parent when enough of them match; LlamaIndex's `AutoMergingRetriever` does this with a threshold [[tr40]]." },
+    { "t": "p", "md": "In Azure AI Search you build the parent-child shape with **index projections**, which write several child documents from one parent in a skillset. The child index needs a key and a `parent_id`-style field that is `Edm.String` and `filterable` and not the document key. `projectionMode` is `skipIndexingParentDocuments` (recommended, uniform documents) or `includeIndexingParentDocuments` (the default). Projected keys contain a random hash that changes when the parent changes, so stale children are replaced. Children of a deleted parent are removed only if the data source has a deletion detection policy [[tr4]]." },
+    { "t": "table", "caption": "Where the parent text lives", "head": ["Design", "Query cost", "Storage", "Watch for"], "rows": [
+      ["Parent text copied onto every child", "One lookup", "High, parent repeated per child", "Updating a parent means rewriting every child"],
+      ["Separate parent index or document store", "Second lookup by id", "Compact", "Extra latency and a consistency gap"],
+      ["Offsets into the source, re-sliced at query time", "Read from source", "Lowest", "Source must be fast and stable"]
+    ] }
+  ],
+  "whereToUse": [
+    "Long legal, technical or policy documents where one clause needs its neighbours to make sense",
+    "Question answering where precise matching and broad context pull in opposite directions",
+    "Corpora with natural parents: sections, pages, slides, tickets with comments",
+    "Citations that must show a short child quote inside a longer returned section"
+  ],
+  "whenToUse": {
+    "use": ["Small chunks match well but answers need context", "You can afford a parent lookup or extra storage", "Parents have stable ids and clear boundaries"],
+    "avoid": ["A single index call is the whole latency budget", "Parents are huge, so returning them wastes the prompt", "Documents are short and one chunk already holds the answer"],
+    "flips": ["Prompt budget is tight: return neighbours (a window) instead of whole sections", "Parents change often: store a parent id and fetch live rather than copying text", "Permissions differ by section: make sure each parent carries the access fields of its children"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Parent-child", "Precision plus context are both needed", "One-call latency budget", "Extra lookup or storage, dedupe logic"],
+      ["Single medium chunks", "Simple pipelines, mixed questions", "Questions need both sharpness and context", "A compromise size serves neither well"],
+      ["Window expansion", "Neighbours supply enough context", "Context sits in a distant section", "Duplicate tokens when windows overlap"],
+      ["Contextual retrieval", "Chunks are ambiguous alone", "You need the full section text", "LLM pass at ingest"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "The prompt fills with the same section three times", "cause": "Several children from one parent were each expanded", "fix": "Group by parent id, return each parent once and rank by its best child" },
+    { "symptom": "Answers quote outdated text after a document update", "cause": "Child vectors were refreshed but copied parent text was not", "fix": "Rewrite all children of a changed parent, or fetch parent text by id at query time" },
+    { "symptom": "Stale child chunks remain after a source file is deleted", "cause": "In AI Search, child removal requires a deletion detection policy on the data source", "fix": "Define the policy from the first run and reconcile child counts against the source" },
+    { "symptom": "A user sees text from a section they cannot access", "cause": "The parent carries different permissions than the matched child", "fix": "Copy access fields to parents and children at ingest and filter before expansion" }
+  ],
+  "scenarios": [
+    {
+      "id": "w04-t06-s1",
+      "title": "Clause lookup in long contracts",
+      "situation": "Lawyers search 200-page contracts. A matching clause is only meaningful with its definitions and exceptions in the same section. Answers can use larger prompts.",
+      "constraints": ["Long structured documents", "Precision required", "Larger prompts are acceptable", "Latency budget is moderate"],
+      "unknowns": ["How long is a typical section?", "How often do contracts change after indexing?"],
+      "question": "Which retrieval design fits?",
+      "options": [
+        { "name": "Embed clause-sized children, return the parent section, dedupe by parent", "verdict": "best", "why": "Clause matching stays sharp and the model gets definitions and exceptions.", "tradeoff": "A second lookup or larger index, and bigger prompts." },
+        { "name": "Embed whole sections only", "verdict": "good", "why": "One level, simple to operate.", "tradeoff": "Vectors blur across clauses, so exact clause lookup is weaker." },
+        { "name": "Embed single sentences and return only them", "verdict": "poor", "why": "Sentences without their section lose definitions and exceptions.", "tradeoff": "Right for corpora of independent, self-contained statements." }
+      ],
+      "flips": [
+        { "if": "Sections run to many pages", "then": "Return a window around the match instead of the whole section." },
+        { "if": "Contracts are amended daily", "then": "Fetch parent text by id so only children need re-embedding." }
+      ],
+      "takeaway": "Match small, answer big, and decide where the parent lives."
+    },
+    {
+      "id": "w04-t06-s2",
+      "title": "Chat assistant on a hard latency limit",
+      "situation": "A voice assistant must retrieve in a single index call and keep prompts short. The corpus is modest and storage is plentiful.",
+      "constraints": ["One index call only", "Short prompts", "Storage is cheap", "Documents are medium length"],
+      "unknowns": ["How wide must the context be?", "Is the corpus stable?"],
+      "question": "What do you build?",
+      "options": [
+        { "name": "Parent-child with the parent text stored on each child document", "verdict": "best", "why": "Sharp child match and the parent arrives in the same call, with storage as the price.", "tradeoff": "Updating a parent means rewriting all its children, and the index grows." },
+        { "name": "Single-level chunks of about 512 tokens", "verdict": "good", "why": "Simplest design inside the latency limit.", "tradeoff": "One size must serve both matching and context." },
+        { "name": "Parent-child with a separate parent store and a second lookup", "verdict": "poor", "why": "The extra round trip breaks the single-call latency limit.", "tradeoff": "Right when storage is tight and a second call fits the budget." }
+      ],
+      "flips": [
+        { "if": "The corpus is updated hourly", "then": "Prefer single-level chunks to avoid rewriting copied parents." },
+        { "if": "Latency allows a second call", "then": "A separate parent store saves storage and eases updates." }
+      ],
+      "takeaway": "Where the parent lives is a latency and storage decision, and also a data model choice."
+    }
+  ],
+  "quiz": [
+    { "id": "w04-t06-q1", "type": "single", "tag": "concept", "q": "In parent-child retrieval, what is embedded and what is sent to the model?", "options": ["The parent is embedded and the child is sent", "Both are embedded and only the child is sent", "Neither is embedded, the parent is summarised", "The children are embedded and the parent (or window) is sent"], "answer": 3, "explain": "Children give sharp matching, parents give context. Embedding the parent defeats the purpose, and sending only the child loses the context you wanted." },
+    { "id": "w04-t06-q2", "type": "multi", "tag": "bug", "q": "Which AI Search index projection settings or rules are true?", "options": ["The parent id field must be `Edm.String` and filterable", "The parent id field must be the document key", "`skipIndexingParentDocuments` is the recommended `projectionMode`", "Child chunks of a deleted parent are always removed automatically"], "answers": [0, 2], "explain": "The parent id field is a filterable string and not the key. Skipping parent documents gives a uniform index shape. Children of a deleted parent are removed only when the data source has a deletion detection policy." },
+    { "id": "w04-t06-q3", "type": "single", "tag": "diagnose", "q": "Top results show the same section repeated three times and the prompt overflows. What is the fix?", "options": ["Group matches by parent id and return each parent once", "Increase efSearch", "Use a larger embedding dimension", "Lower overlap to zero"], "answer": 0, "explain": "Several children from one parent each expanded to the same parent. Grouping and ranking by parent removes duplicates. Search parameters, dimensions and overlap do not affect expansion duplicates." }
+  ],
+  "flashcards": [
+    { "front": "What is parent-child retrieval?", "back": "Embed small child chunks for precise matching, then return the larger parent (section, page or window) to the model for context." },
+    { "front": "What must the parent id field be in an AI Search index projection?", "back": "An `Edm.String` field marked `filterable`, and not the document key." },
+    { "front": "What does the LlamaIndex AutoMergingRetriever do?", "back": "It merges matched sibling leaf nodes into their parent when enough of them match a set threshold." },
+    { "front": "When are children of a deleted parent removed in AI Search?", "back": "Only when the data source has a deletion detection policy. Without it, stale children remain." }
+  ],
+  "related": ["w04-t01", "w04-t03", "w04-t05", "w04-t08", "w03-t09", "w05-t01", "w04-l2"],
+  "refs": ["tr2", "tr4", "tr40"]
+}

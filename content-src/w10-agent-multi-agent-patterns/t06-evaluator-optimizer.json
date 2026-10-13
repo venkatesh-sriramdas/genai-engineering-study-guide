@@ -1,0 +1,95 @@
+{
+  "id": "w10-t06",
+  "order": 6,
+  "group": "Workflow patterns",
+  "title": "Evaluator-optimizer",
+  "minutes": 7,
+  "difficulty": "core",
+  "summary": "One call generates an answer and another evaluates it against criteria. Feedback loops back to the generator until the answer passes or a stop rule fires.",
+  "useIf": "You have clear, checkable criteria and a first draft is measurably improved by feedback, so each loop earns its cost.",
+  "avoidIf": "Criteria are vague, the evaluator shares the generator's blind spots, or one pass is already good enough.",
+  "explain": [
+    { "t": "p", "md": "In **evaluator-optimizer** one LLM call generates a response and another provides evaluation and feedback in a loop. Anthropic says it works well when there are clear evaluation criteria and when iterative refinement gives measurable value, for example literary translation with nuance the first pass misses [[r1]]. Microsoft's name for the same loop is **maker-checker**, also known as generator-verifier, critic loops or reflection loops [[r9]]." },
+    { "t": "diagram", "id": "w10-t06-d1", "title": "The critic loop with stop rules", "alt": "A generator produces a draft, an evaluator scores it, and the loop ends on pass, on the iteration cap or on no improvement. Otherwise feedback goes back to the generator.", "src": "flowchart LR\n  G[Generate or revise] --> E[Evaluate against criteria]\n  E --> D{Stop?}\n  D -->|pass| O[Return best draft]\n  D -->|cap or no gain| F[Fallback: escalate or warn]\n  D -->|fail| G" },
+    { "t": "p", "md": "Three details decide whether the loop helps. First, the evaluator needs acceptance criteria that produce consistent pass or fail decisions, ideally from an external signal such as tests, a schema, a retrieval check or a rubric with named dimensions. Second, you need stop rules: a pass threshold, an iteration cap, a no-improvement check and a budget. Microsoft recommends an iteration cap with defined fallback behaviour, such as escalating to a human or returning the best draft with a quality warning [[r9]]. Third, independence helps: Cognition reports a review loop that caught about 2 bugs per pull request, around 58 percent of them severe, working best when the reviewer shares no context with the coder. That figure is vendor-reported [[r4]]." },
+    { "t": "callout", "kind": "gotcha", "title": "Diminishing returns", "md": "Each loop costs a generation and an evaluation call, and the second revision usually improves less than the first. Plot score against iteration on your own data and cap the loop where the curve flattens." }
+  ],
+  "whereToUse": [
+    "Code generation where tests and linters give an objective score",
+    "Translation or tone-sensitive writing with a rubric of named criteria",
+    "Structured extraction checked against a schema and business rules",
+    "Answer drafting checked for groundedness against retrieved sources",
+    "Compliance review with a fixed checklist before content is released"
+  ],
+  "whenToUse": {
+    "use": ["Acceptance criteria are explicit and the evaluator can apply them consistently", "An external signal (tests, schema, sources) can check the draft", "Quality gain per loop justifies the extra calls"],
+    "avoid": ["No one can say what good looks like, so the evaluator invents standards", "The evaluator is the same model and prompt as the generator and has the same blind spots", "Latency is tight and one pass meets the bar"],
+    "flips": ["The evaluator is too lenient or too harsh: calibrate it on labelled examples", "Scores plateau after one loop: cap at one revision", "Failures are high stakes: send cap-hit cases to a person"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Evaluator-optimizer (this topic)", "Clear criteria, measurable gain per loop", "Criteria are vague or one pass is enough", "Two or more calls per round"],
+      ["Gate in a chain", "A deterministic check can accept or reject", "Quality needs judgement", "Cheap, but no revision"],
+      ["Self-reflection in one call", "A quick sanity pass with no external signal needed", "Reasoning errors the model cannot see", "Little gain without feedback [[tr7]]"],
+      ["Voting", "Independent attempts reveal disagreement", "A flaw needs a targeted fix", "N times the cost"],
+      ["Human review", "Stakes are high, volume is low", "Volume is high", "Slow, expensive"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "The loop always passes on the first try", "cause": "The evaluator is lenient or shares the generator's context and bias", "fix": "Use a different prompt or model, hide the generator's reasoning and calibrate on known bad drafts." },
+    { "symptom": "The loop runs to the cap and the output gets worse", "cause": "Feedback is vague, so revisions drift", "fix": "Require specific, actionable feedback tied to criteria, and keep the best-scoring draft." },
+    { "symptom": "Cost per task doubles with no quality gain", "cause": "No stop rule on score plateau", "fix": "Stop when score improvement falls below a threshold and track gain per iteration." }
+  ],
+  "scenarios": [
+    {
+      "id": "w10-t06-s1",
+      "title": "Code with a test suite",
+      "situation": "A generator writes a function and a test suite exists that fails or passes it. The team wants higher first-time quality without a person in the loop.",
+      "constraints": ["Objective pass or fail signal", "Moderate latency tolerance", "Retries are cheap"],
+      "unknowns": ["How many iterations usually reach a pass?", "What happens when tests still fail at the cap?"],
+      "question": "How do you build the loop?",
+      "options": [
+        { "name": "Generate, run tests, feed failures back, cap at a few rounds, escalate at the cap", "verdict": "best", "why": "The tests are an external signal that does not share the model's blind spots, and the cap bounds cost.", "tradeoff": "Each round is a generation plus a test run, and tests only cover what they cover." },
+        { "name": "Ask the model to critique its own code with no tests", "verdict": "poor", "why": "Intrinsic self-correction often fails to fix reasoning errors without external feedback [[tr7]].", "tradeoff": "Fine for style and readability notes, not for correctness." },
+        { "name": "A separate judge model scores the code, no tests", "verdict": "good", "why": "Independence helps and catches some bugs.", "tradeoff": "Judges miss runtime failures that tests catch directly." }
+      ],
+      "flips": [
+        { "if": "No tests exist", "then": "Generate tests first, or use a static analyser as the signal." },
+        { "if": "Stakes are high", "then": "Add a clean-context reviewer and a human approval after the loop." }
+      ],
+      "takeaway": "A loop is only as good as its signal."
+    },
+    {
+      "id": "w10-t06-s2",
+      "title": "Subjective writing, tight latency",
+      "situation": "A user-facing feature polishes marketing copy. Taste varies by reader, there is no rubric, and users wait for the result.",
+      "constraints": ["No objective criteria", "Interactive latency", "Cost per request matters"],
+      "unknowns": ["Can the team write a rubric with named dimensions?", "Do users accept regeneration on demand?"],
+      "question": "Do you add an evaluator loop?",
+      "options": [
+        { "name": "Skip the loop, offer a regenerate button and optional user feedback", "verdict": "best", "why": "Without criteria the evaluator invents standards, and latency is tight. The user is the best evaluator here.", "tradeoff": "Quality varies per draft and you rely on the user to iterate." },
+        { "name": "Two automatic revision rounds by a critic model", "verdict": "poor", "why": "It doubles or triples latency and cost for gains you cannot measure.", "tradeoff": "Right once you have a rubric and evidence that critic scores track user preference." },
+        { "name": "One critic pass against a short style rubric", "verdict": "good", "why": "A single pass adds modest latency and can enforce brand rules.", "tradeoff": "Rubric upkeep, and one more call on every request." }
+      ],
+      "flips": [
+        { "if": "Brand rules are explicit and checkable", "then": "Gate on those rules in code and revise only on failure." },
+        { "if": "Requests are asynchronous", "then": "Latency pressure drops and a bounded loop becomes affordable." }
+      ],
+      "takeaway": "No criteria, no critic loop."
+    }
+  ],
+  "quiz": [
+    { "id": "w10-t06-q1", "type": "order", "tag": "order", "q": "Put the steps of a bounded evaluator-optimizer round in order.", "items": ["Generate or revise a draft", "Evaluate the draft against the criteria", "Check stop rules (pass, cap, no improvement)", "Feed specific feedback back to the generator"], "explain": "A draft exists before it can be scored. Stop rules are checked after each evaluation and before another revision. Feedback only goes back when the loop continues. [[r9]]", "ref": "r9", "difficulty": 1 },
+    { "id": "w10-t06-q2", "type": "single", "tag": "tradeoff", "q": "Scores rise from 6 to 8 after revision one, then to 8.2 after revision two and 8.2 after revision three. What is the best stop rule?", "options": ["Always run three revisions", "Stop only when the score reaches 10", "Remove the evaluator after round one", "Stop when gain per round falls below a set threshold, and cap total rounds"], "answer": 3, "explain": "Gain per round and a hard cap together bound cost at the plateau. A fixed three rounds wastes calls, a perfect score may never arrive and removing the evaluator drops the signal. [[r9]]", "ref": "r9", "difficulty": 2 },
+    { "id": "w10-t06-q3", "type": "multi", "tag": "diagnose", "q": "An evaluator approves nearly every draft. Which changes make it more discriminating?", "options": ["Hide the generator's reasoning from the evaluator", "Use a different prompt or model for the evaluator", "Calibrate it on labelled drafts known to be bad", "Increase the generator temperature"], "answers": [0, 1, 2], "explain": "Independence and calibration against known failures make an evaluator useful. Raising generator temperature changes the drafts, not the evaluator's leniency.", "difficulty": 2 }
+  ],
+  "flashcards": [
+    { "front": "Other names for evaluator-optimizer in Microsoft's guide?", "back": "Maker-checker, generator-verifier, critic loops and reflection loops. It needs clear acceptance criteria and an iteration cap with a fallback [[r9]]." },
+    { "front": "When does Anthropic say this pattern works well?", "back": "When evaluation criteria are clear and iterative refinement gives measurable value [[r1]]." },
+    { "front": "What helped Cognition's review loop most?", "back": "A reviewer that shares no context with the coder. The reported average was 2 bugs per PR, about 58 percent severe, vendor-reported [[r4]]." }
+  ],
+  "related": ["w10-l1", "w10-t09", "w10-t14", "w10-t16"],
+  "refs": ["r1", "r9", "r4", "tr7"]
+}

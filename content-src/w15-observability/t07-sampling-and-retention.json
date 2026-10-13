@@ -1,0 +1,178 @@
+{
+  "id": "w15-t07",
+  "order": 7,
+  "group": "Privacy and volume",
+  "title": "Sampling and retention",
+  "minutes": 8,
+  "difficulty": "advanced",
+  "summary": "Agent traces are large, so most systems keep only a share. Head sampling decides at the start of a trace, tail sampling decides after seeing it, and metrics are never sampled. Retention tiers then set how long what you kept stays searchable.",
+  "useIf": "Trace volume or cost is climbing and you must decide what to keep, for how long and where totals will come from.",
+  "avoidIf": "You compute token totals from sampled traces or sample so hard that the failing runs vanish.",
+  "explain": [
+    { "t": "p", "md": "**Head sampling** decides as early as possible, without looking at the whole trace. The common form is consistent probability sampling by trace id, for example 5 percent, which keeps or drops whole traces. It is simple and cheap, but it cannot guarantee that traces containing errors are kept. **Tail sampling** decides after all or most spans of a trace are complete, so it can always keep errors, keep slow traces and apply different rates per service. It needs a stateful collector component, is harder to operate and tends to be vendor specific. Large systems often combine them: a coarse head sample protects the pipeline and tail sampling makes the fine decisions [[r20]]." },
+    { "t": "p", "md": "In Application Insights the Microsoft OpenTelemetry Distro for .NET, Node.js and Python defaults to **rate-limited sampling at five traces per second** for Azure Monitor export. You can choose a fixed ratio between 0 and 1 or a rate limit. Python reads `OTEL_TRACES_SAMPLER` and `OTEL_TRACES_SAMPLER_ARG`, not the older `sampling_ratio` and `traces_per_second`. If unsure, start with a fixed 5 percent (0.05). **Metrics are not sampled**, so alert on metrics. Ingestion sampling and a daily cap are last-resort cost guards. An App Service tutorial says the exporter applies adaptive sampling by default, but the sampling page is the more authoritative source [[r15]]." },
+    { "t": "table", "caption": "Where each signal stands", "head": ["Signal", "Sampled?", "Use it for"], "rows": [
+      ["Metrics (token counters, durations)", "No", "Totals, cost, SLIs and alerts"],
+      ["Traces with head sampling", "Yes, whole traces by ratio or rate", "Typical debugging and latency waterfalls"],
+      ["Traces with tail sampling", "Yes, by rule after the trace ends", "Keeping errors, slow runs and rare agents"],
+      ["Content in an external store", "Your policy", "Reading text for flagged or sampled runs"]
+    ] },
+    { "t": "code", "lang": "kql", "title": "Check how much telemetry survives sampling (Microsoft Learn query)", "code": "union requests,dependencies,pageViews,browserTimings,exceptions,traces\n| where timestamp > ago(1d)\n| summarize RetainedPercentage = 100/avg(itemCount) by bin(timestamp, 1h), itemType", "caption": "Weight sums by `itemCount` when you total token attributes from retained spans." },
+    { "t": "p", "md": "Retention is a separate dial. The Foundry portal Traces tab shows 90 days, while backend retention follows your Application Insights settings [[r12]]. Keep long retention for metrics and aggregated views, short retention for detailed traces, and the shortest for any stored content (see content capture, redaction and privacy)." }
+  ],
+  "whereToUse": [
+    "Cost control for an agent platform that emits many spans per run",
+    "Making sure every failed or slow agent run is kept while healthy runs are thinned",
+    "Setting export rates for an Application Insights deployment",
+    "Explaining why a load test shows fewer traces than requests",
+    "Retention policy design for traces, metrics and stored content"
+  ],
+  "whenToUse": {
+    "use": [
+      "Head sampling at a fixed ratio when volume is high and failures are not rare",
+      "Tail sampling in a collector when you must keep all errors and slow runs",
+      "Unsampled metrics for totals, SLIs and alerts, plus sampled traces for explanation"
+    ],
+    "avoid": [
+      "Do not sample at all if you produce tens of small traces per second or are legally barred from dropping data",
+      "Do not total tokens or cost from sampled spans without weighting by `itemCount`",
+      "Do not use ingestion sampling or a daily cap as your main strategy"
+    ],
+    "flips": [
+      "Failures are rare and you must keep every one: switch from head to tail sampling",
+      "A load test looks incomplete: raise the rate limit or use a fixed ratio for the test, since bursts above five traces per second are dropped by default",
+      "Volume is small: keep everything and skip the operational cost of a sampler"
+    ]
+  },
+  "alternatives": {
+    "title": "Ways to control trace volume",
+    "head": ["Approach", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["No sampling", "Tens of traces per second or fewer, or no-drop rules", "Volume is large", "Highest storage and ingestion cost"],
+      ["Head sampling (ratio or rate)", "High volume, uniform traffic", "You must keep every error", "May drop the traces you wanted"],
+      ["Tail sampling (collector)", "Keep errors, slow runs and rare agents", "A small team without collector operations", "Stateful, harder to run, often vendor specific [[r20]]"],
+      ["Ingestion sampling or daily cap", "Emergency cost control", "Normal operation", "Drops data without regard to value"]
+    ]
+  },
+  "pitfalls": [
+    {
+      "symptom": "A load test shows far fewer traces than requests",
+      "cause": "Rate-limited sampling at five traces per second drops bursts above that rate",
+      "fix": "Use a fixed ratio or a higher rate limit for the test and confirm with the retained-percentage query [[r15]]"
+    },
+    {
+      "symptom": "The traces you wanted, the errors, are missing",
+      "cause": "Head sampling decided before the error happened",
+      "fix": "Add tail sampling that keeps error and slow traces [[r20]]"
+    },
+    {
+      "symptom": "Token totals computed from spans are far too low",
+      "cause": "The sums ignore that spans are sampled",
+      "fix": "Use unsampled counters for totals, or weight span sums by `itemCount` [[r15]]"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "w15-t07-s1",
+      "title": "Two thousand traces per second and rare failures",
+      "situation": "An agent platform emits about 2,000 traces per second. Failures are well under 1 percent but each one matters. Storage cost is the main complaint.",
+      "constraints": ["High volume", "Rare but important failures", "Cost pressure"],
+      "unknowns": ["Can the team run a collector?", "Does the backend offer tail sampling?"],
+      "question": "What sampling do you use?",
+      "options": [
+        { "name": "Tail sampling that keeps all errors and slow runs plus a small baseline share, with unsampled metrics for totals", "verdict": "best", "why": "It keeps the traces that matter and cuts cost on the healthy majority.", "tradeoff": "A stateful collector tier to run, monitor and scale." },
+        { "name": "Fixed 5 percent head sampling", "verdict": "good", "why": "Cheap, simple and keeps whole traces.", "tradeoff": "Drops about 95 percent of failures along with healthy traces." },
+        { "name": "Keep everything and set a daily ingestion cap", "verdict": "poor", "why": "The cap drops data by time of day, not by value, and cost stays high until it triggers.", "tradeoff": "Reasonable as an emergency guard on top of a real strategy." }
+      ],
+      "flips": [
+        { "if": "No team can operate a collector", "then": "Use head sampling and alert on error metrics." },
+        { "if": "Volume falls below tens of traces per second", "then": "Keep everything." }
+      ],
+      "takeaway": "Keep by value when failures are rare."
+    },
+    {
+      "id": "w15-t07-s2",
+      "title": "A regulated workflow that may not drop traces",
+      "situation": "An internal approval workflow produces 30 small traces per second. Auditors require every run to be reconstructable for a year, but content must not be stored in traces.",
+      "constraints": ["Low volume", "No-drop requirement", "Content excluded from traces"],
+      "unknowns": ["Can unsampled data go to cheap storage?", "What detail must a reconstruction contain?"],
+      "question": "How do you handle volume and retention?",
+      "options": [
+        { "name": "No sampling, shape-only spans, tiered retention (short hot, long cold storage)", "verdict": "best", "why": "At this volume sampling saves little and the audit needs every run.", "tradeoff": "Higher storage cost and a tiering design." },
+        { "name": "5 percent head sampling", "verdict": "poor", "why": "It drops 95 percent of runs, which violates the audit requirement.", "tradeoff": "Right for volumes where dropping is allowed." },
+        { "name": "Tail sampling that keeps errors only", "verdict": "good", "why": "Cheaper and keeps failures.", "tradeoff": "Healthy runs are not reconstructable." }
+      ],
+      "flips": [
+        { "if": "Volume grows to thousands per second", "then": "Route unsampled data to low-cost storage and keep sampled data hot." },
+        { "if": "The no-drop rule is lifted", "then": "Move to tail sampling." }
+      ],
+      "takeaway": "When you may not drop data, spend on retention tiers instead of sampling."
+    },
+    {
+      "id": "w15-t07-s3",
+      "title": "A load test with missing traces",
+      "situation": "A load test sends 100 requests per second for ten minutes. The backend shows far fewer traces than requests, and the team suspects data loss in the app.",
+      "constraints": ["Default distro settings", "Burst load", "Need a faithful test"],
+      "unknowns": ["What sampler and rate is configured?", "Are metrics complete?"],
+      "question": "What do you check and change?",
+      "options": [
+        { "name": "Check the sampler settings and retained percentage, then use a fixed ratio or higher rate for the test", "verdict": "best", "why": "The default rate-limited sampler caps at five traces per second, which explains the gap.", "tradeoff": "Higher volume and cost during the test." },
+        { "name": "Increase application replicas", "verdict": "poor", "why": "The limit is the sampler, not capacity.", "tradeoff": "Right if requests themselves are failing." },
+        { "name": "Trust the traces and report data loss", "verdict": "poor", "why": "Missing sampled traces are expected, and the app is not dropping data.", "tradeoff": "Use metrics to confirm request counts." }
+      ],
+      "flips": [
+        { "if": "Metrics also show fewer requests", "then": "The app or network is dropping load, so investigate that." },
+        { "if": "Production volume resembles the test", "then": "Choose the ratio deliberately and document it." }
+      ],
+      "takeaway": "Know your sampler before you trust a trace count."
+    }
+  ],
+  "quiz": [
+    {
+      "id": "w15-t07-q1",
+      "type": "single",
+      "tag": "flip",
+      "q": "Which sampling approach can guarantee that every trace containing an error is kept?",
+      "options": [
+        "Fixed-ratio head sampling",
+        "Tail sampling that inspects the completed trace",
+        "Rate-limited head sampling",
+        "A daily ingestion cap"
+      ],
+      "answer": 1,
+      "explain": "Head sampling decides before the trace content is known, so it cannot ensure errors are kept. Tail sampling decides after the trace completes and can keep errors and slow runs. A daily cap drops data without regard to value."
+    },
+    {
+      "id": "w15-t07-q2",
+      "type": "numeric",
+      "tag": "numeric",
+      "q": "A sampled span stream shows RetainedPercentage of 10 percent. A retained span reports 1,000 input tokens. Roughly how many tokens does that span represent when weighted by `itemCount`?",
+      "answer": 10000,
+      "tolerancePct": 0,
+      "unit": "tokens",
+      "hint": "RetainedPercentage = 100 / average itemCount.",
+      "explain": "A 10 percent retention means itemCount is about 10, so each retained span stands for about 10 spans: 1,000 x 10 = 10,000 tokens."
+    },
+    {
+      "id": "w15-t07-q3",
+      "type": "multi",
+      "tag": "tradeoff",
+      "q": "Which statements about sampling in Application Insights are correct? Select all that apply.",
+      "options": [
+        "The Microsoft OpenTelemetry Distro defaults to rate-limited sampling at five traces per second",
+        "Metrics are not sampled, so alerts should use metrics",
+        "Python configures sampling with `OTEL_TRACES_SAMPLER` and `OTEL_TRACES_SAMPLER_ARG`",
+        "Traces are never sampled by default"
+      ],
+      "answers": [0, 1, 2],
+      "explain": "The distro defaults to five traces per second, metrics are not sampled and Python uses the standard OTel environment variables. The fourth statement contradicts the default."
+    }
+  ],
+  "flashcards": [
+    { "front": "What is the difference between head and tail sampling?", "back": "Head decides at the start of a trace and cannot see errors. Tail decides after the trace completes, so it can keep errors and slow runs, but needs a stateful collector." },
+    { "front": "What does the Microsoft OpenTelemetry Distro sample by default?", "back": "Rate-limited sampling at five traces per second for Azure Monitor export. Bursts above that are dropped." },
+    { "front": "Why alert on metrics instead of traces?", "back": "Metrics are not sampled, so counts and rates are accurate. Use traces to explain an alert." }
+  ],
+  "related": ["w15-t04", "w15-t05", "w15-t06", "w15-t08", "w16-t01"],
+  "refs": ["r12", "r15", "r20"]
+}

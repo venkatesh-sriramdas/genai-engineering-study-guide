@@ -1,0 +1,56 @@
+{
+  "id": "w01-l1",
+  "order": 1,
+  "title": "Count the budget before you spend it",
+  "kind": "concept",
+  "minutes": 15,
+  "brief": "A request fails on length, or worse, returns half an answer. Before you touch a sampling knob, work out what the token budget is made of and why the same text costs different amounts on different vendors.",
+  "blocks": [
+    { "t": "h", "text": "One budget, three consumers", "level": 2 },
+    { "t": "p", "md": "A **token** is a word piece, not a word. Every request spends one budget: your input, the visible output and any hidden reasoning tokens all share the context window. Input and output also have separate caps, so having room in the window does not mean you may use all of it for either side. Azure states that `max_output_tokens` is a ceiling, not a reservation [[r13]]." },
+    { "t": "stats", "items": [
+      { "label": "GPT-6 family window", "value": "1,050,000", "note": "922,000 max input and 128,000 max output (OpenAI, checked 2026-10-13) [[r1]]" },
+      { "label": "Azure GPT-5 era window", "value": "400,000", "note": "272,000 input and 128,000 output for gpt-5, 5.1, 5.2 and 5.4-mini class models [[r13]]" },
+      { "label": "Claude 1M models", "value": "1M", "note": "128K sync output. Haiku 5.5 charges more above 100,000 prompt tokens [[r18]]" },
+      { "label": "Long-prompt price step", "value": "2x in, 1.5x out", "note": "GPT-6 prompts above 272K input tokens: the whole request is repriced [[r1]]" }
+    ] },
+    { "t": "table", "caption": "What counts toward the window and how it bills", "head": ["Item", "In the window", "Billed as", "What to know"], "rows": [
+      ["System prompt and messages", "Yes", "Input", "Everything you send, including earlier turns you replay."],
+      ["Tool and function definitions", "Yes", "Input", "OpenAI injects them into the system message. Its soft advice is fewer than 20 functions at the start of a turn, and `tool_search` with `defer_loading` for large catalogs on gpt-5.4 and later [[r9]]. Claude counts them too [[r20]]."],
+      ["Images and PDF pages", "Yes", "Input", "A Claude request can carry up to 600 images or PDF pages, or 100 on 200k-window models [[r20]]."],
+      ["Reasoning or thinking tokens", "Yes", "Output", "Reported in `output_tokens_details.reasoning_tokens` (Responses) or `completion_tokens_details.reasoning_tokens` (Chat) [[r3]]. Claude keeps earlier thinking blocks by default on recent models [[r20]]."]
+    ], "highlightCol": 1 },
+    { "t": "formula", "title": "Window check", "expr": "input_tokens + visible_output + reasoning_tokens <= context_window", "vars": [
+      { "k": "input_tokens", "v": "everything you send, tools and images included" },
+      { "k": "visible_output + reasoning_tokens", "v": "what the model generates, capped separately by the output limit" },
+      { "k": "context_window", "v": "the limit of this deployment, which can be lower than the model's limit" }
+    ], "example": "`gpt-4.1` supports 1,047,576 tokens, but an Azure standard deployment allows 300,000 and provisioned or batch deployments allow 128,000 [[r13]]. A 310,000-token prompt fails on the Azure standard deployment and fits on the OpenAI API." },
+    { "t": "h", "text": "Count before you send", "level": 2 },
+    { "t": "compare", "title": "Four ways to count tokens", "intro": "Each one is right for a different decision. Pick by how close to a limit you are and which model you will call.", "options": [
+      { "name": "Characters divided by 4", "summary": "A back-of-envelope estimate for English text.", "pros": ["Free and instant"], "cons": ["Wrong for images, files, tool definitions and many languages [[r29]]"], "bestWhen": "You are sizing a project or a rough cost.", "avoidWhen": "You are within about 10% of a limit or pricing a long prompt.", "meta": [{ "k": "Accuracy", "v": "low" }, { "k": "Cost", "v": "none" }] },
+      { "name": "Local tokenizer", "summary": "A library such as `tiktoken` run in your process.", "pros": ["Offline and fast", "Good for chunk sizing"], "cons": ["Plain text only", "Wrong family for Claude models, which use a different tokenizer [[r30]]"], "bestWhen": "You size chunks for an OpenAI-family model at ingest time.", "avoidWhen": "Prompts carry images, files or tools, or you call a Claude model.", "meta": [{ "k": "Accuracy", "v": "medium" }, { "k": "Cost", "v": "CPU" }] },
+      { "name": "Vendor count endpoint", "tag": "GA", "summary": "OpenAI `POST /v1/responses/input_tokens` returns the exact count. Claude `POST /v1/messages/count_tokens` returns an estimate.", "pros": ["Counts roles, tools and images on the real model", "Pre-flight gate before an expensive call"], "cons": ["Extra network call", "Claude's endpoint errors on server tools and the MCP connector [[r30]]"], "bestWhen": "You must enforce a budget or choose between trimming and compaction.", "avoidWhen": "A cheap local estimate already leaves a wide margin.", "meta": [{ "k": "Accuracy", "v": "high" }, { "k": "Cost", "v": "one call" }] },
+      { "name": "Read `usage` afterwards", "summary": "The billed counts returned with every response.", "pros": ["Exact", "Feeds cost attribution"], "cons": ["Too late to prevent a failure"], "bestWhen": "You calibrate estimates and attribute spend.", "avoidWhen": "You need to stop an oversized request before it is sent.", "meta": [{ "k": "Accuracy", "v": "exact" }, { "k": "Cost", "v": "none" }] }
+    ] },
+    { "t": "failure", "title": "Token failure modes", "items": [
+      { "symptom": "Empty or cut-off answer with `status: incomplete` and `incomplete_details.reason: max_output_tokens`", "cause": "Reasoning tokens used the output cap, possibly before any visible text.", "fix": "Reserve at least 25,000 tokens at first, read `reasoning_tokens` in `usage`, then raise the cap or lower effort." },
+      { "symptom": "A prompt that fit on one vendor costs about 30% more tokens or overflows on another", "cause": "Tokenizers differ. Claude Opus 4.7 and later give roughly 30% more tokens for the same text, depending on content [[r30]].", "fix": "Recount on the target model with its own count endpoint and re-check every budget." },
+      { "symptom": "A 400 error when history grows in Responses", "cause": "`truncation` defaults to `disabled`, so overflow fails instead of dropping items [[r4]].", "fix": "Trim or compact yourself, or choose `auto` only if silent dropping is acceptable." },
+      { "symptom": "The bill jumps on long prompts while the model and output length are unchanged", "cause": "On GPT-6 models a prompt above 272K input tokens reprices the whole request at 2x input and 1.5x output.", "fix": "Keep prompts below the step with retrieval or compaction, or accept the step knowingly." },
+      { "symptom": "Azure rejects a prompt that the OpenAI API accepts", "cause": "The deployment type sets the window, for example 300,000 on `gpt-4.1` standard against 1,047,576 on the model.", "fix": "Read the limit for your deployment type and test at your real prompt length." }
+    ] }
+  ],
+  "quiz": [
+    { "id": "w01-l1-q1", "type": "numeric", "tag": "numeric", "q": "A request to `gpt-6-sol` sends 300,000 uncached input tokens and receives 4,000 output tokens. List prices are $2 per 1M input and $10 per 1M output tokens. Prompts above 272K input tokens cost 2x on input and 1.5x on output for the whole request. What does the request cost?", "answer": 1.26, "tolerancePct": 2, "unit": "USD", "hint": "Apply both multipliers to the whole request, not only to the tokens above 272K.", "explain": "Input: 0.3M tokens x $2 x 2 = $1.20. Output: 0.004M tokens x $10 x 1.5 = $0.06. Total $1.26. Ignoring the step gives $0.64. Applying it only to the 28,000 tokens above 272K is wrong because the vendor reprices the whole request.", "difficulty": 2, "ref": "r1" },
+    { "id": "w01-l1-q2", "type": "single", "tag": "diagnose", "q": "Users of a reasoning model report empty answers. A failing response shows the fields below. What is the most likely cause?", "code": { "lang": "text", "code": "status: incomplete\nincomplete_details: { reason: \"max_output_tokens\" }\nmax_output_tokens: 2048\nusage.output_tokens_details.reasoning_tokens: 2048\noutput_text: \"\"" }, "options": ["A safety filter blocked the response before any text was returned", "The prompt exceeded the context window and was silently truncated", "Reasoning tokens used the whole output cap", "A stop sequence matched on the very first generated token"], "answer": 2, "explain": "Reasoning tokens count against `max_output_tokens`, and all 2,048 went to thinking, so no visible text was produced. A safety block would show a refusal or filter result, not this reason. An overlong prompt fails with a 400 when truncation is disabled. A stop sequence ends the response normally, not as incomplete.", "difficulty": 2, "ref": "r3" },
+    { "id": "w01-l1-q3", "type": "multi", "tag": "concept", "q": "Select every item that counts against the context window of one request.", "options": ["Tool and function definitions", "Reasoning or thinking tokens", "HTTP headers and the API key", "Images and PDF pages", "The billing tier of the account"], "answers": [0, 1, 3], "explain": "Tool definitions, thinking and images or documents all count in the window. Headers and the key are transport details, and the account tier sets rate limits and quota, not the window of a request.", "difficulty": 1, "ref": "r20" }
+  ],
+  "defend": null,
+  "refs": ["r1", "r3", "r4", "r9", "r13", "r18", "r20", "r28", "r29", "r30"],
+  "takeaways": [
+    "Input, visible output and reasoning tokens share one window, and each side also has its own cap",
+    "Count on the model you will call, with the vendor endpoint, before you budget near a limit",
+    "A reasoning model can burn the whole output cap and return nothing visible",
+    "Prices and windows can step at thresholds such as 272K tokens, and deployment type can lower the window"
+  ]
+}

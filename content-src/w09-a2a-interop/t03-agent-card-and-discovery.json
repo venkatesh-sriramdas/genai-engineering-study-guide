@@ -1,0 +1,165 @@
+{
+  "id": "w09-t03",
+  "order": 3,
+  "group": "Protocol",
+  "title": "Agent Card and discovery",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "The Agent Card is a JSON document that an A2A server publishes to describe its identity, endpoints, capabilities, skills and security. Clients fetch it from a well-known URL, a registry or direct configuration.",
+  "useIf": "You publish an agent for others to call, or you must decide how a client finds and trusts a remote agent.",
+  "avoidIf": "You treat the card as proof of identity or as a contract: it is a claim that must be verified and then authenticated against.",
+  "explain": [
+    { "t": "p", "md": "A server serves its card at `/.well-known/agent-card.json` (the well-known URI pattern of RFC 8615) [[r6]] [[tr3]]. In v1.0 the required fields are `name`, `description`, `supportedInterfaces`, `version`, `capabilities`, `defaultInputModes`, `defaultOutputModes` and `skills` [[r1]]. Each entry in `supportedInterfaces` has a `url`, a `protocolBinding` (`JSONRPC`, `GRPC` or `HTTP+JSON`), a `protocolVersion` and an optional `tenant`. The list is ordered and the first entry is preferred." },
+    { "t": "table", "caption": "Read each field as a claim and decide what to check [[r1]]", "head": ["Field", "What it declares", "Check before calling"], "rows": [
+      ["`supportedInterfaces`", "Where and how to call", "Pick a binding you support, send `tenant` exactly as declared"],
+      ["`capabilities`", "`streaming`, `pushNotifications`, `extensions`, `extendedAgentCard`", "A missing or false flag means the operation returns `UnsupportedOperationError`"],
+      ["`skills`", "Each has `id`, `name`, `description`, `tags`", "Descriptive only, not a contract: test the skill"],
+      ["`securitySchemes`", "API key, HTTP, OAuth 2.0, OpenID Connect, mutual TLS", "Obtain credentials out of band, then authenticate every request"],
+      ["`signatures`", "Optional JWS over the card", "Proves origin and integrity of the card, nothing about behaviour"]
+    ] },
+    { "t": "diagram", "id": "w09-t03-d1", "title": "Finding and vetting a card", "alt": "Flow from needing an agent, through a known URL or a registry query, to fetching the card, verifying it, choosing an interface and authenticating.", "src": "flowchart TD\n  N[Need an agent] --> K{Know the host?}\n  K -->|yes| W[GET well-known card]\n  K -->|no| R[Query registry]\n  W --> V[Verify card and capabilities]\n  R --> V\n  V --> I[Pick first supported interface]\n  I --> A[Authenticate every request]" },
+    { "t": "p", "md": "Cards may be signed as a JWS (RFC 7515) over the RFC 8785 canonical form, excluding the `signatures` field [[r1]] [[r18]] [[r19]]. Servers SHOULD send `Cache-Control: max-age` and an `ETag`, and clients SHOULD use conditional requests [[r6]]. The spec defines no registry API, so you design that layer yourself [[r6]]. Anything sensitive belongs in the authenticated **extended card** (`GetExtendedAgentCard`, declared by `capabilities.extendedAgentCard`), not the public one." },
+    { "t": "callout", "kind": "note", "title": "Foundry differs from the default path", "md": "A Foundry agent's card requires Microsoft Entra authentication and uses the path `agentCard/v1.0`, not `/.well-known/agent-card.json`. Anonymous card access is not supported (checked 2026-10-13) [[r17]]." }
+  ],
+  "whereToUse": [
+    "A public agent that publishes its card at a well-known URL for open discovery",
+    "An enterprise catalog where a registry stores cards and filters them by skill or tag",
+    "A client library that resolves a card, picks an interface and builds an agent object from it",
+    "A security review that checks which schemes, scopes and interfaces a callee declares",
+    "A gateway that caches cards and refreshes them with conditional requests"
+  ],
+  "whenToUse": {
+    "use": [
+      "Well-known URI for agents meant for broad discovery on a domain you can reach",
+      "A curated registry when many teams publish agents and you need governance and skill search",
+      "Direct configuration for a few tightly coupled, high-trust agents"
+    ],
+    "avoid": [
+      "Do not put internal URLs or sensitive skills in a public card",
+      "Do not follow a card's endpoint blindly when tasks will carry sensitive data",
+      "Do not skip the capability check: operations the card does not declare fail"
+    ],
+    "flips": [
+      "Cards change weekly: honor `Cache-Control` and `ETag` and refresh with conditional requests instead of pinning forever",
+      "Cards carry sensitive detail: authenticate the card endpoint and serve an extended card or selective disclosure",
+      "Trust is low and data is sensitive: pin the host and verify the JWS signature against a key you trust"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Discovery approach", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Well-known URI", "Open or domain-controlled discovery", "You need search by skill or governance", "Cards are public unless the endpoint is protected"],
+      ["Curated registry", "Many teams, central policy, skill search", "You have two agents and no platform team", "You build and run the registry (no standard API) [[r6]]"],
+      ["Direct configuration", "Static, tightly coupled agents", "Cards change or agents multiply", "Every change means client reconfiguration"],
+      ["Registry plus signed cards", "Cross-organization, low trust", "Latency or key management is a burden", "Key distribution and rotation work"]
+    ]
+  },
+  "pitfalls": [
+    {
+      "symptom": "Calls fail with `UnsupportedOperationError` on streaming or the extended card",
+      "cause": "The client assumed a capability the card does not declare",
+      "fix": "Read `capabilities` first and fall back to polling when `streaming` is false or missing [[r1]]"
+    },
+    {
+      "symptom": "Traffic flows to an unexpected host after a card refresh",
+      "cause": "The client trusted the `url` in a refreshed card without any allowlist or signature check",
+      "fix": "Allowlist hosts, verify the JWS when present and alert when an interface URL changes"
+    },
+    {
+      "symptom": "Internal URLs and sensitive skills show up in a public card",
+      "cause": "Everything was placed in the unauthenticated card",
+      "fix": "Keep the public card minimal and serve detail through the authenticated extended card [[r6]]"
+    },
+    {
+      "symptom": "Requests are rejected on a shared multi-agent endpoint",
+      "cause": "The `tenant` value declared on the interface was not sent",
+      "fix": "Send `tenant` exactly as declared on the selected interface [[r1]]"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "w09-t03-s1",
+      "title": "Forty internal agents, one platform team",
+      "situation": "Forty agents owned by different teams must be findable by skill. Security wants an audit of who can see which agent. Cards change about weekly.",
+      "constraints": ["Internal, many owners", "Search by skill and audit needed", "Cards change weekly"],
+      "unknowns": ["Is there a platform team to run a catalog?", "Do some agents hide sensitive skills?"],
+      "question": "How do clients discover agents?",
+      "options": [
+        { "name": "Curated registry with authenticated access and selective disclosure", "verdict": "best", "why": "Central governance, search by skill, per-caller visibility and one place to audit.", "tradeoff": "You build and operate the registry, since the spec defines no registry API." },
+        { "name": "Well-known URI scan across team domains", "verdict": "good", "why": "Standard and automatable, and each team stays in control of its card.", "tradeoff": "No central search or policy, and every endpoint needs its own protection." },
+        { "name": "Hard-coded endpoints in each client", "verdict": "poor", "why": "Every card change forces client redeployments across forty agents.", "tradeoff": "Right for two tightly coupled agents that rarely change." }
+      ],
+      "flips": [
+        { "if": "Only five agents and one owning team", "then": "Direct configuration is enough." },
+        { "if": "Agents cross company boundaries", "then": "Add signed cards and host pinning." }
+      ],
+      "takeaway": "Many owners and a need to search mean a registry."
+    },
+    {
+      "id": "w09-t03-s2",
+      "title": "A third-party agent that will see customer data",
+      "situation": "Your assistant will send customer records to an external agent found through a partner directory. A wrong endpoint would leak data. The card changes roughly monthly.",
+      "constraints": ["Low trust, sensitive data", "Card changes monthly", "Direct regulatory exposure"],
+      "unknowns": ["Does the partner sign its cards?", "Who approves a new endpoint?"],
+      "question": "How much do you trust the card at runtime?",
+      "options": [
+        { "name": "Pin host and key, verify the JWS, alert on interface changes", "verdict": "best", "why": "A card refresh cannot silently redirect customer data, and signatures prove the card's origin.", "tradeoff": "Key rotation and change approval take operational effort." },
+        { "name": "Fetch the well-known card on every call and follow it", "verdict": "good", "why": "Always current and simple.", "tradeoff": "Whoever controls DNS or the host controls where data goes." },
+        { "name": "Follow any card URL the model discovers", "verdict": "poor", "why": "A prompt-injected or malicious card could redirect tasks and data anywhere.", "tradeoff": "Acceptable only in a sandbox with synthetic data." }
+      ],
+      "flips": [
+        { "if": "Data is public and low risk", "then": "Fetch with caching and skip pinning." },
+        { "if": "Partner cannot sign cards", "then": "Pin the host and TLS identity and review each card change by hand." }
+      ],
+      "takeaway": "The card is a claim. Pin what you cannot afford to be wrong about."
+    }
+  ],
+  "quiz": [
+    {
+      "id": "w09-t03-q1",
+      "type": "order",
+      "tag": "order",
+      "q": "Put the steps of using a remote agent in a sensible order.",
+      "items": [
+        "Fetch the Agent Card",
+        "Check capabilities and the supported interfaces",
+        "Select the first interface whose binding you support",
+        "Obtain credentials out of band for the declared scheme",
+        "Send the authenticated request, with `tenant` if declared"
+      ],
+      "explain": "You learn what the agent supports before choosing an interface, and credentials depend on the declared scheme. Authentication still happens on every request, not once at discovery."
+    },
+    {
+      "id": "w09-t03-q2",
+      "type": "multi",
+      "tag": "concept",
+      "q": "Which fields are required in a v1.0 Agent Card? Select all that apply.",
+      "options": ["`supportedInterfaces`", "`skills`", "`provider`", "`signatures`"],
+      "answers": [0, 1],
+      "explain": "`supportedInterfaces` and `skills` are required, along with name, description, version, capabilities and the default input and output modes. `provider` and `signatures` are optional."
+    },
+    {
+      "id": "w09-t03-q3",
+      "type": "single",
+      "tag": "security",
+      "q": "A card carries a valid JWS signature. What does that prove?",
+      "options": [
+        "The agent is safe to send sensitive data to",
+        "The listed skills behave as described",
+        "The card was published by the key holder and was not modified",
+        "The agent will accept any credential"
+      ],
+      "answer": 2,
+      "explain": "A signature establishes origin and integrity of the card document. It says nothing about the agent's behaviour, safety or authentication policy."
+    }
+  ],
+  "flashcards": [
+    { "front": "Where does an A2A server publish its Agent Card by default?", "back": "At `/.well-known/agent-card.json` on its domain. Foundry agents use an authenticated custom path, `agentCard/v1.0`." },
+    { "front": "Which Agent Card fields tell a client which operations are available?", "back": "`capabilities` (`streaming`, `pushNotifications`, `extensions`, `extendedAgentCard`). A missing flag means the operation returns `UnsupportedOperationError`." },
+    { "front": "How is an Agent Card signed?", "back": "As a JWS (RFC 7515) over the RFC 8785 canonical form of the card, excluding the `signatures` field." },
+    { "front": "Where should sensitive card detail live?", "back": "In the authenticated extended card (`GetExtendedAgentCard`), not the public card." }
+  ],
+  "related": ["w09-t01", "w09-t06", "w09-t09", "w09-l02", "w12-t13"],
+  "refs": ["r1", "r6", "r17", "r18", "r19", "tr3"]
+}

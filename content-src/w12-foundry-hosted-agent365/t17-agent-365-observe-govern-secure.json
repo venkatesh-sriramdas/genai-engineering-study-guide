@@ -1,0 +1,114 @@
+{
+  "id": "w12-t17",
+  "order": 17,
+  "group": "Identity and governance",
+  "title": "Agent 365: observe, govern, secure",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "Microsoft Agent 365 is a control plane that observes, governs and secures the agents in an organization. It is GA since 2026-05-01 for the Commercial segment, licensed per user, and it does not build or host agents.",
+  "useIf": "You must see, govern and protect agents from many platforms in one admin surface.",
+  "avoidIf": "You expect it to build, host, orchestrate or run an agent: it does none of these.",
+  "explain": [
+    { "t": "p", "md": "Agent 365 gives organizations three pillars [[r12]]. **Observe**: real-time visibility through a central agent registry and agent map, with adoption, activity and health. **Govern**: lifecycle, access and compliance through the registry in the Microsoft 365 admin center, Microsoft Entra and Microsoft Purview. **Secure**: Entra risk-based access, Purview information protection and DLP, and Defender threat detection. It is a control plane over agents from Foundry, Copilot Studio, partners and other clouds, not a Foundry feature [[r29]]." },
+    { "t": "diagram", "id": "w12-t17-d1", "title": "Control plane over many runtimes", "alt": "Agents from Foundry, Copilot Studio, partners and other clouds feed Agent 365, which provides observe, govern and secure through the registry, Entra, Purview and Defender.", "src": "flowchart LR\n  F[Foundry agents] --> A365[Agent 365 control plane]\n  C[Copilot Studio agents] --> A365\n  P[Partner agents] --> A365\n  X[Other clouds and frameworks] --> A365\n  A365 --> O[Observe: registry and map]\n  A365 --> G[Govern: Entra and Purview]\n  A365 --> S[Secure: Defender and DLP]" },
+    { "t": "table", "caption": "How an agent joins Agent 365 (checked 2026-10-13)", "head": ["Path", "For", "What you get"], "rows": [
+      ["Native integration", "Microsoft platforms and supported partner agents", "Inventory without the SDK"],
+      ["Agent 365 SDK", "Agents built with the Microsoft 365 Agents SDK, OpenAI Agents SDK, Microsoft Agent Framework, LangChain, CrewAI or LlamaIndex", "Identity, governed tooling and notifications; you still host and run the agent"],
+      ["Registry synchronization", "Connected platforms such as Vertex AI and AWS Bedrock", "Inventory, not code-level capabilities"]
+    ] },
+    { "t": "p", "md": "The **Agent 365 SDK** (Python, JavaScript, .NET) covers identity, tooling (governed Work IQ MCP servers for Mail, Calendar, Word, SharePoint and Teams) and notifications. It does **not** build, host, orchestrate or run tools, and it is not the Microsoft 365 Agents SDK. Notifications need an agent user account and the Frontier preview program [[r13]]. Its Observability SDK is deprecated for new work: use the Microsoft OpenTelemetry Distro [[r26]]." },
+    { "t": "callout", "kind": "preview", "title": "Availability, licensing and status", "md": "Agent 365 became GA on **2026-05-01** for the Commercial segment, licensed per user. At least one user needs a qualifying Agent 365 license, and Microsoft E5 is described as the best-fit prerequisite. It is included in Microsoft 365 E7 and available as an add-on to E5, A5 or Business Premium. A numeric price is **UNVERIFIED** [[r12]]. At the GA announcement, delegated agents and agents behind the scenes with their own access were GA, agents in team workflows with their own access were public preview, and discovery of local and shadow agents through Defender and Intune was announced as preview [[r20]]." }
+  ],
+  "whereToUse": [
+    "A central AI admin view of every agent across Microsoft and partner platforms",
+    "Governing agent lifecycle, access reviews and compliance with Entra and Purview",
+    "Applying risk-based access, DLP and threat detection to agents",
+    "Bringing agents built on other frameworks or clouds into one inventory"
+  ],
+  "whenToUse": {
+    "use": [
+      "Many teams and platforms are creating agents and nobody has a full inventory",
+      "Security and compliance teams need the same controls for agents as for users",
+      "You want code-level governed Work IQ tools or notifications for framework-built agents"
+    ],
+    "avoid": [
+      "You need a place to host or orchestrate an agent: use a runtime such as Foundry",
+      "You need only Entra identity and Conditional Access: Entra Agent ID is available to all Entra customers",
+      "Your tenant is outside the Commercial segment, which is where GA was announced"
+    ],
+    "flips": [
+      "Agent is on another cloud: use registry sync for inventory, and the SDK only if you need Work IQ tools or notifications",
+      "Preview is not allowed: rely on GA modes (delegated, behind-the-scenes own access) and treat team-workflow agents and shadow discovery as pilots",
+      "Licensing is the blocker: confirm the plan against the service description before design"
+    ]
+  },
+  "alternatives": {
+    "title": "Governance options",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Agent 365", "Cross-platform inventory, governance and security", "Only one platform and no licensing budget", "Per-user licensing; some features preview [[r12]]"],
+      ["Entra Agent ID alone", "Identity, Conditional Access, access packages", "You need registry, map, Purview and Defender views", "CA and governance need E7 or an Agent 365 license plus Entra P1 or E3 [[r15]]"],
+      ["Foundry Control Plane", "Foundry-centered fleet, custom agent registration through API Management", "Estate spans Microsoft 365 admin processes", "Different surface from Agent 365 [[r23]]"],
+      ["Copilot Studio governance", "Maker-built agents in Microsoft 365", "Code-first agents elsewhere", "Covers Studio agents, not all runtimes [[tr4]]"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Team plans to deploy agents through the Agent 365 SDK", "cause": "The SDK is mistaken for a runtime or builder", "fix": "Host the agent yourself or on Foundry, and use the SDK only for identity, tooling and notifications [[r13]]." },
+    { "symptom": "Notifications do not work in a pilot", "cause": "They need an agent user account and the Frontier preview program", "fix": "Enroll the tenant in Frontier or drop notifications from scope [[r13]]." },
+    { "symptom": "Code uses the Agent 365 Observability SDK", "cause": "It is deprecated for new work", "fix": "Move to the Microsoft OpenTelemetry Distro [[r26]]." }
+  ],
+  "scenarios": [
+    {
+      "id": "w12-t17-s1",
+      "title": "Framework-built agent on its own infrastructure",
+      "situation": "A team runs a LangChain-based agent in its own container platform. The business wants it in the inventory with governed access to Mail and Calendar tools.",
+      "constraints": ["Agent stays where it runs", "Governed Work IQ tools are wanted", "Code can be changed"],
+      "unknowns": ["Is notification support needed?", "Is the tenant in the Frontier preview?"],
+      "question": "How does it join Agent 365?",
+      "options": [
+        { "name": "Add the Agent 365 SDK to the agent", "verdict": "best", "why": "It gives identity and governed Work IQ MCP tools for a framework-built agent while you keep hosting.", "tradeoff": "Code change, and notifications need an agent user and Frontier." },
+        { "name": "Registry synchronization only", "verdict": "good", "why": "Inventory with no code change.", "tradeoff": "No code-level tooling or notifications." },
+        { "name": "Expect the SDK to host and run the agent", "verdict": "poor", "why": "The SDK does not build, host, orchestrate or run tools.", "tradeoff": "Right only for a runtime product, which this is not." }
+      ],
+      "flips": [
+        { "if": "Only an inventory entry is required", "then": "Registry sync or native integration." },
+        { "if": "The agent moves to Foundry", "then": "Native integration, plus the SDK only if you need extra tooling." }
+      ],
+      "takeaway": "The SDK adds identity, tools and notifications, not hosting."
+    },
+    {
+      "id": "w12-t17-s2",
+      "title": "Shadow agent inventory by quarter end",
+      "situation": "Security wants a count of all agents, including ones employees run locally, by the end of the quarter. Policy forbids preview features in production controls.",
+      "constraints": ["No preview in production controls", "Known platforms exist", "Shadow agents are suspected"],
+      "unknowns": ["Which platforms are in use?", "What evidence does audit need?"],
+      "question": "How do you plan the inventory?",
+      "options": [
+        { "name": "Native integration and registry sync for known platforms, with preview shadow discovery as a labeled pilot", "verdict": "best", "why": "Uses GA paths for the controlled estate and keeps preview discovery outside production controls.", "tradeoff": "Coverage of local agents stays partial and unproven until discovery reaches GA." },
+        { "name": "Wait until discovery is GA", "verdict": "good", "why": "Complies with the policy.", "tradeoff": "No shadow signal this quarter." },
+        { "name": "Report full coverage from the preview discovery", "verdict": "poor", "why": "Preview features carry no SLA and the announcement labeled local and shadow discovery as preview.", "tradeoff": "Acceptable as a pilot finding, not as a control." }
+      ],
+      "flips": [
+        { "if": "Policy allows preview with a waiver", "then": "Include shadow discovery in production reporting with caveats." },
+        { "if": "All agents run on Foundry", "then": "Native integration covers the estate." }
+      ],
+      "takeaway": "Label preview coverage honestly in governance reports."
+    }
+  ],
+  "quiz": [
+    { "id": "w12-t17-q1", "type": "single", "tag": "concept", "q": "On what date did Agent 365 become GA for the Commercial segment?", "options": ["2025-11-01", "2026-05-01", "2026-08-20", "2026-12-01"], "answer": 1, "explain": "Agent 365 became GA on 2026-05-01. The other dates are the Content Understanding API version, the end of the initial-preview hosted backend and the retirement of Foundry Workflows.", "ref": "r12" },
+    { "id": "w12-t17-q2", "type": "multi", "tag": "tradeoff", "q": "Which statements about the Agent 365 SDK are correct?", "options": ["It adds identity, governed tooling and notifications", "It builds and hosts your agent", "It is the same as the Microsoft 365 Agents SDK", "Notifications need an agent user account and Frontier preview"], "answers": [0, 3], "explain": "The SDK adds identity, tooling and notifications. It does not build, host, orchestrate or run tools, it is not the Microsoft 365 Agents SDK, and notifications need an agent user plus Frontier.", "ref": "r13" },
+    { "id": "w12-t17-q3", "type": "match", "tag": "concept", "q": "Match the platform to its Agent 365 integration path.", "pairs": [
+      { "l": "Microsoft platforms and supported partners", "r": "Native integration" },
+      { "l": "LangChain or CrewAI agents", "r": "Agent 365 SDK" },
+      { "l": "Vertex AI or AWS Bedrock", "r": "Registry synchronization" }
+    ], "explain": "The SDK overview lists these three paths: native integration, the SDK for framework-built agents, and registry synchronization for connected platforms.", "ref": "r13" }
+  ],
+  "flashcards": [
+    { "front": "Agent 365's three pillars and what backs them?", "back": "Observe (registry, map), Govern (admin center, Entra, Purview), Secure (Entra risk-based access, Purview DLP, Defender). GA 2026-05-01, Commercial, per user." },
+    { "front": "Does Agent 365 host agents?", "back": "No. It is a control plane. The SDK adds identity, governed Work IQ tools and notifications, but you build, host and run the agent elsewhere." },
+    { "front": "Agent 365 price?", "back": "UNVERIFIED in this guide. Licensing is per user, included in Microsoft 365 E7, and an add-on to E5, A5 or Business Premium." }
+  ],
+  "related": ["w12-t15", "w12-t16", "w12-t18", "w17-t07", "w17-t03", "w12-l6"],
+  "refs": ["r12", "r13", "r15", "r20", "r23", "r26", "r29", "tr4"]
+}

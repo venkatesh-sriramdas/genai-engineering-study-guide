@@ -1,0 +1,96 @@
+{
+  "id": "w04-t15",
+  "order": 15,
+  "group": "Embeddings",
+  "title": "Asymmetric prompts, multilingual and drift",
+  "minutes": 8,
+  "difficulty": "advanced",
+  "summary": "Many embedding models need different prefixes for queries and documents. Quality varies across languages. Any change to model, version or prefix makes old vectors incomparable, so pin them and plan migrations.",
+  "useIf": "You self-host an open embedding model, serve several languages, or must change models without breaking search.",
+  "avoidIf": "You cannot version the embedding setup. Unversioned changes cause silent quality loss.",
+  "explain": [
+    { "t": "p", "md": "**Asymmetric prompts.** A query is a short question and a document is a long passage, so many models are trained to embed them differently. E5 requires the prefixes `query: ` and `passage: `. BGE v1.5 models use the query instruction `Represent this sentence for searching relevant passages: ` and embed documents with no prefix. Nomic Embed v1.5 uses `search_query: ` and `search_document: `. Missing prefixes silently lower quality, with no error [[tr31]]." },
+    { "t": "code", "lang": "python", "title": "Prefix rules live in code, so version them", "code": "# E5 style\ndoc_texts = [f\"passage: {c}\" for c in chunks]\nquery_text = f\"query: {question}\"\n\n# Record the setup with the index\nEMBED_SETUP = {\"model\": \"intfloat/e5-large-v2\", \"dims\": 1024,\n               \"doc_prefix\": \"passage: \", \"query_prefix\": \"query: \"}" },
+    { "t": "p", "md": "**Multilingual.** Quality differs by language and model. On the MIRACL multilingual benchmark the Azure OpenAI models average 31.4 (ada-002), 44.0 (3-small) and 54.9 (3-large) [[tr28]]. MMTEB, with 250+ languages, shows how broad the test space is [[tr19]]. Test cross-lingual cases too, such as English queries over German documents, and measure per language. Token counts per character also differ across languages, so a chunk size in tokens covers different amounts of text." },
+    { "t": "p", "md": "**Drift.** Vectors from different models, versions or prefix templates are not comparable, and Azure says you cannot upgrade an embedding model in place; new embeddings are required [[tr28]]. A query vector from the new setup against stored vectors from the old setup returns plausible but wrong neighbours. In AI Search the query-time vectorizer must use the same model as the embedding skill [[tr3]]." },
+    { "t": "diagram", "id": "w04-t15-d1", "title": "Blue-green re-embedding", "alt": "An alias points at the live index built with model A. A new index is built with model B and evaluated on golden queries. If it passes, the alias is repointed to the new index and the old index is kept for a rollback window.", "src": "flowchart LR\n  A[\"Alias: live\"] --> I1[\"Index v1: model A\"]\n  N[\"Build index v2: model B\"] --> E[\"Evaluate on golden queries\"]\n  E --> S{\"Better and safe?\"}\n  S -->|yes| P[\"Repoint alias to v2\"]\n  S -->|no| K[\"Keep v1, fix v2\"]\n  P --> R[\"Keep v1 for rollback\"]" },
+    { "t": "p", "md": "An **alias** is a service-level name you repoint to cut an application over to a rebuilt index [[tr46]]. Pin the model name, version, dimensions and prefix template, store them next to the index and on each chunk, and keep a small **golden query set** that you run after every change. The Azure schedule (page updated 2026-09-21) lists retirement for text-embedding-3-large, 3-small and ada-002 on 2028-02-09 [[tr29]]." }
+  ],
+  "whereToUse": [
+    "Self-hosted retrieval stacks using E5, BGE or Nomic models",
+    "Multilingual assistants where each language needs its own quality check",
+    "Model migrations driven by a retirement date or a better model",
+    "Any pipeline where embedding code and index data are deployed by different teams"
+  ],
+  "whenToUse": {
+    "use": ["Apply the documented prefix to every query and every document", "Run golden queries before and after any embedding change", "Build a new index for each model or prefix change and cut over by alias"],
+    "avoid": ["Mixing vectors from several models or prefix rules in one index", "Upgrading a library without checking its default prefixes", "Assuming a multilingual model is equally good in every language"],
+    "flips": ["The provider retires your model: schedule the blue-green migration, not an emergency swap", "A language underperforms: add labelled queries for it and test alternatives", "Memory allows only one copy: use a maintenance window with a tested rollback"]
+  },
+  "alternatives": {
+    "title": "Migration approaches compared",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["New index behind an alias (blue-green)", "User-facing search, rollback needed", "No headroom for two copies", "Double memory during the overlap"],
+      ["Second vector field in the same index", "Gradual backfill, one index to manage", "Memory is tight", "Fields double vector memory, queries pick one field"],
+      ["Rebuild in place in a maintenance window", "Small corpus, downtime tolerated", "Search must stay available", "No rollback, outage while re-embedding"],
+      ["Keep the old model", "It is not retiring and quality is acceptable", "Retirement or better quality forces a change", "Deferred cost and risk"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Recall drops after a library upgrade with no code change in the pipeline", "cause": "The library's default prefix handling changed, so documents were embedded with one rule and queries with another", "fix": "Pin library versions, test prefixes in CI with golden queries and record the setup with the index" },
+    { "symptom": "Search returns plausible but wrong chunks after a model swap", "cause": "New query vectors are compared with old stored vectors from another model", "fix": "Re-embed every chunk into a new index and repoint by alias" },
+    { "symptom": "Non-English queries retrieve noticeably worse", "cause": "The model is weaker in that language, a gap visible in multilingual averages", "fix": "Evaluate per language and test a stronger multilingual model" },
+    { "symptom": "The team cannot tell which model produced which vectors", "cause": "Model, version and prefix were never stored with the data", "fix": "Store an embedding setup id on each chunk and in index metadata" }
+  ],
+  "scenarios": [
+    {
+      "id": "w04-t15-s1",
+      "title": "Migrating 40 million chunks before retirement",
+      "situation": "A user-facing search over 40 million chunks must move to a new embedding model before the old one retires. Search must stay up and a rollback path is required.",
+      "constraints": ["40 million chunks", "No downtime", "Rollback required", "Memory headroom exists for two copies"],
+      "unknowns": ["How long does re-embedding take at the rate limit?", "How are updates handled during the build?"],
+      "question": "How do you migrate?",
+      "options": [
+        { "name": "Build a new index with the new model, evaluate on golden queries, repoint the alias, keep the old index for a rollback window", "verdict": "best", "why": "Keeps search live, proves quality before cutover and allows instant rollback.", "tradeoff": "Two copies of the data and embedding spend for the whole corpus." },
+        { "name": "Add a second vector field to the live index and backfill", "verdict": "good", "why": "One index to manage and a gradual switch.", "tradeoff": "Vector memory doubles in the same index and queries must choose the field." },
+        { "name": "Overwrite vectors in place during business hours", "verdict": "poor", "why": "Old and new vectors mix, so queries match a blend of incomparable spaces.", "tradeoff": "Acceptable in a short maintenance window on a small corpus." }
+      ],
+      "flips": [
+        { "if": "Memory cannot hold two copies", "then": "Plan a staged rebuild with a tested maintenance window and rollback snapshot." },
+        { "if": "The corpus is small", "then": "A weekend rebuild may be simplest." }
+      ],
+      "takeaway": "Treat a model change as a new index, not an edit."
+    },
+    {
+      "id": "w04-t15-s2",
+      "title": "English questions over German documents",
+      "situation": "Support staff ask questions in English about a German-language technical corpus. Exact product terms must be preserved. The team has labelled English-German pairs.",
+      "constraints": ["Cross-lingual queries", "Exact product terms matter", "Labelled pairs exist", "Moderate latency budget"],
+      "unknowns": ["Do users ever ask in German?", "How large is the corpus?"],
+      "question": "What do you try first?",
+      "options": [
+        { "name": "A multilingual embedding model tested cross-lingually on the labelled pairs, with original-language chunks kept", "verdict": "best", "why": "One model handles both languages and the test shows whether quality is enough.", "tradeoff": "Cross-lingual quality is lower than same-language quality for some models." },
+        { "name": "Translate each query to German at query time", "verdict": "good", "why": "Brings the query into the document language.", "tradeoff": "An extra model call and translation errors on product terms." },
+        { "name": "Translate the whole corpus to English at ingest", "verdict": "poor", "why": "Costly and loses exact German terms and wording.", "tradeoff": "Right when a downstream system must be single-language." }
+      ],
+      "flips": [
+        { "if": "Most users switch to German", "then": "Same-language retrieval becomes the main path." },
+        { "if": "Cross-lingual recall is too low", "then": "Add translated query variants alongside the original." }
+      ],
+      "takeaway": "Evaluate languages explicitly, never assume parity."
+    }
+  ],
+  "quiz": [
+    { "id": "w04-t15-q1", "type": "single", "tag": "bug", "q": "Documents were embedded with the E5 prefix `passage: ` but queries were sent with no prefix. What is the expected effect?", "options": ["An API error", "Nothing, prefixes are optional", "Silently lower retrieval quality", "Higher recall because queries are shorter"], "answer": 2, "explain": "E5 expects `query: ` and `passage: `. Missing prefixes do not error but lower quality. They are not optional and they do not help recall." },
+    { "id": "w04-t15-q2", "type": "order", "tag": "order", "q": "Order the blue-green re-embedding steps.", "items": ["Build a new index with the new model", "Evaluate on golden queries", "Repoint the alias to the new index", "Keep the old index for a rollback window", "Retire the old index"], "explain": "You build and prove the new index before the alias moves, then keep the old one until the rollback window has passed." },
+    { "id": "w04-t15-q3", "type": "multi", "tag": "tradeoff", "q": "Which metadata should you store with an index to prevent drift?", "options": ["Embedding model name and version", "Dimensions", "The document and query prefix template", "The chunk's title colour"], "answers": [0, 1, 2], "explain": "Model, dimensions and prefix rules decide whether vectors are comparable. Title colour has no bearing on vector compatibility." }
+  ],
+  "flashcards": [
+    { "front": "What prefixes does E5 require?", "back": "`query: ` for queries and `passage: ` for documents. Missing prefixes silently lower quality." },
+    { "front": "Why can't you swap embedding models in place?", "back": "Vectors from different models are not comparable and Azure requires new embeddings. Build a new index and repoint an alias." },
+    { "front": "What should you store to pin an embedding setup?", "back": "Model name and version, dimensions and prefix template, on the index and on each chunk, plus a golden query set to re-run after changes." }
+  ],
+  "related": ["w04-t12", "w04-t13", "w03-t09", "w05-t03", "w04-l3"],
+  "refs": ["tr3", "tr19", "tr28", "tr29", "tr31", "tr46"]
+}

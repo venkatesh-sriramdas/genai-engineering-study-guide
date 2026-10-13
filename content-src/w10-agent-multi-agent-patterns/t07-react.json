@@ -1,0 +1,97 @@
+{
+  "id": "w10-t07",
+  "order": 7,
+  "group": "Reasoning loops",
+  "title": "ReAct",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "ReAct interleaves reasoning with actions: the model thinks, calls a tool, reads the observation and repeats until it can answer. It is the loop inside most tool-using agents.",
+  "useIf": "The next step depends on what the last tool returned, so the path cannot be planned in advance, and each loop is affordable.",
+  "avoidIf": "The tool chain is predictable (plan first or use a workflow), latency is very tight, or tools are unreliable and nothing bounds the loop.",
+  "explain": [
+    { "t": "p", "md": "**ReAct** (reason plus act) lets a model alternate between a reasoning step and an action. The model writes a thought, picks a tool and arguments, the harness runs the tool and appends the result as an **observation**, and the model reasons again. On the ALFWorld and WebShop benchmarks the paper reports absolute success-rate gains of 34 percent and 10 percent over imitation and reinforcement-learning baselines using one or two in-context examples [[r16]]." },
+    { "t": "diagram", "id": "w10-t07-d1", "title": "The ReAct loop", "alt": "The model reasons, chooses a tool call, receives an observation and loops back until it gives a final answer. Brakes in the harness can stop the loop.", "src": "flowchart LR\n  T[Reason] --> A[Act: tool call]\n  A --> O[Observation]\n  O --> T\n  T -->|enough evidence| F[Final answer]\n  B[Harness brakes] -.-> T" },
+    { "t": "p", "md": "In modern APIs the loop is native. The model returns tool calls, your code executes them, and you send the results back. With reasoning models the thought is hidden reasoning tokens, billed as output, and OpenAI's guide says to pass reasoning items back with the function call outputs so the model keeps its chain across calls [[r34]]. Anthropic describes agents as LLMs using tools on environmental feedback in a loop, and stresses getting ground truth from the environment at each step, with stopping conditions such as a maximum number of iterations [[r1]]." },
+    { "t": "p", "md": "The loop has a cost shape you must respect. Each step rereads the growing history, so input tokens grow roughly with the square of the number of steps unless you trim results or rely on caching. The harness, not the prompt, owns the brakes: step cap, token budget, deadline and repeat detection. See the loop guards topic for the details." },
+    { "t": "callout", "kind": "gotcha", "title": "Observations are untrusted input", "md": "A tool result may contain text that looks like instructions. Treat it as data, keep tool permissions narrow, and require approval for high-impact actions. A loop that acts on whatever it reads is the setting for indirect prompt injection." }
+  ],
+  "whereToUse": [
+    "Research and browsing agents where each result changes the next query",
+    "Debugging and operations agents that inspect, hypothesise and re-inspect",
+    "Data analysis agents that explore a schema before writing queries",
+    "Customer-support agents that look up an order, then decide which action fits",
+    "Any tool-using assistant whose tool order cannot be listed in advance"
+  ],
+  "whenToUse": {
+    "use": ["The next action depends on the last observation", "Tools are reliable enough that errors are recoverable", "A bounded loop with traces and evals is in place"],
+    "avoid": ["The sequence of tool calls is the same every time", "Each step is expensive or irreversible and no approval exists", "Latency budget leaves room for only one or two model calls"],
+    "flips": ["Tool chains become predictable: freeze them as plan-and-execute or a workflow", "Step counts and tokens balloon: trim old tool results or add a plan step", "Tools fail often: improve tool descriptions and error messages before adding steps"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["ReAct loop (this topic)", "Tool outputs steer the next step", "The chain is predictable or latency is tight", "Input tokens grow each step, needs brakes"],
+      ["Plan-and-execute", "Tool chains are stable and checkable", "Surprises break the plan", "Replanning logic, stale plans [[r18]]"],
+      ["Workflow (chain or route)", "Steps are known", "Inputs vary in structure", "Branch growth"],
+      ["Reasoning model with tools", "A hard problem benefits from deeper thinking per step", "Effort is wasted on simple lookups", "Reasoning tokens billed as output [[r34]]"],
+      ["Reflection on top of ReAct", "A checker exists after the loop", "No external signal", "More calls, bias risk [[tr7]]"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "The agent repeats the same tool call with the same arguments", "cause": "Observations do not change its belief, or the error message is unhelpful", "fix": "Detect repeated calls, return a clear error that names what to change, and stop with an explicit reason after a repeat threshold." },
+    { "symptom": "The agent calls a tool that does not exist or passes invalid arguments", "cause": "Overlapping or vaguely described tools", "fix": "Tighten tool names, descriptions and schemas, validate arguments and return actionable errors." },
+    { "symptom": "Runs get slower and costlier with every step", "cause": "The full history, including large tool results, is resent each time", "fix": "Trim or clear stale tool results, keep a stable prefix for cache hits and cap steps." },
+    { "symptom": "It answers early on thin evidence", "cause": "No check that the answer is supported by observations", "fix": "Add a final verification step, or require citations to observation ids." }
+  ],
+  "scenarios": [
+    {
+      "id": "w10-t07-s1",
+      "title": "Exploratory investigation",
+      "situation": "An internal assistant investigates incidents by querying logs, a ticket system and a runbook index. Findings from one query decide the next, and a run may take a few minutes.",
+      "constraints": ["Tool order unpredictable", "Read-only tools", "Minutes of latency are acceptable", "Moderate volume"],
+      "unknowns": ["What step cap and token budget fit typical runs?", "Do traces show where runs stall?"],
+      "question": "Which loop shape do you pick?",
+      "options": [
+        { "name": "ReAct loop with step cap, budget and repeat detection", "verdict": "best", "why": "Observations steer each step, read-only tools make errors cheap and the brakes bound cost.", "tradeoff": "Variable cost per run and a need to evaluate trajectories." },
+        { "name": "Plan-and-execute with a fixed upfront plan", "verdict": "good", "why": "Fewer tokens and a reviewable plan.", "tradeoff": "Findings invalidate the plan often, so replanning logic is required." },
+        { "name": "A fixed workflow that runs every query in order", "verdict": "poor", "why": "It wastes calls on irrelevant tools and cannot follow a lead.", "tradeoff": "Right when incidents of one type always need the same four lookups." }
+      ],
+      "flips": [
+        { "if": "Most runs follow the same five tool calls", "then": "Freeze that path as a plan or workflow and keep ReAct for the exceptions." },
+        { "if": "Tools can change production state", "then": "Add approval gates before any write action." }
+      ],
+      "takeaway": "Let observations steer, and let the harness hold the brakes."
+    },
+    {
+      "id": "w10-t07-s2",
+      "title": "Voice assistant, tight latency",
+      "situation": "A voice assistant must answer in about two seconds. A request needs an order lookup, and sometimes a second lookup. Callers are impatient.",
+      "constraints": ["Latency target near two seconds", "One or two tool calls per request", "Tools are fast and reliable"],
+      "unknowns": ["Can the first lookup run before the model call?", "How often is the second lookup needed?"],
+      "question": "How do you use tools here?",
+      "options": [
+        { "name": "Prefetch the likely lookup in code, then one model call, with one optional follow-up call", "verdict": "best", "why": "It removes a model round trip from the common path and keeps a small bounded loop for the rare case.", "tradeoff": "Prefetching can fetch data that is never used, and the code path must be maintained." },
+        { "name": "Open-ended ReAct loop with a generous step cap", "verdict": "poor", "why": "Each extra model call adds latency the call cannot afford, and the cap hides slow tails.", "tradeoff": "Right for text channels where a longer wait is acceptable." },
+        { "name": "A single prompt with all data stuffed in", "verdict": "good", "why": "One call, so latency is lowest.", "tradeoff": "Context bloat and stale or unneeded data on every request." }
+      ],
+      "flips": [
+        { "if": "The channel changes to chat with a ten second budget", "then": "A short ReAct loop becomes acceptable." },
+        { "if": "Lookups grow to many possible tools", "then": "Route first, then run a small loop on the routed path." }
+      ],
+      "takeaway": "Every loop step is a model call, so count them against the latency budget."
+    }
+  ],
+  "quiz": [
+    { "id": "w10-t07-q1", "type": "order", "tag": "order", "q": "Order one pass of the ReAct loop.", "items": ["The model reasons about what it needs", "The model emits a tool call", "The harness executes the tool", "The result is appended as an observation"], "explain": "Reasoning leads to a tool call, the harness runs it and the observation goes back into context for the next pass. The model never executes tools itself. [[r16]]", "ref": "r16", "difficulty": 1 },
+    { "id": "w10-t07-q2", "type": "single", "tag": "diagnose", "q": "A ReAct agent calls the same search with the same query six times, then times out. What is the best first fix?", "options": ["Raise the model temperature", "Remove the step cap", "Detect repeated identical calls and stop or change course with a clear error", "Give the agent more tools"], "answer": 2, "explain": "Repeat detection plus an informative error addresses the loop and returns a stop reason. Temperature does not fix the missing signal, removing the cap makes it worse, and more tools add overload.", "difficulty": 2 },
+    { "id": "w10-t07-q3", "type": "multi", "tag": "tradeoff", "q": "Which conditions favour ReAct over plan-and-execute?", "options": ["Tool outputs change what you should do next", "The tool chain is identical for every request", "Surprises are common and re-planning would be frequent", "A human must approve the whole plan before any step"], "answers": [0, 2], "explain": "ReAct earns its cost when observations steer and surprises are common. A fixed chain favours a plan or workflow, and plan approval before execution is the plan-first pattern's strength.", "difficulty": 2 }
+  ],
+  "flashcards": [
+    { "front": "What does ReAct interleave?", "back": "Reasoning traces and actions. The model thinks, calls a tool, reads the observation and repeats [[r16]]." },
+    { "front": "Why do ReAct input tokens grow so fast?", "back": "Each step resends the history, so total input grows roughly quadratically with steps unless results are trimmed or cached." },
+    { "front": "Who owns the brakes in a ReAct agent?", "back": "The harness: step cap, token budget, deadline and repeat detection, returning an explicit stop reason. A prompt asking the model to stop is not a brake." }
+  ],
+  "related": ["w10-l2", "w10-t08", "w10-t10", "w10-t09"],
+  "refs": ["r16", "r1", "r34", "r18", "tr7"]
+}

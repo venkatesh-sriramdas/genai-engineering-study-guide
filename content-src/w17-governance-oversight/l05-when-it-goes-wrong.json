@@ -1,0 +1,54 @@
+{
+  "id": "w17-l5",
+  "order": 5,
+  "title": "When it goes wrong, and what you can show",
+  "kind": "problem",
+  "minutes": 20,
+  "brief": "An agent did something it should not, or a regulator asks what the system did last Tuesday. Decide how you detect, contain and classify AI incidents, what you record and what you disclose, before the day it happens.",
+  "blocks": [
+    { "t": "h", "text": "AI incidents need their own playbook", "level": 2 },
+    { "t": "p", "md": "AI systems break the assumptions of classic incident response. Microsoft's guidance names four properties. **Taxonomy gaps**: harms such as dangerous instructions or misuse through natural language fall outside confidentiality, integrity and availability buckets. **Context-dependent severity**: the same model error matters differently for medical guidance than for trivia. **Ambiguous root cause**: training data, fine-tuning, retrieval inputs and user context interact. **Telemetry gaps**: standard monitoring misses output anomalies, and privacy-by-design defaults narrow the forensic record. A gap in a safety classifier can produce thousands of harmful outputs before a reviewer sees the first [[r21]].\n\nFor providers of high-risk systems Article 73 adds legal clocks. Report a serious incident immediately after establishing a causal link or its reasonable likelihood, and in any event within 15 days of becoming aware. The limit is 2 days for a widespread infringement or a serious incident under Article 3(49)(b), and 10 days after a death. An incomplete initial report is allowed, followed by a full one, and the provider must not alter the system in a way that could affect the evaluation of causes before informing the authorities [[r7]]." },
+    { "t": "flow", "title": "Staged remediation", "direction": "v", "steps": [
+      { "title": "Stage 1: contain", "md": "In the first hour block known-bad inputs, activate content filters and restrict access. Containment comes before the root-cause hunt.", "tag": "first hour" },
+      { "title": "Stage 2: expand", "md": "In the first 24 hours broaden mitigations to related variants, using automated pattern analysis.", "tag": "24 hours" },
+      { "title": "Stage 3: fix at source", "md": "Over days or weeks update classifiers, adjust the model and change the system. Allow and block lists are triage tools, not durable fixes.", "tag": "days to weeks" },
+      { "title": "Watch and protect", "md": "Hold a watch period after each stage, because non-deterministic behaviour cannot be verified with one test pass. Rotate responders who face harmful content.", "tag": "always" }
+    ] },
+    { "t": "compare", "title": "How to organise AI incident response", "intro": "The documented pattern extends established practice. A separate team is the alternative at scale.", "options": [
+      { "name": "Treat it as a normal security incident", "summary": "Route AI incidents through the existing security process unchanged.", "pros": ["No new process", "One on-call rota"], "cons": ["Harm categories fall into generic buckets", "Severity by record count misses harm", "No telemetry for output anomalies"], "bestWhen": "A pure confidentiality incident, such as a leaked credential.", "avoidWhen": "Harmful, manipulated or misleading outputs.", "meta": [ { "k": "Effort", "v": "lowest" }, { "k": "Coverage", "v": "narrow" } ] },
+      { "name": "Extend the existing process", "tag": "Documented pattern", "summary": "Keep ownership, containment before investigation and clear communication, then add AI harm categories, domain-weighted severity, AI observability, staged remediation and responder protection.", "pros": ["Reuses what already works", "One escalation path"], "cons": ["Needs new telemetry and training", "Logging must be reconciled with privacy before an incident"], "bestWhen": "A mature security team and AI features inside existing products.", "avoidWhen": "Many models and no shared incident discipline.", "meta": [ { "k": "Effort", "v": "medium" }, { "k": "Coverage", "v": "broad" } ] },
+      { "name": "A separate AI safety response team", "summary": "A specialist team owns model and content harms next to the security team.", "pros": ["Deep skill in model and content harms"], "cons": ["Duplicated on-call and handoff gaps between teams"], "bestWhen": "A large organization with many models and content-facing products.", "avoidWhen": "A small team, where handoffs cost more than specialisation gains.", "meta": [ { "k": "Effort", "v": "high" }, { "k": "Coverage", "v": "deep" } ] }
+    ] },
+    { "t": "table", "caption": "Records to keep before the incident, and why.", "head": ["Record", "Keeps", "Needed for", "Source"], "rows": [
+      ["Retrieval and decision log", "Document ids, principal, filter hash, outcome", "Reproducing a leak or a wrong answer without copying text", "Design reasoning, see w07"],
+      ["Approval log", "Who approved, the evidence shown, the time", "Accountability and automation-bias reviews", "Article 14 intent [[r5]]"],
+      ["Tool-call audit", "Tool, arguments, result and the acting identity", "Reconstructing what the agent did", "Agentic risks such as ASI03 [[r22]]"],
+      ["Version record", "Model, prompt, tool and policy versions at the time", "Root cause across data, tuning, retrieval and context", "Ambiguous root cause [[r21]]"],
+      ["Event logs", "Automatic events over the system's lifetime", "Risk identification and post-market monitoring", "Article 12 for high-risk systems [[r8]]"],
+      ["Disclosure and marking", "Proof people were told they use an AI system, and marking of generated content", "Showing compliance with transparency rules", "Article 50 [[r6]]"],
+      ["Incident timeline", "Detection, severity, containment, communication, fix, watch periods", "Article 73 reports and lessons learned", "[[r7]] [[r21]]"]
+    ], "highlightCol": 1 },
+    { "t": "failure", "title": "Failure modes to recognise", "items": [
+      { "symptom": "After an incident nobody can say which documents or tools the agent used.", "cause": "Privacy-by-design defaults turned content logging off and nobody logged identifiers.", "fix": "Reconcile logging with privacy before an incident: ids and decisions always, content under a bounded policy." },
+      { "symptom": "The team hunts for a root cause for days while the harmful output continues.", "cause": "Containment was skipped, and root cause in AI systems is often ambiguous.", "fix": "Contain in the first hour with block lists, filters and access limits, then investigate." },
+      { "symptom": "A fix passes one test and the incident returns.", "cause": "Non-deterministic behaviour was verified with a single pass.", "fix": "Use watch periods after each stage and replay variants at volume." },
+      { "symptom": "A first-hour block list is still the only fix three months later.", "cause": "Tactical lists were treated as durable.", "fix": "Schedule stage 3: classifier updates, model adjustments and systemic changes." },
+      { "symptom": "Responders burn out after an incident with abusive content.", "cause": "Exposure to harmful content was not planned for.", "fix": "Rotate responders, schedule breaks, offer peer support and borrow practices from content moderation teams." }
+    ] },
+    { "t": "callout", "kind": "interview", "title": "What interviewers listen for", "md": "Say contain first, then investigate. Name the AI-specific gaps (taxonomy, severity by domain, root cause, telemetry), the three stages with their time boxes and the records you keep. For high-risk systems name the Article 73 deadlines: 15 days, 2 days and 10 days." }
+  ],
+  "quiz": [
+    { "id": "w17-l5-q1", "type": "order", "tag": "order", "q": "Put the response to an AI incident in order.", "items": ["Classify with AI-specific harm categories and domain-weighted severity", "Contain in the first hour: block known-bad inputs, activate filters, restrict access", "Expand mitigations to related variants within 24 hours", "Fix at source over days or weeks: classifier and model changes"], "explain": "Classification sets severity and ownership, containment limits the damage in the first hour, expansion covers variants within 24 hours and the source fix takes days or weeks. Watch periods follow each stage because one test pass cannot verify non-deterministic behaviour.", "difficulty": 1, "ref": "r21" },
+    { "id": "w17-l5-q2", "type": "numeric", "tag": "numeric", "q": "A provider of a high-risk system becomes aware of a serious incident involving the death of a person. What is the latest number of days after becoming aware to submit the report?", "answer": 10, "tolerancePct": 0, "unit": "days", "hint": "The general limit is 15 days, and death has its own shorter limit.", "explain": "Article 73 sets 15 days as the general limit, 2 days for a widespread infringement or an Article 3(49)(b) incident and 10 days after a death, always immediately after a causal link is established or suspected. An incomplete initial report is allowed to meet the deadline.", "difficulty": 1, "ref": "r7" },
+    { "id": "w17-l5-q3", "type": "single", "tag": "diagnose", "q": "After an incident the team cannot tell which documents the agent retrieved. The log holds the following. What explains the gap?", "code": { "lang": "text", "code": "request_id=9f2c user=svc-agent model=m-2026-09 status=200\nprompt: [not captured]  answer: [not captured]\nretrieval: [not captured]" }, "options": ["The model was too large to log", "Containment ran before classification", "A telemetry gap: privacy defaults dropped content and no identifiers were logged", "The incident was a pure confidentiality incident"], "answer": 2, "explain": "Microsoft's guidance lists telemetry gaps and warns that privacy-by-design defaults narrow the forensic record, so logging must be reconciled before an incident. Model size does not stop logging, the order of containment and classification does not remove records, and the missing retrieval trace is the gap regardless of incident type.", "difficulty": 2, "ref": "r21" }
+  ],
+  "defend": null,
+  "refs": ["r5", "r6", "r7", "r8", "r21", "r22"],
+  "takeaways": [
+    "AI incidents have taxonomy, severity, root-cause and telemetry gaps that classic response misses.",
+    "Contain in the first hour, expand in 24 hours, fix at source over days or weeks, and watch after each stage.",
+    "High-risk providers report serious incidents within 15 days, or 2 days, or 10 days after a death.",
+    "Decide what you log before the incident: ids and decisions always, content under a bounded policy.",
+    "Rehearse the playbook, including responder protection."
+  ]
+}

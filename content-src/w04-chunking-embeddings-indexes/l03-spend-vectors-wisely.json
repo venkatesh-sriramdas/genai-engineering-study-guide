@@ -1,0 +1,91 @@
+{
+  "id": "w04-l3",
+  "order": 3,
+  "title": "Spend vectors wisely",
+  "kind": "problem",
+  "minutes": 18,
+  "brief": "Twenty million chunks, a memory quota that is already tight, a mix of languages and an embedding model that will be retired within years. Choose the model, the dimensions and the compression, and say how you would prove recall held.",
+  "blocks": [
+    { "t": "h", "text": "Size it before you choose", "level": 2 },
+    { "t": "p", "md": "Embedding choices are storage and quality choices at once. Topics `w04-t12` (model choice), `w04-t13` (dimensions and Matryoshka), `w04-t14` (quantization and rescoring) and `w04-t15` (asymmetric prompts, multilingual, drift) cover the mechanisms. A leaderboard is only a shortlist: MTEB found no method that wins every task, and MMTEB extends the benchmark to more than 500 tasks [[r17]] [[r18]]. Start by sizing the raw vectors, because in Azure AI Search the vector quota is a memory quota and HNSW adds 1% to 20% on top of float32 vectors [[r36]]." },
+    { "t": "formula", "title": "Raw vector memory", "expr": "bytes = vectors x dimensions x bytes_per_dimension", "vars": [
+      { "k": "vectors", "v": "chunk count, one vector per chunk (more if you keep several fields)" },
+      { "k": "dimensions", "v": "model default or the shortened value you configure" },
+      { "k": "bytes_per_dimension", "v": "4 for float32, 2 for float16, 1 for int8, 0.125 for binary" }
+    ], "example": "20,000,000 vectors at 1,536 dimensions in float32 is 20,000,000 x 1,536 x 4, about **122.9 GB** before index overhead. As int8 it is about 30.7 GB, and binary is about 3.8 GB plus any full-precision copies you keep for rescoring." },
+    { "t": "dials", "id": "w04-l3-compress", "title": "Pick a compression setup", "prompt": "Flip the constraints. Note how recall tolerance and native dimensions change the answer.",
+      "dials": [
+        { "id": "pressure", "label": "Memory pressure", "values": [ { "id": "ok", "label": "Quota is comfortable" }, { "id": "tight", "label": "Quota is the bottleneck" } ] },
+        { "id": "recall", "label": "Recall tolerance", "values": [ { "id": "critical", "label": "Recall-critical (legal, safety)" }, { "id": "loose", "label": "A point or two of recall is fine" } ] },
+        { "id": "dims", "label": "Native dimensions", "values": [ { "id": "low", "label": "Up to 1,024" }, { "id": "high", "label": "Above 1,024" } ] }
+      ],
+      "options": [
+        { "id": "full", "name": "Full precision", "summary": "Keep float32 or float16 vectors at their native size." },
+        { "id": "int8", "name": "Scalar quantization (int8)", "summary": "Store each dimension as an 8-bit integer." },
+        { "id": "binary", "name": "Binary quantization with rescoring", "summary": "One bit per dimension, with oversampling and rescoring from the originals." },
+        { "id": "mrlscalar", "name": "Matryoshka truncation plus scalar", "summary": "Keep only the leading dimensions of a Matryoshka-trained model, then quantize." },
+        { "id": "mrlbinary", "name": "Truncation plus binary, originals discarded", "summary": "The smallest index: truncated, binary, and `stored: false` for the full vector." }
+      ],
+      "scores": {
+        "full": {
+          "pressure": { "ok": { "s": 2, "why": "No loss and the simplest setup, so keep it while the quota allows." }, "tight": { "s": -2, "why": "It is the biggest index, and the quota is the constraint." } },
+          "recall": { "critical": { "s": 2, "why": "Nothing to lose, and it is your baseline for measuring every other option." }, "loose": { "s": 0, "why": "You are paying for recall you said you do not need." } },
+          "dims": { "low": { "s": 1, "why": "Vectors are already small, so compression saves little." }, "high": { "s": -1, "why": "3,072 dimensions in float32 is 12,288 bytes per vector." } }
+        },
+        "int8": {
+          "pressure": { "ok": { "s": 0, "why": "Works, but you take a small loss for savings you do not need." }, "tight": { "s": 2, "why": "4 times smaller, and about 99.3% of float32 performance in an open benchmark [[r22]]." } },
+          "recall": { "critical": { "s": 1, "why": "The loss is small and measurable against the full-precision baseline." }, "loose": { "s": 1, "why": "A cheap, safe saving." } },
+          "dims": { "low": { "s": 0, "why": "The saving is smaller in absolute terms." }, "high": { "s": 1, "why": "A 4 times cut on large vectors is worth taking." } }
+        },
+        "binary": {
+          "pressure": { "ok": { "s": -1, "why": "More machinery than you need, and it depends on oversampling and rescoring [[r21]]." }, "tight": { "s": 2, "why": "32 times smaller in the open benchmark (AI Search says up to 28 times) [[r21]] [[r22]]." } },
+          "recall": { "critical": { "s": -1, "why": "About 96% retained with rescoring and about 92.5% without, so measure first [[r22]]." }, "loose": { "s": 2, "why": "Rescoring recovers most of the recall for a large saving." } },
+          "dims": { "low": { "s": -1, "why": "Binary suits dimensions above 1,024 and embeddings centred on zero [[r21]]." }, "high": { "s": 2, "why": "This is the case it is best for [[r21]]." } }
+        },
+        "mrlscalar": {
+          "pressure": { "ok": { "s": 0, "why": "Optional." }, "tight": { "s": 1, "why": "Stacks two savings, but needs a Matryoshka-trained model, quantization and a new field [[r20]]." } },
+          "recall": { "critical": { "s": 0, "why": "Test it: a 256-dimension 3-large vector still beat full ada-002 on MTEB, though your data may differ [[r12]]." }, "loose": { "s": 1, "why": "Cuts dimensions and bytes together." } },
+          "dims": { "low": { "s": -1, "why": "There is little to truncate from a small vector." }, "high": { "s": 2, "why": "Large Matryoshka vectors such as 3-large (3,072) are what truncation is for [[r12]]." } }
+        },
+        "mrlbinary": {
+          "pressure": { "ok": { "s": -2, "why": "It is irreversible overkill when the quota is comfortable." }, "tight": { "s": 1, "why": "The largest size cut, but `stored: false` means a partial document update loses the vector unless you resend it [[r20]]." } },
+          "recall": { "critical": { "s": -2, "why": "Discarding the originals removes your rescoring and your rollback." }, "loose": { "s": 1, "why": "Acceptable when recall has slack and you re-send full vectors on updates." } },
+          "dims": { "low": { "s": -2, "why": "Truncation and binary both suit large vectors." }, "high": { "s": 1, "why": "Large native vectors give the cuts room to work." } }
+        }
+      },
+      "takeaway": "Compress when the quota or cost is the bottleneck, keep the originals when recall is critical, and always measure recall against an uncompressed baseline on your own queries." },
+    { "t": "table", "caption": "Models and the numbers worth quoting", "head": ["Model", "Dimensions", "Scores", "Notes"], "rows": [
+      ["text-embedding-3-small", "1,536", "MTEB 62.3, MIRACL 44.0", "62,500 pages per dollar at about 800 tokens per page [[r12]] [[r13]]"],
+      ["text-embedding-3-large", "3,072, shortened with `dimensions`", "MTEB 64.6, MIRACL 54.9", "9,615 pages per dollar. A 256-dimension vector beat full ada-002 on MTEB [[r12]] [[r13]]"],
+      ["text-embedding-ada-002", "1,536 fixed", "MTEB 61.0, MIRACL 31.4", "12,500 pages per dollar, no `dimensions` parameter [[r12]] [[r13]] [[r38]]"],
+      ["Cohere embed-v4.0", "256, 512, 1,024 or 1,536 (default)", "Text and images", "128k context. embed-v5.0 models default to 2,048 dimensions [[r15]]"],
+      ["Open models (E5, BGE, Nomic)", "Model specific", "Self-hosted", "Need query and document prefixes, and you own the serving [[r16]]"]
+    ], "highlightCol": 2 },
+    { "t": "table", "caption": "Asymmetric prefixes: leave them out and quality drops without an error", "head": ["Model", "Query side", "Document side"], "rows": [
+      ["E5", "`query: `", "`passage: `"],
+      ["BGE v1.5", "`Represent this sentence for searching relevant passages: `", "No prefix"],
+      ["Nomic Embed v1.5", "`search_query: `", "`search_document: `, and it supports Matryoshka truncation"]
+    ] },
+    { "t": "failure", "title": "Embedding failure modes", "items": [
+      { "symptom": "Recall fell after shortening vectors by hand", "cause": "The model was not Matryoshka-trained, or the truncated vector was not re-normalised [[r12]] [[r19]].", "fix": "Use the `dimensions` parameter or a trained model, and re-normalise a hand-truncated vector." },
+      { "symptom": "An open model scores well in the benchmark and poorly in the app", "cause": "The query and passage prefixes were left out on one or both sides [[r16]].", "fix": "Apply the model card's prefixes on both sides and assert them in a test." },
+      { "symptom": "Partial document updates wipe the vectors", "cause": "Binary plus Matryoshka with `stored: false` discards the full vector, so a partial update loses it unless you resend it [[r20]].", "fix": "Send the full vector on every update, or keep originals." },
+      { "symptom": "Results turn to nonsense after a model swap", "cause": "Vectors from different models are not comparable, and Azure says embeddings cannot be upgraded in place [[r13]].", "fix": "Build a new field or index for the new model and cut over by alias (see `w03-l3`)." }
+    ] },
+    { "t": "callout", "kind": "gotcha", "title": "Dates and limits to check, 2026-10-13", "md": "The Azure retirement schedule (updated 2026-09-21) lists text-embedding-3-large, 3-small and ada-002 as retiring 2028-02-09, while an older page had ada-002 at no earlier than April 30, 2026, so read the live schedule [[r14]]. The embedding input limit is 8,192 tokens in the Azure model table and OpenAI docs, and 8,191 on the AI Search chunking page, so stay a little under [[r1]] [[r13]]." }
+  ],
+  "quiz": [
+    { "id": "w04-l3-q1", "type": "numeric", "tag": "numeric", "difficulty": 2, "q": "How many gigabytes do 20,000,000 float32 vectors of 1,536 dimensions need before any index overhead?", "answer": 122.9, "tolerancePct": 3, "unit": "GB", "hint": "A float32 value is 4 bytes. Use 1 GB = 1,000,000,000 bytes.", "explain": "20,000,000 x 1,536 x 4 bytes is 122,880,000,000 bytes, about 122.9 GB. HNSW adds 1% to 20% on top, and the AI Search vector quota is a memory quota, so this is the figure to compare with the quota. int8 cuts it to about 30.7 GB [[r36]]." },
+    { "id": "w04-l3-q2", "type": "single", "tag": "diagnose", "difficulty": 2, "q": "A self-hosted E5 model scores well in the benchmark but retrieval in the app is mediocre, with no errors anywhere. What is the most likely cause?", "options": ["The `query: ` and `passage: ` prefixes were never added", "The vectors were stored as float32 instead of int8", "The HNSW `m` value is below its documented default", "The embedding input limit of 8,192 tokens was exceeded for every chunk"], "answer": 0, "explain": "E5 requires the prefixes, and leaving them out silently lowers quality, which matches a benchmark gap with no error. Storing float32 is the higher-quality choice, an `m` change shifts recall only slightly, and exceeding the input limit would raise errors or truncation on every chunk rather than mediocre results [[r16]]." },
+    { "id": "w04-l3-q3", "type": "multi", "tag": "tradeoff", "difficulty": 3, "q": "Select the true statements about quantization and truncation in Azure AI Search.", "options": ["Rescoring works only with HNSW, and `defaultOversampling` defaults to 4", "`truncationDimension` needs scalar or binary quantization, and cannot be added to an existing field", "You can switch an existing vector field to quantized vectors in place", "`discardOriginals` is available for binary quantization only"], "answers": [0, 1, 3], "explain": "Rescoring, the oversampling default, the truncation prerequisites and the binary-only discard option are documented. A quantized field needs a new vector profile and a new field, so in-place switching is false, which is why quantization is planned like a re-index [[r20]] [[r21]]." },
+    { "id": "w04-l3-q4", "type": "single", "tag": "flip", "difficulty": 2, "q": "The corpus is mostly German and Hindi. MTEB averages are 62.3 for 3-small and 64.6 for 3-large, and the cost difference is small. What do you do?", "options": ["Stay on 3-small, because a 2.3 point MTEB gap is negligible for any corpus", "Move to ada-002, which costs less per page and has fixed 1,536 dimensions", "Test 3-large first, shortened with `dimensions` if memory requires", "Apply binary quantization to close the language gap with the cheaper model"], "answer": 2, "explain": "MIRACL, a multilingual retrieval benchmark, averages 44.0 for 3-small and 54.9 for 3-large, a far wider gap than MTEB shows, and ada-002 scores 31.4. Shortening 3-large with `dimensions` recovers memory. Quantization trades recall for size and cannot add language skill [[r12]] [[r13]]." }
+  ],
+  "defend": null,
+  "refs": ["r1", "r12", "r13", "r14", "r15", "r16", "r17", "r18", "r19", "r20", "r21", "r22", "r36", "r38", "r41"],
+  "takeaways": [
+    "Size raw vectors first: vectors x dimensions x 4 bytes, plus 1% to 20% for HNSW, against a memory quota",
+    "A leaderboard is a shortlist: no model wins every MTEB task, and MIRACL shows what an average hides for other languages",
+    "Compress when memory is the bottleneck, keep originals for rescoring, and plan quantization like a re-index",
+    "Apply the model's query and document prefixes, and check the retirement date before committing"
+  ]
+}

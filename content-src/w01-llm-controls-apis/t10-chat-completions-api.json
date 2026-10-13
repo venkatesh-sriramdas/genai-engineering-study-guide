@@ -1,0 +1,119 @@
+{
+  "id": "w01-t10",
+  "order": 10,
+  "group": "API styles",
+  "title": "Chat Completions API",
+  "minutes": 7,
+  "difficulty": "core",
+  "summary": "Chat Completions takes an array of role-tagged messages, returns choices, and keeps no state: your application sends the full history on every call.",
+  "useIf": "You target many OpenAI-compatible vendors, run non-reasoning models, or want to own conversation state.",
+  "avoidIf": "You need reasoning models with tools on recent OpenAI models, built-in tools or server-held state. Use the Responses API.",
+  "explain": [
+    { "t": "p", "md": "A **Chat Completions** request carries a `model` and a `messages` array. Each message has a role such as `system`, `user`, `assistant` or `tool`. The response holds one or more `choices`. The API is **stateless**: nothing is remembered between calls, so your code resends the system prompt and the conversation each time and decides what to trim. OpenAI says Chat Completions stays supported while Responses is recommended for all new projects [[r6]]." },
+    { "t": "code", "lang": "json", "title": "A minimal request", "code": "{\n  \"model\": \"gpt-6-sol\",\n  \"messages\": [\n    { \"role\": \"system\", \"content\": \"Answer in one sentence.\" },\n    { \"role\": \"user\", \"content\": \"What is a token?\" }\n  ],\n  \"max_completion_tokens\": 300\n}" },
+    { "t": "flow", "title": "Cost grows because history is resent", "direction": "h", "steps": [
+      { "title": "Turn 1", "md": "System, user 1. Pays for 2 messages." },
+      { "title": "Turn 2", "md": "System, user 1, reply 1, user 2. Pays for 4." },
+      { "title": "Turn 3", "md": "System, user 1, reply 1, user 2, reply 2, user 3. Pays for 6." }
+    ] },
+    { "t": "table", "caption": "What the Chat Completions body offers (check date 2026-10-13)", "head": ["Feature", "Detail"], "compact": true, "rows": [
+      ["Choices", "`n` returns several choices and bills for all of them"],
+      ["Stop and seed", "`stop` up to 4 sequences (not on o3 and o4-mini), `seed` Beta"],
+      ["Penalties and bias", "`frequency_penalty`, `presence_penalty` (-2.0 to 2.0), `logit_bias`"],
+      ["Logprobs", "`logprobs` with `top_logprobs` 0 to 20"],
+      ["Output cap", "`max_completion_tokens`. `max_tokens` is deprecated and not compatible with o-series"],
+      ["Reasoning and format", "`reasoning_effort`, `verbosity`, `response_format`"]
+    ] },
+    { "t": "p", "md": "Chat completions are stored by default for new accounts, and `store: false` turns that off. The endpoint `/v1/chat/completions` is eligible for zero data retention [[r10]]. Limits on newer models: from GPT-5.4 tool calling is not supported with `reasoning_effort` other than `none`, GPT-6 Astra and 6.1 Sol need Responses for tools, and GPT-6 Sol and Luna allow function calling in Chat only with `none` [[r6]] [[r2]]." },
+    { "t": "callout", "kind": "note", "title": "Why portability matters", "md": "Many vendors implement a Chat-style API, and the Azure v1 API also routes chat completions calls to other providers such as DeepSeek and Grok [[r14]]. Anthropic's OpenAI compatibility layer silently ignores several controls and is for testing, not production [[r36]]." }
+  ],
+  "whereToUse": [
+    "Gateways and SDKs that must talk to several vendors through one message format",
+    "Non-reasoning models where simple stateless chat is enough",
+    "Applications that need `n`, `stop`, `seed`, penalties or `logit_bias`",
+    "Legacy code and tutorials, where migration is not yet justified",
+    "ZDR environments where your application controls what is stored"
+  ],
+  "whenToUse": {
+    "use": [
+      "You own conversation state and want to control trimming",
+      "Portability across OpenAI-compatible APIs matters more than platform features",
+      "The model is non-reasoning, or reasoning without tools"
+    ],
+    "avoid": [
+      "Reasoning with tools on GPT-5.4 and later, GPT-6 Astra and 6.1 Sol",
+      "Built-in web search, file search, code interpreter, computer use or remote MCP",
+      "Background runs and server-held reasoning state"
+    ],
+    "flips": [
+      "You adopt a reasoning model with tools: move the loop to Responses",
+      "You need built-in tools or durable server state: move to Responses",
+      "You must stay vendor-neutral: keep Chat behind an adapter and isolate platform features"
+    ]
+  },
+  "alternatives": {
+    "title": "Chat Completions against its neighbours",
+    "head": ["API", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Chat Completions", "Portability, simple stateless chat, `seed`, penalties", "Reasoning with tools, built-in tools", "Your code owns state and trimming"],
+      ["Responses", "New builds, reasoning plus tools, built-in tools, server state", "You must target many OpenAI-compatible vendors", "Items model to learn, retention choices"],
+      ["Anthropic Messages", "Claude models, adaptive thinking, native `strict` tools", "You need one format across vendors", "Different body, stateless as well"],
+      ["Assistants API", "Nothing, it is retired on OpenAI", "Always", "Sunset on 2026-08-26"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Cost and latency climb across a long chat", "cause": "The full history is resent every turn", "fix": "Trim or summarise old turns, keep a stable prefix for caching and cap tool output sizes" },
+    { "symptom": "Tool calls fail after a model upgrade", "cause": "Newer models do not support tools with reasoning effort other than `none` on Chat Completions", "fix": "Use Responses, or set effort to `none` if reasoning is not needed" },
+    { "symptom": "`max_tokens` is rejected on a reasoning model", "cause": "`max_tokens` is deprecated and incompatible with o-series", "fix": "Use `max_completion_tokens`" }
+  ],
+  "scenarios": [
+    {
+      "id": "w01-t10-s1",
+      "title": "One endpoint, four providers",
+      "situation": "A platform team exposes one internal chat endpoint that routes to OpenAI, Azure and two open-weight hosts. Models are non-reasoning and applications keep their own history.",
+      "constraints": ["Vendor neutrality is a requirement", "Non-reasoning models", "Apps own conversation state"],
+      "unknowns": ["Which controls do all providers honour?", "Do any apps need built-in tools?"],
+      "question": "Which interface do you standardise on?",
+      "options": [
+        { "name": "Route Claude traffic through Anthropic's OpenAI compatibility layer in production", "verdict": "poor", "why": "The layer ignores `seed`, penalties, `logit_bias`, `response_format` and more, and Anthropic says it is for testing.", "tradeoff": "Fine in a test harness to compare outputs quickly." },
+        { "name": "A Chat-style message interface at the gateway, with per-vendor adapters and a documented list of controls that are honoured", "verdict": "best", "why": "Every vendor supports a message list, and adapters hide differences while the control list sets expectations.", "tradeoff": "You maintain adapters and some features, such as server state, stay out of reach." },
+        { "name": "Responses everywhere", "verdict": "good", "why": "Richer features on OpenAI and Azure.", "tradeoff": "Other vendors may lack the API, so the gateway ends up translating anyway." }
+      ],
+      "flips": [
+        { "if": "Only OpenAI and Azure remain", "then": "Standardise on Responses and use its built-in tools." },
+        { "if": "A team needs reasoning with tools on GPT-6", "then": "Give that route a Responses adapter." }
+      ],
+      "takeaway": "Standardise on the common denominator and isolate platform features behind adapters."
+    },
+    {
+      "id": "w01-t10-s2",
+      "title": "A 40-turn support chat that keeps getting dearer",
+      "situation": "A support chat averages 40 turns. Cost per conversation grows faster than linearly and late turns feel slower.",
+      "constraints": ["Chat Completions, non-reasoning model", "Quality must hold on late turns", "Cost per conversation is monitored"],
+      "unknowns": ["Which turns carry facts that must stay verbatim?", "How large are tool outputs in the history?"],
+      "question": "What do you change?",
+      "options": [
+        { "name": "Move to `previous_response_id` expecting a lower bill", "verdict": "poor", "why": "Chained calls bill all earlier input tokens again, so cost does not fall.", "tradeoff": "Chaining saves code and state handling, not tokens." },
+        { "name": "Summarise old turns with a cheap model call and keep recent turns verbatim", "verdict": "good", "why": "Shrinks the history.", "tradeoff": "Summaries are lossy and add a call." },
+        { "name": "Keep a stable prefix for caching, trim stale turns, cap tool outputs and keep key facts in a pinned note", "verdict": "best", "why": "It cuts tokens, keeps the cache prefix intact and preserves the facts that matter.", "tradeoff": "Needs rules for what is pinned and what is trimmed." }
+      ],
+      "flips": [
+        { "if": "Conversations must be audited in full", "then": "Store the full history outside the prompt and send only the trimmed view." },
+        { "if": "You adopt a reasoning model with tools", "then": "Move to Responses and use compaction where available." }
+      ],
+      "takeaway": "In a stateless API the history is your cost, so manage it deliberately."
+    }
+  ],
+  "quiz": [
+    { "id": "w01-t10-q1", "type": "single", "tag": "concept", "q": "What does 'stateless' mean for Chat Completions?", "options": ["Your application sends the history on every call", "The API stores the conversation for 30 days and replays it", "The model has no memory of its training data", "Responses are never stored"], "answer": 0, "explain": "The API keeps no conversation state between calls, so your code resends what the model should see. Storage of completions is a separate setting." },
+    { "id": "w01-t10-q2", "type": "multi", "tag": "diagnose", "q": "Which are true about Chat Completions on newer OpenAI models?", "options": ["Tools with `reasoning_effort` other than `none` are not supported from GPT-5.4", "GPT-6 Astra and 6.1 Sol need Responses for tools", "`max_tokens` is the recommended cap on o-series", "The endpoint is eligible for ZDR"], "answers": [0, 1, 3], "explain": "Tools with reasoning need Responses from GPT-5.4, and GPT-6 Astra and 6.1 Sol need Responses for tools. `max_tokens` is deprecated for o-series. `/v1/chat/completions` is ZDR eligible." },
+    { "id": "w01-t10-q3", "type": "single", "tag": "tradeoff", "q": "Which need is the strongest reason to stay on Chat Completions?", "options": ["Built-in web search", "Reasoning with tools on GPT-6 Astra", "Targeting several OpenAI-compatible vendors with one format", "Server-held conversation state"], "answer": 2, "explain": "Portability is Chat's strength. The other needs favour Responses." }
+  ],
+  "flashcards": [
+    { "front": "Why does cost grow over a long Chat Completions conversation?", "back": "The API is stateless, so you resend the full history each turn and pay for those input tokens again." },
+    { "front": "Which cap parameter replaces `max_tokens` in Chat Completions?", "back": "`max_completion_tokens`. `max_tokens` is deprecated and not compatible with o-series." },
+    { "front": "When must you leave Chat Completions for Responses?", "back": "For reasoning with tools on GPT-5.4 and later, for GPT-6 Astra and 6.1 Sol tools, and for built-in tools or server-held state." }
+  ],
+  "related": ["w01-t11", "w01-t12", "w01-l5", "w01-t09", "w16-t01"],
+  "refs": ["r5", "r6", "r2", "r10", "r14", "r36"]
+}

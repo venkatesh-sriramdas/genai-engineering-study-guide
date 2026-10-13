@@ -1,0 +1,114 @@
+{
+  "id": "w11-t06",
+  "order": 6,
+  "group": "Behaviour",
+  "title": "Tool approval and standing approvals",
+  "minutes": 9,
+  "difficulty": "core",
+  "summary": "A tool marked for approval does not run. The run ends with an approval request, a person decides, and the next run with the same session executes or rejects the call. The Harness adds queueing and standing rules.",
+  "useIf": "A tool changes data, spends money or sends messages, and a person must authorise each class of call.",
+  "avoidIf": "The tool is read-only and cheap, or no person is available to answer: approval prompts would stall the run.",
+  "explain": [
+    { "t": "p", "md": "**Per-tool approval.** Mark the tool: Python `@tool(approval_mode=\"always_require\")`, .NET wrap the function in `ApprovalRequiredAIFunction`. When the model asks for it the run completes with a request instead of an answer: Python `result.user_input_requests`, .NET `ToolApprovalRequestContent` in the messages. Your code shows the call (name and arguments), then calls the agent again with the answer and **the same session** [[tr6]]." },
+    { "t": "p", "md": "**Binding is a security control.** By default a local approval response authorises a call only when it matches a pending request recorded in the same `AgentSession`. An unbound response is ignored with a warning. Setting `disable_approval_response_binding` to `True` removes that check and can let a fabricated or replayed response approve a privileged call [[tr6]]. If a batch has several approvals, no tool runs and the model does not resume until every request in the batch has a decision; approved tools then run in the model's order [[tr5]]." },
+    { "t": "p", "md": "**Harness additions.** `ToolApprovalMiddleware` (Python) or `ToolApprovalAgent` (.NET) queues requests, applies standing \"always approve\" answers from earlier responses and evaluates `auto_approval_rules` before returning a request. With no rules, nothing is auto-approved. `disable_tool_auto_approval=True` removes this middleware but **does not** remove the approval requirement from the tool [[tr6]]. Inside orchestrations approvals arrive as request events (`function_approval_request` content in Python, `ToolApprovalRequestContent` in .NET) [[tr19]]." },
+    { "t": "table", "caption": "A risk-tier starting point (design suggestion, not vendor guidance)", "head": ["Tier", "Example", "Policy"], "rows": [
+      ["Read-only, bounded", "Search, load skill, read resource", "No approval, or an auto-approval rule for trusted sources"],
+      ["Reversible write", "Create draft, add todo, tag ticket", "Standing approval per tool after the first yes"],
+      ["External side effect", "Send email, post message", "Approve each call, show arguments"],
+      ["Irreversible or financial", "Payout, delete, deploy", "Approve each call, separate approver, audit log"]
+    ] },
+    { "t": "tabs", "tabs": [
+      { "label": "C#", "blocks": [ { "t": "code", "lang": "csharp", "code": "var payout = new ApprovalRequiredAIFunction(AIFunctionFactory.Create(IssueRefund));\n\nAIAgent agent = chatClient.AsHarnessAgent(new HarnessAgentOptions\n{\n    ChatOptions = new ChatOptions { Tools = [payout] },\n    ToolApprovalAgentOptions = new ToolApprovalAgentOptions\n    {\n        AutoApprovalRules = [AgentSkillsProvider.ReadOnlyToolsAutoApprovalRule], // skill read tools only\n    },\n});\nAgentSession session = await agent.CreateSessionAsync();\nAgentResponse r = await agent.RunAsync(\"Refund order 42\", session);\n\nvar req = r.Messages.SelectMany(m => m.Contents)\n    .OfType<ToolApprovalRequestContent>().First();\nvar approve = new ChatMessage(ChatRole.User, [req.CreateResponse(true)]);\nawait agent.RunAsync(approve, session);   // same session" } ] },
+      { "label": "Python", "blocks": [ { "t": "code", "lang": "python", "code": "@tool(approval_mode='always_require')\ndef issue_refund(order_id: str) -> str:\n    return f'refunded {order_id}'\n\nagent = create_harness_agent(client=client, tools=issue_refund)\nsession = agent.create_session()          # required by approval middleware\nresult = await agent.run('Refund order 42', session=session)\n\nwhile result.user_input_requests:\n    replies = []\n    for req in result.user_input_requests:\n        ok = ask_human(req.function_call.name, req.function_call.arguments)\n        replies.append(Message(role='user',\n            contents=[req.to_function_approval_response(ok)]))\n    result = await agent.run(replies, session=session)" } ] }
+    ] }
+  ],
+  "whereToUse": [
+    "Payments, refunds and order changes in assistants that can act",
+    "Sending email, chat messages or tickets on a user's behalf",
+    "Running skill scripts: all three skill tools require approval by default in the Harness [[tr7]]",
+    "Production data changes from a coding or data agent",
+    "Tool use inside orchestrations, where approvals surface as request events"
+  ],
+  "whenToUse": {
+    "use": [
+      "The action is hard to undo, costs money or leaves your boundary",
+      "A person can answer within the run's time budget, or the run can pause and resume",
+      "You want an audit record of who approved which call and arguments"
+    ],
+    "avoid": [
+      "Every call is low risk: approval fatigue trains people to click yes",
+      "No approver exists at run time and no resume path: use narrower tools or a scoped identity instead",
+      "You rely on the model's own confirmation question: that is a prompt, not a control"
+    ],
+    "flips": [
+      "Users approve the same safe tool repeatedly: add a standing approval or a trusted `auto_approval_rules` entry for that tool",
+      "Approval must outlive a restart: persist the session, or use a workflow request port whose pending request is stored in the checkpoint"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Per-call approval", "Irreversible or external actions", "High-volume low-risk calls", "Friction, run pauses"],
+      ["Standing approval or auto rule", "Repeated safe calls", "Arguments vary in risk (a refund of 5 or of 5,000)", "Rule too broad lets risky calls through"],
+      ["Scoped credentials and narrow tools", "No human in the loop is possible", "You need judgment on content", "Design effort, still no human check"],
+      ["Workflow request port", "Approval must be durable and audited per step", "Quick interactive chat", "Graph design, checkpoint storage"],
+      ["Plan/execute mode confirmation", "Agreeing a plan before autonomous work", "Gating a specific tool call", "It is instruction-level, not a tool approval request [[tr8]]"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "The approval round trip never resumes, or the Harness raises a session error", "cause": "A new session was used for the answer, or none was passed", "fix": "Reuse the same `AgentSession` and persist it if the user may answer later" },
+    { "symptom": "Team set `disable_tool_auto_approval=True` and expects tools to run freely", "cause": "That flag removes only the harness middleware; the tool's approval requirement stays", "fix": "Change the tool's `approval_mode` (or drop `ApprovalRequiredAIFunction`) if it should not require approval" },
+    { "symptom": "A replayed approval authorises a different call", "cause": "Response binding was disabled (`disable_approval_response_binding=True`)", "fix": "Keep binding on unless your app enforces equivalent binding before messages reach the agent" }
+  ],
+  "scenarios": [
+    {
+      "id": "w11-t06-s1",
+      "title": "Internal assistant, many small writes",
+      "situation": "An internal ops assistant creates tickets, tags them and posts status updates. Ten users, one team. People complain about approving the same 'add tag' call 30 times a day.",
+      "constraints": ["Low volume, trusted users", "Reversible writes", "Audit needed but not per call"],
+      "unknowns": ["Which tools are truly reversible?", "Can the tag tool be abused with bad arguments?"],
+      "question": "How do you reduce friction without losing control?",
+      "options": [
+        { "name": "Standing approval (or an auto-approval rule) for the tag and ticket tools, per-call approval for status posts to channels", "verdict": "best", "why": "Reversible, bounded actions earn a standing yes. Messages that leave the team keep per-call approval.", "tradeoff": "A broad rule may approve a harmful argument later; review rule scope." },
+        { "name": "Approve every call", "verdict": "good", "why": "Maximum control.", "tradeoff": "Approval fatigue, and people start approving blindly." },
+        { "name": "Turn approval off for all tools", "verdict": "poor", "why": "Posts to channels cannot be undone.", "tradeoff": "Reasonable only when every tool is read-only or sandboxed." }
+      ],
+      "flips": [
+        { "if": "Users in other departments get access", "then": "Move to per-call approval for writes until rules are reviewed." },
+        { "if": "A tool starts accepting free-form arguments such as amounts", "then": "Drop the standing rule for it and approve each call, since argument risk varies." }
+      ],
+      "takeaway": "Match approval friction to reversibility, not to the tool count."
+    },
+    {
+      "id": "w11-t06-s2",
+      "title": "Payouts approved by a second person next day",
+      "situation": "An agent prepares refunds up to 5,000 per case. A manager approves, often the next morning. The process must survive deploys and produce an audit trail.",
+      "constraints": ["Approver is a different person, hours later", "Process restarts are normal", "Audit trail per approval"],
+      "unknowns": ["Where is state kept while waiting?", "Who may approve which amounts?"],
+      "question": "Where does the approval live?",
+      "options": [
+        { "name": "A workflow with a request port at the approval step, checkpointed to durable storage (or the Durable Extension)", "verdict": "best", "why": "Pending requests are saved in the checkpoint and re-emitted on restore, and a different person can answer later.", "tradeoff": "More design work than a tool flag, and checkpoint storage becomes a trust boundary." },
+        { "name": "An approval-required tool in a Harness Agent with the session saved to a database", "verdict": "good", "why": "Much less code and the session holds pending approvals.", "tradeoff": "You own session persistence, ownership checks and the approver identity." },
+        { "name": "A prompt asking the user to type approve", "verdict": "poor", "why": "Not bound to a pending request, and the requester can approve their own refund.", "tradeoff": "Only fine for demos." }
+      ],
+      "flips": [
+        { "if": "The approver answers within the same chat", "then": "A tool-level approval with the same session is enough." },
+        { "if": "Python checkpoint storage uses pickle and your threat model forbids it", "then": "Use in-memory storage or a custom `CheckpointStorage`, or run the workflow on the Durable Extension." }
+      ],
+      "takeaway": "Approval by someone else, later, belongs in durable workflow state."
+    }
+  ],
+  "quiz": [
+    { "id": "w11-t06-q1", "type": "single", "tag": "bug", "q": "A team sets `disable_tool_auto_approval=True` on a Harness Agent to 'turn approvals off', yet `issue_refund` (marked `always_require`) still pauses. Why?", "options": ["The flag only works in .NET", "The session is missing", "Approvals can never be disabled", "It removes the harness middleware (queueing, standing rules) but not the tool's own approval requirement"], "answer": 3, "explain": "Approval is a property of the tool. The flag removes the middleware only, so the normal `user_input_requests` flow still applies.", "ref": "tr6" },
+    { "id": "w11-t06-q2", "type": "order", "tag": "order", "q": "Order the approval round trip.", "items": ["Model requests an approval-required tool", "Run completes with an approval request instead of an answer", "Host shows the call name and arguments to a person", "Host sends the decision with the same session", "Tool executes or is rejected and the model continues"], "explain": "The run ends with a request, the person decides, and the next run with the same session binds the response to the pending request.", "ref": "tr6" }
+  ],
+  "flashcards": [
+    { "front": "What does response binding protect against?", "back": "A fabricated or replayed approval: by default a response counts only if it matches a pending request stored in the same `AgentSession`." },
+    { "front": "What do standing approvals do in the Harness?", "back": "After a person chooses 'always approve' for a tool, the middleware answers later identical requests without asking." },
+    { "front": "Is the plan-to-execute confirmation a tool approval?", "back": "No. It is instruction-level behaviour; the todo and mode tools do not require function approval." }
+  ],
+  "related": ["w11-t05", "w11-t07", "w11-t16", "w10-t22", "w17-t01"],
+  "refs": ["tr5", "tr6", "tr7", "tr8", "tr19"]
+}

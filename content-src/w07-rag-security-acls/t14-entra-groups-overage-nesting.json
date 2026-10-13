@@ -1,0 +1,117 @@
+{
+  "id": "w07-t14",
+  "order": 14,
+  "group": "Identity",
+  "title": "Entra groups: overage and nested groups",
+  "minutes": 8,
+  "difficulty": "advanced",
+  "summary": "A token lists at most 200 groups (JWT), so large users arrive without a groups list. Nested groups need transitive lookups. Both decide whether your ACL filter sees the user's real groups.",
+  "useIf": "Your ACLs or security filters refer to Microsoft Entra groups and some users belong to many or nested groups.",
+  "avoidIf": "Authorization is coarse and fits a few app roles. Roles avoid the overage problem.",
+  "explain": [
+    { "t": "p", "md": "A token carries at most **200 groups for a JWT, 150 for SAML and 6 for the implicit flow**. Above that the `groups` claim is replaced by an overage indicator [[r23]]. A filter built from a missing claim silently under-authorizes the user, and a careless fallback can over-authorize. Handle the claim explicitly." },
+    { "t": "diagram", "id": "w07-t14-d1", "title": "Resolve groups safely", "alt": "A validated token either lists groups, signals overage, or carries nothing. Overage triggers a paged Microsoft Graph transitive membership call whose result is cached with a TTL, and all paths build the filter. No groups means public documents only.", "src": "flowchart TD\n  T[Validated token] --> C{groups claim present?}\n  C -- yes --> U[Use listed groups]\n  C -- \"overage marker\" --> G[Graph transitiveMemberOf, paged]\n  C -- \"nothing\" --> N[No groups: public only]\n  G --> K[Cache with TTL]\n  U --> F[Build filter]\n  K --> F\n  N --> F" },
+    { "t": "p", "md": "**Detect overage** by the absence of `groups` plus `hasgroups` (implicit flow) or `_claim_names` containing `groups`. Then call Microsoft Graph for direct and transitive memberships with `transitiveMemberOf`. Trust the presence of the overage claim, not the `_claim_sources` endpoint, which may still point at the legacy AAD Graph [[r23]]. The call pages at 100 by default and 999 at most, and advanced queries (`$count`, `$search`, `$filter`) need `ConsistencyLevel: eventual`, which reads an index that might not reflect recent changes [[r24]]." },
+    { "t": "p", "md": "**Avoid overage** instead of handling it where you can: choose *Groups assigned to the application* instead of *All groups*, or define app roles and authorize on role claims [[r23]]. For native Azure AI Search ACLs the service expands security groups and Microsoft 365 Groups through Graph at query time, so nesting works without your code [[r12]]. Whatever you cache, the TTL is part of your revocation SLA, so state it." },
+    { "t": "callout", "kind": "gotcha", "title": "Fail closed", "md": "If the Graph call fails or is throttled, return public documents or an error. Never build an unfiltered query." }
+  ],
+  "whereToUse": [
+    "Security-filter designs where the filter is built from the caller's groups",
+    "Enterprise users who belong to hundreds of groups through nesting",
+    "Apps that start with the groups claim and later hit the overage limit",
+    "Choosing between groups and app roles for coarse access"
+  ],
+  "whenToUse": {
+    "use": ["Document ACLs name Entra groups", "Users can hold more than 200 groups", "Groups nest more than one level"],
+    "avoid": ["Treating the groups claim as complete without checking for overage", "Using an eventually consistent advanced query where fresh membership matters", "Falling back to an unfiltered query when Graph fails"],
+    "flips": ["Authorization is coarse: use app roles and skip group lookups", "The search service expands groups itself (native ACL, preview): drop your Graph code", "Revocation needs seconds: shorten or drop the membership cache and add a live check"]
+  },
+  "alternatives": {
+    "title": "Ways to get a user's groups",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["groups claim", "Fewer than 200 groups, shallow nesting", "Overage or nested groups", "Missing or truncated list"],
+      ["Graph transitiveMemberOf per request", "Overage, nesting, fresh membership", "Very high volume", "Latency, throttling, paging"],
+      ["Cached membership with TTL", "Repeated queries, Graph load", "TTL longer than the revocation target", "Stale grants up to the TTL"],
+      ["App roles", "Coarse authorization", "Per-document group ACLs", "Role design and assignment effort"],
+      ["Search service expands groups (native ACL)", "Preview acceptable, Entra identities", "GA needed", "Preview, no SLA"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Some users see no private documents", "cause": "More than 200 groups so the groups claim was absent and the code treated it as empty", "fix": "Detect the overage marker and call Graph transitiveMemberOf" },
+    { "symptom": "Users in nested groups miss documents", "cause": "Only direct memberships were read", "fix": "Use transitiveMemberOf, or let native ACL enforcement expand groups" },
+    { "symptom": "A removed member still sees documents for minutes", "cause": "A membership cache TTL or an eventually consistent advanced query", "fix": "Bound the TTL by the revocation target and avoid eventual-consistency queries for authorization" },
+    { "symptom": "Graph calls fail under load", "cause": "Throttling on repeated membership lookups", "fix": "Cache per user, page in bulk and fail closed on errors" }
+  ],
+  "scenarios": [
+    {
+      "id": "w07-t14-s1",
+      "title": "Large users, small set of ACL groups",
+      "situation": "Document ACLs reference about 30 groups. Users belong to 340 groups in total, so tokens arrive with an overage marker. Latency is tight and membership may be up to ten minutes stale.",
+      "constraints": ["340 groups per user", "About 30 ACL groups", "Ten-minute freshness"],
+      "unknowns": ["Can the app registration be changed?", "How many requests per second reach the API?"],
+      "question": "How do you get the right groups?",
+      "options": [
+        { "name": "Keep All groups and call Graph for every request", "verdict": "poor", "why": "It adds a paged Graph call to every query and risks throttling.", "tradeoff": "Reasonable for rare, high-risk queries." },
+        { "name": "Configure the token to include groups assigned to the application, mapping the ACL groups to it", "verdict": "best", "why": "It keeps the claim under the limit so no Graph call is needed [[r23]].", "tradeoff": "Needs group assignment hygiene, and you must still detect overage as a safeguard." },
+        { "name": "Detect overage, call transitiveMemberOf and cache the result for five minutes", "verdict": "good", "why": "Correct for all users and within the freshness target.", "tradeoff": "Graph load, paging at 100 to 999 and a cache to secure." }
+      ],
+      "flips": [
+        { "if": "The ACL groups are not assignable to the app", "then": "Use the Graph path with caching." },
+        { "if": "Freshness tightens to under a minute", "then": "Shorten the cache and measure Graph throttling." }
+      ],
+      "takeaway": "Avoid overage where you can, handle it where you cannot."
+    },
+    {
+      "id": "w07-t14-s2",
+      "title": "Five levels of nested groups",
+      "situation": "Document ACLs name top-level groups. Users sit in leaf groups nested up to five levels below. A removal must take effect within five minutes.",
+      "constraints": ["Deep nesting", "Five-minute freshness", "ACLs name parent groups"],
+      "unknowns": ["Can the search service expand groups?", "Is preview acceptable?"],
+      "question": "How do you expand membership?",
+      "options": [
+        { "name": "Read direct memberships only", "verdict": "poor", "why": "Users in leaf groups would miss documents that name parent groups.", "tradeoff": "Fine only for flat group structures." },
+        { "name": "transitiveMemberOf with a cache TTL under five minutes", "verdict": "best", "why": "It returns direct and transitive groups and fits the freshness target [[r24]].", "tradeoff": "Paged Graph calls and cache management." },
+        { "name": "Native ACL enforcement, where the search service expands groups through Graph", "verdict": "good", "why": "No expansion code, and failure is closed [[r12]].", "tradeoff": "Preview, and your sync still limits freshness." }
+      ],
+      "flips": [
+        { "if": "GA is required", "then": "Use transitiveMemberOf with a security filter." },
+        { "if": "Entra identities and preview are acceptable", "then": "Native ACLs remove the expansion code." }
+      ],
+      "takeaway": "Nested groups need transitive lookups."
+    },
+    {
+      "id": "w07-t14-s3",
+      "title": "Three coarse access levels",
+      "situation": "An assistant has three access levels: reader, analyst and admin. Document access depends only on the level. Users hold dozens of groups, and several hundred in some departments.",
+      "constraints": ["Three levels", "Coarse access", "Some users exceed 200 groups"],
+      "unknowns": ["Who assigns roles?", "Do per-document group ACLs exist anywhere?"],
+      "question": "What should the app authorize on?",
+      "options": [
+        { "name": "App roles in the token, authorize on role claims", "verdict": "best", "why": "Roles avoid group overage and the code reads three role names [[r23]].", "tradeoff": "Role assignment must be managed, and roles do not model per-document ACLs." },
+        { "name": "Group ids from the groups claim", "verdict": "poor", "why": "Large users hit overage and the code must handle it.", "tradeoff": "Right when ACLs are per document and name groups." },
+        { "name": "Graph lookups for every request", "verdict": "good", "why": "Always accurate.", "tradeoff": "Extra latency and throttling risk for a decision three roles could make." }
+      ],
+      "flips": [
+        { "if": "Per-document group ACLs appear", "then": "Add group resolution for those documents." },
+        { "if": "Roles multiply into dozens", "then": "Reconsider groups with a mapping layer." }
+      ],
+      "takeaway": "Use roles for coarse access."
+    }
+  ],
+  "quiz": [
+    { "id": "w07-t14-q1", "type": "match", "tag": "concept", "q": "Match each token type to its group limit before an overage indicator replaces the list.", "pairs": [
+      { "l": "JWT", "r": "200 groups" },
+      { "l": "SAML", "r": "150 groups" },
+      { "l": "Implicit flow", "r": "6 groups" }
+    ], "explain": "The thresholds are 200 for JWT, 150 for SAML and 6 for the implicit flow. Above them the groups claim is replaced by an overage indicator.", "ref": "r23" },
+    { "id": "w07-t14-q2", "type": "single", "tag": "diagnose", "q": "A token has no groups claim but contains _claim_names listing groups. What should the API do?", "options": ["Treat the user as having no groups and filter to public documents silently", "Call Microsoft Graph transitiveMemberOf for the user, then build the filter, failing closed if the call fails", "Use the endpoint in _claim_sources exactly as given", "Skip filtering to avoid blocking the user"], "answer": 1, "explain": "The overage claim means a Graph lookup is needed. A silent empty list under-authorizes, the _claim_sources endpoint may point to the legacy AAD Graph, and skipping filtering leaks.", "ref": "r23" }
+  ],
+  "flashcards": [
+    { "front": "What happens to the groups claim above the limit?", "back": "It is replaced by an overage indicator: hasgroups for the implicit flow, or _claim_names containing groups. Call Graph for memberships." },
+    { "front": "Which Graph call returns nested group memberships?", "back": "GET /users/{id}/transitiveMemberOf. Page size is 100 by default and 999 at most. Advanced queries need ConsistencyLevel: eventual and may be stale." },
+    { "front": "How can you avoid group overage?", "back": "Choose Groups assigned to the application instead of All groups, or define app roles and authorize on role claims." }
+  ],
+  "related": ["w07-t13", "w07-t08", "w07-t11", "w07-t15", "w07-l2"],
+  "refs": ["r12", "r23", "r24"]
+}

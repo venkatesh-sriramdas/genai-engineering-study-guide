@@ -1,0 +1,110 @@
+{
+  "id": "w12-t06",
+  "order": 6,
+  "group": "Foundry Agent Service",
+  "title": "Versions, scaling, networking and identity of hosted agents",
+  "minutes": 8,
+  "difficulty": "advanced",
+  "summary": "Hosted agent versions are immutable snapshots served one at a time. Scale is per session with billing on allocated CPU and memory, networking supports bring-your-own VNet, and every agent gets its own Entra identity.",
+  "useIf": "You are sizing, releasing, isolating or authorizing a hosted agent in production.",
+  "avoidIf": "You are still choosing between agent types: read the overview and runtime matrix first.",
+  "explain": [
+    { "t": "p", "md": "**Versions.** Each create-version call produces an immutable snapshot of the image, resources, environment variables and protocol configuration. An endpoint serves **one version** and sends 100 percent of traffic to it. **Traffic splitting is not supported** [[r2]]. A rollback is a change of the active version: in the portal you pick \"Always use latest\" or a specific version, and over REST you patch `agent_endpoint.version_selector` with an `agent_version` (the documented example uses a `FixedRatio` rule at `traffic_percentage` 100) [[r5]]. Whether the selector accepts ratios below 100 for other agent types is UNVERIFIED. For a canary on a hosted agent you need routing outside the platform, for example two agent names behind your own gateway (inference)." },
+    { "t": "p", "md": "**Scaling.** Scale is per session: no replica count and no warm pool. Billing is CPU plus memory across active sessions, so an oversized tier multiplies cost by concurrency. The docs advise moving to the next size when sustained peaks pass about 70 percent of allocation. Numeric rates are UNVERIFIED here because the docs only link to the pricing page [[r2]]." },
+    { "t": "formula", "title": "Allocated compute at peak", "expr": "allocated vCPU = concurrent active sessions x vCPU per session", "vars": [
+      { "k": "concurrent active sessions", "v": "Sessions in the Active state at the same time" },
+      { "k": "vCPU per session", "v": "0.5, 1 or 2 depending on the tier" }
+    ], "example": "200 active sessions at 2 vCPU allocate 400 vCPU. At 1 vCPU they allocate 200 vCPU, half the compute, if sustained usage stays below the 70 percent trigger." },
+    { "t": "p", "md": "**Networking.** Prompt agents support private networking. Hosted agents support bring-your-own VNet, with each session in a VM-isolated sandbox connected to your VNet [[r1]]. A private Azure Container Registry works only for projects created after 2026-06-25, and portal publishing is not supported when public network access is disabled [[r2]] [[r5]]. Network egress controls for hosted agents are preview and live in the same guardrail [[r8]]." },
+    { "t": "p", "md": "**Identity.** Each agent gets a dedicated Entra agent identity at deploy, used for model inference, tool access and downstream services. A separate project managed identity does infrastructure work such as pulling from the registry [[r2]]. The agent identity can call inference and session storage by default. Anything else needs manual RBAC [[r2]]." },
+    { "t": "diagram", "id": "w12-t06-d1", "title": "Two identities, two jobs", "alt": "The agent identity reaches models and session storage by default and other resources only with added RBAC. The project managed identity pulls the image from the registry.", "src": "flowchart LR\n  AI[Agent identity] --> MI[Model inference]\n  AI --> SS[Session storage]\n  AI -. RBAC added .-> OT[Your storage or APIs]\n  PM[Project managed identity] --> ACR[Container Registry pull]" }
+  ],
+  "whereToUse": [
+    "Release planning: deciding how to ship a risky change when one version takes all traffic",
+    "Capacity reviews that compare tier choices against sustained peak usage",
+    "Landing-zone design for projects with private networking and a private registry",
+    "Granting an agent least-privilege access to storage, databases and APIs"
+  ],
+  "whenToUse": {
+    "use": [
+      "Pin each release to an immutable version so you can reason about what is running",
+      "Start at the smallest tier that holds your peak and step up on measured saturation",
+      "Give the agent identity only the roles it needs on named resources"
+    ],
+    "avoid": [
+      "Do not plan a weighted rollout on one endpoint: it is not supported",
+      "Do not use the project managed identity as the agent's runtime identity: it is for platform infrastructure",
+      "Do not use an old project for private-registry designs: it must be created after 2026-06-25"
+    ],
+    "flips": [
+      "Need a gradual rollout: add routing in your gateway or client across two agents",
+      "Public network access must be off: publish through the REST API rather than the portal",
+      "Sustained peaks pass about 70 percent of allocation: ship a new version on the next tier"
+    ]
+  },
+  "alternatives": {
+    "title": "Release and sizing choices",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Swap the single served version", "Change is low risk, fast rollback matters", "You want to test on a slice of users", "All traffic moves at once"],
+      ["Two agents with external routing (inference)", "You need a canary or A/B split", "You want zero extra moving parts", "Two identities, endpoints and RBAC sets to manage"],
+      ["Smallest tier, step up on saturation", "Cost control, bursty concurrency", "Memory-heavy tools OOM at the small tier", "Resume or restart pain if undersized"],
+      ["Largest tier by default", "Rare, heavy single-user agents", "High concurrency", "Cost multiplies with active sessions [[r2]]"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "401 or 403 from a downstream service even though RBAC looks right", "cause": "Token audience is the MCP server URL instead of the downstream resource ID (for example `https://storage.azure.com`)", "fix": "Request the token for the resource ID audience and re-test [[r4]]." },
+    { "symptom": "Agent cannot read your storage account", "cause": "Only inference and session storage are allowed by default", "fix": "Assign roles to the agent identity on that resource [[r2]]." },
+    { "symptom": "Private registry setup fails in an existing project", "cause": "Private Container Registry works only for projects created after 2026-06-25", "fix": "Create a new project, or keep the public registry path until you can migrate [[r2]]." }
+  ],
+  "scenarios": [
+    {
+      "id": "w12-t06-s1",
+      "title": "Ten percent canary",
+      "situation": "A new version changes the tool-calling logic and the team wants it to see ten percent of traffic first.",
+      "constraints": ["Endpoint serves one version", "Rollback must be quick", "Two teams own the gateway and the agent"],
+      "unknowns": ["Is there a gateway in front of the agent?", "Can sessions be pinned per user?"],
+      "question": "How do you roll it out?",
+      "options": [
+        { "name": "Deploy a second agent and route ten percent in your gateway or client", "verdict": "best", "why": "The platform does not split traffic, so the split must sit in front of two endpoints (inference).", "tradeoff": "Two identities and RBAC sets to keep in sync, and routing logic to maintain." },
+        { "name": "Swap the served version and watch metrics", "verdict": "good", "why": "Quick and rollback is serving the earlier immutable version.", "tradeoff": "All traffic sees the change at once." },
+        { "name": "Configure a 90/10 weight on the endpoint", "verdict": "poor", "why": "Traffic splitting is not supported on a hosted agent endpoint.", "tradeoff": "It would be right on a platform that offers weighted routing." }
+      ],
+      "flips": [
+        { "if": "The change is a low-risk prompt tweak", "then": "Swap the version and keep the old one for rollback." },
+        { "if": "Users must stay on one version per session", "then": "Pin the route per user in the gateway." }
+      ],
+      "takeaway": "One endpoint serves one version, so build canaries outside it."
+    },
+    {
+      "id": "w12-t06-s2",
+      "title": "Locked-down network",
+      "situation": "A regulated team needs a hosted agent in a project with public network access disabled, a private registry and Teams publishing.",
+      "constraints": ["No public network access", "Private Container Registry", "Teams publishing required"],
+      "unknowns": ["When was the project created?", "Is a public Microsoft 365 endpoint acceptable?"],
+      "question": "What do you set up?",
+      "options": [
+        { "name": "New project, bring-your-own VNet, private registry, REST publish with `enable_m365_public_endpoint`", "verdict": "best", "why": "A private registry needs a project created after 2026-06-25, and portal publishing is unsupported without public access, so the REST route is the documented path.", "tradeoff": "Heavier setup and an explicit public Microsoft 365 endpoint decision." },
+        { "name": "Re-enable public access and use the portal", "verdict": "good", "why": "Works with the least effort.", "tradeoff": "Breaks the stated network policy." },
+        { "name": "Reuse an older project and add a private registry", "verdict": "poor", "why": "The private registry works only for projects created after 2026-06-25.", "tradeoff": "Right only if the project already meets the date." }
+      ],
+      "flips": [
+        { "if": "The project already postdates 2026-06-25", "then": "Reuse it and skip the new project." },
+        { "if": "Policy allows public access for the publish step", "then": "Portal publishing becomes possible." }
+      ],
+      "takeaway": "Check the project creation date and the publish path before promising private networking."
+    }
+  ],
+  "quiz": [
+    { "id": "w12-t06-q1", "type": "multi", "tag": "concept", "q": "Which statements about hosted agent versions are supported by the docs?", "options": ["Each create-version call makes an immutable snapshot", "An endpoint serves one version and sends it 100 percent of traffic", "You can split traffic 90/10 between two versions", "A snapshot includes image, resources, environment variables and protocol config"], "answers": [0, 1, 3], "explain": "Versions are immutable snapshots of image, resources, environment and protocol config, and an endpoint serves one version. Traffic splitting is not supported.", "ref": "r2" },
+    { "id": "w12-t06-q2", "type": "numeric", "tag": "numeric", "q": "A version is allocated 2 vCPU and sustained peak usage is 1.5 vCPU. What percent of allocation is that? (The docs suggest stepping up above about 70 percent.)", "answer": 75, "tolerancePct": 2, "unit": "%", "hint": "1.5 divided by 2", "explain": "1.5 / 2 = 75 percent, which is above the 70 percent trigger, so ship a new version on the next tier.", "ref": "r2" },
+    { "id": "w12-t06-q3", "type": "single", "tag": "security", "q": "Calls to a storage account fail with the right RBAC role but a token whose audience is the MCP server URL. What fixes it?", "options": ["Request the token for the downstream resource ID audience", "Assign Owner to the project", "Switch to the project managed identity", "Increase the idle timeout"], "answer": 0, "explain": "The audience must be the resource ID, such as `https://storage.azure.com`. A mismatch fails even with correct RBAC. More roles, a different identity or timeouts do not change the audience.", "ref": "r4" }
+  ],
+  "flashcards": [
+    { "front": "What identities does a hosted agent involve?", "back": "A dedicated Entra agent identity per agent (runtime) and a project managed identity (platform work such as registry pulls). Agent identity gets inference and session storage by default." },
+    { "front": "Can a hosted agent endpoint split traffic between versions?", "back": "No. An endpoint serves one immutable version at 100 percent of traffic. Build canaries outside the endpoint." },
+    { "front": "Cutoff date for private Container Registry on hosted agents?", "back": "Only projects created after 2026-06-25 support a private registry." }
+  ],
+  "related": ["w12-t03", "w12-t05", "w12-t13", "w12-t15", "w12-t16", "w16-t11"],
+  "refs": ["r1", "r2", "r4", "r5", "r8"]
+}

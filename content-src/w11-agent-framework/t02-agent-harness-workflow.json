@@ -1,0 +1,135 @@
+{
+  "id": "w11-t02",
+  "order": 2,
+  "group": "Foundations",
+  "title": "Agent vs Harness Agent vs Workflow",
+  "minutes": 9,
+  "difficulty": "core",
+  "summary": "A plain agent is one model loop with tools. A Harness Agent is the same agent pre-wired for long multi-step work. A workflow is an explicit graph where you, not the model, decide the path.",
+  "useIf": "You are choosing the unit of control: model-decided path (agent or Harness) or developer-decided path (workflow).",
+  "avoidIf": "A plain function can do the task. The docs say that if you can write a function, do that instead of using an agent.",
+  "explain": [
+    { "t": "p", "md": "**Plain agent.** A chat client plus instructions, tools and a session. The model decides which tools to call and when to stop. Use it when the task is open-ended or one LLM call with tools is enough [[tr1]]." },
+    { "t": "p", "md": "**Harness Agent.** Not a new runtime. `HarnessAgent` derives from `AIAgent` (.NET, `chatClient.AsHarnessAgent()`) and Python `create_harness_agent()` returns an ordinary `Agent`. It composes existing parts: function invocation with an iteration limit, per-service-call history persistence, todo tracking, plan and execute modes, session file memory, standing tool approvals, OpenTelemetry and web search where the client supports it [[tr2]]. Compaction turns on only when you give token limits or a strategy. Shared file access, background agents, shell execution and looping are opt-in." },
+    { "t": "p", "md": "**Workflow.** A graph of executors (agents or functions) and edges. Execution runs in supersteps with checkpoints, so order, fan-out, human gates and recovery are explicit [[tr14]]. Use it when steps are well defined or several agents must coordinate." },
+    { "t": "p", "md": "**They compose.** An agent can be a workflow executor, a workflow can be exposed as an agent (`workflow.as_agent()`), and a Harness Agent is an agent, so it can sit anywhere an agent can [[tr20]]. What stays your job with the Harness: session storage, telemetry exporters and the approval UX [[tr2]]." },
+    { "t": "table", "caption": "What each unit adds (checked 2026-10-13)", "head": ["Capability", "Plain agent", "Harness Agent", "Workflow"], "rows": [
+      ["Who picks the next step", "Model", "Model, steered by plan/execute modes and todos", "Your graph (edges and conditions)"],
+      ["Run length", "Short to medium", "Long, with compaction and todos", "Any, resumable from checkpoints"],
+      ["Human gates", "Per-tool approval you code", "Queued approvals and standing rules", "Request and response with pending state in checkpoints"],
+      ["Recovery", "Your session store", "Session holds todos, mode, approvals", "Checkpoint per superstep"]
+    ] },
+    { "t": "dials", "id": "w11-t02-pick", "title": "Pick the unit of control", "prompt": "Flip the constraints. The ranking and the reasons update.",
+      "dials": [
+        { "id": "path", "label": "Path", "values": [ { "id": "open", "label": "Open-ended" }, { "id": "fixed", "label": "Known steps" } ] },
+        { "id": "len", "label": "Run length", "values": [ { "id": "short", "label": "Minutes, few tool calls" }, { "id": "long", "label": "Hours, many tool calls" } ] },
+        { "id": "gate", "label": "Approval and audit", "values": [ { "id": "none", "label": "None" }, { "id": "strict", "label": "Per step, resumable" } ] }
+      ],
+      "options": [
+        { "id": "fn", "name": "Plain function", "summary": "No model in the control path." },
+        { "id": "agent", "name": "Plain agent", "summary": "One loop with tools." },
+        { "id": "harness", "name": "Harness Agent", "summary": "Agent plus todos, modes, compaction, approvals." },
+        { "id": "wf", "name": "Workflow", "summary": "Graph with checkpoints." }
+      ],
+      "scores": {
+        "fn": { "path": { "open": { "s": -2, "why": "A function cannot plan an open-ended task." }, "fixed": { "s": 2, "why": "Known steps are code. No tokens, no variance." } }, "len": { "short": { "s": 1, "why": "Fast and cheap." }, "long": { "s": 0, "why": "Fine, but you own state and retries." } }, "gate": { "none": { "s": 1, "why": "Nothing to gate." }, "strict": { "s": -1, "why": "You would build approvals yourself." } } },
+        "agent": { "path": { "open": { "s": 2, "why": "The model chooses tools and stopping point." }, "fixed": { "s": -1, "why": "Variance where a fixed order was enough." } }, "len": { "short": { "s": 2, "why": "Little scaffolding is needed." }, "long": { "s": -1, "why": "No compaction, todos or per-call persistence unless you add them." } }, "gate": { "none": { "s": 1, "why": "Simple." }, "strict": { "s": 0, "why": "Per-tool approval works, but queueing and standing rules are yours." } } },
+        "harness": { "path": { "open": { "s": 2, "why": "Plan and execute modes steer an open task." }, "fixed": { "s": -1, "why": "The model still picks the path." } }, "len": { "short": { "s": -1, "why": "More defaults than the task needs." }, "long": { "s": 2, "why": "Todos, compaction and per-call history persistence fit long runs." } }, "gate": { "none": { "s": 0, "why": "Approvals are on but cost nothing if unused." }, "strict": { "s": 1, "why": "Queued requests and standing approvals. Needs the same session each round trip." } } },
+        "wf": { "path": { "open": { "s": -1, "why": "Graphs encode known paths. Open tasks need an agent node." }, "fixed": { "s": 2, "why": "Explicit order, conditions and fan-out." } }, "len": { "short": { "s": 0, "why": "Works, with more setup." }, "long": { "s": 2, "why": "Checkpoint each superstep and resume." } }, "gate": { "none": { "s": 0, "why": "Not a differentiator." }, "strict": { "s": 2, "why": "Pending requests persist in checkpoints and re-emit on restore." } } }
+      },
+      "takeaway": "Open path and long run: Harness. Known path or hard gates: workflow. Known and trivial: function."
+    },
+    { "t": "tabs", "tabs": [
+      { "label": "C#", "blocks": [ { "t": "code", "lang": "csharp", "code": "AIAgent plain = chatClient.AsAIAgent(instructions: \"You are a researcher.\");\n\nAIAgent harness = chatClient.AsHarnessAgent(new HarnessAgentOptions\n{\n    Name = \"research-agent\",\n    MaxContextWindowTokens = 128_000,\n    MaxOutputTokens = 16_384,   // both set: compaction on\n});\n\nAgentSession session = await harness.CreateSessionAsync();\nawait harness.RunAsync(\"Plan the migration.\", session);" } ] },
+      { "label": "Python", "blocks": [ { "t": "code", "lang": "python", "code": "from agent_framework import Agent, create_harness_agent\n\nplain = Agent(client=client, instructions='You are a researcher.')\n\nharness = create_harness_agent(\n    client=client,\n    name='research-agent',\n    max_context_window_tokens=128_000,\n    max_output_tokens=16_384,   # both set: compaction on\n)\nsession = harness.create_session()   # approvals need a session\nawait harness.run('Plan the migration.', session=session)" } ] }
+    ] }
+  ],
+  "whereToUse": [
+    "Plain agent: a support bot with three tools, an FAQ answerer, a classifier with one lookup",
+    "Harness Agent: research, coding, data analysis and other long-running work where the model keeps a plan and a todo list",
+    "Workflow: ETL-like pipelines with branches, regulated approvals, multi-agent hand-offs that must be auditable",
+    "Workflow containing agents: deterministic skeleton with model judgment at chosen nodes"
+  ],
+  "whenToUse": {
+    "use": [
+      "Choose a plain agent when one loop with a few tools solves the task and runs finish in minutes",
+      "Choose the Harness when the run is long enough to need compaction, todos, plan/execute modes and standing approvals",
+      "Choose a workflow when order, parallelism, human gates or recovery must be explicit and testable"
+    ],
+    "avoid": [
+      "Do not use an agent where a function works: it adds variance, cost and latency",
+      "Do not use the Harness for a short single-tool task: defaults such as file memory and todo tools add prompt weight",
+      "Do not use a workflow for a task whose steps you cannot list in advance"
+    ],
+    "flips": [
+      "A compliance rule demands a fixed review order: move the control flow from the Harness into a workflow and keep agents as nodes",
+      "Runs exceed the context window: move from plain agent to Harness (or add a compaction strategy)",
+      "Approvals must survive a restart: a Harness session store may suffice, but a workflow checkpoint stores pending requests natively"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Plain function", "Steps are known and cheap", "Input is unstructured and open-ended", "None beyond maintenance"],
+      ["Plain agent", "Short tool-using tasks", "Runs are long or must pause for people", "You hand-build compaction, todos, per-call history"],
+      ["Harness Agent", "Long open-ended work", "Short tasks or strict step order", "Extra defaults, experimental pieces (looping, background agents, file access)"],
+      ["Workflow", "Explicit order, gates, recovery", "Path is unknown in advance", "More design effort, graph rebuild must keep executor ids stable"],
+      ["Orchestration builder", "A standard multi-agent pattern fits", "You need custom edges and state", "Less control than a hand-built graph"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Harness approvals never resume or ask again", "cause": "The default `ToolApprovalMiddleware` needs the same `AgentSession` across approval round trips", "fix": "Create one session per conversation, pass it every run, persist it with `to_dict()` or `SerializeSessionAsync` [[tr2]] [[tr10]]" },
+    { "symptom": "Team calls the Harness \"another runtime\" and plans separate hosting", "cause": "It is a normal agent with pre-wired providers and middleware", "fix": "Host it like any agent; you still own session storage, exporters and the approval UI [[tr2]]" },
+    { "symptom": "Workflow that wraps an agent returns only the last answer", "cause": "Orchestration terminal output became an `AgentResponse` in Python 1.2.2 (2026-04-29)", "fix": "Read `intermediate` events or `intermediate_output_from` for earlier steps [[tr49]]" }
+  ],
+  "scenarios": [
+    {
+      "id": "w11-t02-s1",
+      "title": "Overnight data research task",
+      "situation": "An analyst assistant runs 2 to 4 hours per request: it reads many files, queries tools and writes a report. A person reviews the plan before it starts. Cost per run is acceptable.",
+      "constraints": ["Open-ended path", "Long run, hundreds of tool calls", "Plan review by a person, then autonomous execution"],
+      "unknowns": ["Must the run survive a process restart?", "Which tools change data and need approval?", "How large is the context window versus the data read?"],
+      "question": "Which unit do you start from?",
+      "options": [
+        { "name": "Harness Agent in plan mode, then execute mode, with compaction limits set", "verdict": "best", "why": "Plan and execute modes model the human review, todos track progress, compaction and per-call persistence handle the long tool loop.", "tradeoff": "Looping and background agents are experimental, and you own the session store and the approval UI." },
+        { "name": "Plain agent with tools", "verdict": "good", "why": "Simple to build and fine if runs stay short.", "tradeoff": "At hundreds of tool calls you must add compaction, todo state and per-call persistence yourself." },
+        { "name": "Workflow with one node per research step", "verdict": "poor", "why": "The number and order of steps are unknown, so the graph would be guesswork.", "tradeoff": "Right when the research steps are a fixed pipeline, such as fetch, extract, summarise." }
+      ],
+      "flips": [
+        { "if": "The report must be produced by a fixed sequence of reviewers", "then": "Wrap the Harness as one node inside a workflow that fixes the review order." },
+        { "if": "Runs are under 10 minutes with 3 tools", "then": "A plain agent is enough." }
+      ],
+      "takeaway": "Open path plus long run points to the Harness; the graph comes when you can name the steps."
+    },
+    {
+      "id": "w11-t02-s2",
+      "title": "Refund pipeline with audit",
+      "situation": "A refund process has intake, policy check, fraud score, manager approval and payout. Auditors want the order proven and the approval step to wait days.",
+      "constraints": ["Fixed step order", "Approval may take days", "Per-step audit trail"],
+      "unknowns": ["Which steps need an LLM at all?", "Where do pending approvals live while waiting?", "Is the host Azure Functions or containers?"],
+      "question": "What do you build?",
+      "options": [
+        { "name": "Workflow with function executors for rules and agent executors for judgment, a request port for manager approval, checkpoints in durable storage", "verdict": "best", "why": "Order is explicit, pending approval is stored in the checkpoint and re-emitted on resume, and each step is auditable.", "tradeoff": "More design effort and you must keep executor ids stable when rebuilding the graph." },
+        { "name": "Harness Agent with an approval-required payout tool", "verdict": "poor", "why": "The model chooses the order, so you cannot prove the sequence, and the approval lives in session state.", "tradeoff": "Fits when the process is advisory, reversible and order does not matter." },
+        { "name": "Plain agent with a prompt that lists the steps", "verdict": "poor", "why": "Prompt order is a request, not a guarantee.", "tradeoff": "Acceptable only for low-risk, reversible tasks." }
+      ],
+      "flips": [
+        { "if": "Approval waits days and you want zero idle compute", "then": "Run the workflow on the Durable Extension." },
+        { "if": "Only the fraud explanation needs an LLM", "then": "Keep the pipeline as code and call one agent." }
+      ],
+      "takeaway": "When order and gates must be provable, make them edges and requests, not prompts."
+    }
+  ],
+  "quiz": [
+    { "id": "w11-t02-q1", "type": "single", "tag": "concept", "q": "What is the Harness Agent?", "options": ["A separate runtime that replaces the agent loop", "A workflow template with fixed steps", "A normal agent (an `AIAgent` or `Agent`) with a pre-wired set of providers and middleware", "A hosting service for agents"], "answer": 2, "explain": "The docs state it derives from `AIAgent` in .NET and `create_harness_agent` returns an `Agent` in Python. It is not a runtime, a workflow or a host.", "ref": "tr2" },
+    { "id": "w11-t02-q2", "type": "multi", "tag": "flip", "q": "Which changes push the choice from a plain agent toward a workflow? Select all.", "options": ["Approval must wait days and survive restarts", "The path is unknown in advance", "A regulator requires a provable step order", "The task is a quick lookup"], "answers": [0, 2], "explain": "Durable pending requests and a provable order are workflow strengths. An unknown path and quick lookups favour an agent.", "ref": "tr14" }
+  ],
+  "flashcards": [
+    { "front": "Which Harness defaults are on, and which are opt-in?", "back": "On: function invocation limit, per-call history persistence, todos, plan/execute modes, file memory, standing approvals, OpenTelemetry. Opt-in: shared file access, background agents, shell, looping. Compaction needs token limits." },
+    { "front": "Agent or workflow: who decides the next step?", "back": "Agent: the model. Workflow: your graph. The docs add that if a function can do it, use the function." },
+    { "front": "How do agents and workflows compose?", "back": "Agents are executors in graphs, and `workflow.as_agent()` or `AsAIAgent` exposes a workflow as an agent." }
+  ],
+  "related": ["w11-t01", "w11-t14", "w11-t23", "w10-t01", "w10-t11"],
+  "refs": ["tr1", "tr2", "tr10", "tr14", "tr20", "tr49"]
+}

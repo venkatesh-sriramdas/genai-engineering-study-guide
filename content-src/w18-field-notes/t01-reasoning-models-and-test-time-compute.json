@@ -1,0 +1,126 @@
+{
+  "id": "w18-t01",
+  "order": 1,
+  "group": "Models",
+  "title": "Reasoning models and test-time compute",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "A reasoning model spends extra hidden tokens thinking before it answers, and a per-request effort setting decides how many. More thinking costs time and money and only helps when the task is hard enough to use it.",
+  "useIf": "The task needs multi-step planning, debugging or analysis and you can measure whether more thinking improves the result.",
+  "avoidIf": "The task is lookup, classification, extraction or voice, where latency and output-token cost matter more than depth.",
+  "explain": [
+    { "t": "p", "md": "A **reasoning model** produces hidden reasoning tokens before the visible answer. Those tokens are billed as output tokens and count against the output cap. **Test-time compute** is the general idea: spend more computation per answer instead of only at training time. Snell et al. (2024-08) found that allocating test-time compute by prompt difficulty improved efficiency by more than 4x over best-of-N, and that a smaller model with non-trivial success on a problem could beat a 14x larger one in a FLOPs-matched comparison [[r6]]. The s1 paper (2025-01) shows **budget forcing**: cut thinking short, or append `Wait` to extend it. Extending raised AIME24 from 50% to 57% [[r7]]. The lesson is that returns depend on difficulty. Easy prompts gain little." },
+    { "t": "table", "caption": "Controls by vendor, checked 2026-10-13. Values and defaults are per model, so read the model page.", "compact": true, "head": ["Vendor", "Control", "Values and a default", "Trap"], "rows": [
+      ["OpenAI", "`reasoning.effort`; `reasoning.mode` on GPT-5.6 and GPT-6", "none, minimal, low, medium, high, xhigh, max by model. `gpt-5.5` defaults to medium. Mode is `standard` or `pro`.", "GPT-6 Astra rejects `none` with HTTP 400. GPT-6.1 Sol rejects `none` and `minimal` [[r1]]"],
+      ["Azure OpenAI", "`max_completion_tokens`, `reasoning_effort`", "Same values as the hosted model", "Function tools with `reasoning_effort` are unsupported for `gpt-5.6-sol` on `/v1/chat/completions`. Use `/v1/responses` or set `none` [[r2]]"],
+      ["Claude", "`output_config.effort`", "low, medium, high, xhigh, max. Default high on most models, medium on Claude Opus 5.5 and Haiku 5.5", "Manual `budget_tokens` returns HTTP 400 on Claude 4.7 and later [[r3]] [[r4]]"],
+      ["Gemini", "`thinking_level`", "`gemini-3.8-flash` is on at medium; `gemini-3.1-pro-preview` is on at high", "Summaries are opt-in through `thinking_summaries` [[r5]]"]
+    ] },
+    { "t": "formula", "title": "Output headroom", "expr": "max_output_tokens >= reasoning_tokens + visible_answer_tokens", "vars": [{ "k": "max_output_tokens", "v": "the cap, shared by hidden reasoning and the visible answer" }], "example": "OpenAI advises reserving at least **25,000** tokens for reasoning plus output when you start. Hitting the cap gives `status: incomplete`, which can happen before any visible text [[r1]]." },
+    { "t": "p", "md": "Treat effort as a **cost and latency dial**, not only a quality dial. Start at the vendor default, raise it only when an eval shows a gain, and lower it for voice, classification and retrieval. OpenAI advises giving reasoning models a clear goal, constraints and an output contract instead of scripting every intermediate step [[r1]]. In tool loops on the Responses API, pass reasoning items back with function outputs. In stateless mode (`store` false or ZDR) they carry `encrypted_content` by default [[r1]]." }
+  ],
+  "whereToUse": [
+    "Multi-step coding, debugging and migration work where tests can confirm the result",
+    "Planning steps inside an agent, where a wrong plan wastes many later calls",
+    "Escalation paths: a cheap first pass, then a high-effort retry only for failures"
+  ],
+  "whenToUse": {
+    "use": [
+      "The task is hard enough that a standard model fails the eval",
+      "Quality gains from effort are measured, not assumed",
+      "A background or batch path tolerates the extra latency"
+    ],
+    "avoid": [
+      "Interactive or voice paths with a tight time-to-first-token budget",
+      "Routine lookups, classification and extraction that a standard model already gets right",
+      "You have no eval, so you cannot tell if effort helped"
+    ],
+    "flips": [
+      "Latency budget moves from a few hundred milliseconds to minutes: reasoning becomes affordable",
+      "A verifier appears (tests, a checker): escalate effort only on failures instead of paying everywhere",
+      "You swap models: re-check supported effort values and defaults, because some reject `none` or `budget_tokens`"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Reasoning model at default effort", "Hard multi-step tasks with an eval", "Latency-critical paths", "Hidden tokens billed as output"],
+      ["Standard model, no reasoning", "Lookups, extraction, chat, voice", "Planning and debugging that the model gets wrong", "Quality ceiling on hard tasks"],
+      ["Higher effort or pro mode", "Evals show a gain at the next level", "Gain is flat or the task is easy", "Latency and cost rise, and a cap can truncate"],
+      ["Best-of-N sampling or a verifier loop", "A cheap checker exists", "No checker, or N calls blow the budget", "N times the calls, still needs a judge"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Response is `incomplete` with no visible answer", "cause": "The output cap was spent on reasoning tokens", "fix": "Reserve at least 25,000 tokens when starting, tune from measured reasoning tokens and alert on `incomplete` with reason `max_output_tokens`." },
+    { "symptom": "HTTP 400 after swapping the model", "cause": "The new model rejects an effort value (`none`) or manual `budget_tokens`", "fix": "Keep a per-model capability table and a contract test that sends your real settings to each candidate model." }
+  ],
+  "scenarios": [
+    {
+      "id": "w18-t01-s1",
+      "title": "Voice assistant, routine intents",
+      "situation": "A voice assistant answers account and policy lookups. Users notice any pause. Almost every request is a routine intent, and a few are ambiguous.",
+      "constraints": ["Time to first audio must stay under about a second", "Tasks are routine lookups with known answers", "Volume is high and cost per call matters"],
+      "unknowns": ["What share of requests fail on a standard model?", "Is there a cheaper path to handle the ambiguous few?"],
+      "question": "How do you configure thinking?",
+      "options": [
+        { "name": "Reasoning model at default effort for everything", "verdict": "poor", "why": "Every call pays hidden tokens and delay for tasks a standard model already solves.", "tradeoff": "Right for a background analysis path where latency is relaxed and failures are costly." },
+        { "name": "Standard model or the lowest supported effort", "verdict": "best", "why": "The tasks are routine, so extra thinking adds latency and output cost without a measurable gain.", "tradeoff": "Hard ambiguous requests may fail. Route those to a slower path." },
+        { "name": "High effort only when a classifier flags ambiguity", "verdict": "good", "why": "Matches effort to difficulty and protects the fast path.", "tradeoff": "Adds a classifier and an extra latency path to build and evaluate." }
+      ],
+      "flips": [
+        { "if": "The assistant becomes a chat helper with a 30-second budget", "then": "A reasoning model at default effort becomes reasonable if evals show gains." },
+        { "if": "The chosen model rejects `none`", "then": "Use its lowest supported effort or a non-reasoning model, and add a contract test." }
+      ],
+      "takeaway": "Latency-bound routine work should not pay for hidden thinking."
+    },
+    {
+      "id": "w18-t01-s2",
+      "title": "Overnight migration with tests",
+      "situation": "A batch job rewrites thousands of code files to a new library. Each file has unit tests. The job runs overnight and spend is reviewed weekly.",
+      "constraints": ["Outcomes are verifiable by tests", "Latency is relaxed", "Budget is limited but failures are expensive to fix by hand"],
+      "unknowns": ["What is the pass rate at default effort?", "How many failures pass at the next effort level?"],
+      "question": "How do you spend thinking?",
+      "options": [
+        { "name": "Max effort on every file", "verdict": "good", "why": "Simple and gives the best chance per file.", "tradeoff": "Pays top price on the many files that default effort already passes." },
+        { "name": "Low effort plus a long scripted step-by-step prompt", "verdict": "poor", "why": "OpenAI advises goals, constraints and an output contract for reasoning models, and scripted steps replace measured effort with guesswork.", "tradeoff": "Scripted steps can suit a standard model that has no reasoning control." },
+        { "name": "Default effort first, retry failures at higher effort", "verdict": "best", "why": "Tests act as a verifier, so you pay for extra thinking only on the files that need it.", "tradeoff": "Needs retry logic and a cap on attempts per file." }
+      ],
+      "flips": [
+        { "if": "No tests exist", "then": "You cannot escalate on failure. Run an eval sample first to pick one fixed effort." },
+        { "if": "Failures at default effort are rare", "then": "Keep default effort and skip the retry tier." }
+      ],
+      "takeaway": "A verifier lets you buy effort only where it pays."
+    },
+    {
+      "id": "w18-t01-s3",
+      "title": "Tool loop under zero data retention",
+      "situation": "An agent calls functions in a loop on a new reasoning model. The organization is approved for zero data retention, so nothing may be stored server side.",
+      "constraints": ["`store` is treated as false", "The model needs function calling", "Quality in multi-step tool use must hold"],
+      "unknowns": ["Does the model support function calling on Chat Completions?", "Which effort values does it accept?"],
+      "question": "How do you build the loop?",
+      "options": [
+        { "name": "Responses API, stateless, passing reasoning items back", "verdict": "best", "why": "Reasoning items carry `encrypted_content` in stateless mode, so continuity survives without server-side storage.", "tradeoff": "Your code carries the items and the larger payload." },
+        { "name": "Chat Completions with function tools", "verdict": "poor", "why": "GPT-6 Astra and GPT-6.1 Sol do not support function calling on Chat Completions.", "tradeoff": "Fine on older models that support it and where you do not need reasoning continuity." },
+        { "name": "Responses API but drop reasoning items from each turn", "verdict": "poor", "why": "OpenAI recommends passing back reasoning items with function outputs, so dropping them breaks the documented path.", "tradeoff": "Acceptable only if an eval shows no quality loss and you need to cut payload size." }
+      ],
+      "flips": [
+        { "if": "ZDR does not apply and server-side state is allowed", "then": "Use `previous_response_id` and let the service carry reasoning state." },
+        { "if": "The model supports function calling on Chat Completions", "then": "Chat Completions is possible, but you still need to return reasoning state yourself." }
+      ],
+      "takeaway": "Stateless reasoning loops need the Responses API and returned reasoning items."
+    }
+  ],
+  "quiz": [
+    { "id": "w18-t01-q1", "type": "single", "tag": "diagnose", "q": "A reasoning request returns `status: incomplete` and no visible text. What is the most likely cause?", "options": ["The model refused the request and returned an empty message", "The prompt cache expired between turns", "The effort was set too low", "Reasoning tokens used up `max_output_tokens`"], "answer": 3, "explain": "Reasoning tokens count against the output cap, so a cap that is too low can end the response before any visible text. A refusal returns text, cache expiry only changes cost and a low effort would use fewer reasoning tokens.", "ref": "r1" },
+    { "id": "w18-t01-q2", "type": "multi", "tag": "concept", "q": "Which statements about reasoning controls are true?", "options": ["Effort values and defaults are model-specific", "GPT-6 Astra accepts effort `none`", "Manual `budget_tokens` returns HTTP 400 on Claude 4.7 and later", "Effort only changes answer quality, not cost"], "answers": [0, 2], "explain": "Values and defaults differ per model, and Claude 4.7 and later reject `budget_tokens`. GPT-6 Astra rejects `none` with HTTP 400. Effort changes hidden token use, so it changes cost and latency too.", "ref": "r1" },
+    { "id": "w18-t01-q3", "type": "single", "tag": "flip", "q": "Which change most justifies raising effort on a task?", "options": ["An eval showing a gain at the higher level", "A larger context window on the same model family", "A new vendor SDK release with a changelog", "A request to sound more careful in answers"], "answer": 0, "explain": "Effort is a cost and latency dial, so raise it when measured results improve. Window size, SDK versions and tone requests are not evidence that more thinking helps.", "ref": "r6" }
+  ],
+  "flashcards": [
+    { "front": "What are reasoning tokens and how are they billed?", "back": "Hidden thinking tokens produced before the visible answer. They are billed as output tokens and count against the output cap." },
+    { "front": "What does budget forcing do (s1 paper)?", "back": "It cuts thinking short or appends `Wait` to extend it. Extending raised AIME24 from 50% to 57% in the paper." },
+    { "front": "How much output headroom does OpenAI advise when starting with reasoning models?", "back": "Reserve at least 25,000 tokens for reasoning plus output, then tune from measured usage." }
+  ],
+  "related": ["w18-l1", "w01-t03", "w01-t13", "w10-t10", "w16-t01", "w14-t12"],
+  "refs": ["r1", "r2", "r3", "r4", "r5", "r6", "r7"]
+}

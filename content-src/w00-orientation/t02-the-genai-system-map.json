@@ -1,0 +1,122 @@
+{
+  "id": "w00-t02",
+  "order": 2,
+  "group": "Start here",
+  "title": "The GenAI system map",
+  "minutes": 7,
+  "difficulty": "core",
+  "summary": "A GenAI product is a stack of decisions, from the model call to knowledge, tools, agents, proof and operations. Each chapter owns some of those decisions.",
+  "useIf": "You need to place a problem on the stack before you pick a technology.",
+  "avoidIf": "You already know which layer is failing and need the details of that layer.",
+  "explain": [
+    { "t": "p", "md": "A user question travels through layers. First the **model call** fixes the token budget, the controls and the API style (w01), and the **latency and caching** layer decides what is affordable (w02). **Knowledge** layers get the right content to the model: ingestion, chunking and indexes, retrieval, guardrails and access control (w03 to w07). **Tools and protocols** let the model act and talk to other systems (w08 MCP, w09 A2A). **Agents** coordinate several steps (w10 patterns, w11 Microsoft Agent Framework, w12 Foundry hosted agents and Agent 365)." },
+    { "t": "diagram", "id": "w00-t02-d1", "title": "One question, nine stops", "alt": "A question passes through model and API, latency and cache, knowledge, tools and protocols and agents to an answer, which is then checked by senses, proof and operations chapters.", "src": "flowchart LR\n  Q[Question] --> B[Budget and API w01]\n  B --> L[Latency and cache w02]\n  L --> K[Knowledge w03 to w07]\n  K --> T[Tools and protocols w08 w09]\n  T --> A[Agents w10 to w12]\n  A --> R[Answer]\n  R --> S[Senses w13]\n  R --> P[Proof w14 w15]\n  R --> O[Operate w16 w17]" },
+    { "t": "p", "md": "After the answer exists, three more concerns apply to every layer: **senses** (images and audio, w13), **proof** (evaluation and observability, w14 and w15) and **operations** (cost, reliability, governance, w16 and w17). Field notes (w18) and boss rounds (w19) combine them." },
+    { "t": "table", "caption": "Which chapter owns the decision", "head": ["Symptom", "Likely layer", "Chapter"], "rows": [
+      ["Parameter rejected, output cut off, wrong API", "Model call", "w01"],
+      ["First token is slow, bill too high from repeated prompts", "Latency and caching", "w02"],
+      ["Answer is missing from the system, or chunks are cut badly", "Ingestion, chunking", "w03, w04"],
+      ["Right chunk exists but is not retrieved", "Retrieval", "w05"],
+      ["Model answers anyway, or leaks another user's data", "Guardrails, access control", "w06, w07"],
+      ["Tool misuse, protocol mismatch", "Tools and interop", "w08, w09"],
+      ["Loops, wrong runtime, unclear ownership", "Agents", "w10 to w12"],
+      ["Nobody can show it works or why it broke", "Proof", "w14, w15"]
+    ] },
+    { "t": "callout", "kind": "why", "title": "Start with the least machinery", "md": "Anthropic's guide to building agents advises finding the simplest solution possible, because agentic systems trade latency and cost for task performance [[tr1]]. Climb the stack only when an eval shows the lower layer fails." }
+  ],
+  "whereToUse": [
+    "Triage: a complaint arrives and you must decide who owns the investigation",
+    "Design reviews: check that every layer has an owner and a metric",
+    "Interviews: say where on the stack a problem lives before you name a technology",
+    "Planning study: pick the chapters that match your role",
+    "Onboarding: give new engineers one picture of how the pieces connect"
+  ],
+  "whenToUse": {
+    "use": [
+      "A failure has several plausible causes in different layers",
+      "A proposal adds a layer such as an agent and nobody has shown the lower layers fall short",
+      "You must explain a system to non-specialists"
+    ],
+    "avoid": [
+      "You are tuning one known parameter: go straight to that topic",
+      "You treat the map as a mandatory pipeline: many products need only two or three layers",
+      "The failing layer is already known and instrumented: go straight to that layer's topic"
+    ],
+    "flips": [
+      "The corpus fits the context window and has one tenant: drop the knowledge layers and use the prompt",
+      "Steps vary at run time and need tools: add tools before you add agents",
+      "Regulation or per-user data is involved: access control and governance move from last to first"
+    ]
+  },
+  "alternatives": {
+    "title": "How much of the stack to use",
+    "head": ["Architecture", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Single prompt", "Task is self-contained and the facts fit the window", "Knowledge is large, changing or permissioned", "Cheapest, but stale or oversized context"],
+      ["Prompt plus retrieval (RAG)", "Large or changing corpus, citations, per-user access", "Questions need whole-document reasoning or retrieval is poor", "Ingestion, index and ACL work"],
+      ["Workflow with fixed code paths", "Steps are known and must be predictable", "Steps depend on what the model finds", "Rigid, more code to maintain"],
+      ["Single agent with tools", "Steps vary and tools return facts or take actions", "Latency and cost budgets are tight", "Loops, tool misuse, harder evals"],
+      ["Multi-agent", "Work splits into independent specialists with separate context", "One agent with good context would do", "Coordination cost and compounding errors"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A team adds RAG to fix a style problem", "cause": "The failing layer was not identified before choosing a fix", "fix": "Name the symptom, find the layer in the map, then choose the cheapest fix at that layer" },
+    { "symptom": "An agent is built for a task a workflow could do", "cause": "Complexity was chosen before simpler layers were tested", "fix": "Start with a prompt, add retrieval or tools only when evals show a gap" },
+    { "symptom": "Security is bolted on last", "cause": "Access control sits in the knowledge layers, not in the model call", "fix": "Decide the permission model at ingestion, when ACLs are captured, not after launch" }
+  ],
+  "scenarios": [
+    {
+      "id": "w00-t02-s1",
+      "title": "The policy answer is out of date",
+      "situation": "Users report that the assistant quotes an old policy. The document was updated yesterday. A trace shows the retrieval step returned the old chunk.",
+      "constraints": ["The assistant answers from a search index", "The index returned the previous version of the text", "Model and prompt are unchanged"],
+      "unknowns": ["How does new content reach the index?", "Are old chunks deleted when a document changes?"],
+      "question": "Where do you investigate first?",
+      "options": [
+        { "name": "Switch to a larger model", "verdict": "poor", "why": "The model faithfully used the old chunk. A larger model cannot fix missing fresh data.", "tradeoff": "A larger model helps when the right chunk is present but the model misreads it." },
+        { "name": "The ingestion and update path (w03)", "verdict": "best", "why": "The index holds old text, so the update or delete path failed before retrieval or the model were involved.", "tradeoff": "You must instrument sync lag and deletes to see the cause." },
+        { "name": "Response and semantic caches (w02)", "verdict": "good", "why": "A cache can also serve a stale answer, so rule it out second.", "tradeoff": "The trace already shows old retrieval output, so this is less likely the root cause." }
+      ],
+      "flips": [
+        { "if": "The trace shows the new chunk was retrieved but the answer is old", "then": "Look at caches (w02) and then prompt assembly." },
+        { "if": "Retrieval returns both versions", "then": "Fix deletes and versioning in ingestion, and add a freshness filter." }
+      ],
+      "takeaway": "Locate the layer with the trace, then fix at that layer."
+    },
+    {
+      "id": "w00-t02-s2",
+      "title": "How much machinery for a small knowledge base",
+      "situation": "A team plans a multi-agent assistant for 40 stable internal pages (about 60,000 tokens) used by one department. Risk is low and budget is small.",
+      "constraints": ["Corpus is small and rarely changes", "Single tenant, no per-user permissions", "Low risk, low budget"],
+      "unknowns": ["How often do pages change?", "What accuracy does a baseline reach on a golden set?"],
+      "question": "What architecture do you propose first?",
+      "options": [
+        { "name": "RAG with hybrid search and a reranker", "verdict": "good", "why": "Works and scales when the corpus grows.", "tradeoff": "Adds ingestion, an index and retrieval tuning that the constraints do not need." },
+        { "name": "Multi-agent system with a retrieval agent and a writer agent", "verdict": "poor", "why": "It adds coordination cost and failure modes for a problem one call can solve.", "tradeoff": "Multi-agent fits independent subtasks with large, separate contexts." },
+        { "name": "Single prompt with the pages, plus prompt caching", "verdict": "best", "why": "The corpus fits the window, changes rarely and has one audience, so the simplest layer meets every constraint.", "tradeoff": "It stops scaling if the corpus grows past a comfortable window or permissions appear." }
+      ],
+      "flips": [
+        { "if": "The corpus grows past what fits in the window or accuracy drops deep in context", "then": "Move to RAG and measure retrieval quality." },
+        { "if": "Different users may see different pages", "then": "Choose retrieval with per-user access control." }
+      ],
+      "takeaway": "Climb the stack only when a measured gap forces it."
+    }
+  ],
+  "quiz": [
+    { "id": "w00-t02-q1", "type": "match", "tag": "diagnose", "q": "Match each symptom to the chapter that owns it.", "pairs": [
+      { "l": "A parameter is rejected with HTTP 400", "r": "w01 LLM controls and APIs" },
+      { "l": "First token arrives after many seconds", "r": "w02 Latency and caching" },
+      { "l": "Relevant chunk exists but is never returned", "r": "w05 Retrieval" },
+      { "l": "A user sees another team's document", "r": "w07 Security and ACLs" }
+    ], "explain": "Parameter rules belong to the model call chapter, slow first tokens to latency and caching, missed chunks to retrieval and leaks across users to access control." },
+    { "id": "w00-t02-q2", "type": "single", "tag": "tradeoff", "q": "A task fits comfortably in the context window and the facts rarely change. What does the system map suggest first?", "options": ["A multi-agent design", "A fine-tuned model", "A vector database", "A single prompt, adding layers only if evals fail"], "answer": 3, "explain": "Use the least machinery that meets the constraints. Agents, fine-tuning and vector stores each add cost that the stated dials do not justify." },
+    { "id": "w00-t02-q3", "type": "multi", "tag": "concept", "q": "Which concerns apply across every layer of the stack?", "options": ["Evaluation and observability", "Cost and reliability", "Governance and oversight", "The temperature setting"], "answers": [0, 1, 2], "explain": "Proof, operations and governance apply to all layers. Temperature is a single model-call control in w01." }
+  ],
+  "flashcards": [
+    { "front": "Name the nine stops a question passes through.", "back": "Budget and API, latency and cache, knowledge, tools and protocols, agents, then senses, proof and operations around the answer." },
+    { "front": "What is the default rule for how much of the stack to use?", "back": "Use the simplest layer that meets the constraints, and add retrieval, tools or agents only when a measured gap appears." },
+    { "front": "Where does access control get decided?", "back": "At ingestion, when ACLs are captured, and at query time through filters. It is not a late add-on." }
+  ],
+  "related": ["w00-t03", "w00-l1", "w01-t14", "w05-t01"],
+  "refs": ["tr1", "r23", "r24"]
+}

@@ -1,0 +1,131 @@
+{
+  "id": "w18-t06",
+  "order": 6,
+  "group": "Deployment",
+  "title": "Data residency, ZDR, keys and private endpoints",
+  "minutes": 9,
+  "difficulty": "advanced",
+  "summary": "Four different controls that people mix up: where inference runs (residency), whether content is retained (ZDR and abuse monitoring), who holds the encryption key (customer-managed keys) and how traffic reaches the service (private networking).",
+  "useIf": "A regulator, customer contract or data classification limits where prompts go, how long they persist, who can decrypt them or which network they cross.",
+  "avoidIf": "You assume one control covers the others. Each answers a different question and each can disable features.",
+  "explain": [
+    { "t": "table", "caption": "Name the question before choosing a control. Checked 2026-10-13.", "head": ["Control", "Question it answers", "What it does not do"], "rows": [
+      ["Residency (deployment type)", "Where does inference run and where is data at rest?", "At rest data stays in the designated geography. Global types may run inference in any region, Data Zone types stay in the US, EU or APAC zone, Standard and Regional Provisioned types stay in the geography [[r24]]"],
+      ["Retention (ZDR, modified abuse monitoring)", "Is content stored for abuse review or application state?", "OpenAI keeps abuse-monitoring logs up to 30 days by default. ZDR and Modified Abuse Monitoring need approval. Some endpoints (threads, vector stores, fine-tuning jobs) are not ZDR eligible [[r25]]"],
+      ["Customer-managed key (CMK)", "Who controls the key for data at rest?", "Covers associated storage (project artifacts, uploaded files, evaluation data), not model inference. Uses Key Vault or Managed HSM, RSA 2048 bits or more. Grant the managed identity key access first, and omit `keyVersion` to follow the latest version. Some previews lack CMK [[r26]]"],
+      ["Private endpoint and VNet", "Which network path does traffic take?", "Some tools stay public or are unsupported under isolation [[r27]] [[r28]]"]
+    ] },
+    { "t": "p", "md": "**Residency.** Microsoft advises starting with Global Standard unless residency, reserved throughput or batch forces a change. Global Batch and Data Zone Batch give a 50% discount. The Developer tier is for fine-tuned model evaluation only, with a 24-hour lifetime and no SLA or residency guarantee [[r24]]." },
+    { "t": "p", "md": "**Retention.** On Foundry, prompts and completions are not used to train base models. Stateful features (Responses API, threads, stored completions, files, vector stores) keep data at rest in your resource in the same geography, AES-256 encrypted, deletable. Abuse monitoring uses automated review by default with possible human review, and approved customers can get modified abuse monitoring that removes storage and human review [[r22]] [[r23]]. On OpenAI, under ZDR `store` on `/v1/responses` and `/v1/chat/completions` is always treated as false [[r25]]. Background mode keeps data for about 10 minutes, which conflicts with ZDR [[tr7]]." },
+    { "t": "p", "md": "**Private networking.** Disable public network access and use a private endpoint, or allow selected networks. Agent Service setups are Basic, Standard (bring your own Storage, AI Search and Cosmos DB) and Standard with a bring-your-own VNet. Under isolation MCP, AI Search, Code Interpreter, function calling, OpenAPI, Azure Functions, A2A and file search work. Bing grounding, web search and SharePoint grounding use public endpoints. Browser automation, computer use, image generation and Logic Apps are not supported [[r27]] [[r28]]." },
+    { "t": "callout", "kind": "gotcha", "title": "Zero retention does not mean nothing is stored", "md": "Some endpoints are not ZDR eligible and keep state until you delete it. Some previews lack CMK. Check each feature you plan to use against the control you need." }
+  ],
+  "whereToUse": [
+    "Regulated workloads (health, finance, public sector) with data location rules",
+    "Contracts that forbid retention of prompts beyond the request",
+    "Environments with a key-ownership policy for data at rest",
+    "Enterprises that require private connectivity from a VNet to model and agent services",
+    "Architecture reviews that must map each requirement to a specific control"
+  ],
+  "whenToUse": {
+    "use": [
+      "Choose the deployment type from the residency need: Data Zone or Regional before self-hosting",
+      "Request ZDR or modified abuse monitoring when content retention is the blocker",
+      "Add CMK when policy demands you control the key for stored artifacts"
+    ],
+    "avoid": [
+      "Assuming CMK protects inference, since it covers storage at rest only",
+      "Enabling private networking and then expecting browser automation or computer use to work",
+      "Using ZDR with features that need stored state or background mode"
+    ],
+    "flips": [
+      "Required tool is public-only (web search, Bing grounding): residency or isolation requirements may rule it out",
+      "Stateful feature needed (threads, vector stores): ZDR eligibility may block it",
+      "Volume and custom weights justify GPUs: self-hosting may deliver stricter control"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Global deployment", "No residency need, best capacity", "Inference must stay in a zone", "Inference may run in any region"],
+      ["Data Zone or Regional deployment", "Inference must stay in a zone or geography", "You need the very newest model first, or a capacity not offered there", "Capacity and model availability vary by zone"],
+      ["ZDR or modified abuse monitoring", "Retention of content is the blocker", "You need stored state or background mode", "Needs approval. Some endpoints are ineligible"],
+      ["CMK on Foundry resources", "Policy requires key ownership for stored data", "The concern is inference-time processing", "Key Vault or HSM operations, access grants"],
+      ["Private endpoint plus VNet", "Traffic must not cross the public internet", "Tools that are public-only or unsupported", "Network design and DNS work"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Auditors find prompts outside the allowed region", "cause": "A Global deployment type was used where inference must stay in a zone", "fix": "Use Data Zone or Regional types, and verify the deployment type of every endpoint in code review." },
+    { "symptom": "Feature fails or silently stores state after ZDR is approved", "cause": "The endpoint is not ZDR eligible, or background mode keeps data for about 10 minutes", "fix": "Check per-endpoint eligibility, avoid ineligible endpoints and disable background mode for ZDR projects." },
+    { "symptom": "Agent tool works in dev but fails in the locked-down network", "cause": "Browser automation, computer use, image generation and Logic Apps are not supported under isolation", "fix": "Pick tools from the supported list or keep that tool in a separate, non-isolated environment." }
+  ],
+  "scenarios": [
+    {
+      "id": "w18-t06-s1",
+      "title": "EU inference rule",
+      "situation": "A contract says personal data must be processed inside the EU. There is no rule about retention or key ownership. Load is moderate.",
+      "constraints": ["Inference must stay in the EU zone", "No special retention rule", "Moderate load"],
+      "unknowns": ["Is the needed model available as a Data Zone deployment?", "Does the contract cover logging?"],
+      "question": "Which control do you reach for first?",
+      "options": [
+        { "name": "Private endpoint only", "verdict": "poor", "why": "It controls network path, not where inference runs, so processing could still happen outside the EU on a Global type.", "tradeoff": "Right when the requirement is that traffic never crosses the public internet." },
+        { "name": "Data Zone deployment for the EU", "verdict": "best", "why": "Data Zone types keep inference in the US, EU or APAC zone, which matches the rule.", "tradeoff": "Model and capacity availability may trail Global deployments." },
+        { "name": "Customer-managed key", "verdict": "poor", "why": "CMK covers data at rest in associated storage, not inference location.", "tradeoff": "Right when policy demands you own the key for stored files and artifacts." }
+      ],
+      "flips": [
+        { "if": "The contract also forbids retention", "then": "Add ZDR or modified abuse monitoring and check endpoint eligibility." },
+        { "if": "The model is not offered in the zone", "then": "Consider a different model or self-hosting in an EU region." }
+      ],
+      "takeaway": "Match the control to the question: residency answers 'where'."
+    },
+    {
+      "id": "w18-t06-s2",
+      "title": "No retention, but needs agent state",
+      "situation": "A public-sector team is approved for zero data retention. They want an agent that keeps thread state and uses vector stores for documents.",
+      "constraints": ["ZDR approved", "Stateful agent features wanted", "Strict audit"],
+      "unknowns": ["Which endpoints are ZDR eligible?", "Can state live in your own storage?"],
+      "question": "How do you reconcile ZDR with state?",
+      "options": [
+        { "name": "Keep state in your own stores and use only ZDR-eligible endpoints", "verdict": "best", "why": "Threads and vector stores are not ZDR eligible, so you hold state yourself and keep control of retention.", "tradeoff": "You build and secure the state layer." },
+        { "name": "Use hosted threads and vector stores anyway", "verdict": "poor", "why": "Those endpoints keep application state until deleted, which contradicts a no-retention intent.", "tradeoff": "Fine where retention in your resource, with deletion controls, is acceptable." },
+        { "name": "Turn on background mode for long runs", "verdict": "poor", "why": "Background mode retains data for about 10 minutes, which conflicts with ZDR.", "tradeoff": "Use it where ZDR does not apply." }
+      ],
+      "flips": [
+        { "if": "Retention in your own resource with deletion is acceptable", "then": "Foundry stateful features with CMK may be simpler." },
+        { "if": "The runs are short", "then": "Use synchronous calls, no background mode." }
+      ],
+      "takeaway": "ZDR changes which features you can use. Check eligibility per endpoint."
+    },
+    {
+      "id": "w18-t06-s3",
+      "title": "Private network and a web-research agent",
+      "situation": "A bank requires all AI traffic over private endpoints with public access disabled. A team wants an agent that browses the public web and uses computer use for a portal.",
+      "constraints": ["Public network access disabled", "Agent needs web search and UI control", "Security review is strict"],
+      "unknowns": ["Can browsing run in a separate environment?", "Is an API available for the portal?"],
+      "question": "What do you propose?",
+      "options": [
+        { "name": "Keep the isolated agent on supported tools and run web and UI work in a separate sandbox with controlled egress", "verdict": "best", "why": "Computer use and browser automation are not supported under isolation and web search uses a public endpoint, so they need a different, controlled environment.", "tradeoff": "Two environments to build, secure and monitor." },
+        { "name": "Enable computer use inside the isolated project", "verdict": "poor", "why": "It is not supported under network isolation.", "tradeoff": "Possible in a non-isolated project with a sandbox and confirmations." },
+        { "name": "Relax isolation for everything", "verdict": "good", "why": "Unblocks all tools at once.", "tradeoff": "Gives up the private-networking requirement for the whole agent." }
+      ],
+      "flips": [
+        { "if": "The portal offers an API or MCP server", "then": "Use it inside the isolated setup and skip computer use." },
+        { "if": "Web research can use an internal indexed corpus", "then": "Use AI Search or file search, which work under isolation." }
+      ],
+      "takeaway": "Private networking is a tool filter. Map each tool to the isolation rules."
+    }
+  ],
+  "quiz": [
+    { "id": "w18-t06-q1", "type": "match", "tag": "concept", "q": "Match each control to the question it answers.", "pairs": [{ "l": "Data Zone deployment", "r": "Where does inference run?" }, { "l": "Zero Data Retention", "r": "Is content stored beyond the request?" }, { "l": "Customer-managed key", "r": "Who controls the key for stored data?" }, { "l": "Private endpoint", "r": "Which network path is used?" }], "explain": "Each control answers a different question, so one does not substitute for another. CMK covers storage at rest, not inference, and private endpoints do not set where inference runs.", "ref": "r24" },
+    { "id": "w18-t06-q2", "type": "multi", "tag": "diagnose", "q": "Which tools are unsupported under Foundry network isolation as of 2026-10-13?", "options": ["Browser automation", "Computer use", "AI Search", "File search"], "answers": [0, 1], "explain": "Browser automation, computer use, image generation and Logic Apps are not supported under isolation. AI Search and file search are supported.", "ref": "r27" },
+    { "id": "w18-t06-q3", "type": "single", "tag": "security", "q": "What does a customer-managed key in Foundry protect?", "options": ["Data at rest in associated storage", "Model inference in memory while a request runs", "Network traffic to the endpoint", "Where inference runs"], "answer": 0, "explain": "CMK covers data at rest in the resource's associated storage, such as project artifacts, uploaded files and evaluation data. It does not cover inference, network path or location.", "ref": "r26" }
+  ],
+  "flashcards": [
+    { "front": "Which Foundry deployment types keep inference inside a zone or geography?", "back": "Data Zone types stay in the US, EU or APAC zone. Standard and Regional Provisioned stay in the geography. Global types may run in any region." },
+    { "front": "What does OpenAI ZDR do to `store`?", "back": "Under ZDR, `store` on `/v1/responses` and `/v1/chat/completions` is always treated as false. Some endpoints are not eligible." },
+    { "front": "Name two tools that fail under Foundry network isolation.", "back": "Browser automation and computer use. Image generation and Logic Apps are also unsupported. Bing grounding, web search and SharePoint grounding use public endpoints." }
+  ],
+  "related": ["w18-l3", "w18-t05", "w07-t16", "w12-t06", "w16-t05", "w17-t07"],
+  "refs": ["r22", "r23", "r24", "r25", "r26", "r27", "r28", "tr7"]
+}

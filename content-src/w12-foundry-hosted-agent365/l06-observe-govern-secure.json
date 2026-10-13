@@ -1,0 +1,82 @@
+{
+  "id": "w12-l6",
+  "order": 6,
+  "title": "Observe, govern, secure",
+  "kind": "problem",
+  "minutes": 18,
+  "brief": "Agents run on many platforms, yet an administrator must still see, govern and secure them. Decide how each agent joins the control plane and which loop keeps it healthy after launch.",
+  "blocks": [
+    { "t": "h", "text": "Agent 365 is a control plane, not a runtime", "level": 2 },
+    { "t": "p", "md": "Agent 365 is Microsoft's control plane for agents with three pillars [[r12]]. **Observe** covers the agent registry, the agent map, adoption and health. **Govern** covers lifecycle, access and compliance through the registry in the Microsoft 365 admin center, Entra and Purview. **Secure** covers Entra risk-based access, Purview DLP and information protection, and Defender threat detection.\n\nIt reached general availability on 2026-05-01 for the Commercial segment and is licensed per user. At least one user needs a qualifying Agent 365 license. It is included in Microsoft 365 E7 and is an add-on to E5, A5 or Business Premium. The overview page carried no price on 2026-10-13, so quote none. Agent 365 is also the unified registry, while Entra stays the identity foundation [[r29]]. The capabilities announced as the Microsoft Entra Agent Registry continue: agent identity capabilities stay in Entra Agent ID and the registration APIs remain supported, but the full inventory, including agents without an Entra identity, is in Agent 365." },
+    { "t": "diagram", "id": "w12-l6-d1", "title": "Many platforms, one registry", "alt": "Foundry, Copilot Studio, framework-built and cross-cloud agents all feed the agent registry, which supports observe, govern and secure.", "src": "flowchart TB\n  F[Foundry agents] --> R[Agent registry]\n  C[Copilot Studio agents] --> R\n  X[Framework agents with SDK] --> R\n  V[Vertex AI and Bedrock agents] --> R\n  R --> O[Observe: map, health]\n  R --> G[Govern: lifecycle, access]\n  R --> S[Secure: Entra, Purview, Defender]", "caption": "Native integration and registry sync add inventory with no code change. The SDK adds code-level capabilities." },
+    { "t": "dials", "id": "w12-l6-join", "title": "How an agent joins the control plane", "prompt": "Change the platform, what you need and who owns the code.",
+      "dials": [
+        { "id": "platform", "label": "Where it runs", "values": [ { "id": "ms", "label": "Microsoft platform or supported partner" }, { "id": "fw", "label": "A framework you host" }, { "id": "cross", "label": "Another cloud platform" } ] },
+        { "id": "need", "label": "What you need", "values": [ { "id": "inv", "label": "Inventory and governance only" }, { "id": "code", "label": "Governed tools and notifications in code" } ] },
+        { "id": "owner", "label": "Code ownership", "values": [ { "id": "own", "label": "You own the code" }, { "id": "vendor", "label": "A vendor owns it" } ] }
+      ],
+      "options": [
+        { "id": "native", "name": "Native integration", "summary": "Appears in the inventory without the SDK." },
+        { "id": "sdk", "name": "Agent 365 SDK", "summary": "Identity, tooling and notifications in code." },
+        { "id": "sync", "name": "Registry synchronization", "summary": "For Vertex AI and AWS Bedrock." },
+        { "id": "proxy", "name": "Foundry Control Plane registration", "summary": "API Management proxy for a custom agent." }
+      ],
+      "scores": {
+        "native": {
+          "platform": { "ms": { "s": 2, "why": "Microsoft platforms and supported partners appear without the SDK." }, "fw": { "s": -1, "why": "Framework agents add the SDK instead." }, "cross": { "s": -2, "why": "Connected platforms use registry sync." } },
+          "need": { "inv": { "s": 1, "why": "Inventory arrives with no code change." }, "code": { "s": -1, "why": "No code-level tools or notifications." } },
+          "owner": { "own": { "s": 0, "why": "Neutral." }, "vendor": { "s": 1, "why": "No change to code you do not own." } }
+        },
+        "sdk": {
+          "platform": { "ms": { "s": 0, "why": "Not needed for inventory." }, "fw": { "s": 2, "why": "The documented path for framework-built agents." }, "cross": { "s": -1, "why": "Connected platforms use sync instead." } },
+          "need": { "inv": { "s": 0, "why": "More than inventory needs." }, "code": { "s": 2, "why": "The route to governed Work IQ MCP servers and notifications." } },
+          "owner": { "own": { "s": 1, "why": "You can change the code." }, "vendor": { "s": -2, "why": "You cannot add an SDK to code you do not own." } }
+        },
+        "sync": {
+          "platform": { "ms": { "s": -1, "why": "Native is simpler." }, "fw": { "s": -1, "why": "Misses code-level capabilities." }, "cross": { "s": 2, "why": "The documented path for Vertex AI and AWS Bedrock." } },
+          "need": { "inv": { "s": 1, "why": "Inventory with no code change." }, "code": { "s": -2, "why": "No code-level capabilities." } },
+          "owner": { "own": { "s": 0, "why": "Neutral." }, "vendor": { "s": 1, "why": "Works without touching vendor code." } }
+        },
+        "proxy": {
+          "platform": { "ms": { "s": -1, "why": "A Microsoft platform agent needs no proxy." }, "fw": { "s": 0, "why": "Possible for a custom agent." }, "cross": { "s": 1, "why": "Registers an agent that runs elsewhere behind a proxy." } },
+          "need": { "inv": { "s": 1, "why": "Access control and monitoring without code change." }, "code": { "s": -2, "why": "No code-level tools." } },
+          "owner": { "own": { "s": 1, "why": "You can register your own agent." }, "vendor": { "s": 0, "why": "Neutral." } }
+        }
+      },
+      "takeaway": "Native and sync buy inventory with no code change. The SDK buys code-level capabilities but needs code you own. Name which of the two you actually need." },
+    { "t": "table", "caption": "The production loop around a Foundry agent, checked 2026-10-13", "head": ["Control", "What it does", "Status"], "rows": [
+      ["Guardrails [[r8]]", "A named set of controls with four intervention points: user input, tool call, tool response and output. Spotlighting and groundedness do not apply to agents. Hosted agents also get network egress controls. They apply only to Foundry Agent Service agents", "Model guardrails GA. Agent guardrails preview, including tool call, tool response and egress"],
+      ["Tracing [[r9]]", "Traces for prompt and hosted agents", "GA for prompt and hosted agents. Monitoring is preview"],
+      ["Evaluation", "Quality, safety and agent evaluators (see world w14). Voice agents support full conversations only, not single-turn or simulated runs", "Voice-agent limits are preview limits"],
+      ["Agent optimizer [[r25]]", "Evaluates an agent and proposes better instructions, tool descriptions, model selection and, for hosted agents, skills. Prompt agent candidates promote to a new version. Hosted candidates are applied to local config and redeployed", "Limited preview"],
+      ["Telemetry [[r26]]", "The Microsoft OpenTelemetry Distro for .NET, Node.js and Python also targets Foundry, Azure Monitor and any OTLP backend", "Use it. The Agent 365 Observability SDK is deprecated for new work"]
+    ], "highlightCol": 2 },
+    { "t": "failure", "title": "Failure modes", "items": [
+      { "symptom": "An agent is missing from the inventory", "cause": "Native integration covers Microsoft platforms and supported partners. Framework agents need the SDK and other clouds need registry sync", "fix": "Pick the join path from the dial board and check the registry after a test run." },
+      { "symptom": "One Copilot Studio agent shows up twice in the registry", "cause": "A Copilot Studio agent can appear under more than one registry type by design", "fix": "Deduplicate by agent id, not by row, before you report counts." },
+      { "symptom": "New code instruments with the Agent 365 Observability SDK", "cause": "That SDK and its packages are deprecated for new work", "fix": "Use the Microsoft OpenTelemetry Distro." },
+      { "symptom": "A team-workflow agent is promised as GA", "cause": "Agents in team workflows with their own access were public preview at the 2026-05-01 announcement", "fix": "Confirm the current status and accept preview terms before production [[r20]]." },
+      { "symptom": "A team expects the SDK to host the agent", "cause": "The Agent 365 SDK does not build, host, orchestrate or run tools", "fix": "Host the agent on a runtime from level 1 and add the SDK for identity, tooling and notifications [[r13]]." }
+    ] },
+    { "t": "callout", "kind": "preview", "title": "GA and preview inside one announcement", "md": "At the 2026-05-01 announcement, agents working on behalf of users and agents behind the scenes with their own access were GA. Agents in team workflows with their own access were public preview. Discovery of local and shadow agents through Defender and Intune was announced as preview. Agent user accounts and notifications need the Frontier preview program. Checked 2026-10-13." },
+    { "t": "accordion", "items": [
+      { "title": "Go deeper: the registry", "blocks": [
+        { "t": "p", "md": "The registry lives in the Microsoft 365 admin center under Agents, All Agents, Registry [[r16]]. It has four types: Microsoft agents, external partner-built agents, published by your org and shared by creator." }
+      ] },
+      { "title": "Go deeper: what the SDK adds", "blocks": [
+        { "t": "p", "md": "The Agent 365 SDK ships Python, JavaScript and .NET packages for identity, tooling and notifications [[r13]]. Tooling means governed Work IQ MCP servers for Mail, Calendar, Word, SharePoint and Teams. It is not the Microsoft 365 Agents SDK. Notifications need an agent user account and the Frontier preview program. Three paths exist: native integration, the SDK for framework-built agents (Microsoft 365 Agents SDK, OpenAI Agents SDK, Microsoft Agent Framework, LangChain, CrewAI, LlamaIndex) and registry synchronization for platforms such as Vertex AI and AWS Bedrock." }
+      ] },
+      { "title": "Go deeper: the Foundry Control Plane proxy", "blocks": [
+        { "t": "p", "md": "You can register a custom agent that runs elsewhere in the Foundry Control Plane, and Foundry puts API Management in front as a proxy for access control and monitoring [[r23]]. For A2A agents the default agent card path is `/.well-known/agent-card.json`. An AI gateway is free to set up. This is a Foundry layer. Agent 365 is the Microsoft 365 layer that ingests agents from Foundry and elsewhere." }
+      ] }
+    ] }
+  ],
+  "quiz": [
+    { "id": "w12-l6-q1", "type": "single", "tag": "concept", "q": "A team assumes adopting the Agent 365 SDK will host their LangChain agent. What is true?", "options": ["It adds identity, governed tooling and notifications, but you still host and run the agent", "It hosts and scales the agent inside the Microsoft 365 tenant", "It replaces the Microsoft 365 Agents SDK for building agents", "It runs the agent's tools in a sandbox that Agent 365 manages"], "answer": 0, "explain": "The Agent 365 SDK provides identity, governed Work IQ tooling and notifications. It does not build, host, orchestrate or run tools, and it is not the Microsoft 365 Agents SDK.", "difficulty": 1, "ref": "r13" },
+    { "id": "w12-l6-q2", "type": "match", "tag": "flip", "q": "Match each situation to the way the agent joins the control plane.", "pairs": [ { "l": "A Microsoft platform agent or a supported partner agent", "r": "Native integration, no SDK" }, { "l": "A LangChain agent you host and can change", "r": "Add the Agent 365 SDK" }, { "l": "An agent on Vertex AI or AWS Bedrock", "r": "Registry synchronization" }, { "l": "A custom agent elsewhere that needs gateway access control", "r": "Foundry Control Plane registration" } ], "explain": "Microsoft platforms and supported partners integrate natively. Framework-built agents add the SDK. Connected platforms such as Vertex AI and Bedrock use registry sync. A custom agent elsewhere can be registered in the Foundry Control Plane, which proxies it through API Management.", "difficulty": 2, "ref": "r13" },
+    { "id": "w12-l6-q3", "type": "single", "tag": "tradeoff", "q": "A platform team wants agents that join team workflows with their own access in production, because Agent 365 is GA. Which risk statement is right?", "options": ["They are GA with the rest of the product, so nothing more is needed before production use", "They need Entra P2 before they can run at all", "They only run as Foundry hosted agents", "They were public preview on 2026-05-01, so confirm status and accept preview terms"], "answer": 3, "explain": "The announcement split modes: delegated and behind-the-scenes agents were GA and team-workflow agents with their own access were public preview. A GA product label does not make every mode GA. The Entra P2 and hosted-only claims have no support in the sources.", "difficulty": 2, "ref": "r20" }
+  ],
+  "defend": null,
+  "refs": ["r8", "r9", "r12", "r13", "r16", "r20", "r23", "r25", "r26", "r29"],
+  "takeaways": ["Agent 365 observes, governs and secures agents. It does not build or host them", "Native and sync add inventory, the SDK adds code-level capabilities, and each needs the right code ownership", "A GA product can hold preview modes, so check each mode and date", "Use the Microsoft OpenTelemetry Distro, not the deprecated Observability SDK"]
+}

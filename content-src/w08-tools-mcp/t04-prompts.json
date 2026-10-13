@@ -1,0 +1,99 @@
+{
+  "id": "w08-t04",
+  "order": 4,
+  "group": "Foundations",
+  "title": "Prompts",
+  "minutes": 6,
+  "difficulty": "core",
+  "summary": "Prompts are reusable message templates a server offers. A user picks one, often as a slash command, fills its arguments, and the server returns ready-made messages.",
+  "useIf": "You want a person to start a standard workflow with one action and consistent wording across a team.",
+  "avoidIf": "Nobody is present to pick it, such as an unattended agent, or the model should choose the workflow itself.",
+  "explain": [
+    { "t": "p", "md": "Prompts are **user-controlled**. The spec means the user decides when to use one, not who wrote it: the content is defined by the server. A typical host shows prompts as slash commands or menu entries [[tr2]]." },
+    { "t": "p", "md": "A server that supports prompts declares the `prompts` capability, with optional `listChanged`. The client calls `prompts/list` to get `name`, `title`, `description`, `icons` and an optional list of `arguments` (each with `name`, `description` and `required`). It then calls `prompts/get` with the chosen `name` and `arguments`. The result holds `messages`, each with a `role` of `user` or `assistant` and `content` such as text, an image or an embedded resource." },
+    { "t": "flow", "title": "A prompt from pick to context", "direction": "h", "steps": [
+      { "title": "List", "md": "`prompts/list` returns names and arguments. Results carry `ttlMs` and `cacheScope` in 2026-07-28." },
+      { "title": "Pick", "md": "The user chooses, for example `/code_review`." },
+      { "title": "Complete", "md": "`completion/complete` can suggest argument values, up to 100 items [[tr9]]." },
+      { "title": "Get", "md": "`prompts/get` returns messages. The server MAY answer with `input_required` first." },
+      { "title": "Send", "md": "The host adds the messages to the conversation for the model." }
+    ] },
+    { "t": "callout", "kind": "warn", "title": "Server text is still untrusted text", "md": "A user selecting a prompt does not make its content safe. The server wrote the messages, and they enter the model's context. Show the expanded text where possible and treat third-party prompt content like any other prompt injection channel." },
+    { "t": "p", "md": "Lists MAY vary by the authorization on the request, for example to hide prompts a caller's scopes do not allow, but MUST NOT vary per connection. A related extension, Skills over MCP (`io.modelcontextprotocol/skills`), serves `SKILL.md` directories as resources. Host support is still being implemented, so check your host before relying on it [[r11]]." }
+  ],
+  "whereToUse": [
+    "A team command palette: `/incident_summary`, `/release_notes`, `/code_review`",
+    "Guided onboarding flows where the first message needs structured arguments",
+    "Domain templates that embed a resource, such as a style guide plus the document to review",
+    "Standard analyst workflows that must read the same way for every user"
+  ],
+  "whenToUse": {
+    "use": ["A human starts the workflow", "The wording should be consistent across users", "Arguments are few and can be autocompleted", "The server owner should maintain the template"],
+    "avoid": ["The model must pick the workflow without a user", "The workflow needs secrets typed into arguments", "The host has no surface to list or pick prompts"],
+    "flips": ["A workflow should run unattended: make it a tool or a host-side automation", "Teams want to edit templates themselves: keep them in the host or a repository"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["MCP prompt", "User-triggered, shared across hosts", "No user in the loop", "Needs host UI support"],
+      ["Tool that wraps the workflow", "Model or automation runs it", "Wording must be user-reviewed first", "Token cost of the definition"],
+      ["Host-side saved prompt", "One host, team edits freely", "Several hosts must share it", "Copies drift apart"],
+      ["Skill (SKILL.md) via the Skills extension", "Reusable instructions plus files", "Host lacks support", "Support is still being implemented"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Nobody uses the prompts the team shipped", "cause": "The chosen host does not expose prompts in its UI", "fix": "Check host support before investing, and offer the same flow as a tool if the host lacks a surface" },
+    { "symptom": "Odd behaviour after selecting a third-party prompt", "cause": "Server-authored messages carried hidden instructions", "fix": "Preview expanded messages, allow-list servers and apply injection defences" },
+    { "symptom": "Users mistype argument values", "cause": "No completion was implemented", "fix": "Implement `completion/complete` for arguments with `ref/prompt`" }
+  ],
+  "scenarios": [
+    {
+      "id": "w08-t04-s1",
+      "title": "A shared incident summary command",
+      "situation": "On-call engineers across three teams need the same incident summary structure. Each fills in an incident id and severity. A person always starts it.",
+      "constraints": ["A human triggers it", "Wording must be consistent", "Several hosts in use"],
+      "unknowns": ["Do all hosts show MCP prompts?", "Who maintains the template?"],
+      "question": "How do you package the workflow?",
+      "options": [
+        { "name": "An MCP prompt with two arguments and completion", "verdict": "best", "why": "User-controlled by design, shared across hosts and consistent for every engineer.", "tradeoff": "Hosts without a prompt surface will not show it." },
+        { "name": "A tool the model may call whenever it thinks it is useful", "verdict": "good", "why": "Works in any host and lets the agent start the summary itself.", "tradeoff": "Less predictable, and the definition costs tokens on every request." },
+        { "name": "A wiki page people copy and paste", "verdict": "poor", "why": "Copies drift and arguments are untracked.", "tradeoff": "Acceptable for a one-off before any server exists." }
+      ],
+      "flips": [
+        { "if": "The summary must be produced automatically on every alert", "then": "Use a tool or an automation, since no user is present to pick a prompt." },
+        { "if": "Only one host is used", "then": "A host-side saved prompt is simpler." }
+      ],
+      "takeaway": "Prompts fit human-started, shared workflows."
+    },
+    {
+      "id": "w08-t04-s2",
+      "title": "Automatic triage on alerts",
+      "situation": "An alert arrives at night and an agent must run a standard triage with no person present. The team wrote the triage as a prompt template.",
+      "constraints": ["No human at trigger time", "Must run on every alert", "Server owned by the SRE team"],
+      "unknowns": ["Does the agent framework call tools or only render prompts?", "What approvals apply to remediation steps?"],
+      "question": "What should the triage flow use?",
+      "options": [
+        { "name": "A workflow tool the agent or automation calls", "verdict": "best", "why": "A tool needs no user selection and can return structured findings.", "tradeoff": "Adds a definition and needs approval design for risky actions." },
+        { "name": "Keep it as a prompt and have the automation call `prompts/get`", "verdict": "good", "why": "The automation can fetch the messages and feed the model.", "tradeoff": "You use the prompt primitive outside its user-controlled intent." },
+        { "name": "Wait for an engineer to select the prompt", "verdict": "poor", "why": "Defeats unattended triage.", "tradeoff": "Right only when a human should always start triage." }
+      ],
+      "flips": [
+        { "if": "A reviewer must approve wording before the run", "then": "Keep the prompt and require a human to pick it." },
+        { "if": "The triage is only ever started by an on-call engineer", "then": "A prompt is the better fit again." }
+      ],
+      "takeaway": "If nobody is there to choose, it is not a prompt."
+    }
+  ],
+  "quiz": [
+    { "id": "w08-t04-q1", "type": "multi", "tag": "concept", "q": "Which statements about MCP prompts are true?", "options": ["They are user-controlled", "Arguments can be auto-completed with the completion API", "Because a user picked it, the content is safe to trust", "Returned messages carry a role of `user` or `assistant`"], "answers": [0, 1, 3], "explain": "Prompts are chosen by users, can use `completion/complete` for arguments and return role-tagged messages. The content is still written by the server, so picking it does not make it trustworthy." },
+    { "id": "w08-t04-q2", "type": "single", "tag": "flip", "q": "A nightly agent must run a standard analysis with nobody present. Which primitive fits?", "options": ["A prompt, since the template is already written", "A resource, since it holds the template", "A tool or automation that runs without selection", "Elicitation, to ask the user which template to use"], "answer": 2, "explain": "Prompts rely on a user choosing them. An unattended run needs a tool or an automation. A resource is attached context and elicitation needs a person to answer." }
+  ],
+  "flashcards": [
+    { "front": "Who controls MCP prompts and who writes them?", "back": "The user decides when to use one. The server defines the content, so it is still untrusted text for the model." },
+    { "front": "Which calls make up the prompt flow?", "back": "`prompts/list` for names and arguments, optional `completion/complete` for values, then `prompts/get` which returns role-tagged messages." },
+    { "front": "When is a prompt the wrong primitive?", "back": "When no human is present to select it or the model should pick the workflow. Use a tool or automation instead." }
+  ],
+  "related": ["w08-t02", "w08-t03", "w08-l01"],
+  "refs": ["tr2", "tr9", "r11"]
+}

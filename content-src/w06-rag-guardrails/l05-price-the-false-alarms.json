@@ -1,0 +1,60 @@
+{
+  "id": "w06-l5",
+  "order": 5,
+  "title": "Price the false alarms and test the guards",
+  "kind": "problem",
+  "minutes": 16,
+  "brief": "A guard that blocks too much is a quiet outage, and one that blocks too little is a headline. How do you put a price on each error and test a guard before users meet it?",
+  "blocks": [
+    { "t": "h", "text": "Every guard is a classifier with two error rates", "level": 2 },
+    { "t": "formula", "title": "Why most blocks are false alarms", "expr": "precision = (recall x base rate) / (recall x base rate + FPR x (1 - base rate))", "vars": [ { "k": "recall", "v": "share of harmful requests the guard catches" }, { "k": "base rate", "v": "share of all traffic that is harmful" }, { "k": "FPR", "v": "false positive rate, the share of benign requests the guard blocks" } ], "example": "With a 0.5% base rate, 95% recall and a 2% false positive rate, precision is 0.00475 / (0.00475 + 0.0199) = **0.193**. About four in five blocks hit a benign request, even though the guard looks excellent." },
+    { "t": "stats", "items": [
+      { "label": "Harmful requests", "value": "500", "note": "Per 100,000 requests at a 0.5% base rate. Illustrative arithmetic, not vendor data." },
+      { "label": "Harm caught", "value": "475", "note": "95% recall." },
+      { "label": "Benign requests blocked", "value": "1,990", "note": "2% of 99,500 benign requests." },
+      { "label": "Share of blocks that are real", "value": "19%", "note": "475 of 2,465 blocks." }
+    ] },
+    { "t": "compare", "title": "What a guard does when it fires", "intro": "The action changes what a false positive costs. Foundry offers annotate and annotate and block for models, and agents support annotate and block only (preview) [[r1]].", "options": [
+      { "name": "Block", "summary": "Stop the request or the answer.", "pros": ["Strongest protection", "Simple to explain"], "cons": ["Every false positive is a failed request", "Block cannot tell the user what to change"], "bestWhen": "Harm is severe and irreversible, such as unsafe tool actions.", "avoidWhen": "The guard is new or its precision is unmeasured." },
+      { "name": "Annotate (shadow mode)", "summary": "Record the verdict and let the content through.", "pros": ["Measures real block rates and false positives with no user impact", "Builds the labelled set you need"], "cons": ["Harm gets through while you learn", "Annotations nobody reads change nothing"], "bestWhen": "Launching or tuning a guard.", "avoidWhen": "Permanent use on a severe-harm surface." },
+      { "name": "Repair", "summary": "Redact, rewrite or correct instead of refusing, for example PII redaction or groundedness correction (preview).", "pros": ["Keeps most of the user's help", "Lowers the cost of a false positive"], "cons": ["A repair can introduce its own errors", "Needs a second check on the repaired text"], "bestWhen": "A small part of the content is the problem.", "avoidWhen": "Any residue of the content is unacceptable." },
+      { "name": "Escalate to a human", "summary": "Hold the item for review or sample it afterwards.", "pros": ["Handles borderline cases", "Feeds labels back to the evaluation set"], "cons": ["Adds delay and a staffing cost", "Does not scale to every request"], "bestWhen": "High stakes and low volume.", "avoidWhen": "Real-time chat at scale." }
+    ] },
+    { "t": "flow", "title": "Evaluate a guard before users meet it", "direction": "h", "steps": [
+      { "title": "Label", "md": "Build sets for benign, harmful, borderline and adversarial inputs, per language.", "tag": "data" },
+      { "title": "Measure", "md": "Recall and false positive rate per category and language, plus latency p50 and p95.", "tag": "offline" },
+      { "title": "Shadow", "md": "Annotate only on live traffic and compare verdicts with your labels.", "tag": "live" },
+      { "title": "Review", "md": "Sample blocks and misses with humans.", "tag": "people" },
+      { "title": "Set", "md": "Choose thresholds per category and surface.", "tag": "tune" },
+      { "title": "Canary", "md": "Enable blocking for a small share, then widen with alerts.", "tag": "rollout" }
+    ] },
+    { "t": "table", "caption": "What to measure and alert on", "head": ["Metric", "Why it matters", "Alert when"], "rows": [
+      ["Recall per category and language on a red-team set", "Shows what slips through", "It falls below the agreed floor after any change"],
+      ["False positive rate on benign traffic", "The cost users feel", "It exceeds budget or differs by language"],
+      ["Block rate over time", "Detects drift, including provider model updates", "It moves outside an agreed band overnight"],
+      ["Latency p50 and p95 per guard", "Parallel guards add the slowest one", "A guard becomes the slowest stage"],
+      ["Guard timeout and error rate", "Reveals fail-open and fail-closed paths", "It rises and stays up"],
+      ["Override or appeal rate", "Shows false positives users notice", "It rises"]
+    ], "highlightCol": 2 },
+    { "t": "failure", "title": "Guard evaluation failure modes", "items": [
+      { "symptom": "The block rate doubles overnight and nothing changed on your side.", "cause": "A classifier or service model update moved its decision boundary.", "fix": "Alert on block rate, re-run the labelled set, compare recall and false positives with the last run, and keep a rollback path." },
+      { "symptom": "Rephrased or encoded attacks get through.", "cause": "The test set holds only plain attacks. Prompt Shields lists encoding attacks and role-play among its subtypes [[r3]].", "fix": "Add encodings, role-play, conversation mockups and document-borne variants to the adversarial set." },
+      { "symptom": "The guard scores well and users in another language complain.", "cause": "Evaluation ran in English only, and several features were tested on English only [[r10]].", "fix": "Slice every metric by language and keep a per-language floor." },
+      { "symptom": "Medical or legal vocabulary is blocked.", "cause": "One threshold across all surfaces.", "fix": "Set thresholds per category and surface, review a sample of blocks, and consider custom categories." },
+      { "symptom": "Annotations pile up and nobody reads them.", "cause": "Shadow mode has no owner or review cadence.", "fix": "Assign an owner, sample weekly and set an exit date for shadow mode." }
+    ] }
+  ],
+  "quiz": [
+    { "id": "w06-l5-q1", "type": "numeric", "tag": "numeric", "difficulty": 3, "q": "Harmful traffic is 1% of requests. A different guard has 90% recall and a 3% false positive rate. What share of its blocks are real harm (precision)?", "answer": 0.233, "tolerancePct": 3, "unit": "fraction", "hint": "0.90 x 0.01 divided by (0.90 x 0.01 + 0.03 x 0.99)", "explain": "True blocks are 0.90 x 0.01 = 0.009 of traffic and false blocks are 0.03 x 0.99 = 0.0297, so precision is 0.009 / 0.0387 = 0.233. Recall alone says nothing about the user-visible cost, because benign traffic is almost all of the traffic." },
+    { "id": "w06-l5-q2", "type": "single", "tag": "diagnose", "difficulty": 2, "q": "The block rate for one harm category doubled overnight. You deployed nothing, and complaints about false positives are rising. What do you do first?", "options": ["Disable the guard until the weekend, then review the complaints", "Re-run the labelled set and compare with the last run, checking for a provider update", "Raise every threshold to the highest level so that the complaints stop and the block rate settles", "Replace the classifier with an LLM judge and relaunch it as a new project"], "answer": 1, "explain": "A sudden shift with no deployment points to a classifier or service update, and only a re-run of your labelled set separates a drift in the guard from a change in traffic. Disabling the guard removes protection, raising every threshold hides real harm, and swapping in a judge is a redesign, not a diagnosis." },
+    { "id": "w06-l5-q3", "type": "order", "tag": "order", "difficulty": 2, "q": "Put the steps for evaluating and rolling out a guard in order.", "items": ["Label benign, harmful, borderline and adversarial sets per language", "Measure recall, false positives and latency offline", "Run in shadow mode on live traffic", "Review a sample of blocks and misses with people", "Set thresholds per category and surface", "Enable blocking for a canary share"], "explain": "Offline measurement comes before live exposure, and shadow mode comes before blocking so that no user pays for tuning. Thresholds are set after the review, because the review shows where they are wrong, and the canary ends the sequence." }
+  ],
+  "defend": null,
+  "refs": ["r1", "r3", "r10", "r4", "r26", "r27"],
+  "takeaways": [
+    "At low base rates most blocks hit benign requests, even for a good guard",
+    "Shadow mode measures false positives before anyone is blocked",
+    "Slice metrics by category and language, and alert on block rate drift",
+    "Choose the action by the cost of a false positive: block, annotate, repair or escalate"
+  ]
+}

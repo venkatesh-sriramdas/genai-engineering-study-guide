@@ -1,0 +1,108 @@
+{
+  "id": "w06-t06",
+  "order": 6,
+  "group": "Azure AI Content Safety",
+  "title": "Groundedness detection and protected material",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "Two Content Safety checks guard the output: groundedness detection compares an answer with its sources, and protected material detection flags known copyrighted text and code. Their status and limits decide where you can use them.",
+  "useIf": "You need managed output checks for unsupported claims or reproduced copyrighted content and can live with their language, size and release-state limits.",
+  "avoidIf": "Your traffic is not English or your content exceeds the size limits: both features were tested on English only.",
+  "explain": [
+    { "t": "p", "md": "**Groundedness detection** checks an answer against supplied grounding sources. You choose a domain (`Medical` or `Generic`) and a task (`Summarization` or `QnA`). Non-reasoning mode returns a fast grounded or ungrounded verdict, reasoning mode explains ungrounded segments, and optional correction returns repaired text. It is **preview** and English only, grounding sources are limited to 55,000 characters, text plus query to 7,500 characters, and the query must be at least 3 words. In Foundry guardrails it applies to models, not agents [[r4]] [[r10]]." },
+    { "t": "p", "md": "**Protected material detection** scans completions. The text filter flags known text such as song lyrics, articles, recipes and selected web content. The code filter flags matches to GitHub repositories, and its code index is current only through 2023-04-06. Both are English only, and a completion needs at least 110 characters to be scanned. The docs quote flag thresholds of 40 characters for recipes, 200 characters for news and 11 words for lyrics [[r5]]. Text reached GA in August 2024. The code filter was labelled preview in a September 2024 notice, and its current status is UNVERIFIED: the Foundry risk table (checked 2026-10-13) lists it for models and agents without a preview label [[r1]]." },
+    { "t": "table", "caption": "What exists and its status on 2026-10-13", "head": ["Feature", "Detects", "Status", "Language", "Key limit"], "rows": [["Groundedness detection", "Claims unsupported by sources", "Preview", "English", "55,000 and 7,500 characters"], ["Protected material, text", "Known copyrighted text", "GA (August 2024)", "English", "110 characters minimum"], ["Protected material, code", "Matches to GitHub code", "UNVERIFIED", "English", "Index through 2023-04-06"], ["Task adherence", "Misaligned or premature tool use", "Preview (since 2025-11)", "See page", "100K characters"], ["Custom categories, standard", "Your own taxonomy (trained)", "Retiring or retired", "English", "Page says retires 2026-09-01"], ["Custom categories, rapid", "Emerging incidents", "Preview", "Text and image", "LLM based"]] }
+  ],
+  "whereToUse": [
+    "Summarisation and Q&A features where an unsupported sentence is costly and content is English",
+    "Content generators (marketing, documentation) that must not reproduce lyrics, articles or recipes",
+    "Code assistants where licence exposure of generated snippets matters",
+    "Evaluation: reasoning mode during development to see which segments fail",
+    "Annotate-only monitoring of how often outputs are flagged"
+  ],
+  "whenToUse": {
+    "use": [
+      "Use groundedness detection on English output with sources that fit the limits and preview is acceptable",
+      "Use the protected material text filter on generated prose that might repeat known text",
+      "Use annotations and sampling to estimate flag rates before blocking",
+      "Use reasoning mode in development and non-reasoning mode in production"
+    ],
+    "avoid": [
+      "Avoid these features for non-English content without your own evaluation",
+      "Avoid treating the code filter as legal clearance: its index ends on 2023-04-06",
+      "Avoid sending answers or sources beyond the size limits"
+    ],
+    "flips": [
+      "Preview status is not allowed: use an NLI model or LLM judge for groundedness",
+      "Generated code ships to customers: add licence scanning in CI on top of the filter",
+      "Answers exceed 7,500 characters: split them into segments with matching sources"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Groundedness detection API", "English, short sources, managed service", "Other languages, big sources, GA required", "Preview, size limits, models only in Foundry"],
+      ["NLI model or LLM judge", "Any language, custom rubric", "Latency and hosting cost matter", "Calibration effort, judge bias"],
+      ["Protected material filter", "Prose output may repeat known text", "Content is not English", "Does not prove originality, code index dated"],
+      ["Similarity search against your own licensed corpus", "You own the reference set", "You need broad web coverage", "Index build and upkeep"],
+      ["Human or legal review", "Published or high-value content", "High volume", "Slow, costly, but accountable"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Groundedness calls fail on long answers", "cause": "Text plus query exceeds 7,500 characters or sources exceed 55,000 characters", "fix": "Segment the answer and select only the relevant sources" },
+    { "symptom": "Short snippets pass protected material checks", "cause": "A completion needs at least 110 characters to be scanned and thresholds differ by content type", "fix": "Do not rely on it for short fragments, add other controls" },
+    { "symptom": "Generated code resembles recent open-source code but is not flagged", "cause": "The code index is current only through 2023-04-06", "fix": "Run licence and similarity scanning in CI" },
+    { "symptom": "A feature disappears or behaves differently", "cause": "Preview or retiring features change, and the custom categories page still says it is retiring after 2026-09-01", "fix": "Confirm status in the portal and keep a fallback" }
+  ],
+  "scenarios": [
+    {
+      "id": "w06-t06-s1",
+      "title": "Internal code assistant with licensing exposure",
+      "situation": "Developers use an assistant to generate code that ships in products. Legal worries about copied open-source snippets. The team wants managed checks and a clear audit trail.",
+      "constraints": ["Generated code ships to customers", "Licence exposure matters", "Managed service preferred", "English prompts"],
+      "unknowns": ["Is the code filter's status acceptable for production?", "Is a CI licence scanner already in use?"],
+      "question": "What do you rely on?",
+      "options": [
+        { "name": "Protected material code filter in annotate mode plus licence and similarity scanning in CI", "verdict": "best", "why": "The filter adds a signal and the CI scan covers code newer than the filter's 2023-04-06 index.", "tradeoff": "Extra pipeline step and review of flagged snippets." },
+        { "name": "The code filter alone", "verdict": "good", "why": "Cheap and managed.", "tradeoff": "Stale index and unverified status leave gaps." },
+        { "name": "A prompt that says do not copy code", "verdict": "poor", "why": "It gives no detection and no audit evidence.", "tradeoff": "A weak extra layer, never a control by itself." }
+      ],
+      "flips": [
+        { "if": "Code is only for internal throwaway scripts", "then": "The filter in annotate mode is enough." },
+        { "if": "Legal needs formal sign-off", "then": "Add a documented review step for flagged output." }
+      ],
+      "takeaway": "A dated index is a reason to add an independent check."
+    },
+    {
+      "id": "w06-t06-s2",
+      "title": "Long English summaries of medical notes",
+      "situation": "A tool produces summaries up to 20,000 characters from source notes of about 40,000 characters. Unsupported statements are unacceptable. Preview features are allowed in this pilot.",
+      "constraints": ["Answers beyond 7,500 characters", "Sources within 55,000 characters", "English", "Preview accepted"],
+      "unknowns": ["Can the summary be split by section?", "What latency is acceptable?"],
+      "question": "How do you use groundedness detection?",
+      "options": [
+        { "name": "Split the summary into segments, pair each with its source notes, run non-reasoning mode and log failures", "verdict": "best", "why": "It respects the 7,500 and 55,000 character limits and gives a verdict per segment.", "tradeoff": "More calls and the need to align segments to sources." },
+        { "name": "Send the whole summary in one call", "verdict": "poor", "why": "It exceeds the 7,500 character limit for text plus query.", "tradeoff": "Fine for short answers under the limit." },
+        { "name": "Use reasoning mode in production for every segment", "verdict": "good", "why": "Explains which parts are ungrounded.", "tradeoff": "Slower and costlier. The docs suggest it for development." }
+      ],
+      "flips": [
+        { "if": "Preview is not allowed", "then": "Use claim-level NLI or an LLM judge." },
+        { "if": "Notes are not English", "then": "Use a judge evaluated in that language." }
+      ],
+      "takeaway": "Fit the check to the service limits by segmenting."
+    }
+  ],
+  "quiz": [
+    { "id": "w06-t06-q1", "type": "numeric", "tag": "numeric", "q": "Text plus query is limited to 7,500 characters. Your query is 100 characters. A 20,000 character answer is split into equal segments. What is the minimum number of segments?", "answer": 3, "tolerancePct": 0, "unit": "segments", "explain": "Each segment can hold at most 7,400 characters of text. 20,000 divided by 7,400 is 2.7, so 3 segments.", "ref": "r4" },
+    { "id": "w06-t06-q2", "type": "single", "tag": "concept", "q": "Up to which date is the protected material code index current, per the documentation?", "options": ["2021-09-30", "2022-12-31", "2023-04-06", "2024-08-01"], "answer": 2, "explain": "The docs state the code index is current only through 2023-04-06. The other dates are not documented for it.", "ref": "r5" },
+    { "id": "w06-t06-q3", "type": "multi", "tag": "diagnose", "q": "Which statements about these checks are correct?", "options": ["Groundedness detection is preview and English only", "Protected material needs at least 110 characters in a completion", "Groundedness detection applies to agents in Foundry guardrails", "Protected material text reached GA in August 2024"], "answers": [0, 1, 3], "explain": "Groundedness is preview, English only and applies to models, not agents. Protected material text is GA and needs 110 characters.", "ref": "r4" }
+  ],
+  "flashcards": [
+    { "front": "Groundedness detection limits?", "back": "Sources 55,000 characters, text plus query 7,500, query at least 3 words, English only, preview, models not agents." },
+    { "front": "Protected material details?", "back": "Text and code filters on completions, English only, minimum 110 characters. Code index current only through 2023-04-06." },
+    { "front": "Reasoning versus non-reasoning groundedness mode?", "back": "Non-reasoning returns a fast verdict. Reasoning explains ungrounded segments, and the docs suggest it for development." }
+  ],
+  "related": ["w06-t02", "w06-t03", "w06-t07", "w06-l3", "w05-t16"],
+  "refs": ["r1", "r4", "r5", "r7", "r10"]
+}

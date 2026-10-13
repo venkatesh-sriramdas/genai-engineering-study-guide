@@ -1,0 +1,91 @@
+{
+  "id": "w17-l3",
+  "order": 3,
+  "title": "Law, guidance, standard or rulebook?",
+  "kind": "problem",
+  "minutes": 18,
+  "brief": "A customer asks for ISO 42001, a regulator for EU AI Act evidence and the board for NIST alignment. Decide which framework you adopt first, say what each one is and is not, and decide what you will not claim.",
+  "blocks": [
+    { "t": "h", "text": "Four kinds of document, often confused", "level": 2 },
+    { "t": "table", "caption": "What each framework is. Dates and statuses checked 2026-10-13.", "head": ["Framework", "Kind", "Binding or certifiable", "Covers", "Date and status"], "rows": [
+      ["EU AI Act", "Regulation", "Binding in the EU. Not a certificate", "Prohibitions, GPAI, transparency, high-risk systems", "In force since 2024-08-01, staged to 2028-08-02 [[r1]]"],
+      ["NIST AI RMF 1.0", "Voluntary framework", "Neither", "Govern, Map, Measure, Manage", "Released 2023-01-26. NIST says it is being revised [[r10]]"],
+      ["NIST AI 600-1", "Voluntary GenAI profile", "Neither", "Twelve GenAI risks with suggested actions", "Released 2024-07-26 [[r11]]"],
+      ["ISO/IEC 42001:2023", "Management system standard", "Certifiable, voluntary", "An organization's AI management system (AIMS), Plan-Do-Check-Act", "Published December 2023 [[r12]]"],
+      ["Microsoft Responsible AI Standard v2", "One company's internal standard", "Neither", "Six goal groups, including human oversight and control", "Published June 2022 [[r13]]"],
+      ["GPAI Code of Practice", "Voluntary code", "Neither", "Transparency, Copyright, Safety and Security chapters", "Published 2025-07-10 [[r9]]"]
+    ], "highlightCol": 1 },
+    { "t": "p", "md": "A **regulation** says what you must do in a jurisdiction. A **guidance framework** such as the NIST AI RMF gives a shared vocabulary and practices and is voluntary. A **management system standard** such as ISO/IEC 42001 lets an independent body certify that your organization runs an AI management system. An **internal standard** turns principles into engineering requirements.\n\nThe common mistake is to mix them. An ISO 42001 certificate covers the organization's management system, not the behaviour of one chatbot, and NIST AI RMF is not a regulation. NIST AI 600-1 names twelve GenAI risks: CBRN information or capabilities, confabulation, dangerous, violent or hateful content, data privacy, environmental impacts, harmful bias and homogenization, human-AI configuration, information integrity, information security, intellectual property, obscene, degrading or abusive content, and value chain and component integration. Prompt injection and data poisoning sit under information security." },
+    { "t": "h", "text": "Pick the first framework", "level": 2 },
+    { "t": "dials", "id": "w17-l3-framework", "title": "Which framework do you adopt first?", "prompt": "Set where you sell, whether customers ask for a certificate and how many teams build AI. The first choice changes. Most organizations end up with a combination.",
+      "dials": [
+        { "id": "jur", "label": "Jurisdiction", "values": [ { "id": "eu", "label": "EU market" }, { "id": "other", "label": "Elsewhere, no binding AI law" }, { "id": "global", "label": "Global, mixed rules" } ] },
+        { "id": "demand", "label": "Customer demand", "values": [ { "id": "none", "label": "No formal ask" }, { "id": "cert", "label": "Procurement asks for a certificate" } ] },
+        { "id": "footprint", "label": "Footprint", "values": [ { "id": "one", "label": "One AI product" }, { "id": "many", "label": "Many teams and agents" } ] }
+      ],
+      "options": [
+        { "id": "euact", "name": "EU AI Act programme", "summary": "Map duties by role and date and build evidence." },
+        { "id": "nist", "name": "NIST AI RMF with the GenAI profile", "summary": "Govern, Map, Measure, Manage, with twelve GenAI risks." },
+        { "id": "iso", "name": "ISO/IEC 42001 certification", "summary": "A certified AI management system." },
+        { "id": "internal", "name": "Internal standard in the Microsoft style", "summary": "Goals, requirements and a Sensitive Uses review." },
+        { "id": "checklist", "name": "Lightweight checklist", "summary": "The boring option, sized to one product." }
+      ],
+      "scores": {
+        "euact": {
+          "jur": { "eu": { "s": 2, "why": "Binding law for systems on the EU market." }, "other": { "s": -1, "why": "No legal driver unless you serve EU users." }, "global": { "s": 1, "why": "Sets a high common bar." } },
+          "demand": { "none": { "s": 1, "why": "A legal duty needs no customer ask." }, "cert": { "s": -1, "why": "It is not a certificate customers can request." } },
+          "footprint": { "one": { "s": 0, "why": "Neutral." }, "many": { "s": 1, "why": "A shared programme pays off across systems." } }
+        },
+        "nist": {
+          "jur": { "eu": { "s": 0, "why": "Not a legal answer in the EU." }, "other": { "s": 2, "why": "A common voluntary reference outside the EU." }, "global": { "s": 1, "why": "A widely recognised baseline." } },
+          "demand": { "none": { "s": 1, "why": "Cheap to start." }, "cert": { "s": -1, "why": "There is no NIST certification." } },
+          "footprint": { "one": { "s": 1, "why": "Light to apply to one product." }, "many": { "s": 1, "why": "The Govern function scales across teams." } }
+        },
+        "iso": {
+          "jur": { "eu": { "s": 1, "why": "Supports compliance but does not prove it." }, "other": { "s": 1, "why": "Recognised internationally." }, "global": { "s": 2, "why": "One international standard for every region." } },
+          "demand": { "none": { "s": -1, "why": "Costly without a customer ask." }, "cert": { "s": 2, "why": "Certifiable, which is what procurement asks for." } },
+          "footprint": { "one": { "s": -1, "why": "Heavy for one product." }, "many": { "s": 2, "why": "A management system pays off across teams." } }
+        },
+        "internal": {
+          "jur": { "eu": { "s": 0, "why": "Needs mapping to the law." }, "other": { "s": 1, "why": "Fits when no law drives you." }, "global": { "s": 1, "why": "One standard across regions." } },
+          "demand": { "none": { "s": 1, "why": "You control the rules." }, "cert": { "s": -1, "why": "Not independently recognised." } },
+          "footprint": { "one": { "s": 0, "why": "Neutral." }, "many": { "s": 2, "why": "Shared goals and a Sensitive Uses review scale across teams." } }
+        },
+        "checklist": {
+          "jur": { "eu": { "s": -2, "why": "Will not satisfy a legal duty." }, "other": { "s": 1, "why": "Fine at small scale." }, "global": { "s": -1, "why": "Too thin for mixed regimes." } },
+          "demand": { "none": { "s": 2, "why": "Right-sized when nobody asks." }, "cert": { "s": -2, "why": "Will fail a procurement review." } },
+          "footprint": { "one": { "s": 2, "why": "Right-sized for one product." }, "many": { "s": -2, "why": "Does not scale to a fleet." } }
+        }
+      },
+      "takeaway": "The law decides what you must do, a certificate decides what customers accept, and a voluntary framework decides how you organise the work. Pick the one your strongest driver demands, then borrow from the others." },
+    { "t": "failure", "title": "Failure modes to recognise", "items": [
+      { "symptom": "A sales deck says the chatbot is ISO 42001 certified.", "cause": "The certificate covers the organization's AI management system, not the behaviour of one application.", "fix": "Say the management system is certified and show application evidence: evals, oversight records and incident drills." },
+      { "symptom": "NIST AI RMF is cited as a regulation, or without a version.", "cause": "It is voluntary guidance, and NIST says 1.0 is being revised under the White House AI Action Plan.", "fix": "Cite the version, call it voluntary and map its functions to your controls." },
+      { "symptom": "The control mapping is complete but no one can show it operating.", "cause": "Controls were listed without records that prove them.", "fix": "Tie every control to evidence: approval logs, review dates, eval results and incident exercises." },
+      { "symptom": "A customer asks for EU AI Act evidence and receives an ISO certificate.", "cause": "Law and management system answer different questions.", "fix": "Map duties by role and date. ISO 42001 can support compliance but does not prove it." }
+    ] },
+    { "t": "accordion", "items": [
+      { "title": "Go deeper: the Microsoft Responsible AI Standard v2", "blocks": [
+        { "t": "p", "md": "The June 2022 external release has six goal groups: accountability, transparency, fairness, reliability and safety, privacy and security, and inclusiveness. Accountability includes goal A5, human oversight and control, and a Sensitive Uses review that is repeated at least annually. It is one company's internal rulebook, a useful template, not a certification [[r13]]." }
+      ] },
+      { "title": "Go deeper: the GPAI Code of Practice", "blocks": [
+        { "t": "p", "md": "Published on 2025-07-10 and voluntary. The Commission and the AI Board confirmed it as an adequate voluntary compliance tool. The Transparency and Copyright chapters cover Article 53 for all GPAI providers, and the Safety and Security chapter covers Article 55 for models with systemic risk [[r9]]." }
+      ] }
+    ] },
+    { "t": "callout", "kind": "interview", "title": "What interviewers listen for", "md": "Say what each framework is before you pick one: law, guidance, certifiable standard or internal rulebook. Then say what you will not claim, for example that ISO 42001 certifies one chatbot or that NIST is binding." }
+  ],
+  "quiz": [
+    { "id": "w17-l3-q1", "type": "single", "tag": "concept", "q": "What does an ISO/IEC 42001 certificate show?", "options": ["An audited organization-level AI management system", "The chatbot will not produce harmful or inaccurate answers in production", "The system meets the EU AI Act high-risk requirements", "The system passed the twelve risk tests in NIST AI 600-1"], "answer": 0, "explain": "ISO/IEC 42001 specifies and certifies an AI management system for an organization, run as Plan-Do-Check-Act. It does not certify one application's behaviour, it does not prove EU AI Act compliance and NIST AI 600-1 is a voluntary profile with suggested actions, not a test suite.", "difficulty": 1, "ref": "r12" },
+    { "id": "w17-l3-q2", "type": "multi", "tag": "concept", "q": "Select every true statement about the NIST AI RMF and AI 600-1.", "options": ["AI RMF 1.0 was released on 2023-01-26 and is voluntary.", "AI 600-1 is the GenAI profile, released 2024-07-26, with twelve risks.", "The four functions are Plan, Do, Check and Act.", "NIST states that AI RMF 1.0 is being revised.", "The AI RMF is a regulation with fines for non-compliance."], "answers": [0, 1, 3], "explain": "The RMF is voluntary guidance with the functions Govern, Map, Measure and Manage, the GenAI profile lists twelve risks, and NIST says 1.0 is under revision. Plan-Do-Check-Act is the ISO management system cycle, and the RMF carries no fines.", "difficulty": 2, "ref": "r10" },
+    { "id": "w17-l3-q3", "type": "single", "tag": "tradeoff", "q": "A 15-person startup ships one chatbot to US customers. No customer asks for a certificate and no binding AI law applies. Which first step fits?", "options": ["Pursue ISO/IEC 42001 certification", "Build a full EU AI Act compliance programme", "Adopt the Microsoft Responsible AI Standard unchanged", "A short checklist mapped to NIST functions"], "answer": 3, "explain": "With one product, no certificate demand and no binding law, a lightweight checklist mapped to the NIST functions is right-sized and can grow later. ISO certification is heavy for one product, the EU programme answers a legal driver you do not have and a large internal standard copied unchanged adds process without a driver.", "difficulty": 2, "ref": "r10" }
+  ],
+  "defend": null,
+  "refs": ["r1", "r9", "r10", "r11", "r12", "r13"],
+  "takeaways": [
+    "Law, guidance, certifiable standard and internal rulebook answer different questions.",
+    "ISO/IEC 42001 certifies an organization's management system, not one chatbot.",
+    "NIST AI RMF is voluntary, 1.0 is under revision, and AI 600-1 lists twelve GenAI risks.",
+    "Pick the framework your strongest driver demands, then borrow from the others.",
+    "Evidence beats mapping: tie every control to a record."
+  ]
+}

@@ -1,0 +1,139 @@
+{
+  "id": "w18-t14",
+  "order": 14,
+  "group": "Pitfalls",
+  "title": "Answer craft for architecture interviews",
+  "minutes": 7,
+  "difficulty": "core",
+  "summary": "How to structure, time-box and word an architecture answer so an interviewer can follow it and test it: clarify dials, start from the boring baseline, speak in trade-offs and avoid the common traps.",
+  "useIf": "You face a design or architecture question with unspecified constraints and a clock, in an interview or a design review.",
+  "avoidIf": "You treat it as a script to recite. The structure serves the content, and a rehearsed answer that ignores the dials fails.",
+  "explain": [
+    { "t": "p", "md": "A strong answer is **structured, time-boxed and testable**. Structure means the interviewer always knows where you are. Time-boxing means the parts that expose judgement (trade-offs, failure modes, metrics) get airtime instead of the architecture diagram eating the clock. Testable means every claim names a dial and a threshold, so the interviewer can change a constraint and watch you adapt. The five moves (clarify the dials, list options, pick and flip, failure modes, metrics and rollout) are taught in the Dial-and-Defend topic. This page covers pacing, wording and mistakes." },
+    { "t": "table", "caption": "A 45-minute design interview, an example split", "head": ["Minutes", "Phase", "What the interviewer should hear"], "rows": [
+      ["0 to 5", "Clarify", "Two to four questions that would change the answer, then stated assumptions"],
+      ["5 to 15", "Baseline design", "The boring baseline first, with a simple diagram and the data path"],
+      ["15 to 25", "Options and decision", "Two or three real alternatives, a pick for these dials and what flips it"],
+      ["25 to 35", "Deep dive", "The riskiest component in detail: permissions, latency, cost or evaluation"],
+      ["35 to 42", "Failure, metrics, rollout", "How it fails, how you would detect it, what you measure, how you ship"],
+      ["42 to 45", "Wrap", "Recap the choice, the top flip and what you would do with more time"]
+    ] },
+    { "t": "p", "md": "**Start from the simplest thing that works.** Anthropic advises finding the simplest solution possible and increasing complexity only when needed, because agentic systems often trade latency and cost for better task performance [[tr8]]. The Azure Architecture Center says to use the lowest level of complexity that reliably meets your requirements, from a direct model call, to a single agent with tools, to multi-agent orchestration [[tr9]]. Naming the baseline you would beat shows judgement." },
+    { "t": "table", "caption": "Trade-off language you can reuse", "head": ["Move", "Say it like this"], "rows": [
+      ["Name the dial", "'This depends on how fast revocation must apply. I will assume minutes.'"],
+      ["Compare", "'Option A wins when X and loses when Y.'"],
+      ["Choose", "'For these dials I pick A, accepting this cost.'"],
+      ["Flip", "'If the corpus doubles or latency drops under one second, I switch to B.'"],
+      ["Date and source", "'As of 2026-10-13 the docs list this as preview, so I would verify before depending on it.'"]
+    ] },
+    { "t": "callout", "kind": "interview", "title": "Admit limits out loud", "md": "Product details change quickly. Say what you know, label what you are inferring and say how you would verify it. Quoting a vendor number as universal fact, or a retired feature as current, costs more than saying 'I would check'." }
+  ],
+  "whereToUse": [
+    "Architecture and system design interviews for AI engineering roles",
+    "Internal design reviews where you must defend a choice to peers",
+    "Written design docs, using the same clarify, options, decision and risks structure",
+    "Mock interviews and practice with the guide's defend rounds",
+    "Customer or stakeholder discussions where requirements are still vague"
+  ],
+  "whenToUse": {
+    "use": [
+      "The question is open-ended and constraints are missing",
+      "You have a time box and need to show judgement, not only knowledge",
+      "You want the interviewer able to test and redirect your answer"
+    ],
+    "avoid": [
+      "Reciting the structure while skipping the dials",
+      "Spending most of the time on a polished diagram",
+      "Listing options without choosing"
+    ],
+    "flips": [
+      "The interviewer gives full constraints: skip clarification and start at options",
+      "You get 4 minutes instead of 45: compress to the five moves at roughly 30, 45, 60, 60 and 45 seconds",
+      "A follow-up changes a constraint: restate the dial and re-run the pick and flip"
+    ]
+  },
+  "alternatives": {
+    "title": "Answer styles compared",
+    "head": ["Style", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Dial-and-defend (clarify, options, pick and flip, failure, metrics)", "Open questions with hidden constraints", "The question is a pure fact check", "Needs practice to stay inside the time box"],
+      ["Component walk-through (draw boxes first)", "The interviewer asks for a diagram", "Constraints are unclear", "Looks thorough and hides missing judgement"],
+      ["Survey of options (no pick)", "Early exploration with no decision needed", "A decision is the point", "Reads as indecision"],
+      ["Single-technology answer", "The interviewer names the stack", "The stack is not given", "Misses alternatives and flips"],
+      ["Rehearsed template", "Never", "Always", "Ignores dials and sounds scripted"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "The interviewer keeps asking 'what about X?'", "cause": "You skipped clarification and the options step, so they are supplying the dials", "fix": "Spend the first minutes on dials, state assumptions and name alternatives before you draw." },
+    { "symptom": "You run out of time before failure modes and metrics", "cause": "The diagram and component detail consumed the clock", "fix": "Time-box the baseline, then move to trade-offs, failure modes and metrics with a visible clock." },
+    { "symptom": "A confident claim is shown to be out of date", "cause": "You quoted a product detail from memory without a date or a check", "fix": "Say 'as of' with a date, label inferences and offer to verify." }
+  ],
+  "scenarios": [
+    {
+      "id": "w18-t14-s1",
+      "title": "A vague opening prompt",
+      "situation": "The interviewer says only: design a question-answering system over our documents. No corpus size, permissions or latency are given. You have 45 minutes.",
+      "constraints": ["Open-ended prompt", "Hidden constraints", "45 minutes"],
+      "unknowns": ["How large and how fast-changing is the corpus?", "Who may see which documents, and how fast must revocation apply?"],
+      "question": "How do you begin?",
+      "options": [
+        { "name": "Start drawing a RAG pipeline with a vector database", "verdict": "poor", "why": "It commits to a technology before any dial is known and invites 'what about X?' interruptions.", "tradeoff": "Right if the interviewer has already fixed the stack and asked for a diagram." },
+        { "name": "Ask two to four dial questions, state assumptions for the rest, then give the boring baseline", "verdict": "best", "why": "It shows judgement, makes the answer testable and anchors later flips.", "tradeoff": "Costs a few minutes, so keep it brisk." },
+        { "name": "List every vendor and technique you know", "verdict": "good", "why": "Shows breadth.", "tradeoff": "Without a pick for stated dials it sounds like a catalogue and burns time." }
+      ],
+      "flips": [
+        { "if": "The interviewer answers the dials", "then": "Move straight to options and the pick." },
+        { "if": "They refuse to answer", "then": "State assumptions explicitly and invite correction." }
+      ],
+      "takeaway": "Dials first, technology second."
+    },
+    {
+      "id": "w18-t14-s2",
+      "title": "Asked about a feature you have not used",
+      "situation": "Midway through, the interviewer asks how a newly released platform feature handles a particular limit. You only half remember it.",
+      "constraints": ["Feature details change quickly", "You are not sure", "Credibility is at stake"],
+      "unknowns": ["Is it preview or GA?", "Is the limit documented or inferred?"],
+      "question": "How do you respond?",
+      "options": [
+        { "name": "Give confident specific numbers from memory", "verdict": "poor", "why": "A wrong number is worse than uncertainty, and product limits change.", "tradeoff": "Acceptable only when the number is widely documented and you are certain." },
+        { "name": "Say 'I do not know' and stop", "verdict": "good", "why": "Honest.", "tradeoff": "It gives up the chance to show reasoning." },
+        { "name": "State what you know, label the rest as an assumption, reason through the design under that assumption and say how you would verify", "verdict": "best", "why": "It shows honesty, reasoning and a verification habit.", "tradeoff": "Needs composure and a few seconds to structure the reply." }
+      ],
+      "flips": [
+        { "if": "You know the feature well", "then": "Answer directly and cite the status and date." },
+        { "if": "The interviewer wants only recall", "then": "Give the best-known facts briefly, with a caveat." }
+      ],
+      "takeaway": "Calibrated uncertainty beats bluffing."
+    },
+    {
+      "id": "w18-t14-s3",
+      "title": "A four-minute defend round",
+      "situation": "You have four minutes to defend a choice between two designs. You already have a clear favourite. The interviewer will ask a follow-up.",
+      "constraints": ["Four minutes", "A follow-up is coming", "Judgement is scored, not recall"],
+      "unknowns": ["Which dial will the follow-up change?", "Does the interviewer want metrics?"],
+      "question": "How do you spend the time?",
+      "options": [
+        { "name": "Run the five moves at about 30, 45, 60, 60 and 45 seconds, and say the flip aloud", "verdict": "best", "why": "It covers every scored element and gives the follow-up a dial to change.", "tradeoff": "Little room for depth on any one move." },
+        { "name": "Spend three minutes detailing the favourite's internals", "verdict": "poor", "why": "It skips options, failure modes and metrics, which are what the round scores.", "tradeoff": "Right when the interviewer asks for a component deep dive." },
+        { "name": "Present a balanced comparison without choosing", "verdict": "good", "why": "Fair and thorough.", "tradeoff": "No commitment, so the follow-up has nothing to test." }
+      ],
+      "flips": [
+        { "if": "The prompt gives you 10 minutes", "then": "Add a short diagram and one deeper failure mode." },
+        { "if": "The follow-up flips a dial", "then": "Re-state the pick for the new dial and the new risk." }
+      ],
+      "takeaway": "Commit, cover the scored moves and say the flip."
+    }
+  ],
+  "quiz": [
+    { "id": "w18-t14-q1", "type": "order", "tag": "order", "q": "Order the five moves of a defend answer.", "items": ["Clarify the dials", "List the options", "Pick and say what flips it", "Name failure modes and detection", "State metrics and rollout"], "explain": "Dials come first because they change the answer. Options and the pick follow, then risks, then how you measure and ship." },
+    { "id": "w18-t14-q2", "type": "single", "tag": "tradeoff", "q": "Which statement is the strongest trade-off wording?", "options": ["RAG is best because it is the standard way to ground a model in company documents, it scales well, and most teams already use it.", "RAG wins here because access is per user. I would flip to a long prompt if the corpus fits the window and is single tenant.", "It depends on the corpus, the users and the budget, so there is no single answer I can give.", "I would use the newest and largest model, since quality matters more than any trade-off here."], "answer": 1, "explain": "It names the dial, the choice and the flip condition. 'RAG is best' has no dial, 'it depends' has no pick and 'newest model' ignores constraints." },
+    { "id": "w18-t14-q3", "type": "multi", "tag": "diagnose", "q": "Which are common interview mistakes?", "options": ["Naming one option only", "Skipping failure modes and metrics", "Stating assumptions aloud", "Quoting product limits from memory without a date"], "answers": [0, 1, 3], "explain": "A single option, no failure modes or metrics and undated product claims all weaken an answer. Stating assumptions aloud is good practice." }
+  ],
+  "flashcards": [
+    { "front": "What makes an architecture answer testable?", "back": "Every claim names a dial and a threshold, so the interviewer can change a constraint and watch you adapt." },
+    { "front": "What baseline-first principle do Anthropic and Microsoft give?", "back": "Find the simplest solution, and add complexity only when needed. Use the lowest level of complexity that reliably meets requirements." },
+    { "front": "How do you handle a product detail you are unsure of?", "back": "State what you know, label the rest as an assumption with an 'as of' date, reason on it and say how you would verify." }
+  ],
+  "related": ["w00-t03", "w00-t04", "w18-l7", "w10-t01", "w10-t11", "w16-t01"],
+  "refs": ["tr8", "tr9"]
+}

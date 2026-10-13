@@ -1,0 +1,117 @@
+{
+  "id": "w09-l05",
+  "order": 5,
+  "title": "Trust between strangers, and the Microsoft stack",
+  "kind": "problem",
+  "minutes": 18,
+  "brief": "Your agent will call agents you do not own, and others will call yours. Identity, delegation, consent and the platform you run on shape what is possible. Decide how callers authenticate, what a credential request inside a task may do, and what Foundry and Agent Framework support.",
+  "blocks": [
+    { "t": "h", "text": "Authentication happens on every request", "level": 2 },
+    { "t": "table", "caption": "How A2A layers trust. A2A treats agents as standard enterprise applications and leaves identity to HTTP standards, where MCP defines its own OAuth profile [[r1]] [[r8]] [[r21]]", "head": ["Layer", "Rule", "Consequence for design"], "rows": [
+      ["Transport", "Production deployments MUST use HTTPS or TLS. Clients SHOULD verify the server certificate", "No plain HTTP between agents, including in the same network"],
+      ["Identity", "No user or client identity travels in the payload. Credentials are obtained out of band and sent on every request in HTTP headers or metadata", "Delegation must be built from tokens, not message fields"],
+      ["Authentication", "A server MUST authenticate every incoming request against the schemes declared in its card", "A card that lists a scheme does not enforce it by itself"],
+      ["Authorization", "Implementation-specific. It may consider skills, actions within tasks, data policies and OAuth scopes. Task listing, get, cancel and subscribe MUST be scoped to the caller", "Check authorization before any database query that could reveal other callers' tasks"],
+      ["In-task authorization", "An agent can move a task to `TASK_STATE_AUTH_REQUIRED` and ask the client to fulfill a credential request, ideally out of band", "The state alone authorizes nothing. Scope and lifetime are yours to define"],
+      ["Observability", "Participate in distributed tracing with W3C Trace Context headers, log `taskId` and correlation ids, audit sensitive events", "Fronting A2A servers with API management is highly recommended across organizations"]
+    ] },
+    { "t": "dials", "id": "w09-l05-scheme", "title": "Pick a security scheme for the card", "prompt": "Flip where the caller sits, whose authority the call carries and how many callers you serve.",
+      "dials": [
+        { "id": "boundary", "label": "Where the caller sits", "values": [ { "id": "tenant", "label": "Same tenant or company" }, { "id": "partner", "label": "A partner organization" } ] },
+        { "id": "identity", "label": "Whose authority the call carries", "values": [ { "id": "agent", "label": "The calling agent's own" }, { "id": "user", "label": "The end user's" } ] },
+        { "id": "scale", "label": "Number of callers", "values": [ { "id": "few", "label": "A few" }, { "id": "many", "label": "Many" } ] }
+      ],
+      "options": [
+        { "id": "key", "name": "API key", "summary": "A shared secret in a header, query or cookie." },
+        { "id": "cc", "name": "OAuth 2.0 client credentials", "summary": "Machine identity with scopes." },
+        { "id": "code", "name": "OAuth 2.0 authorization code", "summary": "User-delegated access with PKCE." },
+        { "id": "oidc", "name": "OpenID Connect", "summary": "Discovery through the identity provider's metadata." },
+        { "id": "mtls", "name": "Mutual TLS", "summary": "Client certificates on the channel." }
+      ],
+      "scores": {
+        "key": {
+          "boundary": { "tenant": { "s": 1, "why": "Simple inside one trust domain." }, "partner": { "s": -1, "why": "A shared secret across organizations is hard to scope and rotate." } },
+          "identity": { "agent": { "s": 0, "why": "Identifies the app only." }, "user": { "s": -2, "why": "Carries no user identity." } },
+          "scale": { "few": { "s": 1, "why": "Few keys to manage." }, "many": { "s": -2, "why": "Key distribution and rotation do not scale." } }
+        },
+        "cc": {
+          "boundary": { "tenant": { "s": 1, "why": "Machine identities with scopes fit internal agents." }, "partner": { "s": 2, "why": "Per-partner clients with narrow scopes." } },
+          "identity": { "agent": { "s": 2, "why": "The agent acts as itself." }, "user": { "s": -2, "why": "The user is lost." } },
+          "scale": { "few": { "s": 0, "why": "Neutral." }, "many": { "s": 1, "why": "Standard token issuance scales and revokes centrally." } }
+        },
+        "code": {
+          "boundary": { "tenant": { "s": 0, "why": "Works, with consent flows." }, "partner": { "s": 1, "why": "Users sign in through their own provider." } },
+          "identity": { "agent": { "s": -2, "why": "No user to consent." }, "user": { "s": 2, "why": "The token carries the user's authority." } },
+          "scale": { "few": { "s": 0, "why": "Neutral." }, "many": { "s": 0, "why": "Neutral." } }
+        },
+        "oidc": {
+          "boundary": { "tenant": { "s": 2, "why": "Reuse the enterprise identity provider and its discovery URL." }, "partner": { "s": 0, "why": "Needs a federation arrangement." } },
+          "identity": { "agent": { "s": 1, "why": "Service identities work." }, "user": { "s": 1, "why": "User tokens work." } },
+          "scale": { "few": { "s": 0, "why": "Neutral." }, "many": { "s": 1, "why": "Central provider management." } }
+        },
+        "mtls": {
+          "boundary": { "tenant": { "s": 0, "why": "Neutral." }, "partner": { "s": 1, "why": "Strong channel binding between known organizations." } },
+          "identity": { "agent": { "s": 1, "why": "Certificates identify the calling service." }, "user": { "s": -2, "why": "A certificate says nothing about a user." } },
+          "scale": { "few": { "s": 1, "why": "Few certificates to manage." }, "many": { "s": -1, "why": "Certificate management grows with callers." } }
+        }
+      },
+      "takeaway": "A user in the loop points to authorization code. A service identity points to client credentials or mutual TLS. Keys are the cheapest and the hardest to scope." },
+    { "t": "table", "caption": "A2A on Microsoft platforms as of 2026-10-13", "head": ["Capability", "Foundry Agent Service", "Microsoft Agent Framework"], "rows": [
+      ["Call a remote A2A agent", "Tool type `a2a` targets A2A 1.0 and is generally available. `a2a_preview` targets 0.3 and is in preview. A project connection stores auth: `none`, `custom-keys`, `oauth2`, `user-entra-token`, `project-managed-identity` or `agentic-identity` [[r16]]", "`A2AAgent` wraps a remote endpoint as an agent. .NET resolves the card with `A2ACardResolver`. Packages are prerelease [[r15]]"],
+      ["Expose your agent over A2A", "Incoming A2A for v1.0: JSON-RPC only, text only, no streaming, requires the responses protocol, Entra auth only [[r17]]", ".NET `MapA2AHttpJson`. Python `A2AExecutor`. Go has a provider package. Prerelease [[r14]]"],
+      ["Versions", "Serves 1.0 and preview 0.3. With no `A2A-Version` header or `a2a-version` query value it serves 0.3. Header and query must agree or Foundry returns 400 [[r17]]", "Not stated on the pages reviewed. Check the SDK release notes before relying on a version"],
+      ["Conversation state", "Tasks and contexts are kept 60 days from the most recent write [[r17]]", "The A2A `context_id` becomes the session id. If the remote restarts and loses state, context may be lost [[r14]] [[r12]]"],
+      ["Legacy", "The Connected Agents tool is not available in the new Foundry Agent Service. Use the A2A tool [[r16]]", "Agents as tools remain the in-process option [[r13]]"]
+    ] },
+    { "t": "failure", "title": "Failure modes and how to detect them", "items": [
+      { "symptom": "401 or 403 when calling a Foundry agent over A2A with a valid Entra token", "cause": "The calling identity lacks the Foundry Agent Consumer role on the project or agent. The role goes to the principal's object id", "fix": "Assign the role at the narrowest scope that works. For OBO grant the user or a group, for service calls grant the agent identity, service principal or managed identity" },
+      { "symptom": "Replies arrive in the 0.3 shape", "cause": "No version selector was sent, so Foundry served preview 0.3", "fix": "Send `A2A-Version: 1.0`, use the `agentCard/v1.0` URL, or the query value. Keep header and query consistent" },
+      { "symptom": "A destructive step ran after the client replied to `AUTH_REQUIRED`", "cause": "The agent treated the state change or the credential as authorization for the operation", "fix": "The spec says the agent MUST NOT treat the state transition as authorization. Check the specific operation and scope after the credential arrives" },
+      { "symptom": "A credential travelled through three agents and was reused", "cause": "In-band credential exchange across a chain of agents exposes it to each hop", "fix": "Prefer out-of-band delivery. If in-band, bind the credential to the originating agent and encrypt it for that agent" },
+      { "symptom": "Conversation context vanished after two months or a restart", "cause": "Foundry's 60-day retention from the last write, or a remote agent that restarted without durable state", "fix": "Persist your own conversation summary and design for expiry. Reset the clock only by writing to the task" }
+    ] },
+    { "t": "accordion", "items": [
+      { "title": "In-task authorization with AUTH_REQUIRED", "blocks": [
+        { "t": "list", "style": "ul", "items": [
+          "The agent MUST track the work as a Task, move it to `TASK_STATE_AUTH_REQUIRED` and include a status message that explains the need, unless negotiated out of band.",
+          "Credentials SHOULD arrive out of band over a secure channel. If received that way, the agent SHOULD keep active streams open and MAY continue without a follow-up message.",
+          "A client that is itself an A2A agent can pass the request up by moving its own task to `AUTH_REQUIRED`, forming a chain.",
+          "Clients that lack a live stream risk missing the resume, so they should subscribe, register a webhook or poll.",
+          "Credentials obtained for one request MUST NOT be assumed to authorize later messages on the task unless the implementation, issuer or an extension says so [[r1]]."
+        ] }
+      ] },
+      { "title": "Foundry identity patterns for incoming A2A", "blocks": [
+        { "t": "list", "style": "ul", "items": [
+          "Incoming A2A requires Microsoft Entra ID authentication. Key-based and anonymous access, even to the agent card, are not supported [[r17]].",
+          "On-behalf-of: the caller passes the end user's identity, so the agent can scope actions to that user's permissions.",
+          "Service identity: the caller authenticates as an agent identity, service principal or managed identity, which suits backend workflows where no user context is needed [[r17]].",
+          "To call a Foundry agent target with the A2A tool, use the target's A2A base path, `agentic-identity` auth and the audience `https://ai.azure.com`. To read a card that requires authentication, set `send_credentials_for_agent_card` to true [[r16]]."
+        ] }
+      ] },
+      { "title": "Agent Framework patterns", "blocks": [
+        { "t": "list", "style": "ul", "items": [
+          ".NET hosting uses `Microsoft.Agents.AI.Hosting.A2A.AspNetCore` with `MapA2AHttpJson`, installed with `--prerelease`. The client package is `Microsoft.Agents.AI.A2A` [[r14]] [[r15]].",
+          "Python uses `pip install agent-framework-a2a --pre` for `A2AAgent` (client) and `A2AExecutor` (server, built on `a2a-sdk`) [[r14]] [[r15]].",
+          "`A2AAgent` is a transport-level wrapper. Whatever tools the remote agent uses stay on the remote side and are invisible to your code [[r15]].",
+          "For long calls, `AllowBackgroundResponses` returns a continuation token you can poll or use to reconnect a stream [[r15]]."
+        ] }
+      ] }
+    ] },
+    { "t": "callout", "kind": "preview", "title": "Preview and GA labels, verified 2026-10-13", "md": "The Foundry `a2a` tool and A2A 1.0 are generally available. `a2a_preview` and A2A 0.3 are in preview. The Agent Framework A2A packages are prerelease. Say the label and the date whenever you recommend one [[r16]] [[r17]] [[r14]]." }
+  ],
+  "quiz": [
+    { "id": "w09-l05-q1", "type": "numeric", "tag": "numeric", "q": "A Foundry agent task receives writes on day 0, day 20 and day 70 and none afterward. Counting from day 0, on which day is retention scheduled to end?", "answer": 130, "tolerancePct": 2, "unit": "day", "hint": "Foundry retains tasks and contexts for 60 days from the most recent write", "explain": "Each write resets the 60-day clock. The last write was on day 70, so retention ends on day 130. Counting from day 0 or day 20 is wrong because those writes were superseded.", "difficulty": 2, "ref": "r17" },
+    { "id": "w09-l05-q2", "type": "single", "tag": "diagnose", "q": "A client calls a Foundry agent's A2A endpoint with no version header and receives 0.3-shaped payloads that its 1.0 parser rejects. What is the fix?", "options": ["Switch the binding to gRPC, which always returns 1.0", "Enable streaming on the agent so it upgrades the protocol", "Disable the Entra token check on the agent so the request is routed to the 1.0 handler instead of the default one", "Send `A2A-Version: 1.0`, or use the v1.0 agent card URL, so Foundry serves 1.0"], "answer": 3, "explain": "With no selector Foundry serves preview 0.3. Version 1.0 is chosen by header, query value or the version-specific card URL. For v1.0 Foundry supports only JSON-RPC and no streaming, and authentication is unrelated to the version.", "difficulty": 2, "ref": "r17" },
+    { "id": "w09-l05-q3", "type": "single", "tag": "security", "q": "A task enters `TASK_STATE_AUTH_REQUIRED` before a destructive step. The client obtains a token and sends the next message. What may the agent assume?", "options": ["That the state transition itself authorized the destructive step", "That any credential received in this state authorizes every later message on the task", "Nothing automatically: the agent must check that the credential and scope cover that specific operation", "That the client's earlier authentication is void and the task must restart"], "answer": 2, "explain": "The spec says agents MUST NOT treat the `AUTH_REQUIRED` transition as authorization, and a credential obtained then MUST NOT be assumed to cover later messages unless the implementation, issuer or an extension defines that. Restarting is not required.", "difficulty": 3, "ref": "r1" },
+    { "id": "w09-l05-q4", "type": "match", "tag": "concept", "q": "Match each Microsoft A2A item to what it is.", "pairs": [ { "l": "Foundry `a2a` tool type", "r": "Calls remote agents using A2A 1.0, generally available" }, { "l": "Foundry `a2a_preview` tool type", "r": "Targets A2A 0.3, in preview" }, { "l": "Incoming A2A on a Foundry agent (v1.0)", "r": "JSON-RPC only, text only, no streaming, Entra auth" }, { "l": "`A2AExecutor` in Agent Framework", "r": "Python server-side adapter built on the A2A SDK" } ], "explain": "These pairings come from the Foundry and Agent Framework docs verified on 2026-10-13. The Foundry incoming limits apply to v1.0, and the Agent Framework packages are prerelease.", "difficulty": 2, "ref": "r16" }
+  ],
+  "defend": null,
+  "refs": ["r1", "r8", "r12", "r13", "r14", "r15", "r16", "r17", "r21"],
+  "takeaways": [
+    "A2A leaves identity to HTTP: authenticate every request, scope every task operation to the caller and keep identity out of the payload.",
+    "Pick the scheme by caller location, whose authority the call carries and caller count.",
+    "`AUTH_REQUIRED` hands a credential job to the client. The state itself authorizes nothing.",
+    "Foundry's `a2a` tool is GA for 1.0. Incoming A2A is JSON-RPC, text only and non-streaming, and defaults to 0.3 without a version selector.",
+    "Agent Framework A2A packages are prerelease. `A2AAgent` hides the remote agent's tools."
+  ]
+}

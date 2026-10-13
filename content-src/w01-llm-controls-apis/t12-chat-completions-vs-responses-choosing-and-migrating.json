@@ -1,0 +1,129 @@
+{
+  "id": "w01-t12",
+  "order": 12,
+  "group": "API styles",
+  "title": "Chat Completions vs Responses: choosing and migrating",
+  "minutes": 9,
+  "difficulty": "core",
+  "summary": "Choose the API from four dials: model family, state ownership, portability and retention. Migrating means changing message shapes, reading output Items and deciding where state lives.",
+  "useIf": "You pick an API for a new build, plan a migration, or map an Assistants or Azure app to current APIs.",
+  "avoidIf": "You treat Responses as a renamed Chat Completions. It changes state, tools, reasoning handling and several parameters.",
+  "explain": [
+    { "t": "p", "md": "Four dials decide the choice. **Model family**: reasoning models with tools on GPT-5.4 and later need Responses. **State ownership**: your app resends history (Chat Completions), or the server holds it (Responses with `previous_response_id` or Conversations). **Portability**: Chat-style messages are the common format across vendors. **Retention**: server state conflicts with a no-retention policy unless you replay statelessly [[r6]] [[r7]] [[r10]]." },
+    { "t": "table", "caption": "Equivalent concepts (check date 2026-10-13)", "head": ["Concept", "Chat Completions", "Responses", "Anthropic Messages"], "compact": true, "rows": [
+      ["Input", "`messages` array", "`input` string or Items", "`messages` with typed content blocks"],
+      ["System text", "A `system` message", "Top-level `instructions`", "Top-level `system`"],
+      ["Structured output", "`response_format`", "`text.format`", "`output_config.format`"],
+      ["Output cap", "`max_completion_tokens`", "`max_output_tokens`", "`max_tokens` (required)"],
+      ["Stop signal", "`finish_reason`", "`status`, `incomplete_details`", "`stop_reason`"],
+      ["State", "None", "`store`, `previous_response_id`, Conversations", "None, resend history"],
+      ["Reasoning control", "`reasoning_effort`", "`reasoning.effort`", "`output_config.effort`, adaptive thinking"]
+    ] },
+    { "t": "flow", "title": "Migration steps from Chat Completions to Responses", "direction": "v", "steps": [
+      { "title": "1. Reshape input", "md": "Move the `system` message to `instructions` and the rest to `input`." },
+      { "title": "2. Rename formats", "md": "`response_format` becomes `text.format`. Read all `output` Items, not index 0." },
+      { "title": "3. Port the tool loop", "md": "Handle `function_call` and `function_call_output` Items. Check strict behaviour." },
+      { "title": "4. Choose state", "md": "Replay yourself, `previous_response_id`, or Conversations. Review retention." },
+      { "title": "5. Drop what is gone", "md": "Responses has no `seed`, `stop`, `n`, penalties, `logit_bias` or `top_k`. Move to prompts, schemas and tests." },
+      { "title": "6. Re-evaluate", "md": "Run your evals. Caching, reasoning context and tool behaviour can shift results." }
+    ] },
+    { "t": "p", "md": "**Azure**: since August 2025 you can opt in to the v1 API. Use the `OpenAI()` client with a base URL ending `/openai/v1`, and `api-version` is no longer required. Azure recommends Responses for Azure OpenAI models and keeps responses 30 days with deletion by ID [[r14]] [[r34]]. **Anthropic**: Messages is stateless, `max_tokens` is required, content is typed blocks (`text`, `tool_use`, `tool_result`, `thinking`) and caching uses `cache_control` [[r19]]." },
+    { "t": "callout", "kind": "warn", "title": "The Assistants API is gone on OpenAI", "md": "Deprecation was announced on 2025-08-26 and the API was sunset on 2026-08-26. Threads map to Conversations and Runs to Responses. The migration guide maps Assistants to Prompts, but reusable prompts are themselves deprecated with shutdown on 2026-11-30, so hold instructions and tools in your code or config. Azure OpenAI Assistants are documented to retire on 2026-08-26 with migration to Foundry Agent Service. Azure status after that date is unverified [[r51]] [[r11]] [[r49]]." }
+  ],
+  "whereToUse": [
+    "Architecture reviews that choose the API for a new assistant or agent",
+    "Migration plans from Chat Completions or Assistants",
+    "Multi-cloud designs that include Azure OpenAI and Claude",
+    "Retention reviews, where state placement matters",
+    "Interviews: justify an API choice from dials, not preference"
+  ],
+  "whenToUse": {
+    "use": [
+      "Responses for new builds, reasoning plus tools, built-in tools, background jobs and server state",
+      "Chat Completions for portability, simple stateless chat and `seed` or penalties",
+      "Anthropic Messages for Claude features, behind an adapter if you are multi-vendor"
+    ],
+    "avoid": [
+      "Migrating everything at once without evals",
+      "Standardising on Responses when most traffic goes to vendors that lack it",
+      "Depending on Assistants or reusable prompts"
+    ],
+    "flips": [
+      "A model upgrade breaks tools with reasoning on Chat: move that route to Responses",
+      "A no-retention policy appears: switch to stateless replay with encrypted reasoning",
+      "You drop all non-OpenAI vendors: simplify to Responses"
+    ]
+  },
+  "alternatives": {
+    "title": "Choosing the API surface",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Chat Completions", "Portability, simple stateless chat", "Reasoning with tools on newer models", "You own state; features lag"],
+      ["Responses", "New work, tools with reasoning, built-in tools", "Many vendors need one format", "Migration effort, retention choices"],
+      ["Anthropic Messages", "Claude 1M window, adaptive thinking", "You need one SDK shape across vendors", "Separate body and rules"],
+      ["Assistants API", "Nothing, retired on 2026-08-26", "Always", "Broken app"],
+      ["Gateway with adapters", "Several vendors and teams", "Single vendor, small team", "You maintain adapters and a control matrix"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Migrated code returns empty text", "cause": "It reads `output[0]`, which may be a reasoning or tool Item", "fix": "Iterate Items or use the SDK helper for output text" },
+    { "symptom": "Behaviour changes after migration", "cause": "`seed`, `stop`, penalties and `logit_bias` do not exist in Responses", "fix": "Replace them with prompts, schemas and repeated-run tests" },
+    { "symptom": "Costs rise after adopting `previous_response_id`", "cause": "All earlier input tokens are billed again", "fix": "Trim, compact or cache a stable prefix, and measure per conversation" },
+    { "symptom": "Old Azure samples fail or look wrong", "cause": "They use `AzureOpenAI()` with dated `api-version` strings", "fix": "Use the v1 API with `OpenAI()` and a `/openai/v1` base URL" }
+  ],
+  "scenarios": [
+    {
+      "id": "w01-t12-s1",
+      "title": "An Assistants app after the sunset",
+      "situation": "A support product built on the OpenAI Assistants API (threads, runs, a stored assistant with tools) starts failing after 2026-08-26.",
+      "constraints": ["OpenAI platform", "Existing threads hold history", "Tools must keep working"],
+      "unknowns": ["How many threads need to be carried over?", "Where do instructions live today?"],
+      "question": "What is the migration path?",
+      "options": [
+        { "name": "Move to Responses, map threads to Conversations and runs to Responses, and keep instructions and tool definitions in code or config", "verdict": "best", "why": "It follows the documented mapping and avoids Prompts, which are deprecated with a 2026-11-30 shutdown.", "tradeoff": "You rebuild the run loop and test tool behaviour." },
+        { "name": "Map each assistant to a reusable Prompt", "verdict": "good", "why": "It is the documented mapping in the migration guide.", "tradeoff": "Reusable prompts shut down on 2026-11-30, so you migrate twice." },
+        { "name": "Keep calling the Assistants API and wait for a notice", "verdict": "poor", "why": "OpenAI sunset it on 2026-08-26 and says it is no longer available.", "tradeoff": "Waiting is only reasonable on a platform with a later published date." }
+      ],
+      "flips": [
+        { "if": "The app runs on Azure", "then": "Check Azure's current notice and consider Foundry Agent Service, since post-date status is unverified." },
+        { "if": "Retention policy forbids stored conversations", "then": "Replay statelessly instead of using Conversations." }
+      ],
+      "takeaway": "Move state to Conversations and keep definitions in your own code."
+    },
+    {
+      "id": "w01-t12-s2",
+      "title": "One feature needs GPT-6 tools, the rest is portable",
+      "situation": "A product calls several vendors through Chat Completions. One new feature needs web search and tools with a GPT-6 reasoning model.",
+      "constraints": ["Most traffic is portable chat", "One feature needs built-in web search and reasoning with tools", "Team of six"],
+      "unknowns": ["How much traffic does the new feature carry?", "Will other vendors gain similar tools?"],
+      "question": "How do you proceed?",
+      "options": [
+        { "name": "Rewrite the whole product on Responses at once", "verdict": "poor", "why": "It puts portable traffic at risk without evals and does not help vendors that lack Responses.", "tradeoff": "A full move is right when OpenAI is the only vendor." },
+        { "name": "Add a Responses path for the new feature behind an adapter and keep Chat elsewhere", "verdict": "best", "why": "It isolates platform features, limits risk and keeps portability for the rest.", "tradeoff": "Two code paths to maintain and test." },
+        { "name": "Stay on Chat Completions with effort `none` and write your own search tool", "verdict": "good", "why": "One API and no migration.", "tradeoff": "You give up reasoning and built-in tools, and you own the search tool." }
+      ],
+      "flips": [
+        { "if": "The new feature becomes most of the traffic", "then": "Move the main path to Responses." },
+        { "if": "Quality tests show reasoning adds nothing", "then": "The Chat plus own tool path is cheaper to run." }
+      ],
+      "takeaway": "Isolate platform-specific features behind an adapter."
+    }
+  ],
+  "quiz": [
+    { "id": "w01-t12-q1", "type": "match", "tag": "concept", "q": "Match each Assistants concept to its replacement.", "pairs": [
+      { "l": "Threads", "r": "Conversations" },
+      { "l": "Runs", "r": "Responses" },
+      { "l": "Assistants", "r": "Prompts (reusable prompts, themselves deprecated)" },
+      { "l": "Azure OpenAI Assistants", "r": "Foundry Agent Service" }
+    ], "explain": "OpenAI's migration guide maps threads to Conversations, runs to Responses and assistants to Prompts, which are also deprecated. Azure documents migration to Foundry Agent Service." },
+    { "id": "w01-t12-q2", "type": "multi", "tag": "bug", "q": "Which Chat Completions parameters have no equivalent in the Responses body?", "options": ["`seed`", "`stop`", "`temperature`", "`logit_bias`"], "answers": [0, 1, 3], "explain": "Responses has `temperature` but no `seed`, `stop`, `n`, penalties, `logit_bias` or `top_k`." },
+    { "id": "w01-t12-q3", "type": "single", "tag": "flip", "q": "Which change most strongly pushes a Chat Completions agent to Responses?", "options": ["Lower latency targets", "Adopting GPT-5.4 or later with reasoning effort above `none` and tools", "A larger team", "A need for `seed`"], "answer": 1, "explain": "From GPT-5.4, Chat Completions does not support tools with reasoning effort other than `none`. `seed` exists only on Chat." }
+  ],
+  "flashcards": [
+    { "front": "Name the four dials for choosing Chat Completions or Responses.", "back": "Model family, state ownership, portability across vendors and data retention." },
+    { "front": "When was the OpenAI Assistants API sunset?", "back": "2026-08-26, after deprecation was announced on 2025-08-26. Threads map to Conversations and Runs to Responses." },
+    { "front": "How do you call Azure OpenAI with the v1 API?", "back": "Use the `OpenAI()` client with a base URL ending `/openai/v1`. `api-version` is no longer required." }
+  ],
+  "related": ["w01-t10", "w01-t11", "w01-l5", "w00-t05", "w11-t01"],
+  "refs": ["r6", "r7", "r10", "r14", "r34", "r19", "r51", "r11", "r49"]
+}

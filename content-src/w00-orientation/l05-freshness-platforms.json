@@ -1,0 +1,77 @@
+{
+  "id": "w00-l5",
+  "order": 5,
+  "title": "Freshness map B: protocols, platforms and policy",
+  "kind": "concept",
+  "minutes": 15,
+  "brief": "Protocol revisions, agent platforms and regulations all moved in 2025 and 2026, and some pages still teach the old shape. Use this map, checked on 2026-10-13, to label what is GA, what is preview and what has a date on it.",
+  "blocks": [
+    { "t": "h", "text": "Protocols, platforms and policy", "level": 2 },
+    { "t": "tabs", "tabs": [
+      { "label": "MCP and A2A", "blocks": [
+        { "t": "table", "head": ["Date", "Change", "Why it matters"], "rows": [
+          ["2025-03-26", "MCP: Streamable HTTP replaces HTTP+SSE, which is formally deprecated [[r8]].", "Tutorials with `/sse` and `/messages` endpoints are legacy."],
+          ["2025-06-18", "MCP servers become OAuth resource servers, and clients must send the RFC 8707 `resource` parameter [[r8]].", "A server that doubles as its own authorization server no longer matches the spec."],
+          ["2025-11-25", "MCP: client ID metadata documents (CIMD) recommended, URL elicitation added, Tasks introduced as experimental [[r8]].", "Dynamic client registration stops being the default advice."],
+          ["2025-12-09", "MCP moves under the Agentic AI Foundation [[r9]].", "Governance is Linux Foundation hosted. The maintainer and proposal process stayed the same."],
+          ["2026-03-12", "A2A v1.0.0 [[r10]].", "Breaking renames and enum casing. Clients on 0.3 still exist, so version negotiation matters."],
+          ["2026-05-28", "A2A v1.0.1 [[r32]].", "A patch: HTTP+JSON SHOULD use `application/a2a+json`. The spec page header can still show 1.0.0."],
+          ["2026-07-28", "MCP revision: stateless protocol (no `initialize`, no session id, `server/discover` required), multi round-trip requests replace server push, sampling, roots, logging and dynamic client registration are deprecated, Tasks move to an extension, resumable SSE is removed [[r8]].", "Several breaking changes. State must be an explicit handle that you authorize."],
+          ["2026-10-13", "Foundry serves A2A preview 0.3 when a request has no version header and no `a2a-version` query value. A header and a query value must agree or you get 400 [[r11]].", "Set the A2A version explicitly."]
+        ] }
+      ] },
+      { "label": "Agent platforms", "blocks": [
+        { "t": "table", "head": ["Date", "Change", "Why it matters"], "rows": [
+          ["2026-04-03", "Microsoft Agent Framework 1.0 for .NET and Python [[r12]].", "Stable at GA: core agents, middleware, graph workflows with checkpointing, orchestrations (sequential, concurrent, handoff, group chat, Magentic-One), declarative YAML, MCP and migration assistants. Preview at GA: DevUI, Foundry hosted agent integration, Foundry tools, memory, observability and evaluations, AG-UI, Skills and the GitHub Copilot SDK and Claude Code SDK agents. A2A 1.0 support was still \"coming soon\" in the announcement."],
+          ["2026-05-01", "Microsoft Agent 365 is GA for the Commercial segment, per user [[r15]].", "At least one user needs a qualifying Agent 365 license, and Microsoft E5 is the best-fit prerequisite. It observes, governs and secures agents through a registry, Entra, Purview and Defender."],
+          ["2026-06-25", "Foundry projects created after this date can use a private Azure Container Registry for hosted agents [[r25]].", "Check the project's creation date before you promise private networking."],
+          ["2026-08", "New Foundry articles cover long-running hosted agents: resilience, crash recovery, steering an in-flight turn, reconnecting streams and a human approval step. All are marked preview [[r14]].", "Background mode and resilient execution solve different problems."],
+          ["2026-08-20", "Support for the initial-preview hosted agent backend ends [[r33]].", "Redeploy on the new model. Existing deployments are not migrated automatically."],
+          ["2026-12-01", "Foundry Workflows (preview) retire [[r25]].", "Use Microsoft Agent Framework for new development."]
+        ] }
+      ] },
+      { "label": "Knowledge, safety and policy", "blocks": [
+        { "t": "table", "head": ["Date", "Change", "Why it matters"], "rows": [
+          ["2025-11", "Content Understanding is GA with API `2025-11-01`. `2026-06-01-preview` adds signature detection and metadata extraction [[r20]].", "Use the GA version for production."],
+          ["2026-04", "Azure AI Search `2026-04-01` is the stable data-plane version. Index projections, the Content Understanding skill and the GenAI Prompt skill are GA [[r16]] [[r17]].", "Older tutorials still show preview syntax."],
+          ["2026-04", "Knowledge sources are GA on `2026-04-01`, but `ingestionPermissionOptions`, which carries ACLs, stays preview. The latest preview is `2026-08-01-preview` [[r16]].", "A GA label on a source does not mean GA access control."],
+          ["2026-10-14", "Azure OpenAI On Your Data retires, one day after the check date [[r19]].", "Migrate to Foundry Agent Service with Foundry IQ."],
+          ["2025-12-09", "OWASP publishes the Top 10 for Agentic Applications 2026, with ids ASI01 to ASI10 [[r21]].", "A shared vocabulary for agent threats."],
+          ["2026-07-24 and 2026-07-27", "The EU AI Omnibus, Regulation (EU) 2026/1744, is published and in force. The dates come from a secondary source [[r22]].", "Annex III high-risk rules start 2027-12-02 and Annex I rules start 2028-08-02. Posts that say 2026-08-02 for high-risk are out of date."]
+        ] }
+      ] }
+    ] },
+    { "t": "diagram", "id": "w00-d-mrtr", "title": "Multi round-trip requests replace server push", "alt": "The client calls a tool. The server answers with input_required. The client retries with the user's input and the server returns the result.", "src": "sequenceDiagram\n  participant C as Client\n  participant S as Server\n  C->>S: tools/call\n  S-->>C: input_required\n  C->>S: Retry with the user input\n  S-->>C: Result", "caption": "MCP revision 2026-07-28. A server can no longer push an elicitation request on a stream [[r8]]." },
+    { "t": "h", "text": "What was GA and what was Preview on 2026-10-13", "level": 2 },
+    { "t": "table", "caption": "Foundry capability status from the general-availability overview [[r25]]", "head": ["Capability", "Status on 2026-10-13", "Say this in an answer"], "rows": [
+      ["Agents (core)", "GA", "The core agent service is GA. Check hosted agents separately."],
+      ["Hosted agents as a separate item", "No separate row. The concept page has no preview banner", "I found no explicit GA statement, so say \"verify the status\" [[r13]]."],
+      ["Tracing", "GA for prompt and hosted agents, Preview for workflow and external agents", "Name the agent type."],
+      ["Toolboxes, publishing to Copilot and Teams", "GA", "Safe to rely on, within the docs' limits."],
+      ["Memory, agent guardrails, controls and intervention, monitoring, AI Gateway", "Preview", "No SLA. Plan for change."],
+      ["Voice Live in agents", "Preview", "Label it preview."],
+      ["Agent optimizer", "Limited preview", "Do not plan around it."],
+      ["Foundry IQ", "Partial GA: API-level GA, portal access Preview", "Say which surface you mean."],
+      ["Workflows", "Preview, retiring 2026-12-01", "Do not start new work on it."]
+    ], "highlightCol": 1 },
+    { "t": "callout", "kind": "warn", "title": "A GA label can be narrower than it looks", "md": "Agents (core) is GA, but hosted agents have no separate GA row. Knowledge sources are GA, but the permission option that carries ACLs is preview. Evaluations are GA, but some evaluators are preview. In an answer, name the exact surface and its status. A preview label, a missing SLA or a retirement date inside your delivery window should flip you toward a different option or a fallback." }
+  ],
+  "quiz": [
+    { "id": "w00-l5-q1", "type": "multi", "tag": "concept", "q": "Select every true statement about the MCP revision dated 2026-07-28.", "options": ["There is no `initialize` call and no session id", "Servers push `elicitation/create` on an open stream", "Tasks moved to an extension", "Sampling, roots, logging and dynamic client registration are deprecated", "JSON-RPC batching was added"], "answers": [0, 2, 3], "explain": "The revision is stateless, moves Tasks to an extension and deprecates sampling, roots, logging and dynamic client registration. Server push for elicitation was replaced by input_required retries, and JSON-RPC batching was added in 2025-03-26 and removed in 2025-06-18.", "difficulty": 2, "ref": "r8" },
+    { "id": "w00-l5-q2", "type": "single", "tag": "diagnose", "q": "A client sends A2A requests to a Foundry agent endpoint with no version header and no `a2a-version` query value, and the response shape matches an older protocol version. What explains this?", "options": ["Foundry always serves A2A v1.0.1 to every client that connects", "Foundry defaults to preview 0.3 without a version", "The request is missing an OAuth scope for the agent", "A2A has no versions, only MCP has versioned releases"], "answer": 1, "explain": "With no header and no query value, Foundry serves preview version 0.3, and a header and query value that disagree return 400. A missing OAuth scope would fail authorization, and A2A has versioned releases such as v1.0.0 and v1.0.1.", "difficulty": 2, "ref": "r11" },
+    { "id": "w00-l5-q3", "type": "match", "tag": "concept", "q": "Match each date to the event.", "pairs": [
+      { "l": "2026-03-12", "r": "A2A v1.0.0 is released" },
+      { "l": "2026-04-03", "r": "Agent Framework 1.0 is announced" },
+      { "l": "2026-05-01", "r": "Agent 365 is GA for the Commercial segment" },
+      { "l": "2026-08-20", "r": "Initial-preview hosted agent backend support ends" }
+    ], "explain": "These four dates are the anchors of the platform story: the protocol reached 1.0, the framework reached 1.0, the control plane reached GA and the first hosted agent backend was retired.", "difficulty": 2, "ref": "r12" }
+  ],
+  "defend": null,
+  "refs": ["r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15", "r16", "r17", "r19", "r20", "r21", "r22", "r25", "r32", "r33"],
+  "takeaways": [
+    "MCP and A2A both changed shape in 2026, so check the spec revision and the version header",
+    "Agent Framework 1.0 and Agent 365 are GA, but several neighbouring features were preview on 2026-10-13",
+    "A GA label can be narrower than it looks, so name the exact surface and status",
+    "Policy dates move too: the EU AI Omnibus pushed high-risk rules to 2027-12-02 and 2028-08-02"
+  ]
+}

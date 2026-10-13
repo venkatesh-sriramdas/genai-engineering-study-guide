@@ -1,0 +1,115 @@
+{
+  "id": "w06-t02",
+  "order": 2,
+  "group": "Grounding",
+  "title": "Groundedness and faithfulness checks",
+  "minutes": 9,
+  "difficulty": "core",
+  "summary": "A groundedness check asks whether every claim in an answer is supported by the evidence the model was given. It is a separate question from whether the answer is true, relevant or cited.",
+  "useIf": "Wrong answers are costly and you can afford a second pass over the answer and its evidence.",
+  "avoidIf": "Latency is tight and the domain is low risk: a prompt that permits \"I don't know\" and a sampled offline check may be enough.",
+  "explain": [
+    { "t": "p", "md": "**Faithfulness** (groundedness) means each claim is entailed by the retrieved context. Natural language inference (NLI) models test this: given the evidence as premise and a claim as hypothesis, predict entailment, neutral or contradiction. SummaC applies NLI at the sentence level and aggregates the scores, which fixes a granularity mismatch between NLI training data and long documents [[r19]]. TRUE meta-evaluates factual-consistency metrics across tasks, and AlignScore is a unified alignment function trained on many tasks [[r20]] [[r21]]. A prompted LLM judge can do the same job at the price of a model call." },
+    { "t": "p", "md": "**Azure AI Content Safety groundedness detection** is preview. It takes the answer and grounding sources, supports the domains `Medical` and `Generic` and the tasks `Summarization` and `QnA`, and is English only. Non-reasoning mode returns a fast grounded or ungrounded verdict, reasoning mode explains the ungrounded segments (use it while developing), and optional correction returns repaired text. Limits are 55,000 characters of grounding sources, 7,500 characters of text plus query, and a query of at least 3 words. In Foundry guardrails it applies to models, not agents [[r4]] [[r10]]." },
+    { "t": "p", "md": "**NeMo Guardrails** offers an output rail, `self check facts`, that uses `$relevant_chunks` as evidence and returns a 0.0 to 1.0 score. Quality depends on the LLM following the `self_check_facts` prompt, and if a reasoning model spends its `max_tokens` budget before answering, the rail fails closed with a score of 0.0 and the response is blocked [[r14]]. For very long documents, Anthropic's guidance is to ask for word-for-word quotes first when the document exceeds 20k tokens, and to give the model explicit permission to say it does not know [[r23]]." },
+    { "t": "flow", "title": "A claim-level check", "direction": "h", "steps": [
+      { "title": "Split", "md": "Break the answer into atomic claims.", "tag": "claims" },
+      { "title": "Pair", "md": "Match each claim with the evidence spans it cites or retrieves.", "tag": "evidence" },
+      { "title": "Score", "md": "Run NLI or a judge per claim, not per answer.", "tag": "entailment" },
+      { "title": "Compare", "md": "Use a threshold calibrated on a labelled set.", "tag": "threshold" },
+      { "title": "Act", "md": "Pass, repair the claim, abstain or block.", "tag": "action" }
+    ] }
+  ],
+  "whereToUse": [
+    "RAG answers in finance, health, legal or policy settings where unsupported text causes harm",
+    "Summarisation pipelines where the source text is the only allowed evidence",
+    "Offline evaluation sets that measure hallucination rate before launch",
+    "Output rails that block or repair an answer before the user sees it",
+    "Long-document tasks that use quote-first prompts and verify quotes by string match"
+  ],
+  "whenToUse": {
+    "use": [
+      "Use claim-level NLI or a judge when a single invented sentence is costly",
+      "Use Azure groundedness detection for English content when preview status is acceptable and sources fit the limits",
+      "Use quote-first prompting for documents over about 20k tokens",
+      "Calibrate thresholds on your own labelled examples, in each language you serve"
+    ],
+    "avoid": [
+      "Avoid answer-level checks that let one fabricated sentence hide among good ones",
+      "Avoid using a groundedness score as proof of correctness: the evidence itself can be wrong",
+      "Avoid copying a threshold from another corpus or model"
+    ],
+    "flips": [
+      "Traffic is not English: use a judge or NLI model you evaluated per language instead of the English-only API",
+      "Latency budget cannot carry a second pass: sample offline and rely on abstention prompts online",
+      "Grounding set exceeds 55,000 characters: split it, use quote-first or choose another checker"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Method", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Azure groundedness detection", "English, short sources, fast verdict wanted", "Other languages or sources over 55,000 characters", "Preview, English only, models not agents"],
+      ["NLI model per claim (SummaC, AlignScore style)", "You can host a model and need claim-level scores", "Domain jargon unseen by the model", "Hosting, calibration, sentence splitting"],
+      ["LLM judge", "Any language, flexible rubric", "Tight latency or cost", "An extra model call, judge bias and leniency"],
+      ["Quote-then-answer", "Long documents, verifiable quotes", "Answers need synthesis across many passages", "Longer outputs, string-match verification step"],
+      ["Prompt-only (\"say I don't know\")", "Low risk, minimal latency", "Wrong answers are costly", "No measurement, relies on model compliance"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A fluent answer passes the check but contains one invented figure", "cause": "The check scored the whole answer, not each claim", "fix": "Split into claims and check each against its evidence" },
+    { "symptom": "The judge approves claims that the context does not contain", "cause": "The judge used its own knowledge, or saw the question without isolated evidence", "fix": "Give only the evidence, ask for entailment per claim, and test with known-bad answers" },
+    { "symptom": "Every answer is blocked after switching to a reasoning model", "cause": "The NeMo rail fails closed when the model spends its `max_tokens` before answering", "fix": "Raise the budget or use a non-reasoning model for the rail" },
+    { "symptom": "The groundedness API rejects or mis-scores some requests", "cause": "Inputs exceed the 55,000 or 7,500 character limits, the query is under 3 words, or the text is not English", "fix": "Segment inputs, enforce limits and route other languages elsewhere" }
+  ],
+  "scenarios": [
+    {
+      "id": "w06-t02-s1",
+      "title": "Multilingual support answers",
+      "situation": "A support assistant answers in English, German and Japanese from a knowledge base. An unsupported claim causes a wrong refund promise. Another second or two of latency is acceptable.",
+      "constraints": ["Several languages", "Moderate harm per error", "1 to 2 extra seconds allowed", "A labelled test set per language can be built"],
+      "unknowns": ["What is the mix of languages in traffic?", "Is preview status acceptable?"],
+      "question": "How do you check groundedness?",
+      "options": [
+        { "name": "Per-claim LLM judge or NLI model evaluated on each language, with calibrated thresholds", "verdict": "best", "why": "It works in all served languages and you can measure it on labelled examples.", "tradeoff": "Extra model call and the work of building per-language test sets." },
+        { "name": "Azure groundedness detection for English traffic and a judge for the rest", "verdict": "good", "why": "Uses the managed API where it is supported.", "tradeoff": "Two code paths and a preview dependency." },
+        { "name": "Azure groundedness detection for every language", "verdict": "poor", "why": "It is English only, so non-English checks are unreliable.", "tradeoff": "Right when all traffic is English." }
+      ],
+      "flips": [
+        { "if": "Traffic is 99 percent English", "then": "The managed API for English plus sampled review for the rest may be enough." },
+        { "if": "No labelled data exists yet", "then": "Start in shadow mode and build the set from logged cases." }
+      ],
+      "takeaway": "Language support decides which checker you may trust."
+    },
+    {
+      "id": "w06-t02-s2",
+      "title": "Answers over very long contracts",
+      "situation": "Users ask about clauses in contracts that run past 20,000 tokens of evidence. Answers must be verifiable by a lawyer in seconds. English only.",
+      "constraints": ["Evidence beyond 20k tokens", "Verifiable quotes needed", "Accuracy outranks speed", "English"],
+      "unknowns": ["Can answers be built from a few clauses?", "How are quotes displayed to the reviewer?"],
+      "question": "Which design fits?",
+      "options": [
+        { "name": "Quote-then-answer, verify each quote by string match, then check claims against the quotes", "verdict": "best", "why": "Quotes are cheap to verify exactly, and the second check then runs on a short, verified evidence set.", "tradeoff": "Longer outputs and two stages." },
+        { "name": "Claim-level NLI over the full retrieved context", "verdict": "good", "why": "Works without changing the answer format.", "tradeoff": "Long inputs weaken NLI and increase cost." },
+        { "name": "Azure groundedness detection over the whole contract", "verdict": "poor", "why": "Its 55,000 character cap on grounding sources is roughly 13,750 tokens by the 4 characters per token rule of thumb, below the evidence size.", "tradeoff": "Right for short grounding sets." }
+      ],
+      "flips": [
+        { "if": "Evidence is under 55,000 characters and preview is acceptable", "then": "The managed API is a quick second check." },
+        { "if": "Answers must synthesise across many clauses", "then": "Quote-first gets harder, so rely on claim-level checks with clause-level evidence." }
+      ],
+      "takeaway": "Shrink the evidence before checking it."
+    }
+  ],
+  "quiz": [
+    { "id": "w06-t02-q1", "type": "numeric", "tag": "numeric", "q": "Azure groundedness detection accepts 55,000 characters of grounding sources. Using about 4 characters per token, roughly how many tokens is that?", "answer": 13750, "tolerancePct": 5, "unit": "tokens", "hint": "Divide characters by 4.", "explain": "55,000 divided by 4 is 13,750 tokens, an estimate from a rule of thumb. It is below the 20k token threshold at which quote-first prompting is advised, so long documents need another approach.", "ref": "r4" },
+    { "id": "w06-t02-q2", "type": "single", "tag": "concept", "q": "What does groundedness measure?", "options": ["Whether each claim is supported by the supplied evidence", "Whether the answer is true in the real world", "Whether the answer is polite", "Whether the retrieval was fast"], "answer": 0, "explain": "Groundedness is about support by the given evidence. A grounded answer can still be wrong if the evidence is wrong, and politeness and speed are unrelated.", "ref": "r19" },
+    { "id": "w06-t02-q3", "type": "multi", "tag": "diagnose", "q": "Which are documented limits or behaviours of Azure groundedness detection?", "options": ["English only", "Grounding sources up to 55,000 characters", "Applies to agents in Foundry guardrails", "Reasoning mode explains ungrounded segments"], "answers": [0, 1, 3], "explain": "It is English only, accepts 55,000 characters of sources and has a reasoning mode for explanations. In Foundry guardrails it applies to models, not agents.", "ref": "r4" }
+  ],
+  "flashcards": [
+    { "front": "Groundedness versus correctness?", "back": "Groundedness asks whether claims are supported by the supplied evidence. An answer can be grounded and still wrong if the evidence is wrong." },
+    { "front": "Azure groundedness detection limits?", "back": "Preview, English only. Grounding sources 55,000 characters, text plus query 7,500 characters, query at least 3 words. Models, not agents." },
+    { "front": "Why check at claim level?", "back": "A whole-answer score can hide one invented sentence. Per-claim entailment catches it (SummaC splits at sentence level and aggregates)." }
+  ],
+  "related": ["w06-t03", "w06-t06", "w06-t10", "w06-l2", "w14-t09"],
+  "refs": ["r4", "r10", "r14", "r19", "r20", "r21", "r23"]
+}

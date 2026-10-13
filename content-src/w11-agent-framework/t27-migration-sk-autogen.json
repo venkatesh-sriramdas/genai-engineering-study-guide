@@ -1,0 +1,115 @@
+{
+  "id": "w11-t27",
+  "order": 27,
+  "group": "Operate",
+  "title": "Migrating from Semantic Kernel and AutoGen",
+  "minutes": 9,
+  "difficulty": "core",
+  "summary": "Agent Framework collapses SK's per-service agent classes into one agent type, replaces threads with sessions, replaces plugins with plain functions and tools, and replaces AutoGen teams with graph workflows and orchestrations.",
+  "useIf": "You own Semantic Kernel agents or AutoGen teams and must plan a move inside the support window.",
+  "avoidIf": "The code is stable, out of scope for new features and inside SK's support window: migrate on a schedule, not in a panic.",
+  "explain": [
+    { "t": "p", "md": "**From Semantic Kernel (guide dated 2026-04-01).** Namespaces move from `Microsoft.SemanticKernel` to `Microsoft.Agents.AI` plus `Microsoft.Extensions.AI`; Python moves from `semantic_kernel` to `agent_framework`. There is no `Kernel` dependency. `ChatCompletionAgent`, `OpenAIAssistantAgent` and `AzureAIAgent` become `ChatClientAgent` (.NET) or `Agent` (Python), created with `AsAIAgent(...)` or `client.as_agent(...)`. The agent creates the session (`agent.CreateSessionAsync()`, `agent.create_session()`), and there is no thread deletion API: track and delete hosted threads through the provider SDK. Plugins disappear: pass functions (optionally `@tool`) to `tools`. Existing `KernelFunction` instances still work as tools through `.as_agent_framework_tool` [[tr39]]." },
+    { "t": "p", "md": "**From AutoGen (guide dated 2026-04-01).** `AssistantAgent` is **single-turn unless `max_tool_iterations` is raised**, while `Agent` is **multi-turn by default** and keeps calling tools until it can answer. AutoGen's `Team` and `GraphFlow` map to graph `Workflow` and the built-in orchestrations; `FunctionTool` maps to `@tool`; agent middleware and sessions replace ad hoc state. The AutoGen guide says Agent Framework \"focuses on single-process composition today; distributed execution is planned\". That line predates the Durable Extension, which now covers durable hosting [[tr40]] [[tr30]]." },
+    { "t": "table", "caption": "Concept mapping", "head": ["Old concept", "Agent Framework", "Note"], "rows": [
+      ["SK `ChatCompletionAgent`, `AzureAIAgent`, `OpenAIAssistantAgent`", "`ChatClientAgent` / `Agent`", "One agent type over any chat client"],
+      ["SK `Kernel`, plugins, `kernel_function`", "`tools=[function]`, `@tool`", "No plugin wrapper needed"],
+      ["SK `AgentThread`", "`AgentSession`", "Agent creates it; persist with `to_dict()` or `SerializeSessionAsync`"],
+      ["SK filters", "Agent, function and chat middleware", "Three layers; see middleware topic"],
+      ["AutoGen `AssistantAgent`", "`Agent`", "Multi-turn by default"],
+      ["AutoGen `Team`, `GraphFlow`", "Orchestrations, graph `Workflow`", "Typed edges, checkpoints"],
+      ["AutoGen termination conditions", "`termination_condition`, round limits", "Per orchestration"]
+    ] },
+    { "t": "tabs", "tabs": [
+      { "label": "C#", "blocks": [ { "t": "code", "lang": "csharp", "code": "// before: Kernel + ChatCompletionAgent + AgentThread\n// ChatCompletionAgent agent = new() { Instructions = Parrot, Kernel = kernel };\n\n// after\nAIAgent agent = chatClient.AsAIAgent(instructions: Parrot);\nAIAgent foundryAgent = aiProjectClient.AsAIAgent(model: deployment, instructions: Parrot);\nAgentSession session = await agent.CreateSessionAsync();\nAgentResponse r = await agent.RunAsync(\"Hello\", session);" } ] },
+      { "label": "Python", "blocks": [ { "t": "code", "lang": "python", "code": "# before (Semantic Kernel)\n# agent = ChatCompletionAgent(service=OpenAIChatCompletion(), name='Host',\n#                             plugins=[SpecialsPlugin()])\n\n# after\nfrom agent_framework import Agent, tool\nfrom agent_framework.foundry import FoundryChatClient\n\n@tool(name='specials', description='List daily specials')\ndef specials() -> str:\n    return 'Clam chowder, Cobb salad, Chai tea'\n\nagent = Agent(client=FoundryChatClient(credential=cred), name='Host',\n              instructions='Answer menu questions accurately.', tools=[specials])\nsession = agent.create_session()\nresult = await agent.run('What is on special?', session=session)\n\n# AutoGen note: Agent keeps calling tools until it can answer\n# (AssistantAgent needed max_tool_iterations > 1)" } ] }
+    ] }
+  ],
+  "whereToUse": [
+    "Planning a migration backlog for SK agents with plugins, filters and threads",
+    "Replacing AutoGen group chats with orchestrations or graph workflows",
+    "Reviewing old blog code: spotting renames such as `ChatAgent` to `Agent` and `ai_function` to `tool`",
+    "Estimating effort: which agents are simple conversions and which need redesign (distributed runtime, custom team types)"
+  ],
+  "whenToUse": {
+    "use": [
+      "New work: start on Agent Framework",
+      "Old agents that need workflows, durable hosting, approvals or the Harness",
+      "Before SK support ends (at least one year after 2026-04-03, so about 2027-04 or later)"
+    ],
+    "avoid": [
+      "Big-bang rewrites of stable agents with no new requirements",
+      "Migrating without a regression set: defaults differ (multi-turn tool use, history storage)",
+      "Assuming AutoGen distributed runtime features map one to one"
+    ],
+    "flips": [
+      "A new feature needs checkpointed workflows or approvals: migrate that agent first",
+      "SK support terms change or a vulnerability goes unpatched: compress the schedule"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Migrate to Agent Framework", "Long-term support and new capabilities", "Code is frozen and low value", "Regression risk, rename churn"],
+      ["Stay on SK v1.x until the window closes", "Stable code, no new features", "You need workflows, durable or the Harness", "Support window ends about 2027-04 at the earliest (derived)"],
+      ["Keep AutoGen", "Research prototypes", "Production support is needed", "Maintenance mode, community managed"],
+      ["Hybrid: new agents in MAF, wrap old ones as tools", "Gradual migration", "Two stacks are too costly", "Dual operations"],
+      ["Rewrite on another framework", "Platform standard demands it", "You want an official migration path", "No migration assistants"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "An AutoGen agent that stopped after one tool call keeps looping after migration", "cause": "`Agent` is multi-turn by default, while `AssistantAgent` was single-turn", "fix": "Set explicit tool iteration and call limits on the client and add loop guards" },
+    { "symptom": "Conversation memory disappears after migration", "cause": "`Agent` is stateless between runs; history lives in the session you must pass", "fix": "Create a session and pass it on every run, then persist it" },
+    { "symptom": "Imports fail on tutorials from early 2026", "cause": "Python renames: `ChatAgent` to `Agent`, `ChatMessage` to `Message`, `create_agent` to `as_agent`, `AIFunction` and `@ai_function` to `FunctionTool` and `@tool`, `SharedState` to `State`", "fix": "Follow the significant-changes page and use Learn pages with current names [[tr49]]" }
+  ],
+  "scenarios": [
+    {
+      "id": "w11-t27-s1",
+      "title": "Fifty SK agents, ten of them critical",
+      "situation": "A company has 50 SK agents. Ten are customer facing and tested well. Forty are internal helpers. The roadmap adds approval-gated workflows to three of the critical ones next quarter.",
+      "constraints": ["Support window until about 2027-04 at the earliest", "Three agents need workflows", "Limited test coverage on internal helpers"],
+      "unknowns": ["How many custom filters and plugins?", "Do internal helpers have owners?", "Is there an eval set per agent?"],
+      "question": "How do you sequence the migration?",
+      "options": [
+        { "name": "Migrate the three agents that need workflows first with regression evals, then critical ones, then helpers as they are touched", "verdict": "best", "why": "Value-driven order, risk contained, and evals catch default changes such as multi-turn tool use.", "tradeoff": "Two stacks run for several quarters." },
+        { "name": "Migrate all 50 in one release", "verdict": "poor", "why": "Large blast radius, and the forty helpers have little test coverage.", "tradeoff": "Reasonable only with strong automated tests and a short freeze." },
+        { "name": "Wait until SK support ends", "verdict": "good", "why": "No effort this quarter.", "tradeoff": "Migration becomes urgent and mistakes cost more." }
+      ],
+      "flips": [
+        { "if": "Support terms are shortened", "then": "Compress the schedule and automate conversions." },
+        { "if": "Helpers are simple prompt wrappers", "then": "Batch-convert them with a template." }
+      ],
+      "takeaway": "Migrate where new capability pays first and let evals guard defaults."
+    },
+    {
+      "id": "w11-t27-s2",
+      "title": "AutoGen group chat in production",
+      "situation": "A team runs an AutoGen `RoundRobinGroupChat` with a termination condition, plus some code on the distributed runtime. They plan to move to Agent Framework.",
+      "constraints": ["Group chat pattern", "Distributed runtime usage", "Uptime expectations"],
+      "unknowns": ["How is the distributed runtime used?", "Are there custom team types?", "What is the traffic profile?"],
+      "question": "What is the target design?",
+      "options": [
+        { "name": "Group chat orchestration for the chat, Durable Extension (or own checkpointed hosts) for durable execution, evals to compare behaviour", "verdict": "best", "why": "The orchestration maps directly, and durable hosting covers the distributed gap the guide mentions (checked 2026-10-13), with Beta or preview caveats.", "tradeoff": "Durable packages are Beta and preview, and behaviour differences need testing." },
+        { "name": "Port line by line to a custom workflow", "verdict": "good", "why": "Maximum control.", "tradeoff": "More work than the built-in orchestration needs." },
+        { "name": "Wait for MAF to add a distributed runtime", "verdict": "poor", "why": "The guide's 'distributed execution is planned' line is dated; the Durable Extension exists.", "tradeoff": "Valid only if your runtime needs go beyond what durable hosting offers." }
+      ],
+      "flips": [
+        { "if": "Pre-release packages are not allowed", "then": "Use stable orchestration and own the hosting." },
+        { "if": "The team needs low-level event routing", "then": "Model it as a graph workflow with typed edges." }
+      ],
+      "takeaway": "Map patterns first, then check what the runtime provides as of 2026-10-13."
+    }
+  ],
+  "quiz": [
+    { "id": "w11-t27-q1", "type": "match", "tag": "concept", "q": "Match the old concept to its Agent Framework counterpart.", "pairs": [ { "l": "SK `AgentThread`", "r": "`AgentSession`" }, { "l": "SK plugin with `kernel_function`", "r": "Plain function or `@tool`" }, { "l": "AutoGen `Team` / `GraphFlow`", "r": "Orchestration or graph `Workflow`" }, { "l": "SK `ChatCompletionAgent`", "r": "`ChatClientAgent` / `Agent`" } ], "explain": "The agent classes collapse into one, threads become sessions, plugins become tools and teams become workflows.", "ref": "tr39" },
+    { "id": "w11-t27-q2", "type": "single", "tag": "diagnose", "q": "After migrating, an agent that used one tool call per request makes several calls and costs more. What changed?", "options": ["Agent Framework disables tool limits", "`Agent` is multi-turn by default, unlike AutoGen's `AssistantAgent`", "Sessions always double tool calls", "Middleware calls tools"], "answer": 1, "explain": "The guide says `AssistantAgent` is single-turn unless `max_tool_iterations` is raised, while `Agent` keeps invoking tools until it can return a final answer.", "ref": "tr40" }
+  ],
+  "flashcards": [
+    { "front": "What replaces SK plugins?", "back": "Plain functions passed to `tools`, optionally decorated with `@tool` (Python) or wrapped by `AIFunctionFactory.Create` (.NET). `KernelFunction` can still be used via `.as_agent_framework_tool`." },
+    { "front": "What default differs between AutoGen `AssistantAgent` and MAF `Agent`?", "back": "AssistantAgent is single-turn unless `max_tool_iterations` is raised. `Agent` is multi-turn by default." },
+    { "front": "How long is SK v1.x supported after MAF GA?", "back": "At least one year (blog dated 2025-10-07). With GA on 2026-04-03: about 2027-04 at the earliest (derived)." }
+  ],
+  "related": ["w11-t01", "w11-t10", "w11-t23", "w10-t14"],
+  "refs": ["tr39", "tr40", "tr30", "tr49"]
+}

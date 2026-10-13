@@ -1,0 +1,279 @@
+{
+  "id": "w19-l2",
+  "order": 2,
+  "title": "Boss: fast, cheap and available, from latency to caching, cost and resilience",
+  "kind": "boss",
+  "minutes": 28,
+  "brief": "An assistant has grown from a pilot to thousands of daily users. Leadership wants it to feel instant, cost less and survive a regional incident without breaking correctness or tenant isolation. Decide which lever fixes which problem and what each lever costs the others.",
+  "blocks": [
+    { "t": "h", "text": "The interview prompt", "level": 2 },
+    { "t": "scenario", "title": "What you know and what to ask", "known": [
+      "A chat assistant sends a long shared prefix (instructions, tool definitions, policies) plus retrieved context on every call",
+      "Users complain about the wait for the first word",
+      "Finance says the token bill keeps climbing",
+      "A regional incident took the assistant down for an hour"
+    ], "ask": [
+      "Is the wait the first token or the full answer, and what are the p50 and p95 targets?",
+      "How much of each prompt repeats across requests, and what changes inside it?",
+      "Is traffic steady or bursty, and how much work can wait for hours?",
+      "Do answers depend on the asking user's data or permissions, and are there tenant isolation rules?",
+      "Which models, regions and residency rules apply, and what recovery time and degraded quality are acceptable?",
+      "Where does the money go: uncached input, cached input, output or reasoning tokens?"
+    ], "tension": "Every lever buys speed or money with correctness, isolation or availability. Name what each one costs." },
+    { "t": "h", "text": "The request path", "level": 2 },
+    { "t": "flow", "title": "Fast, cheap and available on one path", "steps": [
+      { "title": "Gateway", "tag": "w16", "md": "Authenticate, apply per-consumer token limits, emit token metrics and route by backend health." },
+      { "title": "Caches that cannot change the answer", "tag": "w02", "md": "Exact-match response cache first. A semantic cache only for answers that do not depend on the user, partitioned by scope." },
+      { "title": "Router and output caps", "tag": "w01", "md": "Send simple requests to a smaller model, set reasoning effort per route and cap output tokens." },
+      { "title": "A prompt that can hit the provider cache", "tag": "w02", "md": "Stable instructions and tools in a fixed order first, retrieved context next, the user turn last." },
+      { "title": "Capacity", "tag": "w16", "md": "Provisioned throughput near the base load, a standard deployment for spillover, batch for work nobody waits on." },
+      { "title": "Stream, fail over, degrade", "tag": "w16", "md": "Stream tokens. On failure retry once with jitter, spill over, trip the breaker, fail over to the second region, then step down a defined ladder." }
+    ] },
+    { "t": "dials", "id": "w19-l2-pick", "title": "Pick the lever for the bottleneck",
+      "prompt": "Flip where the time goes, how traffic arrives and whether answers are private. The ranking shows the lever and what it risks.",
+      "dials": [
+        { "id": "where", "label": "Where it hurts", "values": [
+          { "id": "prefill", "label": "First token is slow on long prompts" },
+          { "id": "decode", "label": "The whole answer is slow, outputs are long" },
+          { "id": "queue", "label": "429s and queueing at peak" }
+        ] },
+        { "id": "traffic", "label": "Traffic shape", "values": [
+          { "id": "steady", "label": "Steady all day" },
+          { "id": "bursty", "label": "Sharp peaks, idle gaps" }
+        ] },
+        { "id": "answers", "label": "Answers", "values": [
+          { "id": "shared", "label": "Identical across users" },
+          { "id": "private", "label": "Built from each user's data" }
+        ] }
+      ],
+      "options": [
+        { "id": "stream", "name": "Stream, trim and cap the output", "summary": "Show tokens as they arrive, shorten answers and set max output tokens." },
+        { "id": "pcache", "name": "Engineer the prompt for provider caching", "summary": "Stable prefix first, fixed tool order, a cache key and a hit-rate alarm." },
+        { "id": "small", "name": "Route simple requests to a smaller model", "summary": "Cheaper and faster per token, with a check that escalates hard cases." },
+        { "id": "capacity", "name": "Provisioned capacity with spillover", "summary": "Reserved throughput for the base load, a standard deployment for overflow." },
+        { "id": "scache", "name": "Semantic cache at the gateway", "summary": "Return a stored answer when a new prompt embeds close to an old one." }
+      ],
+      "scores": {
+        "stream": {
+          "where": {
+            "prefill": { "s": -1, "why": "Streaming and shorter answers do not shorten prefill, which is where the wait sits." },
+            "decode": { "s": 2, "why": "Output tokens dominate total time. Halving them can halve latency, and streaming shows words as they arrive." },
+            "queue": { "s": 0, "why": "Shorter outputs ease token limits a little, but queueing needs capacity." }
+          },
+          "traffic": {
+            "steady": { "s": 0, "why": "Output trimming works the same at any load." },
+            "bursty": { "s": 0, "why": "Output trimming works the same at any load." }
+          },
+          "answers": {
+            "shared": { "s": 0, "why": "It does not touch correctness or isolation." },
+            "private": { "s": 0, "why": "It does not touch correctness or isolation." }
+          }
+        },
+        "pcache": {
+          "where": {
+            "prefill": { "s": 2, "why": "A cached prefix skips most of prefill, so time to first token falls and reads cost 0.1x on GPT-5.6 and later." },
+            "decode": { "s": 0, "why": "Caching does not shorten decoding." },
+            "queue": { "s": 0, "why": "Hits are cheaper, but a standard deployment still queues at its limit." }
+          },
+          "traffic": {
+            "steady": { "s": 1, "why": "Steady traffic keeps the prefix warm. Plan for about 15 requests a minute per prefix and key." },
+            "bursty": { "s": -1, "why": "Idle gaps past the cache lifetime and bursts that spread over machines both cause misses." }
+          },
+          "answers": {
+            "shared": { "s": 0, "why": "Works the same, and the answer is always computed fresh." },
+            "private": { "s": 1, "why": "Keep user data out of the shared prefix and every answer is still computed fresh, so isolation holds." }
+          }
+        },
+        "small": {
+          "where": {
+            "prefill": { "s": 1, "why": "A smaller model also prefills faster." },
+            "decode": { "s": 2, "why": "A smaller model emits tokens faster and costs less per token." },
+            "queue": { "s": 1, "why": "More tokens per minute of quota per dollar, but not guaranteed capacity." }
+          },
+          "traffic": {
+            "steady": { "s": 1, "why": "A stable request mix is easy to evaluate and tune a router on." },
+            "bursty": { "s": 0, "why": "Routing quality does not depend on peaks." }
+          },
+          "answers": {
+            "shared": { "s": 0, "why": "Route on difficulty, not on who asks." },
+            "private": { "s": 0, "why": "Route on difficulty, not on whose data is used." }
+          }
+        },
+        "capacity": {
+          "where": {
+            "prefill": { "s": 0, "why": "Reserved throughput steadies latency but does not shorten prefill." },
+            "decode": { "s": 0, "why": "It does not shorten decoding." },
+            "queue": { "s": 2, "why": "Reserved capacity removes queueing from shared load, and spillover catches overflow on a standard deployment." }
+          },
+          "traffic": {
+            "steady": { "s": 2, "why": "Provisioned throughput is billed whether or not requests arrive, so it pays off on steady base load." },
+            "bursty": { "s": 0, "why": "Size for the base and let spillover absorb peaks, so bursts cost standard rates only while they last." }
+          },
+          "answers": {
+            "shared": { "s": 0, "why": "No effect on correctness or isolation." },
+            "private": { "s": 0, "why": "No effect on correctness or isolation." }
+          }
+        },
+        "scache": {
+          "where": {
+            "prefill": { "s": 2, "why": "A hit skips the model, so there is no prefill and no decode." },
+            "decode": { "s": 2, "why": "A hit returns the stored answer at once." },
+            "queue": { "s": 1, "why": "Hits never reach the deployment, which relieves load." }
+          },
+          "traffic": {
+            "steady": { "s": 0, "why": "Hit rate depends on repeated questions, not on steadiness." },
+            "bursty": { "s": 1, "why": "Peaks repeat the same questions, and hits absorb them." }
+          },
+          "answers": {
+            "shared": { "s": 2, "why": "Identical questions deserve identical answers, so a hit is safe." },
+            "private": { "s": -2, "why": "A hit can return one user's data to another unless you partition per user, which kills the hit rate." }
+          }
+        }
+      },
+      "takeaway": "Match the lever to the bottleneck first. Prompt caching and routing are cheap and reversible. A semantic cache is only safe for shared answers, and capacity pays off for steady base load." },
+    { "t": "stats", "items": [
+      { "label": "Prompt cache read", "value": "0.1x", "note": "of the uncached input rate on GPT-5.6 and later. A write costs 1.25x." },
+      { "label": "One write plus nine reads", "value": "2.15x", "note": "against 10x for ten uncached sends." },
+      { "label": "Halve the output", "value": "about 50%", "note": "of latency. Halving the prompt gives about 1% to 5%." },
+      { "label": "Batch discount", "value": "50%", "note": "with a 24-hour target. Not for interactive work." },
+      { "label": "Minimum cacheable prefix", "value": "1,024 tokens", "note": "of visible input on GPT-5.6 and later." },
+      { "label": "Foundry regional failover", "value": "none automatic", "note": "Approximate RTO: minutes hot/hot, 30 min to 2 h hot/warm, 2 to 8 h hot/cold." }
+    ] },
+    { "t": "failure", "title": "Where one lever breaks another", "items": [
+      { "symptom": "Cache hit rate collapses after a prompt change", "cause": "A timestamp, user id or reordered tool list moved into the first 1,024 tokens, or traffic per prefix fell", "fix": "Order content by how rarely it changes, pin the tool order, set `prompt_cache_key` per workflow and alert on the cached-token ratio." },
+      { "symptom": "One user sees another user's answer", "cause": "A semantic cache with no partition, or a threshold loose enough to match different questions", "fix": "Partition with `vary-by`, keep the threshold strict (start near 0.05), and skip the cache for answers built from private data." },
+      { "symptom": "A retry storm turns a brownout into an outage", "cause": "Fixed sleeps, many attempts, SDK retries stacked on application retries, and retries on quota errors", "fix": "Treat `Retry-After` as a minimum, add jitter, cap attempts and total time, count SDK retries and never retry quota or billing errors." },
+      { "symptom": "The failover region returns 429 at once", "cause": "No quota or capacity was reserved there, and quota is not a capacity guarantee", "fix": "Size both regions for the load, drill the failover on a schedule and keep a degraded ladder for the gap." },
+      { "symptom": "Cost climbs with every turn of a conversation", "cause": "The full history is re-sent, or `previous_response_id` chaining bills the earlier input tokens again", "fix": "Compact old turns, keep a stable prefix for caching and cap the turn count." }
+    ] }
+  ],
+  "quiz": [
+    { "id": "w19-l2-q1", "type": "numeric", "tag": "numeric", "difficulty": 2, "ref": "r19", "unit": "%", "answer": 15.75, "tolerancePct": 3,
+      "q": "On GPT-5.6 and later models other than GPT-6.1 Sol a prefix is written once and read 19 more times inside its 30-minute lifetime. A write costs 1.25x and a read 0.1x the uncached input rate. What do the prefix tokens cost, as a percentage of 20 uncached sends?",
+      "explain": "One write is 1.25 and 19 reads are 19 x 0.1 = 1.9, so the total is 3.15 units against 20 for uncached sends. 3.15 / 20 = 0.1575, or 15.75%. The write premium is repaid after about two reads, which is why a prefix that is reused rarely or goes stale before it is read again can cost more than not caching." },
+    { "id": "w19-l2-q2", "type": "single", "tag": "diagnose", "difficulty": 2, "ref": "r20",
+      "q": "A 6,200-token prompt is identical across users except for the question at the end, yet `cached_tokens` is always 0. What is the most likely cause?",
+      "code": { "lang": "python", "code": "messages = [\n    {\"role\": \"system\", \"content\": f\"Request time: {request_time}\\nYou are the support assistant. <5,800 tokens of policy and tool notes>\"},\n    {\"role\": \"user\", \"content\": question},\n]\n# usage: prompt_tokens=6212, prompt_tokens_details.cached_tokens=0" },
+      "options": [
+        "A timestamp at the top of the system message changes the first 1,024 tokens on every request",
+        "The prompt is under the 1,024-token minimum, so caching never starts",
+        "The user question sits at the end of the prompt, and a prefix cache needs the question first",
+        "Prompt caching only works when streaming is turned off for the request"
+      ],
+      "answer": 0,
+      "explain": "A cache hit needs an identical prefix, and on Azure before GPT-5.6 one differing character in the first 1,024 tokens gives `cached_tokens` of 0. The request time near the top breaks that. The prompt is 6,212 tokens, far above the minimum. The question belongs at the end, because the stable part must come first. Streaming has no effect on caching. Move the volatile line to the end." },
+    { "id": "w19-l2-q3", "type": "single", "tag": "flip", "difficulty": 2, "ref": "r23",
+      "q": "The FAQ bot uses an API Management semantic cache with `score-threshold` 0.05 and works well. The team adds HR questions whose retrieved context includes the asking employee's leave balance. What should change first?",
+      "options": [
+        "Lower the threshold to 0.02 so that only near-identical questions are able to hit the cache",
+        "Raise the threshold to 0.3 so that many more questions hit the cache and the monthly bill falls further",
+        "Partition the cache by user or permission scope with `vary-by`, or bypass it for private answers",
+        "Move the semantic cache behind the model so that it stores only generated text"
+      ],
+      "answer": 2,
+      "explain": "The risk is not the match quality but who may see a stored answer. Two employees can ask the same words and need different answers, so the cache must be partitioned or skipped for private answers. A lower threshold still lets identical text from another user hit. A threshold above 0.2 can match different questions. The cache already sits in front of the model, so moving it does not change who can read an entry." },
+    { "id": "w19-l2-q4", "type": "single", "tag": "tradeoff", "difficulty": 3, "ref": "r29",
+      "q": "Traffic is steady at about 400 requests per second for most of the day, with two 20-minute peaks at three times that. p95 latency has a target and the budget is capped. Which capacity plan fits best?",
+      "options": [
+        "Provisioned throughput sized for the peak of the two spikes, so no request ever spills to another deployment",
+        "Provisioned throughput near the base load, plus a standard deployment as spillover for the peaks",
+        "Standard pay-as-you-go only, with client-side retries and backoff to absorb the two daily peaks",
+        "Batch for every request, because Batch is 50% cheaper and the usage stays within its file limits"
+      ],
+      "answer": 1,
+      "explain": "Provisioned capacity is billed whether or not requests arrive, so sizing for a three-times peak pays for idle capacity most of the day. Spillover sends non-200 overflow from the provisioned deployment to a standard one, so peaks cost standard rates only while they last. Standard only with retries gives unpredictable latency and retry waves at the peaks. Batch has a 24-hour target and cannot serve interactive requests." },
+    { "id": "w19-l2-q5", "type": "multi", "tag": "bug", "difficulty": 3, "ref": "r31",
+      "q": "Select every defect in this retry loop for a 429 storm on an Azure OpenAI deployment.",
+      "code": { "lang": "python", "code": "client = AzureOpenAI(max_retries=5)\n\nfor attempt in range(10):\n    try:\n        return client.chat.completions.create(\n            model=DEPLOYMENT, messages=msgs, max_tokens=4000)\n    except RateLimitError:\n        time.sleep(1)" },
+      "options": [
+        "A fixed one-second sleep gives every client the same schedule, so retries arrive in waves",
+        "It ignores the `Retry-After` header that the service sends",
+        "Ten attempts with no total deadline, multiplied by the SDK's own `max_retries`, can mean about 60 calls",
+        "It retries at all, because a 429 is never a transient condition",
+        "`max_tokens=4000` inflates the up-front token estimate, so the call can be throttled below real usage"
+      ],
+      "answers": [0, 1, 2, 4],
+      "explain": "No jitter and a fixed sleep synchronise clients, `Retry-After` should be the minimum wait, and stacked retry layers with no deadline multiply load on a service that is already struggling. The TPM check counts prompt plus `max_tokens` up front, so an oversized value consumes quota. Retrying a transient 429 is fine. The exception is a quota or billing error, which retrying cannot fix." },
+    { "id": "w19-l2-q6", "type": "match", "tag": "diagnose", "difficulty": 1, "ref": "r24",
+      "q": "Match each symptom to the lever that addresses it first.",
+      "pairs": [
+        { "l": "First token takes 4 s on a 30,000-token prompt whose first 28,000 tokens never change", "r": "Put the stable prefix first and rely on prompt caching" },
+        { "l": "The first token is fast, but 700-token answers take 20 s to finish", "r": "Trim and cap output tokens, and stream" },
+        { "l": "One slow replica pushes p99 up while p50 is fine", "r": "Hedge the request, using an idempotent call" },
+        { "l": "429s appear at peak although quota looks unused", "r": "Check the up-front token estimate and capacity throttling, then add spillover" },
+        { "l": "A nightly enrichment job is billed at interactive prices", "r": "Move it to Batch at 50% off with a 24-hour target" }
+      ],
+      "explain": "Each lever matches one bottleneck. Prefill is attacked with a cacheable prefix, decode with fewer output tokens, tail latency with hedging, a 429 below quota by reading how the token estimate and capacity throttling work, and work that can wait with Batch. Reaching for the wrong lever, such as streaming to fix prefill, leaves the bottleneck where it was." }
+  ],
+  "defend": {
+    "prompt": "An internal assistant has grown from a pilot to 5,000 daily users. Leadership wants answers that feel instant, a smaller bill, and no outage when a region fails. How do you get there without breaking correctness or tenant isolation? Walk me through the options, what you do first and how you know it worked.",
+    "timebox": "6 min",
+    "clarify": [
+      "Is the wait the time to first token or the time to the full answer, and what are the p50 and p95 targets?",
+      "How much of each prompt repeats across requests, and what changes inside it?",
+      "Is traffic steady or bursty, and how much work is non-interactive and can wait?",
+      "Do answers depend on the asking user's data or permissions, and are there tenant isolation rules?",
+      "Which models, regions and residency rules apply, and what recovery time and degraded quality are acceptable?",
+      "What is the budget, and where is the money going: input, output or reasoning tokens?"
+    ],
+    "options": [
+      { "name": "Engineer the prompt and the call: stable prefix for provider caching, streaming, output caps and a router", "when": "The bill and the wait come from long repeated prefixes and long outputs, and traffic keeps prefixes warm.", "tradeoff": "A prompt refactor and a router to maintain and evaluate. Cache hits are best effort, with no guarantee." },
+      { "name": "Add a gateway cache: exact match first, semantic cache for shared answers", "when": "Many users ask the same questions and the answers do not depend on who asks.", "tradeoff": "A hit can serve a wrong or another user's answer, so it needs a strict threshold, partitioning and an audit of false hits." },
+      { "name": "Buy capacity: provisioned throughput for the base load, spillover to standard, Batch or Flex for work that can wait", "when": "Traffic is steady with predictable peaks and p95 latency has a contract.", "tradeoff": "Provisioned capacity is billed whether used or not, and quota is not a capacity guarantee. Flex is preview." },
+      { "name": "Self-host open models with server-side prefix caching", "when": "Residency, volume or control justify an inference team.", "tradeoff": "You own GPUs, batching, scaling and on-call, and an open model may trail on quality." }
+    ],
+    "modelAnswer": [
+      { "t": "p", "md": "**1. Clarify the dials.** First token or full answer, repeated share of the prompt, traffic shape, private versus shared answers, residency and regions, acceptable degraded quality, and where the tokens go." },
+      { "t": "p", "md": "**2. Options.** Engineer the prompt and call, add a gateway cache, buy capacity, or self-host. They stack, so the question is the order." },
+      { "t": "p", "md": "**3. Choice for assumed dials.** Assume steady base load with two short 3x peaks, a 7,000-token shared prefix followed by retrieved private context, a p95 time to first token target of 2 s, an EU data zone with two allowed regions, a budget cut of 30%, and a fixed quality bar. I would:" },
+      { "t": "list", "style": "ol", "items": [
+        "Measure first: split time to first token from total time, count tokens by category (uncached input, cached input, output, reasoning), and tag every request with route and tenant.",
+        "Fix the prompt for caching: stable instructions and tools in a fixed order, retrieved context next, the user turn last, a `prompt_cache_key` per workflow and an alert on the cached-token ratio. On GPT-5.6 and later a read costs 0.1x and a write 1.25x.",
+        "Cap the output at a measured percentile and ask for shorter answers, because output tokens dominate total time.",
+        "Route: a small model for classification, rewriting and simple lookups, and the strong model with a set reasoning effort for the rest. Reserve at least 25,000 tokens for reasoning and output on a reasoning model, add a cascade check and track quality per route.",
+        "Skip a semantic cache for private answers. Use an exact-match cache for identical requests, and a partitioned, strict semantic cache only for a public FAQ slice.",
+        "Capacity: provisioned throughput near the base load with spillover to a standard deployment, Batch for nightly enrichment, and token limits per consumer at the gateway.",
+        "Availability: retries with jitter that honour `Retry-After` under a total deadline, a circuit breaker per backend, a second region sized and drilled, and a degraded ladder of a smaller model, no tools, retrieval only with citations, then an honest error."
+      ] },
+      { "t": "p", "md": "**What would flip it.** Unique prompts per request: caching does little, so routing and output caps carry the work. Bursty and low volume: skip provisioned throughput and use standard with spillover. Identical answers across users: add a semantic cache. Residency that forbids a second region: degrade inside the region and accept a longer recovery." },
+      { "t": "table", "head": ["Failure mode", "How I detect it"], "rows": [
+        ["Cache hit rate collapses after a prompt change", "Cached-token ratio per route, with an alert after every deploy"],
+        ["Semantic cache serves a wrong or foreign answer", "Sampled hit audits, and a canary pair of users that must never share an answer"],
+        ["Retry storm or 429s below quota", "Retries per success, 429 rate by cause, and the token estimate against actual use"],
+        ["Router degrades quality", "Eval score and escalation rate per route, with a shadow comparison against the strong model"],
+        ["The second region cannot take the load", "Scheduled failover drills that measure recovery time and error rate"]
+      ] },
+      { "t": "p", "md": "**5. Metrics and rollout.** Time to first token at p50 and p95, total latency, cost per successful task (not per token), cached-token ratio, 429 and retry rate, availability against an SLO and quality by route. Shadow the router, canary the prompt reorder on a slice, and drill the failover before the next incident." },
+      { "t": "callout", "kind": "interview", "title": "Order of operations", "md": "Fix prompt order and output caps first: cheap, reversible and no new infrastructure. Then routing, then capacity, then a second region. Each later step costs more to build and to run, so state the order before you state the tools." }
+    ],
+    "rubric": [
+      { "pt": "Splits time to first token from total time and finds the bottleneck before choosing a lever", "w": 3 },
+      { "pt": "Engineers the prompt for caching (stable prefix, fixed tool order, hit-rate metric) and knows the write and read prices", "w": 2 },
+      { "pt": "Treats a semantic cache as a correctness and isolation risk and scopes or skips it", "w": 3 },
+      { "pt": "Chooses capacity by traffic shape: provisioned for the base, spillover, Batch for work that can wait", "w": 2 },
+      { "pt": "Designs retries with jitter, deadlines and breakers, and a defined degradation ladder", "w": 3 },
+      { "pt": "Knows that quota is not capacity and that Foundry gives no automatic regional failover", "w": 2 },
+      { "pt": "Measures cost per successful task and tracks quality per route", "w": 2 },
+      { "pt": "Orders the work from cheap and reversible to expensive and operational", "w": 1 }
+    ],
+    "followUps": [
+      { "q": "The cached-token ratio is 5% although the prefix is stable. What do you check?", "a": "The 1,024-token minimum, anything volatile in the first tokens such as timestamps, ids or tool order, and the traffic per prefix: about 15 requests a minute per prefix and key before traffic can overflow to other machines and miss. Then compare the idle gaps with the cache lifetime." },
+      { "q": "The CFO wants the semantic cache for HR answers. What do you say?", "a": "Only for answers that are identical for every user. Partition with `vary-by`, keep the threshold strict (start near 0.05), audit hits for correctness and skip the cache for answers built from private data. Audits have also detected cross-user cache sharing through timing, so keep private data out of shared prefixes." },
+      { "q": "The primary region fails. What happens in the first hour?", "a": "Foundry does not fail over for you. Expect minutes with hot/hot, 30 minutes to 2 hours with hot/warm and 2 to 8 hours with hot/cold. The breaker trips, the degraded ladder starts, and the second region needs quota and capacity already sized." }
+    ],
+    "redFlags": [
+      "Reaches for a semantic cache first, with no partitioning and no audit of false hits.",
+      "Optimises cost per token and never measures cost per successful task or quality per route.",
+      "Retries every error with fixed sleeps and no cap, or assumes quota means guaranteed capacity.",
+      "Plans a second region with no sizing, no quota and no failover drill."
+    ]
+  },
+  "refs": ["r19", "r20", "r21", "r22", "r23", "r24", "r25", "r26", "r27", "r28", "r29", "r30", "r31", "r32", "r33", "r34", "r35", "r36"],
+  "takeaways": [
+    "Find the bottleneck first: first token and total time have different levers, and halving the output beats halving the prompt for total latency.",
+    "Prompt caching is an engineering task: stable prefix first, fixed tool order, a cache key and a hit-rate alarm. A semantic cache is a correctness and isolation risk.",
+    "Buy provisioned capacity for the base load and let spillover and Batch handle the rest. Quota is not capacity.",
+    "Retries need jitter, a deadline and a cap, and a second region needs sizing and a drill. Foundry does not fail over for you.",
+    "Order the work from cheap and reversible to expensive and operational, and measure cost per successful task."
+  ]
+}

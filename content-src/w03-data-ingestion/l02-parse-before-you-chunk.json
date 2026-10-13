@@ -1,0 +1,90 @@
+{
+  "id": "w03-l2",
+  "order": 2,
+  "title": "Parse it right or pay for it later",
+  "kind": "problem",
+  "minutes": 15,
+  "brief": "Half of the corpus is clean exports, the rest is scans with merged-cell tables, forms and charts. One parser for everything is tempting. Pick by document type, volume and where the text may travel.",
+  "blocks": [
+    { "t": "h", "text": "What the parser must hand over", "level": 2 },
+    { "t": "p", "md": "Chunking cannot repair what parsing lost. A parser has to return reading order, tables with their structure, figures and, when you cite pages, coordinates. Topics `w03-t03` (extraction, OCR, layout), `w03-t04` (vision LLMs and Content Understanding) and `w03-t05` (tables, figures, forms) explain the mechanisms. Benchmarks agree that quality varies by document type [[r21]], and some systems skip text parsing and embed page images instead [[r22]]. Here you choose per document class." },
+    { "t": "stats", "items": [
+      { "label": "Document Layout skill timeout", "value": "5 min per document", "note": "Still charged when a Foundry resource is attached [[r16]]" },
+      { "label": "Document Intelligence S0 file limit", "value": "500 MB, 2,000 pages", "note": "The free F0 tier allows 4 MB and 2 pages [[r27]]" },
+      { "label": "Content Understanding async PDF limit", "value": "200 MB, 300 pages", "note": "Checked 2026-10-13 [[r28]]" }
+    ] },
+    { "t": "dials", "id": "w03-l2-parser", "title": "Pick a parser for a document class", "prompt": "Flip the constraints. Real corpora need a different answer per class, so run the board once for each.",
+      "dials": [
+        { "id": "doc", "label": "Document type", "values": [ { "id": "clean", "label": "Clean born-digital text" }, { "id": "scans", "label": "Scans, tables and forms" }, { "id": "visual", "label": "Charts, diagrams, visual pages" } ] },
+        { "id": "vol", "label": "Volume", "values": [ { "id": "small", "label": "Thousands of pages" }, { "id": "huge", "label": "Hundreds of millions of pages" } ] },
+        { "id": "where", "label": "Where text may go", "values": [ { "id": "cloud", "label": "A managed cloud service is allowed" }, { "id": "local", "label": "Text must stay in our network" } ] }
+      ],
+      "options": [
+        { "id": "native", "name": "Native text extraction", "summary": "Read the text layer of born-digital files, with no model involved." },
+        { "id": "layout", "name": "Layout analysis (Document Intelligence)", "summary": "A managed OCR and layout model that returns Markdown, tables, figures and coordinates." },
+        { "id": "cu", "name": "Content Understanding", "summary": "Managed analyzers that extract and chunk in one skill, with schema-defined fields." },
+        { "id": "oss", "name": "Open-source parser you run", "summary": "Docling or Unstructured with layout, tables and OCR, self-hosted." },
+        { "id": "vlm", "name": "Vision LLM reads each page", "summary": "Send page images to a multimodal model and ask for structured text." }
+      ],
+      "scores": {
+        "native": {
+          "doc": { "clean": { "s": 2, "why": "The text layer is already there, so extraction is fast, cheap and deterministic." }, "scans": { "s": -2, "why": "A scan has no text layer, and flattened tables lose their structure." }, "visual": { "s": -2, "why": "Charts and figures carry no extractable text, so their content is lost." } },
+          "vol": { "small": { "s": 1, "why": "Cheap at any size, though a small volume does not need cheap." }, "huge": { "s": 2, "why": "No per-page fee and no model throughput limit." } },
+          "where": { "cloud": { "s": 0, "why": "No effect: it runs anywhere." }, "local": { "s": 2, "why": "A local library keeps the text inside your network." } }
+        },
+        "layout": {
+          "doc": { "clean": { "s": 0, "why": "Works, but you pay for a model that adds little to clean text." }, "scans": { "s": 2, "why": "OCR, per-line handwriting flags and HTML tables with merged cells and multi-row headers, in Markdown output [[r15]]." }, "visual": { "s": 1, "why": "Figures come back with bounding regions, not a description of what they show [[r15]]." } },
+          "vol": { "small": { "s": 1, "why": "A per-page price is a small bill at this volume." }, "huge": { "s": -1, "why": "Per-page cost and service limits add up (S0 allows 500 MB and 2,000 pages per file) [[r27]]." } },
+          "where": { "cloud": { "s": 1, "why": "Managed, and v4.0 (2024-11-30) is GA [[r15]]." }, "local": { "s": -2, "why": "It is a cloud service. Confirm a deployment that keeps data in your network before assuming one." } }
+        },
+        "cu": {
+          "doc": { "clean": { "s": 0, "why": "Works, but it is more machinery than clean text needs." }, "scans": { "s": 1, "why": "Layout-aware extraction. The AI Search skill outputs tables as Markdown and lets chunks span pages [[r18]]." }, "visual": { "s": 2, "why": "Covers images, audio and video, and AI image descriptions exist, though they are preview [[r17]] [[r18]]." } },
+          "vol": { "small": { "s": 1, "why": "Fine at small volume." }, "huge": { "s": -1, "why": "Asynchronous document analysis is capped at 200 MB and 300 pages per PDF, so large files need splitting [[r28]]." } },
+          "where": { "cloud": { "s": 1, "why": "API 2025-11-01 is GA, and the skill is GA in search REST 2026-04-01 [[r17]] [[r18]]." }, "local": { "s": -2, "why": "It is a managed cloud service, so text leaves your network." } }
+        },
+        "oss": {
+          "doc": { "clean": { "s": 1, "why": "Reads PDF, DOCX, PPTX, XLSX and HTML without a service call [[r19]]." }, "scans": { "s": 1, "why": "Docling covers layout, reading order, tables, code, formulas and OCR for scans [[r19]]." }, "visual": { "s": 0, "why": "Finding a figure is not describing it. A chart description needs a vision model on top." } },
+          "vol": { "small": { "s": 0, "why": "You run and patch the service even for a small job." }, "huge": { "s": 1, "why": "No per-page fee, so cost is compute and operations, which you can scale." } },
+          "where": { "cloud": { "s": 0, "why": "Allowed, but not a reason to pick it." }, "local": { "s": 2, "why": "It can run locally for sensitive or air-gapped data. The Docling code is MIT licensed, and model licences vary [[r19]]." } }
+        },
+        "vlm": {
+          "doc": { "clean": { "s": -1, "why": "Slower and costlier than reading the text layer, and the output can drift between runs." }, "scans": { "s": 1, "why": "Reads messy layouts well, but can drop or invent cells, so every table needs validation." }, "visual": { "s": 2, "why": "The one option here that can read a chart or diagram and say what it shows." } },
+          "vol": { "small": { "s": 1, "why": "Token cost per page is tolerable at small volume." }, "huge": { "s": -2, "why": "Token cost per page and model throughput dominate at this volume." } },
+          "where": { "cloud": { "s": 0, "why": "Allowed." }, "local": { "s": -1, "why": "Only a self-hosted vision model qualifies, which adds GPU operations." } }
+        }
+      },
+      "takeaway": "No parser wins every class. Route by document type: native text for clean files, layout analysis or a local parser for scans and tables, and a vision model only for the pages whose meaning is a picture." },
+    { "t": "table", "caption": "Keep tables, figures and forms answerable", "head": ["Content", "Representation", "Wins when", "Loses when"], "rows": [
+      ["Table", "Whole table as HTML or Markdown in one chunk, with its caption", "It fits in a chunk and questions need several rows", "A large table splits mid-row or exceeds the embedding input limit"],
+      ["Table", "One chunk per row, with the header repeated in each", "Questions look up one row, such as a price or a limit", "Questions compare many rows, and the index grows by the row count"],
+      ["Table", "A short LLM summary embedded, raw table kept in the payload", "Natural-language questions about a dense numeric table", "The summary drops a number, so the raw table must reach the model"],
+      ["Figure", "Caption plus a vision-model description as its own chunk, with the image URL", "The answer lives in a chart or diagram", "The description is a model guess. If it splits across chunks, repeat the image URL in each chunk [[r35]]"],
+      ["Form", "Extract named fields into a schema and store them as metadata", "Questions ask for a field, such as an invoice total", "Layouts vary so much that field confidence is low, so route those to review [[r17]]"]
+    ], "highlightCol": 1 },
+    { "t": "failure", "title": "Parsing failure modes", "items": [
+      { "symptom": "Checkbox and table parsing code broke after an upgrade to layout v4.0", "cause": "v4.0 (2024-11-30) renders tables as HTML and selection marks as the characters ☒ and ☐, instead of `:selected:` and `:unselected:` [[r15]].", "fix": "Parse the new forms and keep a regression set of tricky pages that runs on every parser upgrade." },
+      { "symptom": "Big PDFs fail in the Document Layout skill yet still show on the bill", "cause": "Documents needing over 5 minutes in the layout model time out, and are still charged when a Foundry resource is attached [[r16]].", "fix": "Split very large files into page ranges before ingest, or route them through a separate batch path." },
+      { "symptom": "Answers quote the wrong number from a table", "cause": "A merged-cell or multi-row header was flattened, or a vision model dropped a cell.", "fix": "Score tables against a labelled set per document type, and keep the raw table so the model reads cells instead of a summary." },
+      { "symptom": "Every document re-embeds after a parser upgrade", "cause": "Open-source parsers release often (Docling v2.138.0 on 2026-10-12, Unstructured 0.27.25 on 2026-10-10) and the output shifts [[r19]] [[r20]].", "fix": "Pin versions, run the regression set before upgrading, and include the parser version in the re-embedding key beside the content hash." }
+    ] },
+    { "t": "callout", "kind": "preview", "title": "Where the docs disagree, as of 2026-10-13", "md": "The Content Understanding skill page says it outputs tables and figures as Markdown and that the Document Layout skill gives plain text, while the Document Layout skill page lists `markdown` as its default `outputFormat` [[r16]] [[r18]]. Test both on your own tables. Semantic chunking in the Content Understanding skill and AI image descriptions are preview (`2026-05-01-preview`), and API `2026-06-01-preview` adds signature detection and document metadata extraction [[r17]] [[r18]]." }
+  ],
+  "quiz": [
+    { "id": "w03-l2-q1", "type": "single", "tag": "diagnose", "difficulty": 2, "q": "Questions about a merged-cell price table return wrong numbers. The pipeline extracts the text layer and splits recursively, and the chunks read cleanly. What do you change first?", "options": ["Switch to a parser that keeps table structure, then re-test the table questions", "Raise top-k from 5 to 20 so that more of the table's rows are retrieved per query", "Move to a larger embedding model so that numbers and units embed more precisely", "Increase the chunk overlap so that each row of the table appears in two chunks"], "answer": 0, "explain": "Text-layer extraction flattens merged cells and multi-row headers before any chunker sees them, so the numbers already lost their column. Layout analysis returns tables as HTML with merged cells preserved [[r15]]. A higher top-k, a bigger embedding model and more overlap all operate on the flattened text and cannot restore the structure." },
+    { "id": "w03-l2-q2", "type": "multi", "tag": "tradeoff", "difficulty": 3, "q": "You propose sending every page of a 100-million-page archive to a vision LLM. Select the costs a reviewer should raise.", "options": ["Token cost per page scales with volume and dominates the bill", "Output is not deterministic, so a re-run or model update can change the chunks", "It can never run inside a private network, even with a self-hosted model", "Cells can be dropped or invented, so tables need validation against a labelled set"], "answers": [0, 1, 3], "explain": "Per-page token cost, non-deterministic output and silent cell errors are the real costs, and they push you to route only visual pages to the model. A self-hosted vision model can run on a private network, at the price of GPU operations, so the third option overstates the limit." },
+    { "id": "w03-l2-q3", "type": "match", "tag": "concept", "difficulty": 2, "q": "Match each parsing component to the fact most likely to bite you.", "pairs": [
+      { "l": "Document Layout skill", "r": "Times out when a document needs over 5 minutes in the layout model" },
+      { "l": "Layout v4.0 (2024-11-30)", "r": "Tables as HTML and selection marks as ☒ and ☐" },
+      { "l": "Content Understanding skill", "r": "GA in search REST 2026-04-01, extracts and chunks in one skill" },
+      { "l": "Docling", "r": "MIT-licensed code that can run locally on air-gapped data" }
+    ], "explain": "Each pairing is a documented constraint you would plan around: the skill timeout and billing [[r16]], the v4.0 output change that breaks old parsers [[r15]], the single extract-and-chunk skill [[r18]] and the local, MIT-licensed option [[r19]]." }
+  ],
+  "defend": null,
+  "refs": ["r15", "r16", "r17", "r18", "r19", "r20", "r21", "r22", "r27", "r28", "r29", "r31", "r35"],
+  "takeaways": [
+    "Chunking cannot repair what parsing lost, so test tables and figures before you tune chunk size",
+    "Route by document class: native text, layout analysis or a local parser, and a vision model only where the picture is the content",
+    "Name the version and status: layout v4.0 changed table and checkbox output, and Content Understanding semantic chunking is preview",
+    "Keep a regression set of hard pages and re-run it on every parser upgrade"
+  ]
+}

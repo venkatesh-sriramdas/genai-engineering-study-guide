@@ -1,0 +1,95 @@
+{
+  "id": "w12-l4",
+  "order": 4,
+  "title": "Hands and a library",
+  "kind": "problem",
+  "minutes": 18,
+  "brief": "The agent needs tools, knowledge and sometimes other agents. Where each one lives decides who holds the credentials, who versions the definition and where the tokens are spent.",
+  "blocks": [
+    { "t": "h", "text": "Tools, agents and knowledge", "level": 2 },
+    { "t": "p", "md": "A **Toolbox** groups tools behind one managed MCP-compatible endpoint with central auth (Microsoft Entra, OAuth identity passthrough), toolbox-level guardrails and versioning [[r3]]. You create a version, test it, promote it to default and consuming agents pick it up with no redeploy. Any MCP client can consume it. Agent Framework hosted agents use `FoundryToolbox` in Python or `AddFoundryToolboxes` in .NET.\n\nTool authentication can be key based, Microsoft Entra (agent identity or project managed identity), OAuth identity passthrough (on-behalf-of) or unauthenticated where that is appropriate [[r1]]. These options also apply to remote MCP servers." },
+    { "t": "compare", "title": "How a tool reaches the agent", "intro": "Toolboxes are GA as of 2026-10-13. Tool search and skills inside them are preview.", "options": [
+      { "name": "Toolbox endpoint", "tag": "GA", "summary": "Many tools behind one managed MCP-compatible endpoint with central auth, guardrails and versions.", "pros": ["One credential and governance point", "Versioned promotion with no consumer redeploy", "Non-Foundry MCP clients can consume it"], "cons": ["Some tools are not toolbox eligible", "A promoted default reaches every consumer at once"], "bestWhen": "Several agents share tools and you want central versioning.", "avoidWhen": "One agent uses one tool and nothing is shared.", "meta": [{ "k": "Auth", "v": "Entra or OAuth passthrough" }, { "k": "Context cost", "v": "Lower with tool search (preview)" }] },
+      { "name": "Direct tool integration", "summary": "Attach a built-in tool straight to the agent.", "pros": ["The only route for computer use, SharePoint, image generation, Azure Functions, Grounding with Bing and Fabric data agent"], "cons": ["Credentials and guardrails live per agent", "No shared versioning (inference)"], "bestWhen": "The tool is not toolbox eligible.", "avoidWhen": "Many agents repeat the same wiring." },
+      { "name": "Client-side function calling", "summary": "The model asks, your process runs the function.", "pros": ["Execution and data stay in your process"], "cons": ["You own the loop and retries", "The agent optimizer cannot evaluate tool execution because it runs client side"], "bestWhen": "Execution must stay inside your own trust boundary.", "avoidWhen": "The tool is a shared, governed capability." },
+      { "name": "Plain remote MCP server", "summary": "Point an agent at an MCP server and pick an auth option.", "pros": ["Any MCP server works", "Key, Entra or OAuth passthrough auth"], "cons": ["Every agent wires auth itself", "Catalog sprawl across agents (inference)"], "bestWhen": "One agent needs one external MCP server.", "avoidWhen": "You want a governed catalog with versions." }
+    ] },
+    { "t": "diagram", "id": "w12-l4-d1", "title": "Tool paths into one agent", "alt": "The agent reaches a toolbox MCP endpoint that fronts an MCP server, Azure AI Search, OpenAPI and an A2A peer. It also calls functions in its own process and attaches direct tools.", "src": "flowchart LR\n  A[Agent] --> T[Toolbox MCP endpoint]\n  T --> M[Remote MCP server]\n  T --> S[Azure AI Search]\n  T --> O[OpenAPI tool]\n  T --> P[A2A peer]\n  A --> F[Function call in your process]\n  A --> D[Direct tool such as SharePoint]", "caption": "Checked against the Toolbox overview on 2026-10-13." },
+    { "t": "dials", "id": "w12-l4-knowledge", "title": "Foundry IQ or something else", "prompt": "Change what the content is, who may see it and how much control you need.",
+      "dials": [
+        { "id": "content", "label": "What the content is", "values": [ { "id": "org", "label": "Curated org content, many sources" }, { "id": "user", "label": "Documents a user uploads in chat" }, { "id": "facts", "label": "Per-user preferences and history" } ] },
+        { "id": "perm", "label": "Permission model", "values": [ { "id": "open", "label": "Same access for everyone" }, { "id": "acl", "label": "Per-document ACLs and labels" } ] },
+        { "id": "control", "label": "Control you need", "values": [ { "id": "managed", "label": "Managed defaults are fine" }, { "id": "custom", "label": "Own chunking, ranking and eval" } ] }
+      ],
+      "options": [
+        { "id": "iq", "name": "Foundry IQ knowledge base", "summary": "Managed agentic retrieval over sources." },
+        { "id": "search", "name": "Azure AI Search tool", "summary": "Your own index behind a tool." },
+        { "id": "file", "name": "File search", "summary": "Retrieval over user documents." },
+        { "id": "custom", "name": "Custom retrieval behind MCP", "summary": "Your pipeline as a tool." },
+        { "id": "memory", "name": "Foundry memory (preview)", "summary": "Per-user extracted memories." }
+      ],
+      "scores": {
+        "iq": {
+          "content": { "org": { "s": 2, "why": "Sources include Blob Storage, SharePoint, OneLake and the public web." }, "user": { "s": -1, "why": "Built for curated content, not per-chat uploads." }, "facts": { "s": -2, "why": "Not a user memory store." } },
+          "perm": { "open": { "s": 0, "why": "Works, but ACL sync is wasted." }, "acl": { "s": 2, "why": "Syncs ACLs for supported sources, honors Purview labels and can run as the caller." } },
+          "control": { "managed": { "s": 2, "why": "Agentic retrieval with minimal, low or medium effort." }, "custom": { "s": -1, "why": "Fewer knobs than your own pipeline." } }
+        },
+        "search": {
+          "content": { "org": { "s": 1, "why": "Good when you already own the index." }, "user": { "s": -1, "why": "An index per chat upload is heavy." }, "facts": { "s": -2, "why": "Not a memory store." } },
+          "perm": { "open": { "s": 1, "why": "Simple when everyone sees everything." }, "acl": { "s": 0, "why": "You design the security filters yourself." } },
+          "control": { "managed": { "s": 0, "why": "You operate the index." }, "custom": { "s": 1, "why": "Full control of the index." } }
+        },
+        "file": {
+          "content": { "org": { "s": -1, "why": "Not aimed at large curated corpora." }, "user": { "s": 2, "why": "The docs point here for user documents." }, "facts": { "s": -1, "why": "Documents, not preferences." } },
+          "perm": { "open": { "s": 1, "why": "Fine for content the user brought." }, "acl": { "s": -1, "why": "No per-document ACL sync (inference)." } },
+          "control": { "managed": { "s": 2, "why": "Least setup." }, "custom": { "s": -2, "why": "Few retrieval knobs (inference)." } }
+        },
+        "custom": {
+          "content": { "org": { "s": 1, "why": "Handles odd sources." }, "user": { "s": 0, "why": "Possible, but heavy for uploads." }, "facts": { "s": -1, "why": "Reinvents memory." } },
+          "perm": { "open": { "s": -1, "why": "More build than the need." }, "acl": { "s": 1, "why": "Enforce any rule at query time." } },
+          "control": { "managed": { "s": -2, "why": "You build and run everything." }, "custom": { "s": 2, "why": "Your chunking, ranking and eval." } }
+        },
+        "memory": {
+          "content": { "org": { "s": -2, "why": "Per-user and LLM-consolidated, wrong for shared policy documents (inference)." }, "user": { "s": -1, "why": "Different job: preferences and summaries." }, "facts": { "s": 2, "why": "User profile, chat summary and procedural memory." } },
+          "perm": { "open": { "s": 0, "why": "Neutral." }, "acl": { "s": 0, "why": "Neutral." } },
+          "control": { "managed": { "s": 1, "why": "Extraction and consolidation are managed." }, "custom": { "s": -1, "why": "Few knobs and still preview." } }
+        }
+      },
+      "takeaway": "Foundry IQ leads for curated, permission-aware content. Custom retrieval wins when you need your own ranking and eval. Memory is for the user, not for the policy library." },
+    { "t": "failure", "title": "Failure modes", "items": [
+      { "symptom": "Prompt tokens balloon after the tool catalog grows", "cause": "Hundreds of tool definitions travel in every request", "fix": "Turn on tool search (preview). Watch prompt tokens per request to detect it." },
+      { "symptom": "A new toolbox version breaks several agents at once", "cause": "Promoting a version to default reaches every consuming agent with no redeploy", "fix": "Test the version first, promote deliberately and keep the previous version to roll back (inference)." },
+      { "symptom": "The agent cites a document the user may not read", "cause": "The knowledge base ran under a shared identity, or the source has no ACL sync", "fix": "Run under the caller's Entra identity and confirm ACL sync for each source [[r6]]." },
+      { "symptom": "Delegation to a sibling agent fails after migration", "cause": "The classic Connected Agents tool is not in the new Foundry Agent Service", "fix": "Use the A2A tool, or Microsoft Agent Framework orchestration in hosted code [[r21]]." },
+      { "symptom": "Memory returns stale or wrong policy answers", "cause": "Memory is per-user and LLM-consolidated, so it is the wrong store for shared documents (inference)", "fix": "Put shared documents in Foundry IQ or file search and keep memory for user facts." }
+    ] },
+    { "t": "accordion", "items": [
+      { "title": "Go deeper: what a toolbox can and cannot hold", "blocks": [
+        { "t": "table", "caption": "Toolbox coverage on 2026-10-13", "head": ["In a toolbox", "Direct integration only"], "rows": [
+          ["MCP, web search, Azure AI Search, code interpreter, file search, OpenAPI", "Function calling (client side)"],
+          ["A2A, browser automation, Fabric IQ, Work IQ", "Grounding with Bing, computer use, image generation"],
+          ["Tool search (preview), skills (preview), reminder tool", "SharePoint, Fabric data agent, Azure Functions"]
+        ] },
+        { "t": "p", "md": "Logic Apps does not appear in the toolbox table, and I could not confirm it as a built-in agent tool on 2026-10-13. Check the page before you promise it." }
+      ] },
+      { "title": "Go deeper: tool search and skills (preview)", "blocks": [
+        { "t": "p", "md": "Tool search hides tools by default and exposes two meta-tools, `tool_search` and `call_tool`, with pin, add-context and auto-pin controls. A toolbox can then hold hundreds of tools without flooding context. **Skills** are versioned, immutable, reusable multi-step workflows delivered through MCP resources. Both work only through a toolbox [[r3]]." }
+      ] },
+      { "title": "Go deeper: agent to agent after Connected Agents", "blocks": [
+        { "t": "p", "md": "The classic Connected Agents tool is not available in the new service [[r21]]. The docs name two replacements: the A2A tool, which accepts any A2A endpoint including another Foundry agent exposed as an A2A endpoint, and Workflows. Workflows are preview and retire on 2026-12-01, and the GA page says to use Microsoft Agent Framework for new development [[r11]]. A Foundry agent can also be exposed as an incoming A2A endpoint." }
+      ] },
+      { "title": "Go deeper: Foundry IQ and memory", "blocks": [
+        { "t": "p", "md": "A Foundry IQ knowledge base holds knowledge sources and retrieval settings and runs on Azure AI Search agentic retrieval [[r6]]. Retrieval reasoning effort is minimal, low or medium. Fabric IQ and Work IQ are sibling workloads. The API is GA by Search REST API version and portal access is preview as of 2026-10-13.\n\nFoundry memory is preview [[r7]]. It extracts, consolidates (an LLM merges and resolves conflicts) and retrieves. The three types are user profile, chat summary and procedural, all on by default. The docs advise retrieving the user profile early and the chat summary per turn." }
+      ] }
+    ] }
+  ],
+  "quiz": [
+    { "id": "w12-l4-q1", "type": "multi", "tag": "concept", "q": "Select every tool that is direct-integration only and cannot sit inside a toolbox on 2026-10-13.", "options": ["Computer use", "Azure AI Search", "SharePoint", "Code interpreter", "Azure Functions"], "answers": [0, 2, 4], "explain": "Computer use, SharePoint and Azure Functions are direct only, along with Grounding with Bing, image generation, the Fabric data agent and client-side function calling. Azure AI Search and code interpreter are both toolbox tools.", "difficulty": 2, "ref": "r3" },
+    { "id": "w12-l4-q2", "type": "numeric", "tag": "numeric", "q": "Foundry Workflows (preview) retire on 2026-12-01. How many days remain from 2026-10-13 to the retirement date?", "answer": 49, "tolerancePct": 0, "unit": "days", "hint": "Count the rest of October, all of November and the first of December.", "explain": "October 13 to October 31 is 18 days, November adds 30 and December 1 adds 1, so 49 days. Use that window to move delegation to the A2A tool or Agent Framework orchestration.", "difficulty": 1, "ref": "r11" },
+    { "id": "w12-l4-q3", "type": "single", "tag": "diagnose", "q": "After adding many catalog tools, requests carry most of their tokens in tool definitions and answers get worse. What change fits?", "code": { "lang": "text", "code": "prompt_tokens=38200 tool_definitions=31000\ntools_attached=240" }, "options": ["Lower the temperature so the model is less likely to pick tools it does not need on each turn", "Switch every tool to client-side function calling", "Raise the Foundry IQ reasoning effort to medium", "Turn on tool search (preview) so tools sit behind `tool_search` and `call_tool`"], "answer": 3, "explain": "Tool search hides tools by default and exposes two meta-tools, so definitions stop flooding context. Temperature does not shrink the tool list, client-side calling still sends definitions, and Foundry IQ effort concerns retrieval, not tools.", "difficulty": 2, "ref": "r3" },
+    { "id": "w12-l4-q4", "type": "single", "tag": "tradeoff", "q": "Which store fits the statement 'prefers metric units and a formal tone, remembered across chats' as of 2026-10-13?", "options": ["Foundry memory, using the user profile type, if the team accepts its preview status", "Foundry IQ, because a knowledge base syncs ACLs for every source it connects to and honors Purview labels", "File search over whatever documents the user uploaded in the last chat", "A toolbox skill, because skills are versioned reusable workflows that persist"], "answer": 0, "explain": "User profile memory holds preferences across sessions and is preview. Foundry IQ serves curated org content, file search serves user documents and skills are workflows delivered through MCP resources, not user facts.", "difficulty": 2, "ref": "r7" }
+  ],
+  "defend": null,
+  "refs": ["r1", "r3", "r6", "r7", "r11", "r21"],
+  "takeaways": ["A toolbox centralizes auth, guardrails and versions, and a promotion reaches every consumer", "Some tools are direct only, so check eligibility before promising one catalog", "Connected Agents is gone in the new service, and Workflows retire on 2026-12-01", "Foundry IQ is for curated permission-aware content, memory is for the user"]
+}

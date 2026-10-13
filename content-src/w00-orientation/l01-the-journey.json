@@ -1,0 +1,47 @@
+{
+  "id": "w00-l1",
+  "order": 1,
+  "title": "A question enters the box",
+  "kind": "concept",
+  "minutes": 10,
+  "brief": "A user types one question into a box. Before it becomes an answer it will be counted, cached, matched with knowledge, checked and routed. Find the stop where each kind of failure belongs.",
+  "blocks": [
+    { "t": "h", "text": "The journey in one picture", "level": 2 },
+    { "t": "p", "md": "This guide follows **one question** through an AI system. Each stop on the way is a world. At every stop something breaks or forces a choice, and you solve it by weighing options against dials such as corpus size, update rate, permission model, latency, risk and cost. You never learn one fixed scenario, because the right answer moves when a dial moves." },
+    { "t": "diagram", "id": "w00-d-journey", "title": "The journey of one question", "alt": "A question passes through model and API, latency and cache, knowledge, tools and protocols, agents and the answer. Then senses, evaluation and observability, operations and governance, and finally boss rounds.", "src": "flowchart LR\n  Q[Question] --> M[w01 Model and API]\n  M --> L[w02 Latency and cache]\n  L --> K[w03 to w07 Knowledge]\n  K --> T[w08 to w09 Tools and protocols]\n  T --> A[w10 to w12 Agents]\n  A --> R[Answer]\n  R --> S[w13 to w15 Senses and proof]\n  S --> O[w16 to w18 Operate and govern]\n  O --> B[w19 Boss rounds]", "caption": "World 0 is this orientation. It sits before the question is typed." },
+    { "t": "table", "caption": "Six regions, twenty worlds", "head": ["Region", "Worlds", "What breaks", "You can answer afterwards"], "rows": [
+      ["Foundations", "w00 to w02", "Token budgets, rejected parameters, the wrong API, slow first tokens, cold caches", "Which knob, which API, and why is it slow?"],
+      ["Knowledge", "w03 to w07", "Content never ingested, split badly, retrieved wrongly, unsafe or leaking", "How does the right, permitted content reach the model?"],
+      ["Agents and protocols", "w08 to w12", "Tool misuse, protocol mismatch, agent loops, the wrong runtime", "Which pattern and which runtime for this job?"],
+      ["Senses and craft", "w13 to w15", "Images and audio, no proof of quality, failures nobody can see", "How do I know it works, and why did it break?"],
+      ["Operate and govern", "w16 to w18", "Cost, rate limits, outages, missing oversight, odd edge cases", "How do I run it safely at scale?"],
+      ["Finale", "w19", "Mixed scenarios under time pressure", "Can I defend a design out loud?"]
+    ], "highlightCol": 0 },
+    { "t": "h", "text": "Where does each failure belong", "level": 2 },
+    { "t": "failure", "title": "Symptom to world", "items": [
+      { "symptom": "The first token takes eight seconds", "cause": "Long prefill, queueing, a cold prompt cache or a long generated answer.", "fix": "Go to w02: measure time to first token, shape prompts for cache hits and stream." },
+      { "symptom": "The assistant cannot cite our own content", "cause": "The content was never ingested, was parsed badly or was split into useless chunks.", "fix": "Go to w03 to w05: ingestion, chunking, embeddings and retrieval." },
+      { "symptom": "One user sees another team's document", "cause": "Permissions are missing from the index or a cache is shared across users.", "fix": "Go to w07: security trimming, live permission checks and cache isolation." },
+      { "symptom": "An agent loops between two tools", "cause": "Vague tool descriptions or a pattern that does not match the task.", "fix": "Go to w08 and w10: tool design and agent patterns." },
+      { "symptom": "Quality dropped after a model update and nobody noticed", "cause": "No evaluation set and no traces.", "fix": "Go to w14 and w15: evals, tracing and alerts." },
+      { "symptom": "The bill doubled in a month", "cause": "Token growth, no routing, no caching and no limits.", "fix": "Go to w01, w02 and w16: token economics, routing and cost controls." }
+    ] },
+    { "t": "callout", "kind": "interview", "title": "What interviewers listen for", "md": "Strong candidates say **where on the journey** a problem lives before they name a technology. A latency complaint and a leakage complaint need different questions, even when both mention the same assistant." }
+  ],
+  "quiz": [
+    { "id": "w00-l1-q1", "type": "match", "tag": "concept", "q": "Match each symptom to the world where you would look first.", "pairs": [
+      { "l": "Answers cite old policy because new files never reach the index", "r": "w03 Data ingestion" },
+      { "l": "Time to first token is eight seconds", "r": "w02 Latency and caching" },
+      { "l": "A user can retrieve another tenant's document", "r": "w07 RAG security and ACLs" },
+      { "l": "An agent loops between two tools", "r": "w10 Agent patterns" }
+    ], "explain": "Each symptom has a home stop on the journey. Stale answers start at ingestion, slow first tokens belong to latency and caching, cross-tenant leaks belong to security trimming, and tool loops belong to agent design.", "difficulty": 1 },
+    { "id": "w00-l1-q2", "type": "order", "tag": "order", "q": "Put the regions of the journey in the order a question meets them.", "items": ["Foundations: model, API, latency", "Knowledge: ingest, chunk, retrieve, guard, secure", "Agents and protocols: tools, MCP, A2A, agents", "Senses and craft: multimodal inputs, evaluation, observability", "Operate and govern: cost, reliability, oversight"], "explain": "The model and its limits come first, knowledge comes next, then tools and agents act on it. Proof of quality follows, and running the system safely at scale comes last.", "difficulty": 1 }
+  ],
+  "defend": null,
+  "refs": ["r23", "r24"],
+  "takeaways": [
+    "One question travels through twenty worlds, and every stop forces a choice",
+    "Name where on the journey a problem lives before you name a technology",
+    "Dials, not scenarios, decide which option wins"
+  ]
+}

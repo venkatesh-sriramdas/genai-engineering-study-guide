@@ -1,0 +1,99 @@
+{
+  "id": "w10-t05",
+  "order": 5,
+  "group": "Workflow patterns",
+  "title": "Orchestrator-workers",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "A lead model breaks a task into subtasks at run time, delegates them to worker calls and synthesises the results. The subtasks are not known in advance.",
+  "useIf": "The task is complex or breadth-first, the set of subtasks depends on the input, and the value per run covers the extra tokens.",
+  "avoidIf": "The subtasks are known up front (parallelise or chain them), the work is tightly coupled writes, or value per run is low.",
+  "explain": [
+    { "t": "p", "md": "In **orchestrator-workers** a central LLM dynamically breaks down a task, delegates the pieces to worker LLMs and synthesises their results. It looks like parallelisation, but the subtasks are not predefined: the orchestrator decides them from the input, for example which files a code change touches or which sources a research question needs [[r1]]. Anthropic's research system is the large-scale example: a lead agent plans, spawns subagents that search in parallel, and synthesises the findings [[r2]]." },
+    { "t": "diagram", "id": "w10-t05-d1", "title": "Plan, delegate, synthesise", "alt": "A lead agent plans subtasks, sends briefs to workers that run in parallel, and receives their results for synthesis.", "src": "flowchart TB\n  U[Task] --> L[Lead: plan subtasks]\n  L -->|brief| W1[Worker 1]\n  L -->|brief| W2[Worker 2]\n  L -->|brief| W3[Worker 3]\n  W1 --> S[Lead: synthesise]\n  W2 --> S\n  W3 --> S\n  S --> A[Answer]" },
+    { "t": "stats", "items": [
+      { "label": "Gain on Anthropic's internal research eval", "value": "90.2%", "note": "Opus 4 lead with Sonnet 4 subagents vs single Opus 4. Vendor-reported [[r2]]" },
+      { "label": "Token use vs chat", "value": "about 15x", "note": "Multi-agent systems, Anthropic's data [[r2]]" },
+      { "label": "Variance in BrowseComp explained by tokens", "value": "80%", "note": "Spend is a main driver of quality [[r2]]" }
+    ] },
+    { "t": "p", "md": "The hard parts are the brief and the synthesis. A worker only knows what the lead tells it, so each brief should state the objective, the output format, the tools and sources to use and the boundary of the task. Anthropic's prompt rules scale effort to difficulty: a simple fact-finding task gets one agent with 3 to 10 tool calls, a direct comparison 2 to 4 subagents with 10 to 15 calls each, and complex research more than 10 subagents [[r2]]. Subagents that ran synchronously created bottlenecks, which is why independent workers should run in parallel with timeouts [[r2]]." },
+    { "t": "callout", "kind": "gotcha", "title": "Read-only workers are the safe default", "md": "Cognition argues that parallel agents making implicit decisions on the same artifact produce conflicting results, and later narrowed this to parallel writers: multiple agents contributing intelligence works when writes stay single-threaded [[r3]][[r4]]. Let workers read and report, and let one agent write." }
+  ],
+  "whereToUse": [
+    "Breadth-first research that fans out across many sources",
+    "Code changes that touch an unknown set of files, with workers investigating each",
+    "Report generation where sections depend on what the lead finds",
+    "Data investigation where each lead finding spawns new questions",
+    "Any task where listing the subtasks in advance would be guesswork"
+  ],
+  "whenToUse": {
+    "use": ["Subtasks cannot be predicted, but they can run independently once chosen", "Value per run is high enough for several times the tokens", "Workers are read-only or write to disjoint outputs"],
+    "avoid": ["The subtasks are fixed: use a chain or parallelisation", "Workers must edit one shared artifact", "Simple lookups, where one agent with a few tool calls is enough [[r2]]"],
+    "flips": ["Subtasks become predictable: freeze them as a parallel workflow", "Workers make conflicting decisions: reduce to one writer plus read-only helpers", "Synthesis loses detail from workers: pass artifacts by reference, not paraphrase"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Orchestrator-workers (this topic)", "Subtasks decided at run time, breadth-first work", "Tightly coupled writes, low-value tasks", "About 15x chat tokens [[r2]], brief quality decides results"],
+      ["Parallelisation (sectioning)", "Subtasks known in advance", "The split depends on input", "Merge step"],
+      ["Single agent with tools", "One domain, a few tool calls", "Breadth exceeds one context window", "Context fills up in long runs"],
+      ["Supervisor with specialists", "Fixed set of specialist roles", "Roles are not known in advance", "Lead is a bottleneck [[r32]]"],
+      ["Magentic (task ledger)", "Open-ended work needing a visible plan", "Time-sensitive or deterministic paths [[r9]]", "Slower, untested beyond the original design"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Workers duplicate each other or leave gaps", "cause": "Vague briefs with no boundaries or output format", "fix": "Give each worker an objective, a boundary, a format and the tools to use, and have the lead check coverage." },
+    { "symptom": "The lead call is slow and the run waits on the slowest worker", "cause": "Workers run one after another or with no timeouts", "fix": "Run independent workers in parallel with timeouts and let the lead proceed on partial results [[r2]]." },
+    { "symptom": "Final answer misses details a worker found", "cause": "The lead received paraphrased summaries only", "fix": "Return structured findings or file references the lead can open, and cite sources." }
+  ],
+  "scenarios": [
+    {
+      "id": "w10-t05-s1",
+      "title": "Breadth-first research, high value",
+      "situation": "Analysts ask for a landscape review across dozens of sources. Each answer is read by decision makers, and a miss is costly. Runs are rare and may take several minutes.",
+      "constraints": ["Breadth-first, subtopics unknown in advance", "High value per run", "Several minutes of latency is acceptable", "Workers only read"],
+      "unknowns": ["Is there an evaluation set that shows the crew beats a single agent?", "How are sources cited and checked?"],
+      "question": "What topology do you choose?",
+      "options": [
+        { "name": "Orchestrator with parallel read-only workers and a synthesis step", "verdict": "best", "why": "Breadth parallelises well, tokens explain much of the quality, and read-only workers avoid write conflicts.", "tradeoff": "Roughly 15x chat tokens in Anthropic's data, plus brief design and tracing effort." },
+        { "name": "Single agent with search tools and a large context", "verdict": "good", "why": "Cheaper and simpler to debug, and sufficient for narrow questions.", "tradeoff": "Context fills with search results and breadth suffers on large questions." },
+        { "name": "Peer group chat among three analyst agents", "verdict": "poor", "why": "Debate over a shared transcript costs a lot and does not add coverage.", "tradeoff": "Fits review or critique of a finished draft more than discovery." }
+      ],
+      "flips": [
+        { "if": "Questions are narrow fact lookups", "then": "A single agent with 3 to 10 tool calls is enough." },
+        { "if": "Sources sit in different trust boundaries", "then": "Keep workers per boundary and pass only approved summaries to the lead." }
+      ],
+      "takeaway": "Pay for orchestration only where breadth and value justify it."
+    },
+    {
+      "id": "w10-t05-s2",
+      "title": "Coupled edits across files",
+      "situation": "A coding agent must make a change that spans many files. Pieces share names, types and tests, and any inconsistency breaks the build. Teams want it faster.",
+      "constraints": ["Writes are tightly coupled", "Consistency matters more than speed", "Reads of unfamiliar code can be delegated"],
+      "unknowns": ["Can the build and tests act as an automatic check?", "How large is the codebase relative to the context window?"],
+      "question": "How do you use workers?",
+      "options": [
+        { "name": "One writer agent with read-only workers that investigate and report", "verdict": "best", "why": "Investigation parallelises, while single-threaded writes keep decisions consistent, as Cognition's later view suggests.", "tradeoff": "The writer is a serial bottleneck and must read worker reports fully." },
+        { "name": "One worker per file, each editing in parallel", "verdict": "poor", "why": "Parallel writers make implicit, conflicting choices about shared names and types.", "tradeoff": "Works for truly independent files, such as separate migrations." },
+        { "name": "A single agent that does everything", "verdict": "good", "why": "Fully consistent and easy to trace.", "tradeoff": "Context fills while exploring, which is what read-only workers relieve." }
+      ],
+      "flips": [
+        { "if": "Files are truly independent", "then": "Parallel writers become safe and faster." },
+        { "if": "A reviewer with fresh context is available", "then": "Add it after the write, since a clean-context reviewer worked best in Cognition's report." }
+      ],
+      "takeaway": "Parallelise reads, serialise writes."
+    }
+  ],
+  "quiz": [
+    { "id": "w10-t05-q1", "type": "single", "tag": "concept", "q": "What separates orchestrator-workers from simple parallelisation?", "options": ["The orchestrator decides the subtasks at run time from the input", "Workers run in parallel", "Workers use different models", "The result is aggregated by code"], "answer": 0, "explain": "Both run branches in parallel and both may aggregate. The distinguishing feature is that the subtasks are not predefined: the lead chooses them dynamically. [[r1]]", "ref": "r1", "difficulty": 1 },
+    { "id": "w10-t05-q2", "type": "multi", "tag": "diagnose", "q": "A research crew returns answers that miss obvious sources and repeat the same search. Which fixes address the likely cause?", "options": ["Write briefs with objective, boundary, output format and tools", "Run all workers on one shared prompt with no task split", "Have the lead check coverage against the plan before synthesis", "Remove the lead and let workers chat freely"], "answers": [0, 2], "explain": "Duplicated and missing work comes from vague briefs and unchecked coverage. Giving every worker the same prompt guarantees duplication, and removing the lead removes the one place that tracks coverage.", "difficulty": 2 }
+  ],
+  "flashcards": [
+    { "front": "What does the orchestrator do that a parallel workflow does not?", "back": "It decides the subtasks at run time from the input, delegates them and synthesises the results [[r1]]." },
+    { "front": "What should a worker brief contain?", "back": "The objective, output format, tools and sources to use, and the boundary of the task, so workers do not duplicate or leave gaps." },
+    { "front": "Anthropic's effort rules for subagent counts?", "back": "Simple fact-finding: 1 agent with 3 to 10 tool calls. Direct comparison: 2 to 4 subagents with 10 to 15 calls. Complex research: more than 10 subagents [[r2]]." }
+  ],
+  "related": ["w10-l3", "w10-t04", "w10-t11", "w10-t12"],
+  "refs": ["r1", "r2", "r3", "r4", "r10", "r32"]
+}

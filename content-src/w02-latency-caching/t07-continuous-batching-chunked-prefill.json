@@ -1,0 +1,113 @@
+{
+  "id": "w02-t07",
+  "order": 7,
+  "group": "KV cache and serving",
+  "title": "Continuous batching and chunked prefill",
+  "minutes": 9,
+  "difficulty": "advanced",
+  "summary": "Continuous batching schedules the GPU one iteration at a time so finished requests leave and new ones join. Chunked prefill splits long prompts so they stop stalling everyone else's streams.",
+  "useIf": "You run an inference engine for many users with mixed prompt lengths and you see throughput gaps or ITL spikes.",
+  "avoidIf": "You only call a hosted API. Engine scheduling is not yours to tune, and the lever there is separating workloads.",
+  "explain": [
+    { "t": "p", "md": "**Static batching** forms a batch and runs it until the slowest request finishes. Short requests leave idle slots, and new requests wait for the next batch. **Continuous batching**, introduced by Orca, schedules per iteration: a request that finishes leaves immediately and a waiting request takes its slot. On GPT-3 175B the Orca paper reports 36.9 times the throughput of FasterTransformer at the same level of latency [[tr2]]." },
+    { "t": "p", "md": "Continuous batching still has **head-of-line blocking**. If one iteration contains a long prefill, it runs for a long time and every decode in that batch waits, so ITL spikes for every active stream. **Chunked prefill** fixes this by splitting a long prompt into near-equal chunks and batching each chunk with decodes. Sarathi-Serve calls the result a stall-free schedule and reports 2.6 times the capacity on Mistral-7B (one A100) and up to 3.7 times on Yi-34B (two A100s) compared with vLLM under tail-latency limits [[r9]]." },
+    { "t": "flow", "title": "One scheduler iteration with chunked prefill", "direction": "h", "steps": [
+      { "title": "Decodes first", "md": "Every running request gets one token slot.", "tag": "priority" },
+      { "title": "Fill the budget", "md": "Remaining tokens go to pending prefills, split into chunks if needed.", "tag": "max_num_batched_tokens" },
+      { "title": "Run one pass", "md": "Decodes and the prefill chunk share one forward pass.", "tag": "GPU" },
+      { "title": "Retire and admit", "md": "Finished requests free blocks and waiting requests join.", "tag": "iteration level" }
+    ] },
+    { "t": "p", "md": "In vLLM V1 chunked prefill is on by default whenever possible. The scheduler batches all pending decodes first, then fills the remaining `max_num_batched_tokens` budget with prefills and chunks any that do not fit. Smaller values such as 2048 give better ITL because fewer prefill tokens slow each step. Larger values give better TTFT, and the docs recommend more than 8192 for throughput on smaller models and large GPUs [[tr6]]." },
+    { "t": "callout", "kind": "gotcha", "title": "Chunking is a trade, not a free fix", "md": "A chunked prompt finishes its prefill over several iterations, so its own TTFT rises somewhat. The gain is for everyone else's streams, and for capacity under a tail-latency target [[r9]]." }
+  ],
+  "whereToUse": [
+    "Self-hosted chat and agent serving with vLLM or a similar engine",
+    "Mixed traffic where a few very long prompts share GPUs with many short ones",
+    "Choosing a token budget per step to trade ITL against TTFT",
+    "Capacity tests that must meet a p99 ITL target",
+    "Explaining why a hosted provider recommends separate deployments for interactive and bulk work [[r14]]"
+  ],
+  "whenToUse": {
+    "use": [
+      "p99 ITL spikes line up with long prompts arriving",
+      "You need more capacity under a tail-latency limit without adding GPUs",
+      "Traffic mixes short chat turns with long document prompts"
+    ],
+    "avoid": [
+      "Hosted APIs where you cannot set scheduler budgets",
+      "A single-tenant offline job where only total throughput counts and ITL does not",
+      "Tiny prompts only: with no long prefills there is no stall to remove"
+    ],
+    "flips": [
+      "TTFT for long prompts matters more than ITL: raise the token budget",
+      "ITL is the SLO: lower the token budget and accept slower long-prompt TTFT",
+      "Targets for TTFT and TPOT diverge sharply at fleet scale: consider prefill and decode disaggregation [[r28]] [[r29]]"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with other scheduling choices",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Static batching", "Uniform, offline jobs", "Mixed lengths or interactive traffic", "Idle slots, queueing behind long requests"],
+      ["Continuous batching, no chunking", "Short prompts, light load", "Long prompts arrive among streams", "ITL stalls from long prefills"],
+      ["Continuous batching with chunked prefill", "Mixed traffic with a tail-latency target", "You need the lowest TTFT for long prompts", "Extra TTFT for chunked prompts"],
+      ["Prefill and decode disaggregation", "Large fleets, separate TTFT and TPOT SLOs", "Small deployments", "KV transfer between machines, complex scheduling"],
+      ["Separate deployments per workload", "Hosted API, interactive plus bulk traffic", "Traffic is tiny", "Capacity is split, so utilization falls"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Every user's stream pauses when one user pastes a long document", "cause": "A large prefill shares the iteration with decodes", "fix": "Enable chunked prefill and lower the per-step token budget [[tr6]]" },
+    { "symptom": "Throughput is low on a large GPU running a small model", "cause": "A small token budget leaves compute idle", "fix": "Raise `max_num_batched_tokens` above 8192 and re-measure ITL [[tr6]]" },
+    { "symptom": "Interactive latency is poor while a nightly job runs", "cause": "Bulk and interactive traffic share batches and cache on one deployment", "fix": "Use separate deployments per workload [[r14]]" }
+  ],
+  "scenarios": [
+    {
+      "id": "w02-t07-s1",
+      "title": "ITL spikes when long prompts arrive",
+      "situation": "A chat service on a self-hosted engine streams at 30 ms per token. When a user submits a 20,000-token document, other users' streams freeze for about a second. The SLO is p99 ITL under 100 ms.",
+      "constraints": ["Self-hosted", "Mixed short and long prompts", "p99 ITL is the SLO"],
+      "unknowns": ["Is chunked prefill already enabled?", "What is the current per-step token budget?"],
+      "question": "What do you change first?",
+      "options": [
+        { "name": "Add GPUs and spread the load", "verdict": "good", "why": "More capacity dilutes the stalls.", "tradeoff": "It costs money and leaves the interference in place." },
+        { "name": "Enable chunked prefill and lower the per-step token budget", "verdict": "best", "why": "Decodes run in every iteration, so no stream waits for a whole 20,000-token prefill.", "tradeoff": "Long-prompt TTFT rises, and throughput may fall a little at a small budget." },
+        { "name": "Cap max output tokens", "verdict": "poor", "why": "The freeze comes from a long prefill, not from long answers.", "tradeoff": "Right when long outputs hold slots and starve newcomers." }
+      ],
+      "flips": [
+        { "if": "Long prompts are rare and users accept the pause", "then": "Leave the defaults." },
+        { "if": "Fleet is large and TTFT and ITL targets conflict", "then": "Disaggregate prefill and decode." }
+      ],
+      "takeaway": "Stalls are a scheduling problem. Chunk the prefill so decodes keep running."
+    },
+    {
+      "id": "w02-t07-s2",
+      "title": "Overnight bulk summarisation",
+      "situation": "A nightly job summarises 300,000 documents on a self-hosted small model on large GPUs. Nobody reads the output until morning. The job must finish in 6 hours.",
+      "constraints": ["Offline", "Throughput and cost are the goals", "No ITL target"],
+      "unknowns": ["Is the 6 hour window at risk at today's volume?", "Can the job run on dedicated GPUs?"],
+      "question": "How do you tune scheduling?",
+      "options": [
+        { "name": "Tune for ITL with a small token budget", "verdict": "poor", "why": "ITL is irrelevant here, and a small budget leaves compute idle.", "tradeoff": "Right for interactive streaming where users feel every pause." },
+        { "name": "Keep one deployment shared with chat and turn on priority", "verdict": "good", "why": "It saves hardware.", "tradeoff": "Bulk traffic still shares batches and cache with chat, risking interactive latency." },
+        { "name": "Run on dedicated capacity with a large token budget, above 8192", "verdict": "best", "why": "Large steps keep a big GPU busy and maximise tokens per hour.", "tradeoff": "Individual request latency is poor, which is acceptable offline." }
+      ],
+      "flips": [
+        { "if": "The job must share GPUs with live chat", "then": "Cap the bulk job's concurrency and tune for chat ITL first." },
+        { "if": "The window is missed", "then": "Raise concurrency or add GPUs before changing scheduling." }
+      ],
+      "takeaway": "The right token budget depends on whether anyone waits for a single stream."
+    }
+  ],
+  "quiz": [
+    { "id": "w02-t07-q1", "type": "single", "tag": "diagnose", "q": "Streams for all users pause for about a second whenever one long prompt arrives. What most likely causes this?", "options": ["The KV cache is quantized", "Speculative decoding is rejecting tokens", "A large prefill shares the iteration with the decodes", "The tokenizer is slow on long inputs"], "answer": 2, "explain": "A long prefill occupies the whole iteration, so every decode in the batch waits. Chunked prefill removes this. KV quantization, speculation and tokenization do not create synchronous pauses across all streams.", "difficulty": 2, "ref": "r9" },
+    { "id": "w02-t07-q2", "type": "numeric", "tag": "numeric", "q": "A scheduler has a 2,048 token budget per iteration and 10 running decodes, each using 1 token. How many iterations does a 20,000-token prompt need if every iteration gives it the remaining budget?", "answer": 10, "tolerancePct": 5, "unit": "iterations", "hint": "Chunk size is 2,048 minus 10", "explain": "Decodes use 10 tokens, leaving 2,038 for the prefill chunk. 20,000 / 2,038 is 9.81, so it needs 10 iterations. A larger budget finishes sooner, which is the TTFT side of the trade.", "difficulty": 2, "ref": "tr6" },
+    { "id": "w02-t07-q3", "type": "order", "tag": "order", "q": "Order the steps of one chunked-prefill scheduler iteration in vLLM V1.", "items": ["Schedule all pending decodes", "Fill the remaining token budget with prefill chunks", "Run one forward pass", "Retire finished requests and admit waiting ones"], "explain": "Decodes are prioritised, prefill fills what is left, the pass runs, and finished requests leave so waiting ones can join on the next iteration.", "difficulty": 2, "ref": "tr6" }
+  ],
+  "flashcards": [
+    { "front": "What does continuous batching change versus static batching?", "back": "It schedules per iteration, so finished requests leave and waiting ones join at once instead of waiting for the slowest request." },
+    { "front": "What does chunked prefill fix, and what does it cost?", "back": "It removes decode stalls from long prefills. The chunked prompt's own TTFT rises somewhat." },
+    { "front": "How does max_num_batched_tokens trade ITL against TTFT in vLLM?", "back": "Smaller values (such as 2048) give better ITL. Larger values give better TTFT and throughput." }
+  ],
+  "related": ["w02-t03", "w02-t06", "w02-t09", "w02-l2"],
+  "refs": ["tr2", "r9", "tr6", "r14", "r28", "r29"]
+}

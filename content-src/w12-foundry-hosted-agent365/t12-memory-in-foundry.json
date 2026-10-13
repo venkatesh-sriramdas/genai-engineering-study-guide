@@ -1,0 +1,115 @@
+{
+  "id": "w12-t12",
+  "order": 12,
+  "group": "Tools and knowledge",
+  "title": "Memory in Foundry",
+  "minutes": 7,
+  "difficulty": "core",
+  "summary": "Foundry memory (preview) is managed long-term memory: an LLM extracts facts from conversations, consolidates them into a memory store and retrieves them across sessions, scoped per user.",
+  "useIf": "An agent should remember user preferences, past issues or learned routines across sessions.",
+  "avoidIf": "The content is shared policy or documents, the project needs VNet integration for memory stores, or preview is not allowed.",
+  "explain": [
+    { "t": "p", "md": "Foundry memory is designed for **long-term** memory: knowledge retained across sessions. Short-term memory is the current session's conversation and is handled by the orchestration framework [[r7]]. Memories live as items in a managed **memory store**. The system works in three phases: **extraction** (pull preferences, facts and context from a conversation), **consolidation** (an LLM merges duplicates and resolves conflicts, such as a new allergy), and **retrieval** (search the store for relevant memories) [[r7]]." },
+    { "t": "diagram", "id": "w12-t12-d1", "title": "Memory phases", "alt": "Conversation text is extracted into candidate memories, consolidated by an LLM into the store, and retrieved into later sessions.", "src": "flowchart LR\n  C[Conversation] --> E[Extraction]\n  E --> K[Consolidation by LLM]\n  K --> S[(Memory store)]\n  S --> R[Retrieval in later sessions]" },
+    { "t": "table", "caption": "Memory types, all enabled by default (checked 2026-10-13)", "head": ["Type", "Holds", "Retrieve"], "rows": [
+      ["User profile", "Durable preferences and personal context", "Early in each conversation"],
+      ["Chat summary", "Distilled summaries of prior threads", "Per turn from current messages"],
+      ["Procedural", "Reusable how-to routines inferred from past work", "When a recurring workflow is requested"]
+    ] },
+    { "t": "p", "md": "You use memory in two ways: attach the **memory search tool** to a prompt agent so it reads and writes during conversations, or call the **memory store APIs** for direct control over items, retention and lifecycle [[r7]]. Controls include item-level create, read, update, list and delete, a store-level default TTL set at creation, and direct remember-or-forget commands [[r7]]. Low-level APIs need an explicit `scope` on every request, and automatic scope resolution from the caller's identity works only with the memory search tool and `scope` set to `{{$userId}}` [[r7]]." },
+    { "t": "stats", "items": [
+      { "label": "Scopes per store", "value": "100", "note": "Maximum [[r7]]" },
+      { "label": "Memories per scope", "value": "10,000", "note": "Maximum [[r7]]" },
+      { "label": "Search and update rate", "value": "1,000 per min", "note": "Each of the two operations [[r7]]" }
+    ] },
+    { "t": "callout", "kind": "preview", "title": "Preview, checked 2026-10-13", "md": "Memory and the Memory Store API are preview, with no SLA. Memory needs compatible Azure OpenAI chat and embedding deployments. **VNet integration is not supported for memory stores.** Because an LLM extracts and consolidates memories, prompt injection and memory corruption are risks: use Content Safety prompt injection detection and adversarial testing [[r7]]." }
+  ],
+  "whereToUse": [
+    "Support or shopping agents that should recall a user's preferences and past issues",
+    "Planning agents that reuse stable constraints such as seat or dietary preferences",
+    "Agents that learn recurring workflows (procedural memory) for a given user",
+    "Any agent where a user may ask to remember or forget something explicitly"
+  ],
+  "whenToUse": {
+    "use": [
+      "Facts are user-specific, learned over time and should persist across sessions",
+      "You want extraction and conflict resolution done for you",
+      "You need item-level delete and TTL for privacy and retention"
+    ],
+    "avoid": [
+      "Shared policy or curated documents: use a Foundry IQ knowledge base. Memory is per-user and LLM-consolidated (inference)",
+      "User-provided documents in a chat: use file search",
+      "Networks that require VNet integration for the store, or policies that forbid preview"
+    ],
+    "flips": [
+      "Memory must be auditable and deterministic: store structured facts yourself and keep LLM extraction out",
+      "Volume exceeds 10,000 memories per scope: shard scopes or prune with TTL",
+      "A regulator needs proof of deletion: use item-level delete and log the deletion"
+    ]
+  },
+  "alternatives": {
+    "title": "Where remembered information can live",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Foundry memory (preview)", "Per-user facts across sessions, managed extraction", "Shared content, VNet-bound stores, GA-only policy", "Preview, LLM consolidation can store wrong facts [[r7]]"],
+      ["Foundry IQ knowledge base", "Curated organization content", "Personal context", "Not personal by design [[r6]]"],
+      ["File search", "Documents the user provides", "Learned preferences", "Extra charges [[tr9]]"],
+      ["Your own database with structured profile", "Deterministic, auditable facts", "You want free-form extraction", "You build extraction, retention, deletion"],
+      ["Resending chat history", "Short threads", "Long histories and many sessions", "Tokens grow each turn"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "One user's memories surface for another user", "cause": "Low-level API calls used the wrong or a shared `scope`", "fix": "Set `scope` explicitly per request, or use the memory search tool with `scope` set to `{{$userId}}` [[r7]]." },
+    { "symptom": "The agent confidently repeats a wrong 'fact' about a user", "cause": "A bad statement or injected text was extracted and consolidated", "fix": "Filter inputs with prompt injection detection, review and delete items, and test adversarially [[r7]]." },
+    { "symptom": "TTL or procedural memory settings cannot be changed later", "cause": "Some defaults, such as procedural memory and default TTL, are configured at store creation", "fix": "Plan them at creation and verify post-create updates in your API version [[r7]]." }
+  ],
+  "scenarios": [
+    {
+      "id": "w12-t12-s1",
+      "title": "Remember each customer across visits",
+      "situation": "A customer assistant should recall a user's preferences and the last unresolved issue the next time they return, and forget on request.",
+      "constraints": ["Per-user facts", "Forget-me requests expected", "Preview is acceptable with sign-off"],
+      "unknowns": ["Is the project VNet-isolated?", "How long may memories be kept?"],
+      "question": "How do you provide continuity?",
+      "options": [
+        { "name": "Memory store with the memory search tool, `scope` set to `{{$userId}}` and a default TTL", "verdict": "best", "why": "Managed extraction and consolidation, per-user scope and item-level delete for forget requests.", "tradeoff": "Preview, and LLM-extracted facts can be wrong." },
+        { "name": "Resend full chat history each session", "verdict": "good", "why": "No new store.", "tradeoff": "Token cost grows and history from old sessions is hard to prune." },
+        { "name": "Put shared policy documents into memory", "verdict": "poor", "why": "Memory is per-user and LLM-consolidated, so curated content gets rewritten and scoped wrongly.", "tradeoff": "Use a knowledge base for shared content." }
+      ],
+      "flips": [
+        { "if": "Auditors need deterministic facts", "then": "Own structured profile table with explicit writes." },
+        { "if": "Preview is forbidden", "then": "Own store until memory reaches GA." }
+      ],
+      "takeaway": "Memory is for user-specific facts, not shared knowledge."
+    },
+    {
+      "id": "w12-t12-s2",
+      "title": "Isolated network project",
+      "situation": "A project runs behind private networking with VNet integration required for every data store. The agent needs per-user preference recall.",
+      "constraints": ["VNet integration is mandatory", "Per-user preferences", "Moderate volume"],
+      "unknowns": ["Is a private database already approved?", "What retention applies?"],
+      "question": "What do you do for memory?",
+      "options": [
+        { "name": "Build a small preference store in a VNet-integrated database and retrieve it in code", "verdict": "best", "why": "Memory stores do not support VNet integration, so the requirement rules the managed store out.", "tradeoff": "You write extraction, retention and deletion logic." },
+        { "name": "Use Foundry memory anyway", "verdict": "poor", "why": "It breaks the VNet integration requirement.", "tradeoff": "Right when the network rule does not apply." },
+        { "name": "Resend recent chat history", "verdict": "good", "why": "Works for short horizons with no store.", "tradeoff": "No long-term recall and rising token cost." }
+      ],
+      "flips": [
+        { "if": "Docs later list VNet support for memory stores", "then": "Re-evaluate the managed store." },
+        { "if": "Only the agent needs private networking, not the memory store", "then": "Foundry memory is possible." }
+      ],
+      "takeaway": "Check the limitations list against your network rules before adopting a preview feature."
+    }
+  ],
+  "quiz": [
+    { "id": "w12-t12-q1", "type": "numeric", "tag": "numeric", "q": "A memory store allows at most 100 scopes and 10,000 memories per scope. What is the maximum number of memories one store can hold?", "answer": 1000000, "tolerancePct": 0, "unit": "memories", "hint": "100 times 10,000", "explain": "100 x 10,000 = 1,000,000. This is derived from the documented quotas, which apply to the preview.", "ref": "r7" },
+    { "id": "w12-t12-q2", "type": "single", "tag": "security", "q": "When does Foundry resolve `scope` automatically from the caller's identity?", "options": ["With every memory API call", "Only with hosted agents", "Never", "Only with the memory search tool and `scope` set to `{{$userId}}`"], "answer": 3, "explain": "Low-level APIs need an explicit scope in each request. Automatic resolution is supported only for the memory search tool with `{{$userId}}`.", "ref": "r7" },
+    { "id": "w12-t12-q3", "type": "single", "tag": "tradeoff", "q": "Which content belongs in a Foundry IQ knowledge base rather than in memory?", "options": ["A user's dietary preference", "A summary of last week's chat", "The company's curated policy documents", "A recurring personal workflow"], "answer": 2, "explain": "Memory is for user-specific facts learned over time. Curated organization content belongs in a knowledge base. The other items match the profile, chat summary and procedural memory types.", "ref": "r7" }
+  ],
+  "flashcards": [
+    { "front": "Three phases and three types of Foundry memory?", "back": "Phases: extraction, consolidation, retrieval. Types: user profile, chat summary, procedural. All three types are on by default. Memory is preview." },
+    { "front": "Hard limits for memory stores (preview)?", "back": "100 scopes per store, 10,000 memories per scope, 1,000 search and 1,000 update requests per minute. No VNet integration for memory stores." }
+  ],
+  "related": ["w12-t10", "w10-t19", "w10-t20", "w11-t12", "w12-l4"],
+  "refs": ["r6", "r7", "tr9"]
+}

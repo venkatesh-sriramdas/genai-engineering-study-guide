@@ -1,0 +1,79 @@
+{
+  "id": "w05-l1",
+  "order": 1,
+  "title": "Keywords, vectors or both?",
+  "kind": "problem",
+  "minutes": 14,
+  "brief": "One search box receives an error code, a product name and a paraphrased policy question in the same hour. Which retriever do you trust first, and what does each one lose?",
+  "blocks": [
+    { "t": "h", "text": "Four ways to find a chunk", "level": 2 },
+    { "t": "p", "md": "A retriever turns a query into a ranked list. **Lexical** retrieval (BM25) matches the words. **Dense** retrieval matches meaning through embeddings. **Learned sparse** retrieval (SPLADE style) lets a model choose which vocabulary terms matter, so an inverted index can still serve it. **Late interaction** (ColBERT style) compares token vectors, which gains accuracy and inflates the index by roughly an order of magnitude, so ColBERTv2 adds residual compression [[r12]].\n\nThe evidence is mixed on purpose. On the BEIR benchmark of 18 datasets, BM25 is a reliable baseline out of domain, re-ranking and late-interaction models give the best zero-shot average at high compute cost, and dense and sparse retrievers are cheaper but often weaker out of domain [[r11]]. Azure AI Search says product codes, specialised jargon, dates and names do better with keyword search, and that hybrid plus the semantic ranker gives significant relevance gains, which is a vendor claim you should test on your own queries [[r43]]." },
+    { "t": "compare", "title": "Retrieval modes", "intro": "Each mode fails on a different query class. The fusion level that follows is how you combine them.", "options": [
+      { "name": "BM25 keyword", "tag": "GA", "summary": "Score term overlap over an inverted index.", "pros": ["Exact identifiers, names and dates match", "Cheap, no embedding call per query", "Explainable: you can show which terms matched"], "cons": ["No match when the query and the page share no words", "Scores are unbounded, so they do not mix with cosine scores"], "bestWhen": "Queries are codes, names or jargon, or the corpus is far from your embedding model's training data.", "avoidWhen": "Users paraphrase and the best pages use different vocabulary.", "meta": [{ "k": "Latency", "v": "lowest" }, { "k": "Out-of-domain", "v": "strong baseline" }] },
+      { "name": "Dense vector", "tag": "GA", "summary": "Embed query and chunks, return nearest neighbours.", "pros": ["Handles paraphrase and vocabulary mismatch", "Works across languages when the model does"], "cons": ["Rare tokens and identifiers blur into look-alikes", "Often weaker out of domain", "Re-embedding is needed when you change the model"], "bestWhen": "Questions are natural language and the embedding model fits the domain.", "avoidWhen": "Exact strings decide relevance.", "meta": [{ "k": "Latency", "v": "low to medium" }, { "k": "Ops", "v": "embedding model and vector index" }] },
+      { "name": "Hybrid (BM25 plus vector, fused)", "tag": "GA", "summary": "Run both in parallel and merge the ranked lists, usually with RRF.", "pros": ["Each list covers the other's blind spot", "One engine can serve both in Azure AI Search"], "cons": ["Two retrievals per query", "A noisy list can drag the fused order unless you weight it"], "bestWhen": "The query mix is unknown or mixed, which is the normal case.", "avoidWhen": "Every query is one class and you have proved a single retriever is enough.", "meta": [{ "k": "Latency", "v": "medium" }, { "k": "Default for", "v": "mixed query traffic" }] },
+      { "name": "Learned sparse or late interaction", "tag": "Other engine", "summary": "SPLADE-style term weights or ColBERT-style token matching as an add-on.", "pros": ["Learned term weights keep term-level matching", "Late interaction is among the best zero-shot systems in BEIR"], "cons": ["The Azure AI Search vector pages checked on 2026-10-13 do not document either, so it means another engine and index", "Late-interaction indexes are much larger"], "bestWhen": "You own the engine, have the infrastructure and a measured gap that hybrid plus reranking cannot close.", "avoidWhen": "You want one managed service and a short path to production.", "meta": [{ "k": "Index size", "v": "larger" }, { "k": "Ops", "v": "highest" }] }
+    ] },
+    { "t": "dials", "id": "w05-l1-mode", "title": "Pick the first-stage retrieval mode", "prompt": "Flip the query mix, the domain fit and your operating budget. The ranking and the reasons update.",
+      "dials": [
+        { "id": "qmix", "label": "Query mix", "values": [ { "id": "ids", "label": "Identifiers, names, codes" }, { "id": "para", "label": "Paraphrased questions" }, { "id": "mixed", "label": "Both in one query" } ] },
+        { "id": "shift", "label": "Domain fit", "values": [ { "id": "fit", "label": "Embeddings fit the domain" }, { "id": "jargon", "label": "Jargon heavy, out of domain" } ] },
+        { "id": "ops", "label": "Operating budget", "values": [ { "id": "lean", "label": "One managed engine" }, { "id": "rich", "label": "Extra indexes or GPUs are fine" } ] }
+      ],
+      "options": [
+        { "id": "bm25", "name": "BM25 only", "summary": "Keyword retrieval over an inverted index." },
+        { "id": "dense", "name": "Dense only", "summary": "Vector nearest neighbours." },
+        { "id": "hybrid", "name": "Hybrid with RRF", "summary": "BM25 and vector lists fused by rank." },
+        { "id": "hybridrr", "name": "Hybrid plus reranker", "summary": "Fuse, then rescore the shortlist with a reranker." },
+        { "id": "late", "name": "Late interaction or learned sparse", "summary": "ColBERT or SPLADE style retrieval on a separate engine." }
+      ],
+      "scores": {
+        "bm25": {
+          "qmix": { "ids": { "s": 2, "why": "Exact tokens match, and no embedding blurs the identifier." }, "para": { "s": -2, "why": "No shared words means no match." }, "mixed": { "s": 0, "why": "It finds the identifier half and misses the paraphrase half." } },
+          "shift": { "fit": { "s": 0, "why": "A well-fitting embedding model does not help a lexical index." }, "jargon": { "s": 1, "why": "BM25 is a dependable out-of-domain baseline in BEIR." } },
+          "ops": { "lean": { "s": 2, "why": "An inverted index needs no embedding calls." }, "rich": { "s": 0, "why": "Extra budget buys nothing on its own here." } }
+        },
+        "dense": {
+          "qmix": { "ids": { "s": -2, "why": "Identifiers embed near look-alike strings, so an exact hit can sit at rank 9." }, "para": { "s": 2, "why": "Meaning matches across different wording." }, "mixed": { "s": 0, "why": "It gets the paraphrase and can bury the identifier." } },
+          "shift": { "fit": { "s": 2, "why": "A tuned or well-matched model is where dense retrieval shines." }, "jargon": { "s": -1, "why": "Dense models often lose out of domain in BEIR." } },
+          "ops": { "lean": { "s": 0, "why": "It needs an embedding call per query plus a vector index." }, "rich": { "s": 1, "why": "You can afford larger models and re-embedding." } }
+        },
+        "hybrid": {
+          "qmix": { "ids": { "s": 1, "why": "The BM25 list keeps the exact hit in the fused set." }, "para": { "s": 1, "why": "The vector list leads and fusion mutes the keyword noise." }, "mixed": { "s": 2, "why": "Each list covers one half of the query." } },
+          "shift": { "fit": { "s": 1, "why": "Fusion still helps and costs little." }, "jargon": { "s": 2, "why": "Two independent signals hedge the domain shift." } },
+          "ops": { "lean": { "s": 1, "why": "One managed service can run both legs, at the price of two retrievals." }, "rich": { "s": 1, "why": "No extra infrastructure needed, so budget adds little." } }
+        },
+        "hybridrr": {
+          "qmix": { "ids": { "s": 1, "why": "Keyword leg finds it, the reranker confirms the order." }, "para": { "s": 2, "why": "The reranker reads full text and repairs the first stage order." }, "mixed": { "s": 2, "why": "Fusion keeps both halves and the reranker sorts them." } },
+          "shift": { "fit": { "s": 0, "why": "The gain is smaller when the first stage already fits." }, "jargon": { "s": 2, "why": "Re-ranking has the best zero-shot average in BEIR." } },
+          "ops": { "lean": { "s": -1, "why": "It adds a model hop, a cost line and a second latency to watch." }, "rich": { "s": 2, "why": "You can afford the extra stage and measure it." } }
+        },
+        "late": {
+          "qmix": { "ids": { "s": 1, "why": "Learned sparse keeps term-level matching with learned weights." }, "para": { "s": 1, "why": "Token-level interaction handles wording changes." }, "mixed": { "s": 1, "why": "It covers both halves, but you pay with a second engine." } },
+          "shift": { "fit": { "s": 0, "why": "No special advantage when embeddings already fit." }, "jargon": { "s": 1, "why": "Late interaction scores well zero-shot in BEIR." } },
+          "ops": { "lean": { "s": -2, "why": "Not documented in the Azure AI Search vector pages read on 2026-10-13, so it means another engine." }, "rich": { "s": 1, "why": "You can host the larger index and the extra service." } }
+        }
+      },
+      "takeaway": "Hybrid is the default for mixed traffic because it hedges, not because it always wins. Say which query class drove your pick and how you would measure it." },
+    { "t": "failure", "title": "Failure modes by retrieval mode", "items": [
+      { "symptom": "The runbook for an exact error code is at rank 9 and the answer is generic.", "cause": "Dense-only retrieval blurs identifiers into similar-looking strings.", "fix": "Add a BM25 leg and fuse. Detect it with identifier probe queries and recall@k by query class." },
+      { "symptom": "Paraphrased questions return pages that share one stray word.", "cause": "BM25-only retrieval cannot bridge a vocabulary gap.", "fix": "Add a vector leg or a query rewrite. Detect it with a paraphrase slice in the eval set." },
+      { "symptom": "Hybrid scores worse than BM25 on one query class.", "cause": "Equal weights let a noisy list drag the fused order.", "fix": "Weight the legs, or tune a convex combination. Detect it by splitting metrics by query type." },
+      { "symptom": "Quality was fine on the pilot and is weak on a new product line full of new jargon.", "cause": "The embedding model is out of domain for the new vocabulary.", "fix": "Keep the BM25 leg, then test a domain-fitted or adapted embedding. Compare to the BM25 baseline on a labelled set." }
+    ] },
+    { "t": "callout", "kind": "interview", "title": "What interviewers listen for", "md": "Name the **query mix** and the **vocabulary gap** before you name a mode. Then say how you would prove the choice: recall@k and nDCG on a labelled set, sliced by identifier, paraphrase and mixed queries." }
+  ],
+  "quiz": [
+    { "id": "w05-l1-q1", "type": "single", "tag": "diagnose", "difficulty": 1, "q": "Users report that searching for an exact error code returns related runbooks but not the one for that code. Which cause fits this log best?", "code": { "lang": "text", "code": "query: ERR_4021\nretriever: dense (cosine), k=10\nrank 1: ERR_4012 runbook   0.84\nrank 2: ERR_4201 runbook   0.83\nrank 3: timeout settings   0.82\n...\nrank 9: ERR_4021 runbook   0.74" }, "options": ["The chunks are too large for the embedding model to represent them well", "Dense-only retrieval blurs identifiers, so a keyword leg is missing", "The top-k value is set too high", "The model temperature is too high"], "answer": 1, "explain": "The correct runbook is present at rank 9 with a close score, which is the signature of embedding blur on identifiers. A BM25 leg would rank it first. Chunk size does not explain look-alike neighbours, a larger k only widens the list, and temperature acts at generation, after retrieval." },
+    { "id": "w05-l1-q2", "type": "multi", "tag": "tradeoff", "difficulty": 2, "q": "Select every condition that argues for keeping a BM25 leg next to the vector leg.", "options": ["Many queries are identifiers, names, codes or dates", "The corpus is jargon heavy and the embedding model is general purpose", "Queries are long paraphrases that share no vocabulary with the documents", "Reviewers need to see which query terms matched a hit"], "answers": [0, 1, 3], "explain": "Exact tokens, out-of-domain jargon and explainable matches are the lexical strengths. Pure paraphrase with no shared vocabulary is where BM25 fails and the vector leg carries the query, so it argues for the vector leg, not for keeping BM25 on its own." },
+    { "id": "w05-l1-q3", "type": "match", "tag": "concept", "difficulty": 2, "q": "Match each retriever to the cost or blind spot you plan around.", "pairs": [ { "l": "BM25", "r": "Vocabulary mismatch when no query words appear in the page" }, { "l": "Dense retrieval", "r": "Exact identifiers blur into similar-looking strings" }, { "l": "Learned sparse (SPLADE style)", "r": "Needs a trained term-weighting model and a sparse index" }, { "l": "Late interaction (ColBERT style)", "r": "Index size grows by about an order of magnitude without compression" } ], "explain": "Each mode pays for its strength somewhere else. ColBERTv2 adds residual compression because token-level vectors inflate the index, and SPLADE keeps an inverted index but depends on a trained model." }
+  ],
+  "defend": null,
+  "refs": ["r43", "r1", "r8", "r11", "r12"],
+  "takeaways": [
+    "Lexical, dense, learned sparse and late interaction each fail on a different query class",
+    "BM25 stays a strong out-of-domain baseline, so measure dense retrieval against it",
+    "Hybrid is the default for mixed traffic because it hedges, not because it always wins",
+    "Late interaction and learned sparse are not in the Azure AI Search vector pages read on 2026-10-13"
+  ]
+}

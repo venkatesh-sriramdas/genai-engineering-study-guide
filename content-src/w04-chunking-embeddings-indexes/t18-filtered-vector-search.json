@@ -1,0 +1,104 @@
+{
+  "id": "w04-t18",
+  "order": 18,
+  "group": "Indexes",
+  "title": "Filtered vector search",
+  "minutes": 9,
+  "difficulty": "advanced",
+  "summary": "Vector search with a metadata filter (tenant, language, date, access) can lose recall or return too few results if the filter is applied after the approximate search. Where and how the filter runs decides the outcome.",
+  "useIf": "Queries carry filters: tenants, document types, dates or access groups. Choose the filter strategy deliberately.",
+  "avoidIf": "Every query searches the whole index with no filter. Then the index defaults are enough.",
+  "explain": [
+    { "t": "p", "md": "An ANN index finds near neighbours of the query without knowing about your filter. If you ask for the top 10 and **then** drop results that fail the filter, a selective filter can leave 2 results, or none. The index did its job, the filter ran in the wrong place. Strategies differ in **when** the filter applies." },
+    { "t": "table", "caption": "Filter strategies", "head": ["Strategy", "How it works", "Failure mode"], "rows": [
+      ["Pre-filter", "The filter is applied during graph traversal, so only allowed vectors are candidates", "Very selective filters can slow the search, and AI Search names this `preFilter` [[tr8]]"],
+      ["Post-filter", "Search first, then drop non-matching results (AI Search applies it per shard, then merges)", "Fewer than k results, or none, when the filter is selective"],
+      ["Strict post-filter", "Global top k first, then filter (AI Search `strictPostFilter`, preview)", "Can return zero results"],
+      ["Iterative scan", "Keep scanning the index until enough matches are found (pgvector 0.8.0 and later)", "More work per query, bounded by a scan limit"],
+      ["Filter-aware graph", "The index links vectors with filtering in mind (Qdrant payload indexes, ACORN research [[tr43]])", "Must exist before ingest in Qdrant, otherwise rebuild"],
+      ["Exhaustive over the subset", "Apply the filter first, then compare with every matching vector", "Slow if the subset is large"],
+      ["Partition", "Separate namespace or partition per tenant (Pinecone namespaces [[tr39]], pgvector list partitioning)", "Many tiny partitions, cross-tenant queries are harder"]
+    ] },
+    { "t": "diagram", "id": "w04-t18-d1", "title": "Choosing by selectivity", "alt": "If the filter matches most rows, post-filtering and pre-filtering both work. If it is selective, use pre-filtering or iterative scans. If it is very selective or tenant-sized, use exhaustive search over the subset or a partition.", "src": "flowchart TD\n  S{\"Filter selectivity\"} -->|\"broad\"| B[\"Post-filter or pre-filter\"]\n  S -->|\"selective\"| P[\"Pre-filter or iterative scan\"]\n  S -->|\"very selective or tenant-sized\"| X[\"Exhaustive over subset or partition\"]" },
+    { "t": "p", "md": "**AI Search** exposes `vectorFilterMode`: `preFilter` (filter during HNSW traversal, best recall), `postFilter` and `strictPostFilter` (preview). Indexes created after about 2023-10-15 default to `preFilter`; older indexes default to `postFilter` and must be recreated to use `preFilter` or compression. For very selective filters consider `exhaustive: true` [[tr8]]. **pgvector** applies filters after the approximate scan, so a filter matching 10% of rows with `hnsw.ef_search` of 40 returns about 4 rows on average. Iterative scans (since 0.8.0) use `hnsw.iterative_scan` as `strict_order` or `relaxed_order`, bounded by `hnsw.max_scan_tuples` (default 20,000). A B-tree index suits exact search on the filter column, a partial index suits a few distinct values and list partitioning suits many values or tenant isolation [[tr12]]. **Qdrant** needs payload indexes created before ingest for filter-aware graph edges, otherwise rebuild [[tr35]]." },
+    { "t": "formula", "title": "Expected survivors of a post-filter", "expr": "survivors = candidates x selectivity", "vars": [ { "k": "candidates", "v": "results the ANN search examines or returns" }, { "k": "selectivity", "v": "share of vectors that match the filter" } ], "example": "40 candidates and a filter matching 10% leave about 4 results, fewer than a k of 10. A 1% filter leaves less than one." },
+    { "t": "callout", "kind": "gotcha", "title": "Access filters are filters too", "md": "A security filter (group ids, tenant id) behaves like any other filter. Apply it inside the search, never by dropping results afterwards, or selective permissions give empty answers. The access design itself belongs to the RAG security chapter." }
+  ],
+  "whereToUse": [
+    "Multi-tenant indexes where each query is scoped to one tenant",
+    "Access-trimmed retrieval where the filter encodes the caller's groups",
+    "Metadata-scoped search: language, product, date range, document type",
+    "Hybrid pipelines where a structured predicate narrows the vector search"
+  ],
+  "whenToUse": {
+    "use": ["Pre-filtering when recall matters or filters are selective", "Iterative scans or partitioning in engines that filter after the scan", "Exhaustive search when the filtered subset is small"],
+    "avoid": ["Post-filtering selective predicates", "Filtering on fields that were not declared filterable at index time", "Assuming the engine default is pre-filtering without checking index age or version"],
+    "flips": ["Filter becomes more selective: move from post-filter to pre-filter, iterative scan or exhaustive search", "Tenants are tiny and numerous: partition or use namespaces", "Latency rises under very selective pre-filters: try exhaustive search over the subset"]
+  },
+  "alternatives": {
+    "title": "Filter strategies compared",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Pre-filter", "Selective filters, recall matters", "Extremely selective filters on a large graph", "Latency can rise"],
+      ["Post-filter", "Nearly everything matches the filter", "Selective filters", "Too few or zero results"],
+      ["Iterative scan or filter-aware graph", "Engine supports it, broad range of selectivity", "Engine or version lacks it", "Extra work per query, scan limits, ingest-order rules"],
+      ["Partition or namespace per tenant", "Strong isolation, tiny per-tenant sets", "Cross-tenant queries, huge tenant counts", "Operational overhead, partition limits"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Filtered queries return fewer than k results, sometimes none", "cause": "The filter runs after the ANN search and removes most candidates", "fix": "Use pre-filtering or iterative scans, raise the candidate pool, or search exhaustively over the subset" },
+    { "symptom": "An older AI Search index gives thin results and cannot use compression", "cause": "Indexes created before about 2023-10-15 default to `postFilter` and cannot use `preFilter` or compression", "fix": "Recreate the index and re-index the data" },
+    { "symptom": "Filter performance is poor in Qdrant after loading the data", "cause": "Payload indexes were created after ingest, so the graph lacks filter-aware edges", "fix": "Create payload indexes first, or rebuild the HNSW index" },
+    { "symptom": "Results from an exhaustive filtered query differ from the ANN results", "cause": "The ANN index approximates and the filter changes its reachable candidates", "fix": "Use exact search as ground truth and measure recall with filters on" }
+  ],
+  "scenarios": [
+    {
+      "id": "w04-t18-s1",
+      "title": "Thousands of tiny tenants",
+      "situation": "A SaaS product stores vectors for 5,000 tenants in one index. Each tenant holds a tiny share of vectors and queries are always scoped to one tenant. Isolation is a hard requirement.",
+      "constraints": ["5,000 tenants", "Each tenant is a tiny share", "Hard isolation", "Always single-tenant queries"],
+      "unknowns": ["How large is the biggest tenant?", "Do any queries span tenants?"],
+      "question": "How do you filter?",
+      "options": [
+        { "name": "A partition or namespace per tenant, with exact search inside small ones", "verdict": "best", "why": "Isolation is structural, per-tenant sets are small enough to scan exactly and recall does not depend on a filter.", "tradeoff": "Many partitions to manage and harder cross-tenant queries." },
+        { "name": "A tenant filter applied as a pre-filter in a shared index", "verdict": "good", "why": "One index to operate and good recall.", "tradeoff": "Extremely selective filters can cost latency, and isolation relies on a filter." },
+        { "name": "Search the shared index, then drop other tenants' results", "verdict": "poor", "why": "The top results are almost all from other tenants, so little or nothing survives.", "tradeoff": "Fine only when every tenant is large and similar." }
+      ],
+      "flips": [
+        { "if": "Tenant counts exceed the product's namespace or partition limits", "then": "Group small tenants and use a pre-filter inside each group." },
+        { "if": "Most queries span tenants", "then": "Use a shared index with pre-filtering." }
+      ],
+      "takeaway": "Selectivity at tenant scale pushes you toward partitions."
+    },
+    {
+      "id": "w04-t18-s2",
+      "title": "Postgres with a 30% filter",
+      "situation": "A team uses pgvector HNSW with default settings. A language filter matches about 30% of rows and queries often return fewer than the 10 rows requested. Latency is tight.",
+      "constraints": ["pgvector 0.8.0 or later", "Filter matches about 30%", "k of 10", "Latency is tight"],
+      "unknowns": ["Is the filter on a few distinct values?", "Is strict distance order required?"],
+      "question": "What do you change?",
+      "options": [
+        { "name": "Enable iterative scans with `relaxed_order` and raise `hnsw.ef_search` moderately", "verdict": "best", "why": "The scan continues until enough matches are found, which fixes the shortfall without a new index.", "tradeoff": "Results may be slightly out of distance order and queries do more work." },
+        { "name": "Create partial indexes per language value", "verdict": "good", "why": "Exact, fast filtering for a handful of values.", "tradeoff": "One index per value, and it does not scale to many values." },
+        { "name": "Keep defaults and post-filter in application code", "verdict": "poor", "why": "With `ef_search` of 40, a 30% filter leaves about 12 rows on average and often fewer than 10.", "tradeoff": "Right when the filter matches nearly every row." }
+      ],
+      "flips": [
+        { "if": "Exact distance ordering is mandatory", "then": "Use `strict_order` or partial indexes." },
+        { "if": "Languages become hundreds", "then": "Use list partitioning." }
+      ],
+      "takeaway": "Know where your engine applies the filter, and fix it at that point."
+    }
+  ],
+  "quiz": [
+    { "id": "w04-t18-q1", "type": "numeric", "tag": "numeric", "q": "In pgvector with `hnsw.ef_search` of 40, a filter matches 10% of rows and is applied after the index scan. About how many rows come back on average?", "answer": 4, "tolerancePct": 10, "unit": "rows", "hint": "Multiply the candidate count by the selectivity.", "explain": "40 candidates x 0.10 = 4 rows. If you asked for k = 10 you get fewer than requested, which is why iterative scans exist." },
+    { "id": "w04-t18-q2", "type": "single", "tag": "tradeoff", "q": "Which AI Search `vectorFilterMode` can return zero results because it takes the global top k first?", "options": ["`preFilter`", "`postFilter`", "`strictPostFilter`", "`exhaustive`"], "answer": 2, "explain": "`strictPostFilter` (preview) takes the global top k and then filters, so it can return none. `preFilter` filters during traversal. `postFilter` filters per shard and can miss results but is not the global-top-k variant." },
+    { "id": "w04-t18-q3", "type": "multi", "tag": "bug", "q": "Which are real remedies for too few filtered results in pgvector?", "options": ["Enable `hnsw.iterative_scan`", "Use a partial index for a few distinct filter values", "Lower `hnsw.ef_search` to 10", "Use list partitioning for many values or tenants"], "answers": [0, 1, 3], "explain": "Iterative scans, partial indexes and partitioning address filters that apply after the scan. Lowering `ef_search` reduces candidates and makes the shortfall worse." }
+  ],
+  "flashcards": [
+    { "front": "What are the AI Search `vectorFilterMode` values?", "back": "`preFilter` (during HNSW traversal, best recall), `postFilter` (per shard then merged, can miss) and `strictPostFilter` (preview, global top k first, can return zero)." },
+    { "front": "Why do older AI Search indexes behave differently?", "back": "Indexes created before about 2023-10-15 default to `postFilter` and must be recreated to use `preFilter` or compression." },
+    { "front": "Why can pgvector filtering return too few rows?", "back": "Filters run after an approximate scan. With `ef_search` 40 and a 10% filter you get about 4 rows. Iterative scans (0.8.0 and later) fix this." }
+  ],
+  "related": ["w04-t16", "w04-t17", "w04-t19", "w07-t01", "w05-t11", "w04-l4"],
+  "refs": ["tr8", "tr12", "tr35", "tr39", "tr43"]
+}

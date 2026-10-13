@@ -1,0 +1,119 @@
+{
+  "id": "w17-t07",
+  "order": 7,
+  "group": "Operating governance",
+  "title": "Agent governance lifecycle",
+  "minutes": 9,
+  "difficulty": "advanced",
+  "summary": "Govern a fleet of agents through five stages: inventory, identity, permissions, review and retirement. Every agent needs a sponsor, an identity with limited access, periodic review and a full shutdown path.",
+  "useIf": "Agents are multiplying across teams and nobody can list them, say who owns them or revoke their access quickly.",
+  "avoidIf": "You have one agent in a pilot: a simple owner, a ticket and a retirement date may be enough.",
+  "explain": [
+    { "t": "p", "md": "**Inventory**: an unlisted agent is an ungoverned agent, so register every agent at build or deploy time. **Identity**: give each agent its own identity, not a shared service account. **Permissions**: grant least privilege and review it. **Review**: reconfirm purpose, access and behaviour on a schedule. **Retirement**: remove identity, credentials, memory, data and the registry entry. OWASP's agentic list names the failure modes this guards against, such as ASI03 Identity and Privilege Abuse and ASI10 Rogue Agents [[r22]]." },
+    { "t": "p", "md": "Microsoft's control plane for this is **Agent 365**, generally available from 2026-05-01 for the Commercial segment, licensed per user, with Microsoft E5 as the best-fit prerequisite. It observes, governs and secures agents through a registry in the Microsoft 365 admin center, Entra, Purview and Defender [[r17]] [[r24]]. In **Entra Agent ID**, at least one **sponsor** is required for each agent identity and blueprint: a business representative accountable for purpose and lifecycle. **Owners** are optional technical administrators. Sponsors can disable or soft-delete; owners can also re-enable, restore and hard-delete [[r18]]. Agents have no MFA, so access is governed with Conditional Access, which needs Microsoft 365 E7 or an Agent 365 licence with at least Entra P1 or Microsoft 365 E3 [[r19]]. An agent identity is a service principal without credentials of its own; the blueprint holds credentials, and execution modes are S2S, OBO and Agentic-User, which needs the Frontier preview program [[r27]]. At the GA announcement, discovery of local and shadow agents through Defender and Intune was preview [[r24]]." },
+    { "t": "diagram", "id": "w17-t07-d1", "title": "States of a governed agent", "alt": "An agent moves from proposed to registered to active. Active agents are reviewed periodically, can be suspended on an incident or lapsed sponsor, and are eventually retired.", "src": "stateDiagram-v2\n  [*] --> Proposed\n  Proposed --> Registered: sponsor and identity assigned\n  Registered --> Active: permissions approved\n  Active --> InReview: periodic review\n  InReview --> Active: access reconfirmed\n  Active --> Suspended: incident or lapsed sponsor\n  Suspended --> Active: restored\n  Active --> Retired: sponsor retires it\n  Retired --> [*]" },
+    { "t": "table", "caption": "Stage, control, accountable role and evidence", "head": ["Stage", "Control", "Accountable", "Evidence"], "rows": [
+      ["Inventory", "Registry entry required before deploy; the Agent 365 registry distinguishes Microsoft, partner-built, published-by-your-org and shared-by-creator agents [[r20]]", "Platform team", "Registry record, discovery reports"],
+      ["Identity", "Own agent identity, sponsor, optional owner", "Sponsor and owner", "Identity object, sponsor assignment"],
+      ["Permissions", "Least privilege, Conditional Access", "Owner and security", "Access packages, policy config"],
+      ["Review", "Periodic access and purpose review", "Sponsor", "Review decisions, logs"],
+      ["Retirement", "Disable, revoke, delete data, delist", "Sponsor", "Decommission checklist"]
+    ] }
+  ],
+  "whereToUse": [
+    "A central AI platform that registers agents from many teams",
+    "Microsoft 365 estates where Agent 365 and Entra Agent ID apply",
+    "Security reviews of agent access and sponsorship",
+    "Mergers and reorgs, where sponsors leave and agents are orphaned",
+    "Compliance evidence that agents are inventoried and reviewed",
+    "Usage visibility and threat signals through Purview Data Security Posture Management for AI [[r14]] and Defender for Cloud AI threat protection [[r15]]"
+  ],
+  "whenToUse": {
+    "use": ["More than a handful of agents exist across teams", "Agents hold credentials or act on user data", "An auditor or regulator asks who owns each agent", "Sponsors change jobs regularly"],
+    "avoid": ["Governance by spreadsheet that nobody updates", "Shared service accounts for many agents", "Granting standing broad access because review is hard"],
+    "flips": ["Agents run outside Microsoft 365: require registration at deploy time as a CI gate, and sync to a central inventory", "A sponsor leaves: reassign before the agent is suspended", "An incident occurs: suspend the identity first, then investigate"]
+  },
+  "alternatives": {
+    "title": "Where the inventory lives",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Agent 365 registry and Entra Agent ID", "Microsoft 365-centric estate", "Many agents run outside it", "Licensing prerequisites; some discovery is preview"],
+      ["Own registry with a deploy-time gate", "Mixed runtimes and clouds", "No platform team to run it", "You build and maintain it"],
+      ["Both, synced", "Large mixed estate", "Small estate", "Duplicated effort, sync drift"],
+      ["Spreadsheet", "A pilot", "Anything with real access", "Out of date within weeks"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "An agent keeps running after its builder left", "cause": "No sponsor succession; the sponsor was a person who moved on", "fix": "Require at least one sponsor, prefer a group or two people, and alert on lapsed sponsors [[r18]]" },
+    { "symptom": "Agents share one service account", "cause": "Identity was an afterthought", "fix": "Give each agent its own identity and sponsor; avoid shared credentials" },
+    { "symptom": "A retired agent still has access", "cause": "Only the app was deleted, not the identity, credentials, memory and registry entry", "fix": "Use a decommission checklist covering identity, credentials, memory, data and delisting" }
+  ],
+  "scenarios": [
+    {
+      "id": "w17-t07-s1",
+      "title": "Orphaned agents after a reorg",
+      "situation": "After a reorganisation, an access review finds eleven agents whose sponsors have left the company. Several still hold read access to HR data.",
+      "constraints": ["Agents are in Entra Agent ID", "Business wants most to keep running", "Sponsors are required"],
+      "unknowns": ["Which agents still serve a purpose?", "Who can be a successor sponsor?"],
+      "question": "What do you do?",
+      "options": [
+        { "name": "Suspend the orphaned identities, assign successor sponsors per agent, then reinstate those that pass review", "verdict": "best", "why": "It stops access first, restores accountability and keeps useful agents.", "tradeoff": "A short outage for agents that matter." },
+        { "name": "Leave them running until someone complains", "verdict": "poor", "why": "Agents with data access and no accountable sponsor are a risk with no owner.", "tradeoff": "Tolerable only for read-only, non-sensitive agents with a deadline." },
+        { "name": "Delete all eleven", "verdict": "good", "why": "Clean.", "tradeoff": "Loses useful agents and evidence, and owners may be able to restore only soft-deleted ones." }
+      ],
+      "flips": [
+        { "if": "An agent is business critical and low-risk", "then": "Assign an interim sponsor immediately." },
+        { "if": "Sponsors keep leaving", "then": "Use groups of eligible group types as sponsors." }
+      ],
+      "takeaway": "Every agent needs a living sponsor."
+    },
+    {
+      "id": "w17-t07-s2",
+      "title": "A mixed estate across clouds",
+      "situation": "Agents run in Microsoft 365, in a Kubernetes cluster and in another vendor's platform. Leadership wants one answer to 'how many agents do we have and who owns them'.",
+      "constraints": ["Several runtimes", "No single control plane covers all", "Audit in six months"],
+      "unknowns": ["Which runtimes can integrate with Agent 365 or Entra Agent ID?", "Who runs the platform team?"],
+      "question": "How do you inventory?",
+      "options": [
+        { "name": "A deploy-time registration gate for every runtime, synced to a central inventory that includes Agent 365 where applicable", "verdict": "best", "why": "A gate makes registration a condition of running, regardless of runtime, and the central view answers the question.", "tradeoff": "You build and maintain the gate and sync." },
+        { "name": "Rely on Agent 365 discovery alone", "verdict": "good", "why": "Strong inside Microsoft 365.", "tradeoff": "Shadow discovery was announced as preview at GA, and other runtimes may not be covered." },
+        { "name": "A shared spreadsheet", "verdict": "poor", "why": "It is stale on day two and has no enforcement.", "tradeoff": "Acceptable for a short pilot." }
+      ],
+      "flips": [
+        { "if": "Nearly all agents are in Microsoft 365", "then": "Agent 365 and Entra become the primary inventory." },
+        { "if": "Discovery reaches GA for your runtimes", "then": "Use it to find unregistered agents and close the gap." }
+      ],
+      "takeaway": "Make registration a condition of running."
+    },
+    {
+      "id": "w17-t07-s3",
+      "title": "Retiring an agent",
+      "situation": "A team shuts down a customer-support agent and deletes its repository. Months later its credentials are found to be valid and its memory store still contains customer text.",
+      "constraints": ["Customer data is involved", "Identity and credentials outlived the app", "The sponsor wants closure"],
+      "unknowns": ["Which stores hold memory and logs?", "Which credentials belong to the blueprint?"],
+      "question": "What should retirement have included?",
+      "options": [
+        { "name": "A checklist: disable the identity, revoke credentials, delete memory and data, remove permissions and delist from the registry", "verdict": "best", "why": "Retirement is complete only when identity, credentials, memory, data and the registry entry are gone.", "tradeoff": "Effort at the end of a project, and evidence must be retained where law requires." },
+        { "name": "Delete the repository and the deployment", "verdict": "poor", "why": "The identity, credentials and data survive.", "tradeoff": "Enough only for a throwaway prototype with none of those." },
+        { "name": "Disable the identity and leave it for later", "verdict": "good", "why": "Stops access quickly.", "tradeoff": "Credentials and data persist, and later cleanup gets forgotten." }
+      ],
+      "flips": [
+        { "if": "A hold or audit requires evidence", "then": "Retain logs under the legal rule and delete the rest." },
+        { "if": "The agent may be restored soon", "then": "Soft-delete or suspend with a dated review." }
+      ],
+      "takeaway": "Retire the identity, the credentials, the memory and the registry entry."
+    }
+  ],
+  "quiz": [
+    { "id": "w17-t07-q1", "type": "order", "tag": "order", "q": "Put the governance stages in order for a new agent, from first to last.", "items": ["Inventory", "Identity", "Permissions", "Review", "Retirement"], "explain": "An agent is registered, given its own identity and sponsor, granted least-privilege permissions, reviewed on a schedule and finally retired. This mirrors the five-stage lifecycle used in the Agent 365 and Entra guidance [[r17]] [[r18]].", "difficulty": 1 },
+    { "id": "w17-t07-q2", "type": "single", "tag": "concept", "q": "In Entra Agent ID, which statement is correct?", "options": ["At least one sponsor is required per agent identity; owners are optional", "Owners are required and sponsors are optional", "Both are optional"], "answer": 0, "explain": "Sponsors are required for agent identities and blueprints. Owners are optional technical administrators [[r18]].", "difficulty": 2 },
+    { "id": "w17-t07-q3", "type": "multi", "tag": "security", "q": "Which belong in an agent decommission checklist?", "options": ["Disable and delete the agent identity", "Revoke credentials held by the blueprint", "Delete memory and stored customer data", "Delete only the code repository"], "answers": [0, 1, 2], "explain": "Identity, credentials, memory and data must go with the registry entry. Deleting only the repository leaves live access behind.", "difficulty": 2 }
+  ],
+  "flashcards": [
+    { "front": "Five stages of agent governance?", "back": "Inventory, identity, permissions, review, retirement. An unlisted agent is an ungoverned agent." },
+    { "front": "Sponsor versus owner in Entra Agent ID?", "back": "Sponsor: required business representative accountable for purpose and lifecycle. Owner: optional technical administrator who also manages credentials." },
+    { "front": "When was Agent 365 generally available?", "back": "2026-05-01 for the Commercial segment, per user, with Microsoft E5 as best fit. Shadow-agent discovery was announced as preview then." }
+  ],
+  "related": ["w17-t02", "w17-t03", "w17-t09", "w17-l4", "w12-t15", "w12-t17", "w12-t18"],
+  "refs": ["r14", "r15", "r17", "r18", "r19", "r20", "r22", "r24", "r27"]
+}

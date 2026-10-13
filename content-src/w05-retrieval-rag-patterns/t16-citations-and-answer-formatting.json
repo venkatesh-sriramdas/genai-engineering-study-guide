@@ -1,0 +1,105 @@
+{
+  "id": "w05-t16",
+  "order": 16,
+  "group": "Output and debugging",
+  "title": "Citations and answer formatting",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "Citations tie each claim to the source text it came from. They prove provenance, not correctness, so a good design adds span-level pointers, a verification step and a UI that lets users check.",
+  "useIf": "Answers must be traceable for trust, audit or compliance, or users need to verify claims quickly.",
+  "avoidIf": "You would treat the presence of a citation as proof that the answer is supported.",
+  "explain": [
+    { "t": "p", "md": "Three levels of citation exist. **Document level** names the file. **Chunk level** points to the retrieved passage. **Span level** points to the exact sentence or character range that supports a claim. Finer is more useful and harder to get right." },
+    { "t": "table", "caption": "How citations are produced", "head": ["Approach", "How it works", "Notes from the sources"], "rows": [
+      ["Prompt-based ids", "Label chunks `[1]`, `[2]` in the prompt and ask the model to cite them", "Works anywhere, model can mis-cite or invent ids, so verify"],
+      ["Anthropic Citations", "Enable `citations` on `document` or `search_result` blocks. Types include `char_location`, `page_location` and `content_block_location`", "`cited_text` does not count toward output tokens. Works with prompt caching, token counting and batch. Incompatible with structured outputs: enabling both returns HTTP 400 [[r27]]"],
+      ["OpenAI file search", "Answers carry `file_citation` annotations", "Raw hits return only with `include: [\"file_search_call.results\"]` [[tr12]]"],
+      ["Azure agentic retrieval", "Response has `references` and an `activity` log", "Indexed sources can return service-made citation URLs (preview). Remote sources have no backing index and no citation URLs [[r6]]"]
+    ], "highlightCol": 2 },
+    { "t": "p", "md": "**A citation proves provenance, not entailment.** The cited span may not support the claim. ALCE, a benchmark for LLM answers with citations, found that on the ELI5 dataset even the best models lacked complete citation support 50% of the time [[tr10]]. Verify with an entailment (NLI) check or an LLM judge on each claim-span pair, or have the model **quote first**: for documents over 20k tokens Anthropic advises asking for word-for-word quotes before answering, and giving explicit permission to say 'I don't know' [[r41]]." },
+    { "t": "flow", "title": "Cite, then check", "direction": "h", "steps": [
+      { "title": "Number the evidence", "md": "Give each chunk a stable id and metadata (title, page, URL)." },
+      { "title": "Answer with spans", "md": "Ask for claims that name chunk ids, or use native citations." },
+      { "title": "Verify", "md": "Check each claim against its span. Drop or flag unsupported claims.", "tag": "check" },
+      { "title": "Render", "md": "Show inline markers, hover previews and a link to the source location." }
+    ] },
+    { "t": "callout", "kind": "gotcha", "title": "Format and citation features can conflict", "md": "If you need schema-validated JSON and native citations from the same provider call, check compatibility first. Anthropic returns HTTP 400 when citations and structured outputs are both on [[r27]]. A common workaround is two calls, or prompt-based ids inside your schema (author suggestion)." }
+  ],
+  "whereToUse": [
+    "Policy and compliance assistants where each statement needs a source page",
+    "Research and legal tools where users read the cited span before trusting an answer",
+    "Customer support answers that link to the article section used",
+    "Evaluation pipelines that score citation precision and recall automatically"
+  ],
+  "whenToUse": {
+    "use": ["Users or auditors must trace claims to sources", "You can store chunk ids, page numbers and URLs as metadata", "You can add a verification step for high-risk claims", "The UI can show the cited span"],
+    "avoid": ["Treating any citation as proof of support", "Chunk metadata is missing, so links cannot point anywhere", "Structured output is required and your provider cannot combine it with native citations"],
+    "flips": ["Risk is high: add per-claim entailment checks and require quotes first", "Latency is tight: cite at chunk level and verify only a sample", "Documents are long: prefer span-level citations over whole-document links"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Document-level links", "Low-risk answers, quick to build", "Users must find the exact passage", "Weak verifiability"],
+      ["Chunk ids in the prompt", "Any model or provider", "Models mis-cite or invent ids", "Needs a verifier"],
+      ["Native span citations (provider feature)", "You want exact spans from the API", "You need structured output in the same call", "Provider lock-in, compatibility limits [[r27]]"],
+      ["Quote-first answers", "Long documents, high accuracy needs", "Latency matters", "Extra output tokens [[r41]]"],
+      ["Post-hoc attribution by retrieval", "Citing an answer that was already written", "Claims are paraphrased across several chunks", "May attach a plausible but wrong source"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A citation points to a passage that does not say what the answer claims", "cause": "The model cites by plausibility, and nothing checks entailment [[tr10]]", "fix": "Verify each claim against its cited span, and flag or remove unsupported claims" },
+    { "symptom": "Citations break after re-indexing", "cause": "Chunk ids or page offsets changed", "fix": "Use stable ids and store source URL, page and offsets as metadata" },
+    { "symptom": "Request fails with HTTP 400 when enabling citations", "cause": "Native citations were combined with structured outputs on a provider that forbids it", "fix": "Split into two calls or move citation ids into your own schema" }
+  ],
+  "scenarios": [
+    {
+      "id": "w05-t16-s1",
+      "title": "Legal research with reviewer sign-off",
+      "situation": "Lawyers review AI-drafted summaries of case documents. Every statement must be checkable against a specific passage, and mistakes carry legal risk.",
+      "constraints": ["High risk", "Long documents", "Reviewers will click through"],
+      "unknowns": ["Is native span citation available on the chosen provider?", "Who owns the verification step?"],
+      "question": "How do you design citations?",
+      "options": [
+        { "name": "Span-level citations with quote-first prompting and an automated entailment check that flags unsupported claims for the reviewer", "verdict": "best", "why": "Provenance alone is not enough in a high-risk setting, and quotes plus a check catch mis-citation [[r41]] [[tr10]].", "tradeoff": "More tokens, latency and a verifier to maintain." },
+        { "name": "A source link at the end of each answer", "verdict": "poor", "why": "The reviewer cannot tell which sentence came from which passage.", "tradeoff": "Fine for a low-risk FAQ." },
+        { "name": "Chunk-level citations without verification", "verdict": "good", "why": "Cheaper and still traceable to a passage.", "tradeoff": "Mis-citation can slip through." }
+      ],
+      "flips": [
+        { "if": "Risk is low and speed matters", "then": "Use chunk-level links and sample-based checks." },
+        { "if": "Reviewers cannot open source documents from the UI", "then": "Show the quoted passage inline next to each claim so the check does not depend on a click-through." }
+      ],
+      "takeaway": "Risk sets how much you verify."
+    },
+    {
+      "id": "w05-t16-s2",
+      "title": "Typed JSON answers plus citations",
+      "situation": "A claims-processing service needs schema-valid JSON output and a citation for each field value. The provider's native citation feature is under evaluation.",
+      "constraints": ["Strict schema required", "Citations required per field", "Batch workload"],
+      "unknowns": ["Can the provider combine citations and structured output?", "Is a second verification call affordable?"],
+      "question": "What do you build?",
+      "options": [
+        { "name": "Put chunk ids inside your schema (per-field `source_id` and `quote`), then verify the quote exists in the cited chunk with code", "verdict": "best", "why": "It works whichever provider restricts combining native citations with structured output [[r27]], and a string match on the quote is a cheap verifier.", "tradeoff": "You maintain prompt and schema, and quotes can still paraphrase, so allow a fuzzy match." },
+        { "name": "Enable native citations and structured outputs together", "verdict": "poor", "why": "Anthropic returns HTTP 400 when both are on [[r27]].", "tradeoff": "Right if your provider documents that the combination is supported." },
+        { "name": "Two calls: structured extraction, then a separate citation call", "verdict": "good", "why": "Cleanly separates concerns.", "tradeoff": "Doubles calls and the second call can disagree with the first." }
+      ],
+      "flips": [
+        { "if": "The provider later supports both together", "then": "Switch to native citations and drop the custom verifier for spans." },
+        { "if": "The schema is relaxed to free text with inline citations", "then": "Use the provider's native citations directly and sample-check them." }
+      ],
+      "takeaway": "Check feature compatibility before designing the output."
+    }
+  ],
+  "quiz": [
+    { "id": "w05-t16-q1", "type": "single", "tag": "concept", "q": "A model cites chunk 3 for a claim, and chunk 3 does not support it. What does this show?", "options": ["Citations prove correctness", "Chunk ids were too short", "The reranker failed", "A citation proves provenance, not entailment, so supports need checking"], "answer": 3, "explain": "A pointer to a source does not show the source supports the claim. Verify with NLI, quote-first or a judge. ALCE found incomplete citation support about half the time on ELI5 for the best models [[tr10]]." },
+    { "id": "w05-t16-q2", "type": "single", "tag": "bug", "q": "A service enables Anthropic `citations` and a JSON schema output in one request and gets HTTP 400. What is the cause?", "options": ["Citations are incompatible with structured outputs", "`cited_text` exceeded the output limit", "Prompt caching is on", "The documents were too short"], "answer": 0, "explain": "Enabling both returns HTTP 400. Prompt caching, token counting and batch are compatible with citations [[r27]]." },
+    { "id": "w05-t16-q3", "type": "order", "tag": "order", "q": "Put a cite-then-check flow in order.", "items": ["Number the evidence chunks", "Generate claims that name chunk ids", "Verify each claim against its span", "Render markers with links to the source"], "explain": "You need stable ids before generation, verification after generation, and rendering last so the UI shows only checked claims." }
+  ],
+  "flashcards": [
+    { "front": "Citation versus entailment: what is the difference?", "back": "A citation shows where a claim came from. Entailment shows the source actually supports it. Check it separately." },
+    { "front": "What is the incompatibility in Anthropic's Citations feature?", "back": "Citations cannot be combined with structured outputs. Enabling both returns HTTP 400." },
+    { "front": "What does OpenAI file search return for citations?", "back": "`file_citation` annotations on the answer. Raw hits need `include: [\"file_search_call.results\"]`." }
+  ],
+  "related": ["w06-t03", "w06-t02", "w05-t17", "w05-t06", "w05-l6"],
+  "refs": ["r27", "r41", "r6", "tr10", "tr12"]
+}

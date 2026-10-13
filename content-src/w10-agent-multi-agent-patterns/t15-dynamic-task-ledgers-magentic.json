@@ -1,0 +1,94 @@
+{
+  "id": "w10-t15",
+  "order": 15,
+  "group": "Multi-agent",
+  "title": "Dynamic task ledgers (Magentic)",
+  "minutes": 8,
+  "difficulty": "advanced",
+  "summary": "A manager agent builds a task ledger of facts and a plan, tracks progress each round, picks the next specialist and replans when work stalls. It targets open-ended problems with no predetermined path.",
+  "useIf": "The problem is open-ended, the plan must emerge and be revised, and agents need tools that act on external systems.",
+  "avoidIf": "The path is deterministic, the task is time-sensitive, or you cannot afford the planning overhead and an unproven pattern.",
+  "explain": [
+    { "t": "p", "md": "**Magentic** orchestration comes from Magentic-One, in which an Orchestrator plans, tracks progress and re-plans to recover from errors, while specialised agents drive a browser, files and code execution. The paper reports statistically competitive results on GAIA, AssistantBench and WebArena and ships AutoGenBench for evaluation [[r31]]. In Microsoft Agent Framework the manager keeps shared context, builds a **task ledger**, tracks progress and re-plans. It uses the same architecture as group chat, but the manager plans instead of only picking speakers [[r10]]. The Azure guide places it at the open-ended end, where agents typically have tools that make changes in external systems and the focus is as much on building and documenting the approach as on carrying it out [[r9]]." },
+    { "t": "diagram", "id": "w10-t15-d1", "title": "The Magentic loop", "alt": "The manager gathers facts and writes a plan, then loops: update the progress ledger, pick an agent, let it act, and check for a stall. Repeated stalls trigger a replan, and too many resets end the run.", "src": "flowchart TB\n  T[Task] --> P[Facts and plan: task ledger]\n  P --> L[Progress ledger: next agent?]\n  L -->|next agent| A[Specialist acts]\n  A --> L\n  L -->|stalled| R[Replan]\n  R --> L\n  L -->|done| F[Final answer]\n  R -->|too many resets| X[Stop]" },
+    { "t": "p", "md": "The builder exposes the brakes: a maximum number of coordination rounds, a maximum number of consecutive stalls before replanning and a maximum number of plan resets. The documentation sample sets 10, 3 and 2, shown as `max_round_count=10, max_stall_count=3, max_reset_count=2` in Python and `WithMaxRounds(10)`, `WithMaxStalls(3)` and `WithMaxResets(2)` in C# [[r10]]. There is also a flag for human review of the plan before execution (`RequirePlanSignoff` in C#). Custom prompts are supported, but a custom `progress_ledger_prompt` must preserve the built-in JSON response schema [[r10]]." },
+    { "t": "callout", "kind": "preview", "title": "Experimental status, checked 2026-10-13", "md": "Microsoft states it is untested how well Magentic performs outside the original Magentic-One design. The C# types are experimental and samples suppress diagnostic MAAIW001. The Azure guide advises against it when the task is time-sensitive or the path is deterministic [[r9]]." }
+  ],
+  "whereToUse": [
+    "Open-ended investigations that mix browsing, files and code execution",
+    "Complex analyses where the approach is as valuable as the answer",
+    "Tasks where a human should review the plan before costly steps",
+    "Research on generalist agent teams, evaluated on benchmarks such as GAIA",
+    "Prototypes where you want a visible plan and progress record"
+  ],
+  "whenToUse": {
+    "use": ["No predetermined plan exists and it must adapt", "Specialists need real tools (browser, code, files)", "Time is available for planning rounds and replans"],
+    "avoid": ["The task is time-sensitive or the path is deterministic [[r9]]", "A fixed workflow or plain handoff would do", "You need a mature, well-tested pattern for production without your own evals"],
+    "flips": ["Plans repeat across runs: freeze them as a workflow", "Stalls dominate traces: tighten agent roles and tools, or lower reset limits", "Stakes are high: require plan sign-off and approvals on write tools"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Magentic (this topic)", "Open-ended, plan must emerge and adapt", "Time-sensitive or deterministic work", "Planning overhead, experimental status [[r10]][[r9]]"],
+      ["Group chat", "Review and debate of a draft", "Work needs a plan and tool use", "Manager only picks speakers [[tr1]]"],
+      ["Plan-and-execute", "One agent, stable tool chain", "Several specialists with different tools", "Brittle plans"],
+      ["Orchestrator-workers", "Parallel read-only subtasks", "Long sequential plan with replanning", "Coordination cost [[r2]]"],
+      ["Workflow", "Known path", "Open-ended", "Branch growth"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "The run loops through replans with no progress", "cause": "Stall detection fires but agents lack the tool or role to make progress", "fix": "Lower max resets, improve specialist tools and descriptions, and return a partial result with the ledger." },
+    { "symptom": "Plans look reasonable but the result is wrong", "cause": "No independent verification of intermediate findings", "fix": "Add a verifier agent or external check on key facts before the final answer." },
+    { "symptom": "Costs are far above a single agent", "cause": "Manager and every specialist reread a large shared context", "fix": "Cap rounds, compact the ledger, and compare against a single-agent baseline on a golden set." }
+  ],
+  "scenarios": [
+    {
+      "id": "w10-t15-s1",
+      "title": "Open-ended multi-tool investigation",
+      "situation": "Analysts ask for investigations that need web research, data files and some code, and nobody can list the steps in advance. Each result is high value, and runs may take many minutes. A lead wants to see the plan first.",
+      "constraints": ["No predetermined plan", "Specialists need browser, file and code tools", "High value per run", "Plan review required"],
+      "unknowns": ["Does it beat a single agent on a golden set?", "Which actions need approval?"],
+      "question": "What orchestration do you use?",
+      "options": [
+        { "name": "Magentic-style manager with a task ledger, plan sign-off, round, stall and reset limits", "verdict": "best", "why": "The plan has to emerge and adapt, the pattern provides a visible ledger and the brakes bound runaway planning.", "tradeoff": "Slower and costlier than a single agent, and Microsoft calls performance outside the original design untested." },
+        { "name": "Single agent with all tools and a long context", "verdict": "good", "why": "Simpler and cheaper, and may be enough.", "tradeoff": "Long runs strain one context and give no explicit plan to review." },
+        { "name": "Fixed workflow of search, analyse, report", "verdict": "poor", "why": "The path is not known, so a fixed order fails on cases it did not anticipate.", "tradeoff": "Right once investigations settle into a repeating shape." }
+      ],
+      "flips": [
+        { "if": "A baseline single agent matches quality", "then": "Drop the manager and keep the simpler design." },
+        { "if": "Investigations repeat the same steps", "then": "Convert the common plan to a workflow." }
+      ],
+      "takeaway": "Use a planner only where the plan cannot be written in advance."
+    },
+    {
+      "id": "w10-t15-s2",
+      "title": "Known runbook, tight deadline",
+      "situation": "An operations team wants an agent to execute an incident runbook whose steps are well documented. Responses must start within seconds and complete in minutes.",
+      "constraints": ["Deterministic path", "Time-sensitive", "Write actions on production systems"],
+      "unknowns": ["Which steps need human approval?", "How often does a step fail and need an alternative?"],
+      "question": "Which pattern fits?",
+      "options": [
+        { "name": "Workflow with fixed steps, approvals on writes and a bounded agent branch for exceptions", "verdict": "best", "why": "The path is known and time matters, so code owns the order and the model handles only the exceptions.", "tradeoff": "New runbook steps need code changes." },
+        { "name": "Magentic orchestration with a planning manager", "verdict": "poor", "why": "Planning rounds add latency and variability to a path that does not need planning, and the docs advise against it for deterministic or time-sensitive work.", "tradeoff": "Right for novel incidents with no runbook." },
+        { "name": "Single ReAct agent with all runbook tools", "verdict": "good", "why": "Flexible and simpler than a manager.", "tradeoff": "Step order is not guaranteed and write actions need strict gates." }
+      ],
+      "flips": [
+        { "if": "An incident has no runbook", "then": "Use an exploratory agent or Magentic with plan sign-off." },
+        { "if": "Runbook steps are conditional on many factors", "then": "Add routing steps within the workflow." }
+      ],
+      "takeaway": "Planning is a cost. Pay it only for uncertainty."
+    }
+  ],
+  "quiz": [
+    { "id": "w10-t15-q1", "type": "single", "tag": "concept", "q": "What does the Magentic manager do that a group chat manager does not?", "options": ["Selects which agent speaks next", "Builds a task ledger, tracks progress and replans", "Limits the number of rounds", "Lets agents see the shared conversation"], "answer": 1, "explain": "Both managers pick speakers, share context and can cap rounds. The distinguishing function is planning: building the ledger, tracking progress and re-planning. [[r10]]", "ref": "r10", "difficulty": 2 },
+    { "id": "w10-t15-q2", "type": "multi", "tag": "tradeoff", "q": "Which signals argue against using Magentic orchestration?", "options": ["The task is time-sensitive", "The path is deterministic", "The path cannot be planned in advance and agents need tools", "A fixed workflow already solves the task"], "answers": [0, 1, 3], "explain": "Time pressure, deterministic paths and an existing workflow are reasons to avoid it [[r9]]. An unplannable path with tool-using agents is its intended home [[r9]].", "ref": "r10", "difficulty": 2 }
+  ],
+  "flashcards": [
+    { "front": "What does the Magentic manager keep, and what does it do on a stall?", "back": "A task ledger and a progress record. After consecutive stalls it replans, and too many plan resets end the run [[r10]]." },
+    { "front": "Which sample limits does the Agent Framework Magentic doc show?", "back": "max_round_count=10, max_stall_count=3 and max_reset_count=2 in Python, with matching WithMaxRounds, WithMaxStalls and WithMaxResets in C# [[r10]]." },
+    { "front": "What is Magentic's status caveat, checked 2026-10-13?", "back": "Untested outside the original Magentic-One design. C# types are experimental, with diagnostic MAAIW001 suppressed in samples [[r10]]." }
+  ],
+  "related": ["w10-l3", "w10-t08", "w10-t14", "w10-t10"],
+  "refs": ["r10", "r31", "r9", "r2", "tr1"]
+}

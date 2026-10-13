@@ -1,0 +1,96 @@
+{
+  "id": "w10-t21",
+  "order": 21,
+  "group": "Long-running agents",
+  "title": "Durable execution and checkpoints",
+  "minutes": 9,
+  "difficulty": "advanced",
+  "summary": "Long agent runs must keep their state outside the process, so a crash, deploy or long wait resumes from the last checkpoint instead of restarting. Checkpoints help you resume. Durable execution adds retries, timers and deterministic replay.",
+  "useIf": "A run lasts hours, waits for humans, calls flaky tools or must survive restarts and deployments.",
+  "avoidIf": "A run lasts seconds to minutes and restarting from scratch is cheap and safe. A plain in-process loop is simpler.",
+  "explain": [
+    { "t": "p", "md": "A checkpoint is a saved snapshot of run state. In Agent Framework workflows, checkpoints are written at the end of each superstep and capture executor state, pending messages, pending requests and responses and shared state. C# uses `CheckpointManager`, and from Python 1.13.0 an entry checkpoint is also written before the first superstep and when responses to request events arrive [[r21]]. LangGraph checkpointers store thread-scoped state for human-in-the-loop, time travel and fault tolerance. Its `interrupt()` needs a checkpointer and a `thread_id`, and waits indefinitely until resumed with `Command`; `InMemorySaver` loses state on restart, and old checkpoints should be pruned [[r43]][[r44]]." },
+    { "t": "diagram", "id": "w10-t21-d1", "title": "Resume instead of restart", "alt": "Each step persists a checkpoint before the next step. After a crash or restart the run loads the latest checkpoint and continues from the next step.", "src": "flowchart LR\n  S[Run step] --> P[(Persist checkpoint)]\n  P --> N[Next step]\n  N --> S\n  X[Crash or deploy] --> L[Load latest checkpoint]\n  L --> N" },
+    { "t": "p", "md": "**Durable execution** goes further. Temporal runs code as durable execution: workflow code must be deterministic because it is replayed, side effects live in Activities with retry policies, timeouts and heartbeats, and timers can last months [[r42]]. The Durable Extension for Agent Framework offers durable agents, multi-agent orchestrations and checkpointed workflows on Azure Functions or your own compute, in C# and Python (Go listed as coming soon), using Durable Task infrastructure such as the Durable Task Scheduler. Human-in-the-loop waits consume no compute and no model tokens, so a 24-hour approval costs only seconds of execution on Flex Consumption. Its install uses a prerelease flag (`--prerelease` for .NET packages, `--pre` for pip), and the page states no GA status, so check before promising production use [[r12]]." },
+    { "t": "p", "md": "Anthropic's production lessons are the same shape: agents are stateful and errors compound, so resume from where the agent was, combine model-level error handling with retries and regular checkpoints, and deploy with rainbow deployments so old and new versions run together while traffic shifts [[r2]]. Its Managed Agents design separates an append-only session log, the harness and the sandbox, so a new harness can resume with `wake(sessionId)` (beta, header `managed-agents-2026-04-01`) [[r15]]. For API-level asynchrony, OpenAI background mode runs a response asynchronously that you poll or cancel, and without `store=true` the data is kept only about 10 minutes [[r25]]." },
+    { "t": "callout", "kind": "gotcha", "title": "A checkpoint is not exactly-once", "md": "Resuming from a checkpoint can repeat a step whose side effect already happened. Pair checkpoints with idempotency keys or compensating steps, and keep orchestration code deterministic when replay is used." }
+  ],
+  "whereToUse": [
+    "Multi-hour research or data-processing agents",
+    "Workflows that wait for human approval for hours or days",
+    "Agents that call flaky or rate-limited tools and need retries with backoff",
+    "Systems deployed continuously while runs are in flight",
+    "Pipelines where partial progress is expensive to redo"
+  ],
+  "whenToUse": {
+    "use": ["Runs last longer than a typical deploy or timeout", "A human or external system may take hours to respond", "Tool failures are common and restarts are expensive"],
+    "avoid": ["Short, cheap runs where restarting is safe", "Teams without capacity to operate a durable runtime, unless a managed option fits", "Treating in-memory checkpoint savers as durable"],
+    "flips": ["Waits grow from minutes to days: move to a durable wait that costs no compute", "Side effects cannot repeat: add idempotency keys and compensations", "Preview or unverified GA status blocks adoption: use framework checkpoints with your own store and test recovery"]
+  },
+  "alternatives": {
+    "title": "Where a long run can live",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["In-process loop", "Minutes-long runs, cheap restarts", "Crashes, deploys or approvals interrupt it", "Lost work"],
+      ["Framework checkpoints (Agent Framework, LangGraph)", "You want resume and human-in-the-loop in your own runtime", "You need timers, retries and replay guarantees", "You operate storage, savers can be non-durable [[r43]]"],
+      ["Durable orchestration (Durable Task, Temporal)", "Hours to days, retries, long timers, replay", "Team cannot run it, or status is unverified", "Determinism rules, ops effort [[r42]][[r12]]"],
+      ["Managed agent hosting", "You prefer a hosted session and harness", "You need full control of runtime", "Beta status and vendor coupling [[r15]]"],
+      ["Provider background mode", "One long model call, async polling", "Multi-step tool orchestration", "Data retention window of about 10 minutes [[r25]]"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "All progress is lost after a restart", "cause": "State lived in memory, or the checkpoint saver was in-memory", "fix": "Persist state to a durable store and test a kill-and-resume drill." },
+    { "symptom": "A resumed run sends the same message twice", "cause": "The step completed before the crash but its checkpoint was not written", "fix": "Use idempotency keys on side effects and record completion before acting where possible." },
+    { "symptom": "Replay produces a different path than the original run", "cause": "Non-deterministic code, such as time or random values, runs inside replayed orchestration [[r42]]", "fix": "Move side effects and non-determinism into activities and keep orchestration code deterministic." },
+    { "symptom": "A deploy breaks runs in flight", "cause": "Old runs resume on incompatible new code", "fix": "Version workflows, or use rainbow deployments so old and new run side by side [[r2]]." }
+  ],
+  "scenarios": [
+    {
+      "id": "w10-t21-s1",
+      "title": "Six-hour run with flaky tools",
+      "situation": "A data-processing agent runs for about six hours and calls external tools that fail roughly one call in twenty. The service redeploys several times a day, and restarting from scratch costs a lot.",
+      "constraints": ["Six-hour runs", "Frequent tool failures", "Daily deploys", "Costly restarts"],
+      "unknowns": ["Are the tool calls idempotent?", "Can the team operate a durable runtime?"],
+      "question": "Where does the run live?",
+      "options": [
+        { "name": "Durable orchestration or checkpointed workflow with retries, versioned or rainbow deploys and idempotent activities", "verdict": "best", "why": "It resumes after crashes and deploys, retries failing calls with policy and keeps side effects safe.", "tradeoff": "Determinism rules, operations effort and a status check on the runtime you choose." },
+        { "name": "In-process loop with a retry wrapper", "verdict": "poor", "why": "Every deploy or crash discards hours of work.", "tradeoff": "Right for short runs where a restart is cheap." },
+        { "name": "Framework checkpoints in a local in-memory saver", "verdict": "good", "why": "Cheap to add and handles some failures.", "tradeoff": "An in-memory saver loses state on process restart, so it fails the deploy case." }
+      ],
+      "flips": [
+        { "if": "Runs shrink to five minutes", "then": "An in-process loop with a simple retry is enough." },
+        { "if": "The durable runtime is preview and policy forbids it", "then": "Use framework checkpoints with a durable store you operate." }
+      ],
+      "takeaway": "Longer than a deploy means state must live outside the process."
+    },
+    {
+      "id": "w10-t21-s2",
+      "title": "Short runs, cheap restart",
+      "situation": "A support agent finishes in under a minute. Tools are idempotent reads, and an interrupted run can be retried by the user. The team is small.",
+      "constraints": ["Runs under a minute", "Read-only tools", "Small team", "Retry by the user is acceptable"],
+      "unknowns": ["How often do interruptions occur?", "Do any tools write?"],
+      "question": "Do you add durable execution?",
+      "options": [
+        { "name": "Keep an in-process loop with step cap, timeout and a user-visible retry", "verdict": "best", "why": "The cost of failure is tiny, so durable infrastructure would cost more than it saves.", "tradeoff": "An interrupted run restarts from scratch." },
+        { "name": "Adopt a durable orchestration platform", "verdict": "poor", "why": "It adds operational weight and determinism rules for no benefit here.", "tradeoff": "Right once runs grow to hours or approvals appear." },
+        { "name": "Persist checkpoints to a database after every step", "verdict": "good", "why": "Enables resume if needs grow.", "tradeoff": "Added storage, schema and complexity before it is needed." }
+      ],
+      "flips": [
+        { "if": "Tools start writing to external systems", "then": "Add idempotency keys first, then consider checkpoints." },
+        { "if": "Approvals enter the flow", "then": "Move to a durable wait." }
+      ],
+      "takeaway": "Do not buy durability that the failure cost does not justify."
+    }
+  ],
+  "quiz": [
+    { "id": "w10-t21-q1", "type": "single", "tag": "concept", "q": "When are Agent Framework workflow checkpoints written?", "options": ["Only when the process exits", "After every individual token", "At the end of each superstep", "Only on human approval"], "answer": 2, "explain": "Checkpoints are written at the end of each superstep and capture executor state, pending messages, pending requests and responses and shared state. Python 1.13.0 added entry checkpoints as well. [[r21]]", "ref": "r21", "difficulty": 1 },
+    { "id": "w10-t21-q2", "type": "multi", "tag": "diagnose", "q": "After a restart, a resumed run repeats a paid API call. Which changes address it?", "options": ["Send an idempotency key with the call", "Switch the checkpoint saver to in-memory", "Record completion before acting, or use a compensating step", "Increase the step cap"], "answers": [0, 2], "explain": "Idempotency keys and completion records or compensations make repeats safe. An in-memory saver loses state and a larger step cap does nothing for duplicates. [[r26]][[r27]]", "ref": "r26", "difficulty": 2 }
+  ],
+  "flashcards": [
+    { "front": "Checkpoint versus durable execution?", "back": "A checkpoint lets a run resume. Durable execution adds retries, timers and deterministic replay, with side effects in activities [[r42]]." },
+    { "front": "What does LangGraph's interrupt() require?", "back": "A checkpointer and a thread_id. It waits indefinitely until resumed with Command. InMemorySaver loses state on restart [[r44]][[r43]]." },
+    { "front": "Why do durable human-in-the-loop waits cost little?", "back": "They consume no compute and no model tokens while waiting. A 24-hour approval costs seconds of execution on Flex Consumption [[r12]]." }
+  ],
+  "related": ["w10-l6", "w10-t22", "w10-t10", "w10-t18"],
+  "refs": ["r21", "r43", "r44", "r42", "r12", "r2", "r15", "r25", "r26", "r27"]
+}

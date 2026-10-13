@@ -1,0 +1,96 @@
+{
+  "id": "w10-t02",
+  "order": 2,
+  "group": "Workflow patterns",
+  "title": "Prompt chaining",
+  "minutes": 7,
+  "difficulty": "core",
+  "summary": "Split a task into fixed steps. Each model call works on the previous output, and a programmatic gate between steps checks it before the chain continues.",
+  "useIf": "The task splits cleanly into known sequential subtasks and you would rather trade some latency for a more accurate result per step.",
+  "avoidIf": "Steps are independent (run them in parallel), the path depends on intermediate results, or an early error cannot be caught before later steps build on it.",
+  "explain": [
+    { "t": "p", "md": "In **prompt chaining** a task is decomposed into a fixed sequence of subtasks. Each LLM call processes the output of the previous one, and you can add a programmatic **gate** between steps to check the work is on track. The pattern trades latency for accuracy by making each call an easier task [[r1]]. The Azure Architecture Center calls the same shape sequential orchestration, also known as a pipeline or linear delegation, and notes that which step runs next is defined by the workflow, not chosen by an agent [[r9]]." },
+    { "t": "diagram", "id": "w10-t02-d1", "title": "A chain with gates", "alt": "Input flows through draft, gate, refine and gate to the output. A failed gate retries the previous step or stops with an error.", "src": "flowchart LR\n  I[Input] --> S1[Step 1: draft]\n  S1 --> G1{Gate}\n  G1 -->|pass| S2[Step 2: refine]\n  G1 -->|fail| R[Retry or stop]\n  S2 --> G2{Gate}\n  G2 -->|pass| O[Output]\n  G2 -->|fail| R" },
+    { "t": "p", "md": "A gate is cheap code, not another opinion: schema validation, length and format checks, a regex, a lookup, or a small classifier. Because every intermediate result is a stored value, you can retry only the failing step and you can see which step broke. The costs are additive latency (the sum of every step) and compounding error: if each step is right 95 percent of the time and errors are independent, five steps give 0.95^5, about 77 percent, before gates catch anything." },
+    { "t": "formula", "title": "Chain latency and reliability", "expr": "latency = sum(step_latency) + sum(gate_latency)     end_to_end_ok = product(step_ok)", "vars": [{ "k": "step_ok", "v": "probability a step is acceptable, assuming independent steps (an illustration, not a measured value)" }], "example": "Four steps of 2.5 s each plus four 0.05 s gates: **10.2 s**. Five steps at 0.95 each: **0.774**." },
+    { "t": "callout", "kind": "tip", "title": "Pass less forward", "md": "Hand each step only what it needs, ideally as a structured object. Passing the whole transcript down the chain grows input tokens at every hop and hides the contract between steps." }
+  ],
+  "whereToUse": [
+    "Draft, check, then polish flows such as outline, validate, write",
+    "Extract, normalise, then enrich pipelines where each stage needs the previous result",
+    "Generate a document, then translate it or reformat it",
+    "Any stage that a cheap validator can approve before an expensive stage runs",
+    "Replacing one overloaded mega-prompt that mixes several jobs"
+  ],
+  "whenToUse": {
+    "use": ["Steps are known, ordered and dependent on each other", "A deterministic gate can catch a bad intermediate result", "A single prompt does several jobs and quality is uneven across them"],
+    "avoid": ["Stages are independent and could run in parallel", "The work needs backtracking or iteration over intermediate results", "A single well-written call already meets quality, so extra calls only add latency"],
+    "flips": ["The next step depends on content: switch to routing or orchestrator-workers", "Latency is tight and steps are independent: parallelise them", "A gate cannot be written because quality has no check: consider evaluator-optimizer with an external signal"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Prompt chain (this topic)", "Fixed dependent steps, gates available", "Path varies by input, or stages are independent", "Latency adds up, errors compound without gates"],
+      ["Single mega-prompt", "Task is small and one pass is enough", "One call mixes several jobs and quality drops", "Cheapest, hardest to debug"],
+      ["Parallelisation", "Subtasks are independent", "A step needs the previous output", "Token cost multiplies"],
+      ["Routing", "Inputs fall into distinct categories", "Every input needs the same steps", "Misroute risk"],
+      ["Agent loop", "Steps cannot be listed in advance", "A fixed order would do", "Variable cost, needs brakes"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A bad first step produces a confident but wrong final answer", "cause": "No gate between steps, so error flows forward [[r9]]", "fix": "Add a deterministic check after each risky step and stop or retry on failure." },
+    { "symptom": "Step three fails to parse step two's output", "cause": "Free-text hand-offs between steps", "fix": "Pass structured output with a schema and validate it at the gate." },
+    { "symptom": "Latency is far above the target", "cause": "Independent stages were chained sequentially", "fix": "Run independent stages in parallel and chain only the dependent ones." }
+  ],
+  "scenarios": [
+    {
+      "id": "w10-t02-s1",
+      "title": "Bulk generation with a format contract",
+      "situation": "A pipeline turns raw records into customer-facing text, then translates it. Output must match a strict format, and bad records must never reach the translation step. Volume is high and runs in batch.",
+      "constraints": ["Steps are fixed and dependent", "A format check is cheap to write", "Batch run, so added latency is acceptable"],
+      "unknowns": ["What share of drafts fails the format check?", "Is a rewrite allowed, or must a failure go to a person?"],
+      "question": "How do you structure the calls?",
+      "options": [
+        { "name": "Chain: generate, validate with code, translate", "verdict": "best", "why": "The gate stops bad records before the costly step and each stage is testable on its own.", "tradeoff": "Two sequential calls per record, and the gate needs maintenance when the format changes." },
+        { "name": "One prompt that generates and translates together", "verdict": "good", "why": "Half the calls and simple to run.", "tradeoff": "You cannot gate the intermediate text, so a bad draft is translated and found late." },
+        { "name": "Agent that decides which steps to run", "verdict": "poor", "why": "The order never varies, so the loop adds cost and nondeterminism.", "tradeoff": "Right only if some records need entirely different handling." }
+      ],
+      "flips": [
+        { "if": "Records fall into very different types that need different drafts", "then": "Add a router before the chain." },
+        { "if": "Drafts and translations for many languages are independent", "then": "Fan the translation step out in parallel." }
+      ],
+      "takeaway": "A gate turns a chain from a pipe into a quality control line."
+    },
+    {
+      "id": "w10-t02-s2",
+      "title": "Interactive, latency sensitive",
+      "situation": "A user waits in a chat window for an answer that currently takes four sequential calls of about two seconds each. Quality is fine, but the product team wants a faster reply.",
+      "constraints": ["Interactive use with a latency target near four seconds", "Two of the four steps do not depend on each other", "Quality must not drop"],
+      "unknowns": ["Which steps depend on which?", "Can any step use a smaller, faster model?"],
+      "question": "What do you change?",
+      "options": [
+        { "name": "Run the independent steps in parallel and keep the dependent ones chained", "verdict": "best", "why": "It cuts wall-clock time to roughly three calls without changing what each step does.", "tradeoff": "Token use stays the same but peak rate-limit pressure rises, and the merge step needs care." },
+        { "name": "Collapse all four steps into one prompt", "verdict": "poor", "why": "It saves time but gives up the per-step quality that made the chain accurate.", "tradeoff": "Right when evals show the single prompt matches quality for this task." },
+        { "name": "Stream the final step and leave the rest", "verdict": "good", "why": "Perceived latency improves because text appears early.", "tradeoff": "Total time to the first token is unchanged, since the final step still waits for three others." }
+      ],
+      "flips": [
+        { "if": "A smaller model passes evals on the early steps", "then": "Swap models there first, it shortens every call." },
+        { "if": "All four steps are dependent", "then": "Parallelism is not available, so shrink prompts or use a faster model." }
+      ],
+      "takeaway": "Chain only what depends on what. Everything else can run side by side."
+    }
+  ],
+  "quiz": [
+    { "id": "w10-t02-q1", "type": "single", "tag": "concept", "q": "What is the job of a gate between two steps of a chain?", "options": ["To check an intermediate result with code before the next step runs", "To let the model decide whether to continue", "To merge outputs from parallel branches", "To increase the temperature of the next call"], "answer": 0, "explain": "A gate is a programmatic check on the intermediate output. Letting the model decide would move control flow back to the model, merging is aggregation in parallelisation, and temperature is unrelated. [[r1]]", "ref": "r1", "difficulty": 1 },
+    { "id": "w10-t02-q2", "type": "numeric", "tag": "numeric", "q": "A chain has five steps. Each step produces an acceptable result 95 percent of the time, independently, and there are no gates. What percentage of runs end acceptable?", "answer": 77.4, "tolerancePct": 2, "unit": "%", "hint": "Multiply the per-step probabilities.", "explain": "0.95^5 = 0.7738, about 77.4 percent. Independence is an assumption: gates and retries raise the figure, and correlated errors can lower it." },
+    { "id": "w10-t02-q3", "type": "single", "tag": "flip", "q": "Which change should push you from a prompt chain to routing?", "options": ["Every request needs the same four steps", "The gates are failing too often", "Requests fall into distinct categories that need different steps", "Latency is above the target"], "answer": 2, "explain": "Distinct categories with different handling is the routing dial. A fixed order for everyone is the chain's home case, failing gates call for better prompts or checks, and latency alone suggests parallelisation. [[r1]]", "difficulty": 2 }
+  ],
+  "flashcards": [
+    { "front": "What does prompt chaining trade for accuracy?", "back": "Latency. Each call becomes an easier task, but total time is the sum of the steps plus gates [[r1]]." },
+    { "front": "What is another name for prompt chaining in Azure's pattern guide?", "back": "Sequential orchestration, also called a pipeline or linear delegation. The workflow, not an agent, picks the next step [[r9]]." },
+    { "front": "Why can a five-step chain at 95 percent per step still be unreliable?", "back": "0.95^5 is about 77 percent under independence. Gates between steps stop errors from compounding." }
+  ],
+  "related": ["w10-l1", "w10-t01", "w10-t03", "w10-t04", "w10-t06"],
+  "refs": ["r1", "r9"]
+}

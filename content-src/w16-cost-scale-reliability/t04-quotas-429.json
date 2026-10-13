@@ -1,0 +1,99 @@
+{
+  "id": "w16-t04",
+  "order": 4,
+  "group": "Capacity",
+  "title": "Quotas, TPM, RPM and 429s",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "Providers limit tokens per minute and requests per minute. A 429 has more than one cause, and each provider counts tokens differently, so read the headers before you raise anything.",
+  "useIf": "Requests fail with 429 while dashboards show spare quota, or many consumers share one deployment.",
+  "avoidIf": "You plan to fix every 429 by asking for more quota or by retrying harder.",
+  "explain": [
+    { "t": "p", "md": "On Azure, **quota** is a TPM allowance per subscription, region, model and deployment type. The TPM you assign becomes the deployment's limit, and **RPM** follows in proportion: 6 RPM per 1,000 TPM for older chat models and 1 RPM per 1,000 TPM for o3 and o4-mini [[r8]]. Responses carry `x-ratelimit-limit-requests`, `x-ratelimit-limit-tokens`, `x-ratelimit-remaining-requests`, `x-ratelimit-remaining-tokens` and matching `reset` headers, and a 429 adds `retry-after-ms` [[r8]]." },
+    { "t": "p", "md": "Azure documents several kinds of 429. Three to tell apart first are quota exceeded, system capacity throttling, and a temporary rate-limit adjustment on Standard deployments. Compare `x-ratelimit-limit-tokens` with your assigned TPM to spot the third [[r8]]. A fourth documented cause is a request whose `max_tokens` estimate inflates the counted tokens, so a 429 can appear below quota. The TPM check uses prompt tokens plus `max_tokens` plus `best_of`, so `max_tokens: 4000` reserves 4,000 tokens for a 200-token answer, and RPM is enforced over 1 or 10 second windows, so a 600 RPM deployment can throttle at more than 10 requests in one second [[r9]]." },
+    { "t": "p", "md": "At scale, enforce **per-consumer limits at a gateway**: `llm-token-limit` limits by a `counter-key` in tokens per minute or as a quota per period, but its counts are estimates and are kept per gateway [[r2]]. When a 429 does arrive, honour `retry-after-ms` and never retry a quota-exhausted error." },
+    { "t": "diagram", "id": "w16-t04-d1", "title": "Reading a 429 (author synthesis)", "alt": "A decision tree: if the limit header is below assigned TPM it is a temporary cut; if remaining headers are near zero it is quota or an RPM window; otherwise capacity throttling.", "src": "flowchart TB\n  A[429 received] --> B{limit-tokens below assigned TPM}\n  B -->|yes| C[Temporary limit cut]\n  B -->|no| D{remaining near zero}\n  D -->|yes| E[Quota or short RPM window]\n  D -->|no| F[Capacity throttling]" },
+    { "t": "table", "caption": "Providers count differently", "head": ["Provider", "Limits", "Counting detail"], "rows": [
+      ["Azure OpenAI", "TPM and RPM per deployment", "Prompt plus `max_tokens` counted up front [[r9]]"],
+      ["OpenAI", "RPM, RPD, TPM, TPD, IPM per org, project and model", "Counts the larger of `max_tokens` and an estimate; 429 `slow_down`, 503 `server_is_overloaded` [[r16]]"],
+      ["Anthropic", "RPM, ITPM, OTPM, token bucket with continuous refill", "OTPM counts actual output only; cache reads do not count toward ITPM for most models; acceleration limits punish sharp ramps [[r17]]"]
+    ] }
+  ],
+  "whereToUse": [
+    "Capacity planning before a launch: choose TPM and RPM per deployment",
+    "Incident triage for a spike of 429s",
+    "Setting `max_tokens` per endpoint so reservations match answers",
+    "Per-consumer limits at an API gateway with `llm-token-limit` [[r2]]",
+    "Ramping traffic against Anthropic acceleration limits"
+  ],
+  "whenToUse": {
+    "use": ["Several teams share one deployment and need fair shares", "429s appear while average usage is below quota", "You budget with a provider that counts `max_tokens` up front"],
+    "avoid": ["Retrying quota-exhausted 429s in a loop", "Raising quota when the cause is a temporary adjustment or capacity throttling", "Leaving `max_tokens` at a large default on OpenAI or Azure"],
+    "flips": ["Sustained steady demand above quota: buy provisioned capacity or add a second deployment", "Bursts above RPM windows: smooth at the gateway with a token bucket or queue", "Anthropic with a high cache hit rate: cache reads free ITPM, so measure uncached input"]
+  },
+  "alternatives": {
+    "title": "Where to enforce limits",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Provider quota only", "One consumer, small scale", "Many consumers share a deployment", "One noisy consumer starves the rest"],
+      ["Gateway `llm-token-limit` per consumer", "Fair shares, chargeback, many teams", "Counters must span regions", "Estimates, brief overshoot, counters are per gateway [[r2]]"],
+      ["Separate deployments per workload", "Strong isolation needed", "Quota is scarce", "Fragmented quota, more to manage"],
+      ["Client-side limiter", "A single app, quick fix", "Many clients", "No central view; each client guesses"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "429s while TPM usage looks low", "cause": "Large `max_tokens` reserves tokens, or a burst exceeds the 1 to 10 second RPM window", "fix": "Set `max_tokens` near the real answer length and smooth bursts" },
+    { "symptom": "Raising quota changed nothing", "cause": "The 429 was capacity throttling or a temporary limit cut, not quota", "fix": "Read the headers, compare limit with assigned TPM, move traffic to another deployment or region" },
+    { "symptom": "A retry loop turned a blip into an outage", "cause": "Quota-exhausted 429s were retried and each layer multiplied traffic", "fix": "Honour `retry-after-ms`, do not retry quota errors, count retries across SDK and app layers" }
+  ],
+  "scenarios": [
+    {
+      "id": "w16-t04-s1",
+      "title": "429s with spare quota on the dashboard",
+      "situation": "An assistant answers in about 300 tokens but every call sets `max_tokens: 4000`. At peak, calls return 429 while the TPM graph reads 55% of quota.",
+      "constraints": ["Azure Standard deployment", "Peak traffic is bursty", "No budget for provisioned capacity"],
+      "unknowns": ["What do `x-ratelimit-remaining-tokens` and the limit header say?", "How many requests arrive in the busiest second?", "Is there an overly wide `best_of` or `n`?"],
+      "question": "What is the first fix?",
+      "options": [
+        { "name": "Set `max_tokens` close to the real answer length and read the headers", "verdict": "best", "why": "Azure's TPM check counts prompt plus `max_tokens`, so each call reserves about 13 times what it uses. Right-sizing frees most of the allowance at no cost.", "tradeoff": "Answers longer than the cap are truncated, so measure the output length distribution first." },
+        { "name": "Request more quota", "verdict": "poor", "why": "It treats a reservation artefact as a shortage and the request may be slow or denied.", "tradeoff": "Right when remaining-tokens headers sit near zero at sustained load." },
+        { "name": "Add client retries with backoff", "verdict": "good", "why": "Backoff with jitter smooths short bursts.", "tradeoff": "It does not reduce reservation waste and multiplies load if every layer retries." }
+      ],
+      "flips": [
+        { "if": "The limit header is lower than assigned TPM", "then": "It is a temporary cut: route to a second deployment and wait." },
+        { "if": "Bursts exceed the RPM window with ample TPM", "then": "Smooth at a gateway queue or token bucket." }
+      ],
+      "takeaway": "Oversized `max_tokens` is a quota tax. Right-size it before you ask for more."
+    },
+    {
+      "id": "w16-t04-s2",
+      "title": "One team starves the others",
+      "situation": "Five teams share one Azure deployment. A new batch-style job from one team consumes most of the TPM at midday, and interactive teams see 429s.",
+      "constraints": ["One deployment, one quota", "Teams need predictable shares", "A gateway can be added"],
+      "unknowns": ["Can the batch job move to a Batch tier?", "Do teams need monthly token quotas for chargeback?"],
+      "question": "How do you protect interactive users?",
+      "options": [
+        { "name": "Per-team `llm-token-limit` at the gateway, and move the batch job to Batch", "verdict": "best", "why": "Limits give each team a fair share with a 429 on rate and 403 on quota, and the Batch tier has its own enqueued-token quota.", "tradeoff": "Gateway estimates tokens and can briefly overshoot; counters are per gateway." },
+        { "name": "A separate deployment per team", "verdict": "good", "why": "Strong isolation.", "tradeoff": "Fragments quota so each team needs headroom for its own peaks." },
+        { "name": "Ask every team to retry more patiently", "verdict": "poor", "why": "Retries add load while the noisy job keeps the quota exhausted.", "tradeoff": "Backoff is right for transient blips, not for a sustained shortfall." }
+      ],
+      "flips": [
+        { "if": "The gateway runs in several regions", "then": "Counters are not aggregated, so split the limit per region or use a shared store." },
+        { "if": "Only two teams share quota", "then": "Two deployments may be simpler than a gateway." }
+      ],
+      "takeaway": "Shared quota needs per-consumer limits, or the loudest consumer wins."
+    }
+  ],
+  "quiz": [
+    { "id": "w16-t04-q1", "type": "numeric", "tag": "numeric", "q": "A call has a 600-token prompt, `max_tokens: 4000` and returns 400 tokens. On Azure OpenAI, how many tokens does the TPM check reserve for this call (ignore `best_of`)?", "answer": 4600, "tolerancePct": 1, "unit": "tokens", "explain": "Azure counts prompt plus `max_tokens` up front, so 600 + 4000 = 4,600 [[r9]]. The 400 actual output tokens are irrelevant to the reservation.", "difficulty": 1 },
+    { "id": "w16-t04-q2", "type": "single", "tag": "diagnose", "q": "A 429 arrives and `x-ratelimit-limit-tokens` is well below the TPM you assigned. Which cause is most likely?", "options": ["A malformed request body", "Your quota is permanently reduced", "A temporary rate-limit adjustment on Standard"], "answer": 2, "explain": "Azure lists a temporary adjustment as one of the documented 429 causes and tells you to compare the limit header with assigned TPM [[r8]]. A malformed body returns 400, and assigned quota is unchanged.", "difficulty": 2 },
+    { "id": "w16-t04-q3", "type": "single", "tag": "tradeoff", "q": "You use Anthropic and set a high `max_tokens` for safety. Which statement is correct?", "options": ["It reserves tokens up front exactly as on Azure", "It does not count toward OTPM, which counts actual output", "It raises ITPM"], "answer": 1, "explain": "Anthropic's OTPM counts actual output only, unlike OpenAI and Azure [[r17]]. ITPM concerns input tokens, so a larger output cap does not change it.", "difficulty": 2 }
+  ],
+  "flashcards": [
+    { "front": "What are Azure's three causes of 429?", "back": "Quota exceeded, system capacity throttling, and a temporary rate-limit adjustment on Standard. Compare the limit header with assigned TPM." },
+    { "front": "Why can `max_tokens: 4000` cause 429s?", "back": "Azure and OpenAI count it toward the limit up front, so each call reserves 4,000 tokens whatever it generates." },
+    { "front": "What does `llm-token-limit` return when exceeded?", "back": "429 for the rate limit and 403 for the quota. Counters are per gateway, and streaming always estimates." }
+  ],
+  "related": ["w16-t05", "w16-t07", "w16-t08", "w16-l2", "w02-t01"],
+  "refs": ["r8", "r9", "r16", "r17", "r2"]
+}

@@ -1,0 +1,45 @@
+{
+  "id": "w18-l6",
+  "order": 6,
+  "title": "Quirks that bite: tokens and made-up facts",
+  "kind": "concept",
+  "minutes": 16,
+  "brief": "Two details sit under many production surprises: the same text costs different amounts in different languages, and models state false things fluently. Know the numbers, the taxonomy and the controls well enough to say them in one breath.",
+  "blocks": [
+    { "t": "h", "text": "Tokenization pitfalls and the hallucination taxonomy", "level": 2 },
+    { "t": "p", "md": "Tokenization sets cost, latency and the effective context window, and it differs by language and by digit grouping. A 2023 study found the same text can differ by up to 15x in token count across languages, and byte-level models still show over 4x differences [[r41]]. Tokenizers have changed since 2023, so measure your own text with the provider's tokenizer.\n\nFor numbers, GPT-3.5 and GPT-4 split digits into chunks of one to three, left to right. Forcing right-to-left grouping with commas improved arithmetic, and the gap shrank with model scale [[r42]]." },
+    { "t": "formula", "title": "Cost and capacity move with the token ratio", "expr": "cost_B / cost_A = tokens_B / tokens_A    and    texts_that_fit = window / tokens_per_text", "vars": [ { "k": "tokens_A, tokens_B", "v": "token counts for the same content in two languages" }, { "k": "window", "v": "context window in tokens, minus any reserved output" } ], "example": "If a 1,000-token English prompt takes **4,000** tokens in another language at the same per-token price, it costs 4x as much and a 128,000-token window holds **32** of them instead of 128. The ratio is illustrative, so measure your own text." },
+    { "t": "stats", "items": [
+      { "label": "Token count gap across languages", "value": "up to 15x", "note": "Same text, 2023 tokenizers" },
+      { "label": "Byte-level models", "value": "over 4x", "note": "Gap still present" },
+      { "label": "Digit chunks, GPT-3.5 and GPT-4", "value": "1 to 3 digits", "note": "Left to right" },
+      { "label": "Right-to-left grouping with commas", "value": "better arithmetic", "note": "Gap shrinks as models scale" }
+    ] },
+    { "t": "table", "caption": "Hallucination taxonomy. Huang et al. split it into factuality and faithfulness, with causes in data, training and inference [[r43]].", "head": ["Type", "Meaning", "Control", "How to detect it"], "rows": [
+      ["Factuality", "Output conflicts with real-world facts", "Ground in retrieval, allow abstention, cite sources", "Fact-check evals on a golden set with known answers"],
+      ["Faithfulness", "Output is inconsistent with the instructions, the context or its own logic", "Structured output, citation enforcement, NLI-style checks against context", "Groundedness and instruction-following evals"],
+      ["Intrinsic (older NLG term)", "Output contradicts the source", "Constrain to supplied evidence, verify claims against it", "Compare each claim with the retrieved passage"],
+      ["Extrinsic (older NLG term)", "Output cannot be verified from the source", "Require a citation per claim, strip uncited claims", "Flag claims without a supporting span"]
+    ], "highlightCol": 2 },
+    { "t": "failure", "title": "Where these quirks show up", "items": [
+      { "symptom": "Arithmetic or digit-heavy answers are wrong in small ways", "cause": "Digit chunking changes how numbers are seen, and model scale narrows but does not close the gap [[r42]]", "fix": "Send arithmetic to code or a calculator tool, and format numbers consistently." },
+      { "symptom": "Costs and truncation are far worse for some languages", "cause": "The same content needs many more tokens in some languages [[r41]]", "fix": "Measure tokens per language on real prompts, budget context by language and compare tokenizers when choosing a model." },
+      { "symptom": "The model gives a confident answer when the evidence is missing", "cause": "Training and benchmarks reward guessing over abstaining, which keeps errors alive [[r44]]", "fix": "Evaluate so that abstention beats a confident error, include unanswerable questions and require citations." },
+      { "symptom": "An answer contradicts the supplied document", "cause": "A faithfulness failure: the context was ignored or overridden by prior knowledge [[r43]]", "fix": "Cite per claim, check claims against retrieved text and tighten instructions to answer only from context." }
+    ] },
+    { "t": "callout", "kind": "interview", "title": "Hallucination is an incentive problem as well as a bug", "md": "The 2025-09 paper Why Language Models Hallucinate argues errors resemble binary classification mistakes, and that benchmarks rewarding guessing over abstaining keep them alive [[r44]]. A strong answer covers grounding, citation checks, abstention thresholds and metrics that penalise confident errors." }
+  ],
+  "quiz": [
+    { "id": "w18-l6-q1", "type": "numeric", "tag": "numeric", "difficulty": 1, "q": "A 1,000-token English prompt takes 4,000 tokens in another language. How many copies of that prompt fit in a 128,000-token window in the other language, ignoring reserved output?", "answer": 32, "tolerancePct": 1, "unit": "prompts", "hint": "Divide the window by the tokens per prompt.", "explain": "128,000 / 4,000 = 32, against 128 in English. Cost per prompt is also 4x at the same per-token price. The 4x ratio is illustrative, since real gaps depend on the tokenizer.", "ref": "r41" },
+    { "id": "w18-l6-q2", "type": "match", "tag": "concept", "difficulty": 2, "q": "Match each hallucination term to its meaning.", "pairs": [ { "l": "Factuality hallucination", "r": "Output conflicts with real-world facts" }, { "l": "Faithfulness hallucination", "r": "Output is inconsistent with instructions, context or logic" }, { "l": "Intrinsic hallucination", "r": "Output contradicts the source" }, { "l": "Extrinsic hallucination", "r": "Output cannot be verified from the source" } ], "explain": "Huang et al. use factuality and faithfulness. The older NLG split uses intrinsic for contradicting the source and extrinsic for unverifiable content.", "ref": "r43" },
+    { "id": "w18-l6-q3", "type": "single", "tag": "flip", "difficulty": 2, "q": "An assistant gives confident wrong answers when evidence is missing. The eval scores a wrong answer and an I-do-not-know answer the same. What should change?", "options": ["Set temperature to zero so that the model stops guessing whenever the evidence is missing or unclear", "Add more few-shot examples that show only correct answers", "Change the eval so that abstaining beats a confident error, and add unanswerable questions", "Raise max tokens so that the model can explain its guess"], "answer": 2, "explain": "The 2025 paper links hallucination to evaluations that reward guessing over abstaining. Changing the incentive and testing unanswerable cases attacks that cause. Temperature does not create knowledge, correct-only examples bias toward answering, and longer output does not add evidence.", "ref": "r44" }
+  ],
+  "defend": null,
+  "refs": ["r41", "r42", "r43", "r44"],
+  "takeaways": [
+    "Token counts for the same content differ by language, so measure cost and context per language with the real tokenizer.",
+    "Digit chunking affects arithmetic. Send calculations to code.",
+    "Split hallucination into factuality and faithfulness, then pick controls and detectors for each.",
+    "Reward abstention in evals, or the incentive to guess survives."
+  ]
+}

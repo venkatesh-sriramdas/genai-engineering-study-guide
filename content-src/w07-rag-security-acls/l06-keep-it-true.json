@@ -1,0 +1,90 @@
+{
+  "id": "w07-l6",
+  "order": 6,
+  "title": "Keep it true: sync, drift and revocation",
+  "kind": "problem",
+  "minutes": 22,
+  "brief": "Permissions change after the index is built: people leave, folders move, groups are renamed. Decide how a change reaches every copy, how you detect the ones it missed, and how you prove revocation works before a user proves it does not.",
+  "blocks": [
+    { "t": "h", "text": "Revocation is a chain of copies", "level": 2 },
+    { "t": "p", "md": "The source ACL is copied into the index, group memberships sit in caches and tokens, answers sit in caches and the text sits in logs. The slowest link sets your real revocation time. A **revocation SLA is a choice per sensitivity tier, not a vendor number**. As planning estimates, which are design reasoning and not vendor figures: seconds to minutes for restricted data, hours for general internal content.\n\nPull indexers cannot beat the next run, since the schedule `interval` runs from 5 to 1,440 minutes [[r19]]. Push ingestion can patch only the ACL field with `merge`, so revocation can take seconds, but you own the change feed [[r15]]. For SharePoint, from `2026-05-01-preview` item-level ACL changes are picked up each run, while parent-scope changes need `/resync` [[r16]]. Graph change notifications can trigger the push path and a delta query can reconcile what was missed. Pairing them is design guidance, not a documented SLA [[r27]] [[r35]]." },
+    { "t": "diagram", "id": "w07-l6-d1", "title": "Where a revocation has to travel", "alt": "A source ACL change reaches the index ACL field by polling or events. A group change reaches the app principal set through cache TTL and token lifetime. Both feed the next query. The answer cache and logs sit after the query.", "src": "flowchart LR\n  S[Source ACL change] -->|poll or event| X[Index ACL field]\n  S -->|group change| G[Group membership]\n  G -->|cache TTL, token life| A[App principal set]\n  X --> Q[Next query]\n  A --> Q\n  Q --> C[Answer cache TTL]\n  C --> L[Logs and traces]", "caption": "Each arrow has its own delay. Write the SLA for the tier, then check every arrow against it." },
+    { "t": "stats", "items": [
+      { "label": "Indexer schedule interval", "value": "5 to 1,440 min", "note": "The floor for pull-based revocation" },
+      { "label": "Graph directory subscription maximum", "value": "41,760 min", "note": "Renew before expiry and handle lifecycle notifications" },
+      { "label": "driveItem notification latency", "value": "under 1 min, 6 h max", "note": "Average and maximum. Do not promise tighter than the maximum" },
+      { "label": "ACL entries enforced per item", "value": "32 and 1,000", "note": "ADLS Gen2 per file or directory, SharePoint per file. More might not be enforced" }
+    ] },
+    { "t": "dials", "id": "w07-l6-sync", "title": "How should permission changes travel?", "prompt": "Set the revocation target, where permissions are defined and which change signals you can get. The best mechanism changes.",
+      "dials": [
+        { "id": "sla", "label": "Revocation target", "values": [ { "id": "hours", "label": "Hours" }, { "id": "minutes", "label": "Minutes" }, { "id": "seconds", "label": "Seconds" } ] },
+        { "id": "inherit", "label": "Where permissions are set", "values": [ { "id": "item", "label": "On each item" }, { "id": "parent", "label": "Inherited from folders, sites or groups" } ] },
+        { "id": "feed", "label": "Change signals available", "values": [ { "id": "event", "label": "Events or webhooks exist" }, { "id": "poll", "label": "Polling only" } ] }
+      ],
+      "options": [
+        { "id": "pull", "name": "Scheduled pull indexer", "summary": "The indexer re-reads permissions on a schedule." },
+        { "id": "push", "name": "Push ACL merge on change events", "summary": "Patch only the ACL field when an event arrives." },
+        { "id": "notify", "name": "Graph notifications plus delta reconciliation", "summary": "Notify, then fetch the delta and reconcile." },
+        { "id": "nocopy", "name": "No copy: delegate to the source", "summary": "The source answers with the caller's token." },
+        { "id": "resync", "name": "Periodic full resync and drift audit", "summary": "Re-read everything and compare with the source." }
+      ],
+      "scores": {
+        "pull": {
+          "sla": { "hours": { "s": 2, "why": "A schedule matches the target." }, "minutes": { "s": 0, "why": "The interval floor is 5 minutes." }, "seconds": { "s": -2, "why": "Cannot reach seconds." } },
+          "inherit": { "item": { "s": 1, "why": "Item ACL changes sync each run." }, "parent": { "s": -1, "why": "Parent scope changes need an explicit resync." } },
+          "feed": { "event": { "s": 0, "why": "Ignores events you already have." }, "poll": { "s": 2, "why": "Built for sources you can only poll." } }
+        },
+        "push": {
+          "sla": { "hours": { "s": 1, "why": "Works, with more machinery than needed." }, "minutes": { "s": 2, "why": "Merge the ACL field when an event arrives." }, "seconds": { "s": 2, "why": "`merge` updates the ACL field immediately." } },
+          "inherit": { "item": { "s": 1, "why": "Patch the item's ACL field." }, "parent": { "s": -1, "why": "You must fan an inherited change out to every child." } },
+          "feed": { "event": { "s": 2, "why": "Events drive the update." }, "poll": { "s": -2, "why": "No events to react to." } }
+        },
+        "notify": {
+          "sla": { "hours": { "s": 0, "why": "Overkill for this speed." }, "minutes": { "s": 1, "why": "Notifications average under a minute." }, "seconds": { "s": -1, "why": "Latency can reach 6 hours, so no tight promise." } },
+          "inherit": { "item": { "s": 1, "why": "Delta lists changed items." }, "parent": { "s": 1, "why": "Delta reports the changed scope, then you reconcile children." } },
+          "feed": { "event": { "s": 2, "why": "A webhook endpoint and renewal are available." }, "poll": { "s": -1, "why": "Needs a public endpoint and renewal before expiry." } }
+        },
+        "nocopy": {
+          "sla": { "hours": { "s": 0, "why": "Overkill for this speed." }, "minutes": { "s": 1, "why": "No copy to sync." }, "seconds": { "s": 2, "why": "The source answers live." } },
+          "inherit": { "item": { "s": 1, "why": "The source answers per item." }, "parent": { "s": 2, "why": "The source resolves inheritance." } },
+          "feed": { "event": { "s": 1, "why": "No feed needed." }, "poll": { "s": 1, "why": "No feed needed." } }
+        },
+        "resync": {
+          "sla": { "hours": { "s": 1, "why": "A nightly pass can meet it." }, "minutes": { "s": -1, "why": "A full pass is too slow." }, "seconds": { "s": -2, "why": "Far too slow." } },
+          "inherit": { "item": { "s": 0, "why": "Redundant for item changes." }, "parent": { "s": 2, "why": "Catches inherited changes that events missed." } },
+          "feed": { "event": { "s": 0, "why": "A safety net behind events." }, "poll": { "s": 1, "why": "Works without any feed." } }
+        }
+      },
+      "takeaway": "Most designs run two mechanisms: a fast one for changes you can see and a slow audit for the ones you cannot. Whatever you pick, state the SLA per tier and test it." },
+    { "t": "flow", "title": "Prove revocation with a canary", "direction": "v", "steps": [
+      { "title": "Plant", "md": "Create a canary document with a unique phrase and an ACL that includes a test user.", "tag": "setup" },
+      { "title": "Confirm access", "md": "Ask a question only the canary can answer, as the test user. It must appear with a citation." },
+      { "title": "Revoke at the source", "md": "Remove the user from the group or the document ACL. Record the time.", "tag": "change" },
+      { "title": "Wait the SLA", "md": "Wait the stated revocation SLA for that tier, and no longer." },
+      { "title": "Repeat the question", "md": "The phrase must be absent from the answer, the citations, the caches and the retrieval log.", "tag": "assert" },
+      { "title": "Delete and repeat", "md": "Delete the canary at the source. It must disappear from the index and every cache. Run the whole test nightly and alert on failure." }
+    ] },
+    { "t": "failure", "title": "Failure modes to recognise", "items": [
+      { "symptom": "A daily drift audit finds a few percent of sampled documents whose index ACL differs from the source, all under one folder.", "cause": "A parent-scope change inherited by child items was not refreshed by a normal indexer run.", "fix": "Sample daily, compare index ACL with source ACL, alert on any mismatch, track the age of the oldest unsynced change and resync the affected scope." },
+      { "symptom": "Graph notifications stop arriving after a few weeks.", "cause": "Directory subscriptions expire (maximum 41,760 minutes) and nobody renewed them or handled lifecycle notifications.", "fix": "Renew before expiry, handle lifecycle notifications and fall back to a delta reconciliation." },
+      { "symptom": "A deleted document still helps answer questions.", "cause": "Deletes are not mirrored to the index, or an answer cache holds the text.", "fix": "Propagate tombstones to the index and caches and include a delete step in the canary test." },
+      { "symptom": "Document ACLs sync in minutes but a removed member keeps access for an hour.", "cause": "Membership cache TTL or token lifetime dominates the chain.", "fix": "Count those TTLs in the SLA, shorten them for restricted tiers and live-check the top hits." }
+    ] },
+    { "t": "callout", "kind": "interview", "title": "What interviewers listen for", "md": "How do you test that revoking access really removes documents from answers? Say canary document, revoked test user and an end-to-end assertion on answers, caches and logs. Quote an SLA per tier, name the slowest link and say how you detect drift." }
+  ],
+  "quiz": [
+    { "id": "w07-l6-q1", "type": "order", "tag": "order", "q": "Put the steps of a revocation test in order.", "items": ["Plant a canary document whose ACL includes a test user", "Ask as the test user and confirm the canary is cited", "Revoke the user at the source and record the time", "Wait the stated revocation SLA", "Ask again and confirm the canary is absent from answers, caches and logs"], "explain": "You must prove access works before revoking, otherwise an absent canary proves nothing. You record the revocation time, wait only the stated SLA and then assert on every copy: answer, caches and logs.", "difficulty": 1, "ref": "r12" },
+    { "id": "w07-l6-q2", "type": "single", "tag": "diagnose", "q": "The drift audit reports the following. Which cause fits best?", "code": { "lang": "text", "code": "drift audit: 38 of 1,000 sampled docs differ\nall under /sites/finance/Q3/\nlast indexer run: success, 12 minutes ago" }, "options": ["The indexer failed silently on every run", "A parent-scope permission change that child items inherit needs a resync", "The search service has too few replicas for ACL queries", "The groups claim exceeded the token limit"], "answer": 1, "explain": "Item-level ACL changes sync on each run, but changes to a parent scope such as a folder or library inherited by children need `/resync` with `options: [\"permissions\"]`. The last run succeeded, replicas do not alter ACL values and token claims affect query-time identity, not stored ACLs.", "difficulty": 2, "ref": "r16" },
+    { "id": "w07-l6-q3", "type": "single", "tag": "tradeoff", "q": "A restricted tier must revoke within about a minute. The source is a custom system with a change feed and ACLs set per item. Which mechanism fits?", "options": ["A scheduled pull indexer set to its 5 minute floor", "A nightly full resync of every document and ACL", "Graph driveItem notifications on the custom system", "Push ACL merges on change events"], "answer": 3, "explain": "Push ingestion can `merge` only the ACL field as soon as an event arrives, which fits a one minute target. A pull indexer cannot go below 5 minutes, a nightly resync is a safety net and driveItem notifications apply to OneDrive and SharePoint items, not a custom system. Add a drift audit behind it.", "difficulty": 2, "ref": "r15" },
+    { "id": "w07-l6-q4", "type": "multi", "tag": "concept", "q": "Select every true statement about using Microsoft Graph for permission sync.", "options": ["Subscriptions on directory resources expire and must be renewed.", "A delta query returns changes since the last sync through a delta token.", "Pairing notifications with a delta reconciliation is a documented SLA.", "driveItem notifications always arrive within one second."], "answers": [0, 1], "explain": "Directory subscriptions have a maximum lifetime and need renewal, and delta queries return changes since the last token. The pairing is design guidance, not a documented SLA, and driveItem latency is under one minute on average with a six hour maximum.", "difficulty": 2, "ref": "r27" }
+  ],
+  "defend": null,
+  "refs": ["r12", "r15", "r16", "r19", "r27", "r35"],
+  "takeaways": [
+    "A revocation SLA is a choice per tier. The slowest copy in the chain sets the real number.",
+    "Pull indexers cannot beat 5 minutes, push merges can reach seconds, and SharePoint parent changes need a resync.",
+    "Run two mechanisms: a fast path for events and a slow audit for what events miss.",
+    "Graph subscriptions expire, so renew them and reconcile with a delta query.",
+    "Prove revocation with a canary and a revoked test user, and assert on answers, caches and logs."
+  ]
+}

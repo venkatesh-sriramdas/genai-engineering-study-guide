@@ -1,0 +1,102 @@
+{
+  "id": "w04-t02",
+  "order": 2,
+  "group": "Chunking",
+  "title": "Fixed-size chunking with overlap",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "Cut the text every N tokens or characters and step back by an overlap so a sentence near a boundary lands in two chunks. It is the cheapest strategy and the baseline for every other one.",
+  "useIf": "You need a predictable, cheap baseline, or the text has no headings or paragraphs to split on.",
+  "avoidIf": "The documents have headings, tables or code. A blind cut will separate rows from headers and bodies from titles.",
+  "explain": [
+    { "t": "p", "md": "A **fixed-size chunker** slides a window of N units over the text. The window moves forward by `N - overlap`, so neighbouring chunks share `overlap` units. Overlap exists because the cut ignores meaning: a fact that straddles a boundary would otherwise be split in half, and neither half would match the question well." },
+    { "t": "formula", "title": "Index inflation from overlap", "expr": "stored tokens = text tokens x N / (N - overlap)", "vars": [ { "k": "N", "v": "chunk size in tokens" }, { "k": "overlap", "v": "tokens shared with the previous chunk" } ], "example": "N = 512 and overlap = 128 (25%): 512 / 384 = 1.33, so you embed, store and pay for about 33% more tokens. At 15% overlap the factor is 1.18." },
+    { "t": "p", "md": "Microsoft's chunking guide suggests starting at 512 tokens (about 2,000 characters) with 25% overlap, and also shows a fixed-size example of about 200 words with 10 to 15% overlap [[tr1]]. NVIDIA tested 10, 15 and 20% overlap and found 15% best on one dataset at 1,024 tokens [[tr25]]. Tools differ: Unstructured defaults to `max_characters` 500 and `overlap` 0, which gives small chunks with no safety margin unless you change it [[tr44]]." },
+    { "t": "p", "md": "Choose N from the question type: short facts favour smaller windows and broad questions favour larger ones. Choose overlap from the span of a typical fact: it should at least cover the sentence you cannot afford to cut. Then measure recall on labelled questions at 0, 10 and 20% overlap. That difference is the number that matters, not the guideline." },
+    { "t": "table", "caption": "Text Split skill parameters that matter for fixed-size chunking [[tr2]]", "head": ["Parameter", "Value or default", "Note"], "rows": [
+      ["`textSplitMode`", "`pages` or `sentences`", "`pages` is the length-capped mode. It tries not to cut a sentence, so chunks can be a little shorter than the maximum"],
+      ["`maximumPageLength`", "5,000 characters by default, range 300 to 50,000", "Unit is characters unless you set `unit`"],
+      ["`pageOverlapLength`", "No overlap by default", "Set it explicitly"],
+      ["`unit`", "`characters` (default) or `azureOpenAITokens` (preview)", "Token mode uses `cl100k_base` by default, and `o200k_base` is not supported"]
+    ] },
+    { "t": "callout", "kind": "gotcha", "title": "Characters are not tokens", "md": "A rule of thumb is about 4 characters per token for common OpenAI models [[tr1]]. The default 5,000 characters is therefore roughly 1,250 tokens, not 512. If you want 512 tokens, either set about 2,000 characters or switch to token mode and accept that it is preview." },
+    { "t": "lab", "id": "chunk-visualizer", "intro": "Open the overlap preset: compare 'Fixed 80, no overlap' with 'Add 16 tokens overlap'. Watch where boundaries fall, how many chunks appear and how the total token count grows. Then switch to Recursive and Sentence groups on the same text to see which boundaries each strategy respects." }
+  ],
+  "whereToUse": [
+    "A first baseline before you spend effort on smarter splitting",
+    "Plain text with no structure: transcripts, logs, emails, scraped pages",
+    "Very large corpora where ingest cost and simplicity matter more than boundary quality",
+    "Pipelines that need stable chunk counts and sizes for capacity planning"
+  ],
+  "whenToUse": {
+    "use": ["Text is flat and has no reliable headings", "Ingest budget is small and the corpus is large", "You need a baseline to beat with measurements"],
+    "avoid": ["Documents have headings, tables or code blocks that must stay whole", "Citations must map to sections or pages", "Questions depend on a clause staying with its heading"],
+    "flips": ["Documents arrive with headings: use structure-aware splitting inside sections", "Memory or cost is the constraint: lower overlap to 10 to 15% before touching size", "Boundary misses dominate failures: raise overlap or move to sentence-aware boundaries"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Fixed size with overlap", "Flat text, large corpus, simple baseline", "Structure or tables exist", "Overlap inflates index by 1 / (1 - overlap share)"],
+      ["Recursive or sentence splitting", "Prose where paragraphs and sentences matter", "No clear separators or very long sentences", "Uneven chunk sizes"],
+      ["Structure-aware splitting", "Headings, tables, layout available", "Raw text with no layout", "Needs a good parser"],
+      ["Semantic splitting", "Topic shifts without headings", "Cost-sensitive or frequently updated corpora", "Embedding calls at ingest, unstable boundaries"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Chunks are a fraction of the intended size", "cause": "`maximumPageLength` was set to 512 expecting tokens, but the default unit is characters (about 128 tokens)", "fix": "Set the unit deliberately, convert with about 4 characters per token, and check real token counts" },
+    { "symptom": "Token counts in the index do not match what the chat model sees", "cause": "Token mode uses `cl100k_base`, and `o200k_base` (used by GPT-4o) is not supported", "fix": "Leave headroom under limits and measure with the tokenizer of the model you care about" },
+    { "symptom": "Two almost identical chunks fill the top results", "cause": "High overlap means the same sentences live in neighbouring chunks, and both match", "fix": "Lower overlap, dedupe by document and ordinal position, or return merged neighbours" },
+    { "symptom": "Answers that sit across a boundary are still missed", "cause": "Overlap is smaller than the span of the fact", "fix": "Check overlap against real question spans, or use sentence-aligned boundaries" }
+  ],
+  "scenarios": [
+    {
+      "id": "w04-t02-s1",
+      "title": "Millions of flat transcripts",
+      "situation": "A nightly batch indexes millions of call transcripts that have no headings. Storage is metered and recall on boundary-spanning facts matters less than coverage.",
+      "constraints": ["Flat text, no structure", "Very large corpus", "Cost per token matters", "No labelled set yet"],
+      "unknowns": ["How long is a typical fact span?", "Is index memory capped?"],
+      "question": "Which chunker do you ship first?",
+      "options": [
+        { "name": "Fixed 512 tokens with 10 to 15% overlap", "verdict": "best", "why": "Predictable, cheap and well supported. Overlap covers most boundary cuts at a small inflation.", "tradeoff": "Boundaries ignore topic shifts, so some chunks mix two subjects." },
+        { "name": "Semantic splitting on every transcript", "verdict": "poor", "why": "Adds an embedding pass over millions of sentences before the real embedding, for gains studies did not find consistent.", "tradeoff": "Reasonable on a small, high-value corpus after a measured win." },
+        { "name": "Recursive splitting with paragraph and sentence separators", "verdict": "good", "why": "Cleaner boundaries when transcripts have line breaks.", "tradeoff": "Uneven sizes and extra tuning for noisy text." }
+      ],
+      "flips": [
+        { "if": "Transcripts carry speaker turns or timestamps", "then": "Split on turns first, then cap the size." },
+        { "if": "Your labelled questions show boundary misses", "then": "Raise overlap or add sentence-aligned boundaries." }
+      ],
+      "takeaway": "At scale on flat text, the cheap baseline is usually the right start."
+    },
+    {
+      "id": "w04-t02-s2",
+      "title": "Memory cap meets 25% overlap",
+      "situation": "The vector index is close to its memory quota. The pipeline uses 512 token chunks with 25% overlap and the team wants to free space without a rebuild of the embedding model.",
+      "constraints": ["Memory quota nearly full", "Recall must not drop noticeably", "Same embedding model", "A labelled question set exists"],
+      "unknowns": ["How much headroom is needed?", "Do questions span boundaries often?"],
+      "question": "What do you change first?",
+      "options": [
+        { "name": "Cut overlap to about 10% and re-run the labelled set", "verdict": "best", "why": "Inflation falls from 1.33 to about 1.11, roughly 17% fewer stored tokens, and the set tells you the recall cost.", "tradeoff": "Boundary-spanning facts become slightly more likely to be missed." },
+        { "name": "Keep overlap and quantize the vectors", "verdict": "good", "why": "Frees much more memory per vector than any overlap change.", "tradeoff": "Needs a new vector field and a reindex, and rescoring settings to tune." },
+        { "name": "Remove overlap completely", "verdict": "poor", "why": "Boundary cuts return and cannot be measured away without testing.", "tradeoff": "Fine when chunks are already sentence or paragraph aligned." }
+      ],
+      "flips": [
+        { "if": "The corpus is still growing fast", "then": "Plan quantization now, because overlap tuning buys only a one-off saving." },
+        { "if": "Boundary-spanning questions are common", "then": "Keep overlap and fix capacity elsewhere." }
+      ],
+      "takeaway": "Overlap is a dial with a measurable cost on both memory and recall."
+    }
+  ],
+  "quiz": [
+    { "id": "w04-t02-q1", "type": "numeric", "tag": "numeric", "q": "Chunks are 512 tokens with a 128 token overlap. By what percentage do the stored tokens exceed the original text?", "answer": 33.3, "tolerancePct": 5, "unit": "%", "hint": "Each new chunk adds N minus overlap new tokens.", "explain": "Step = 512 - 128 = 384, so stored tokens = 512 / 384 = 1.333 times the text, which is 33.3% more." },
+    { "id": "w04-t02-q2", "type": "single", "tag": "bug", "q": "A team sets `maximumPageLength` to 512 in the Text Split skill, expecting 512 token chunks, and leaves `unit` at its default. What do they get?", "options": ["512 token chunks", "An error, because the minimum is 1,000", "Chunks of 512 characters, roughly 128 tokens", "512 sentences per chunk"], "answer": 2, "explain": "The default unit is characters and the minimum is 300, so 512 is valid and yields about 128 tokens. Token mode needs `unit: azureOpenAITokens`, which is preview. Sentences are set by `textSplitMode`, not by this value." },
+    { "id": "w04-t02-q3", "type": "multi", "tag": "tradeoff", "q": "What does adding overlap cost?", "options": ["More embedding calls and storage", "Duplicate hits in the top results", "A different embedding dimension", "Slower similarity math per vector"], "answers": [0, 1], "explain": "Overlap means more tokens are embedded and stored, and neighbouring chunks can both match. It does not change vector dimensions or per-vector math." }
+  ],
+  "flashcards": [
+    { "front": "What is the index inflation factor for chunk size N and overlap O?", "back": "N / (N - O). With 512 and 128 it is 1.33, so you store about 33% more tokens." },
+    { "front": "What are the Text Split skill defaults for page length and overlap?", "back": "`maximumPageLength` 5,000 characters (range 300 to 50,000) and no overlap. The default unit is characters." },
+    { "front": "Why can Text Split token counts disagree with GPT-4o token counts?", "back": "Token mode uses `cl100k_base` by default and `o200k_base` is not supported, so counts follow a different tokenizer." }
+  ],
+  "related": ["w04-t01", "w04-t03", "w04-t05", "w04-t14", "w03-t05", "w04-l1"],
+  "refs": ["tr1", "tr2", "tr25", "tr44"]
+}

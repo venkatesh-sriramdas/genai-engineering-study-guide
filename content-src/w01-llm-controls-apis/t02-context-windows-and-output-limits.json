@@ -1,0 +1,128 @@
+{
+  "id": "w01-t02",
+  "order": 2,
+  "group": "Model basics",
+  "title": "Context windows and output limits",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "The context window is one shared budget for input, reasoning and output. A separate cap limits output, and each API names its cap differently.",
+  "useIf": "You size prompts, set a max token parameter, or hit truncation, empty answers or 400 errors.",
+  "avoidIf": "You think a bigger advertised window means the model uses all of it equally well. See the long-context topic for accuracy.",
+  "explain": [
+    { "t": "p", "md": "The **context window** is the most tokens a request can hold: system text, history, tool definitions, retrieved content, images, reasoning and the answer. Input and output also have **separate caps** that you cannot always use together. A model can list a 1,050,000 token window, 922,000 max input and 128,000 max output, and output counts inside the window [[r1]]." },
+    { "t": "formula", "title": "The shared budget", "expr": "input + reasoning + visible output <= window, and visible output + reasoning <= max output", "vars": [
+      { "k": "input", "v": "Everything you send, including tool definitions and images" },
+      { "k": "reasoning", "v": "Hidden thinking tokens on reasoning models, billed as output" },
+      { "k": "max output", "v": "Ceiling set by the model and by your `max_output_tokens` or `max_tokens`" }
+    ], "example": "A request with 900,000 input tokens on a 1,050,000 window leaves at most 150,000 tokens, but the model's own output cap of 128,000 still applies. A ceiling does not reserve tokens [[r13]]." },
+    { "t": "p", "md": "Plan the budget in three steps. Reserve the output first (your cap plus reasoning headroom), subtract fixed overhead such as the system prompt and tool definitions, and give what remains to retrieved content and history. Count tokens on the target model, because a window is measured in that model's tokens, and re-check when the model or deployment type changes." },
+    { "t": "table", "caption": "Windows on the check date 2026-10-13", "head": ["Model or deployment", "Window", "Max input", "Max output"], "compact": true, "rows": [
+      ["OpenAI `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`", "1,050,000", "922,000", "128,000"],
+      ["Azure `gpt-5.4-mini`, `gpt-5.2`, `gpt-5`", "400,000", "272,000", "128,000"],
+      ["Azure `gpt-4.1`, standard deployment", "300,000 allowed (model supports 1,047,576)", "300,000 window", "32,768"],
+      ["Azure `gpt-4.1`, provisioned or batch", "128,000 allowed", "128,000 window", "32,768"],
+      ["Claude Opus 5.5, Sonnet 5.5, Haiku 5.5", "1M", "within the window", "128K sync, 300K on batches with a beta header"]
+    ] },
+    { "t": "table", "caption": "The output cap has a different name per API", "head": ["API", "Parameter", "Notes"], "compact": true, "rows": [
+      ["OpenAI Responses", "`max_output_tokens`", "Includes reasoning tokens. Hitting it gives `status: incomplete` with `incomplete_details.reason: max_output_tokens` [[r3]]"],
+      ["OpenAI Chat Completions", "`max_completion_tokens`", "`max_tokens` is deprecated and not compatible with o-series [[r5]]"],
+      ["Anthropic Messages", "`max_tokens` (required)", "Includes thinking tokens [[r19]]"]
+    ] },
+    { "t": "callout", "kind": "gotcha", "title": "Long prompts can change the price", "md": "On the GPT-6 pages, a prompt over 272,000 input tokens costs 2x the input and cache rates and 1.5x the output rate for the whole request [[r1]]. Claude Haiku 5.5 charges more above 100,000 prompt tokens, while other 1M Claude models use standard pricing across the window [[r20]]." }
+  ],
+  "whereToUse": [
+    "Sizing the retrieval budget: how many chunks fit after instructions, history and tools",
+    "Setting `max_output_tokens` so reasoning models can finish thinking and still answer",
+    "Choosing a deployment type on Azure, because the allowed window depends on the deployment",
+    "Diagnosing truncated or empty answers and 400 errors on overflow",
+    "Estimating cost steps for long prompts"
+  ],
+  "whenToUse": {
+    "use": [
+      "You build prompts from several sources and must cap each part",
+      "You use a reasoning model, where hidden tokens eat the output budget",
+      "Prompts approach the window on a given platform"
+    ],
+    "avoid": [
+      "Setting a very large output cap by habit: on Azure the TPM check counts `max_tokens` in full [[tr7]]",
+      "Filling the window because it exists: accuracy and cost both worsen with length",
+      "Copying a window figure from a model page without checking your deployment type"
+    ],
+    "flips": [
+      "Reasoning effort is above `none`: reserve at least 25,000 tokens for reasoning and output when starting out [[r3]]",
+      "Prompts exceed the deployment window: change deployment or model, or retrieve instead of stuffing",
+      "Latency matters: a lower output cap also shortens the worst case"
+    ]
+  },
+  "alternatives": {
+    "title": "What to do when content is bigger than the budget",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Bigger window or model", "The task needs all content at once", "Content grows without bound", "Long-prompt price step, slower first token"],
+      ["Retrieval (RAG)", "Only part of the content matters per question", "The task spans the whole document", "Retrieval quality and ingestion work"],
+      ["Summarise or compact history", "A chat grows turn by turn", "Exact earlier wording matters", "Lossy, and compaction can drop details [[r12]]"],
+      ["Truncate the oldest content", "Old turns hold little value", "Early instructions or facts matter", "Silent loss of content you may need"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A reasoning model returns no visible text and `status: incomplete`", "cause": "Hidden reasoning used the whole `max_output_tokens` before any text was written", "fix": "Raise the cap, reserve about 25,000 tokens at first, and read `incomplete_details.reason`" },
+    { "symptom": "HTTP 400 when the prompt grows", "cause": "Responses defaults to `truncation: disabled`, which fails on overflow instead of trimming", "fix": "Count before sending, trim deliberately, or set `truncation` to `auto` knowing it drops content" },
+    { "symptom": "429 responses while metrics show spare quota", "cause": "The Azure TPM check counts `max_tokens` in full, so a 4,000 cap uses 4,000 tokens of limit even for a 200 token answer", "fix": "Set the cap near the real need and keep headroom for bursts" },
+    { "symptom": "A 330,000 token prompt fails on a model that lists a 1M window", "cause": "The deployment type sets a lower limit, for example 300,000 on `gpt-4.1` standard", "fix": "Check the deployment limit on the platform page, not only the model card" }
+  ],
+  "scenarios": [
+    {
+      "id": "w01-t02-s1",
+      "title": "Empty answers from a reasoning model",
+      "situation": "A support tool on a reasoning model sometimes shows a blank answer. Logs show `status: incomplete`. The team capped output at 1,500 tokens to control cost.",
+      "constraints": ["Reasoning effort is `medium`", "Answers are about 300 tokens", "Cost control matters", "Responses API"],
+      "unknowns": ["How many reasoning tokens does a typical request use?", "Does effort `low` keep quality?"],
+      "question": "What do you change first?",
+      "options": [
+        { "name": "Set `truncation` to `auto`", "verdict": "poor", "why": "That setting trims input on overflow. It does not raise the output cap that was hit.", "tradeoff": "It is right when the prompt, not the output, exceeds the window." },
+        { "name": "Raise `max_output_tokens` to leave room for reasoning, then measure `reasoning_tokens` and tune", "verdict": "best", "why": "Both reasoning and visible text count against the cap, and the guidance is to reserve about 25,000 tokens first and tighten after measuring [[r3]].", "tradeoff": "Worst-case spend per request rises until you tune the cap." },
+        { "name": "Lower the reasoning effort to `low`", "verdict": "good", "why": "It shrinks hidden spend and latency, so the same cap may suffice.", "tradeoff": "Quality can drop on hard questions, so confirm with an eval." }
+      ],
+      "flips": [
+        { "if": "Evals show effort `low` is as accurate", "then": "Lower the effort, which cuts both cost and latency." },
+        { "if": "Requests are all trivial lookups", "then": "Use a non-reasoning model and keep the small cap." }
+      ],
+      "takeaway": "A cap on a reasoning model must cover thinking plus the answer."
+    },
+    {
+      "id": "w01-t02-s2",
+      "title": "A 330,000 token document on a standard deployment",
+      "situation": "An Azure `gpt-4.1` standard deployment rejects a 330,000 token prompt. The model card says it supports about 1M tokens. The task is a cross-reference check across the whole document.",
+      "constraints": ["The whole document must be visible at once", "Moderate budget", "Azure deployment"],
+      "unknowns": ["Is a different model allowed?", "How often will this run?"],
+      "question": "What do you do?",
+      "options": [
+        { "name": "Use a model whose deployment window covers the prompt, and budget for the long-prompt price step", "verdict": "best", "why": "The standard `gpt-4.1` deployment allows 300,000 tokens, while models such as `gpt-5.4` list 1,050,000 [[r13]]. The task needs the whole document, so retrieval would lose cross references.", "tradeoff": "Requests above 272,000 input tokens cost more, and long inputs can lose accuracy deep in the text." },
+        { "name": "Trim or retrieve the document to fit under 300,000 tokens", "verdict": "good", "why": "Keeps the current model and cost.", "tradeoff": "Cross references outside the retrieved part are missed, which the task forbids." },
+        { "name": "Move to a provisioned deployment to get the full 1,047,576 window", "verdict": "poor", "why": "Provisioned and batch deployments of `gpt-4.1` allow only 128,000 tokens, which is smaller.", "tradeoff": "Provisioned capacity helps with steady throughput, not with window size." }
+      ],
+      "flips": [
+        { "if": "Questions need only a few sections", "then": "Retrieval is cheaper and often more accurate." },
+        { "if": "The job runs once a day offline", "then": "Use Batch or Flex pricing to offset the long-prompt cost." }
+      ],
+      "takeaway": "The deployment type, not the model card, sets your window."
+    }
+  ],
+  "quiz": [
+    { "id": "w01-t02-q1", "type": "match", "tag": "concept", "q": "Match each API to its output cap parameter.", "pairs": [
+      { "l": "OpenAI Responses", "r": "`max_output_tokens`" },
+      { "l": "OpenAI Chat Completions (current)", "r": "`max_completion_tokens`" },
+      { "l": "Anthropic Messages", "r": "`max_tokens` (required)" },
+      { "l": "Chat Completions (deprecated name)", "r": "`max_tokens`" }
+    ], "explain": "Responses uses `max_output_tokens`. Chat Completions replaced `max_tokens` with `max_completion_tokens`, and the old name is not compatible with o-series. Anthropic requires `max_tokens`, which includes thinking tokens." },
+    { "id": "w01-t02-q2", "type": "single", "tag": "diagnose", "q": "A Responses call with the default `truncation` returns HTTP 400 when the conversation grows. Why?", "options": ["`truncation` defaults to `auto` and failed", "The output cap was too high", "`store` was false", "`truncation` defaults to `disabled`, which fails on overflow"], "answer": 3, "explain": "The default `disabled` fails with 400 when input exceeds the window. `auto` would trim instead. The output cap and `store` do not cause this error." },
+    { "id": "w01-t02-q3", "type": "numeric", "tag": "numeric", "q": "A request has 900,000 input tokens on a 1,050,000 token window with a 128,000 token output cap. What is the largest visible plus reasoning output the request can produce?", "answer": 128000, "tolerancePct": 0, "unit": "tokens", "explain": "The window leaves 150,000 tokens, but the output cap of 128,000 is lower, so 128,000 is the limit. Both limits apply and the smaller one wins." }
+  ],
+  "flashcards": [
+    { "front": "Does `max_output_tokens` reserve tokens?", "back": "No. It is a ceiling. Reasoning tokens count against it, so a low value can leave no room for visible text." },
+    { "front": "How much headroom does OpenAI advise for reasoning and output at the start?", "back": "At least 25,000 tokens, then tune after measuring reasoning token use." },
+    { "front": "Why can a model's listed window differ from what you get on Azure?", "back": "Deployment type sets the limit. `gpt-4.1` allows 300,000 on standard and 128,000 on provisioned or batch, though the model supports 1,047,576." }
+  ],
+  "related": ["w01-t01", "w01-t03", "w01-t14", "w02-t11", "w16-t04"],
+  "refs": ["r1", "r13", "r3", "r5", "r19", "r20", "r12", "tr7"]
+}

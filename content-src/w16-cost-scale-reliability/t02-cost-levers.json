@@ -1,0 +1,120 @@
+{
+  "id": "w16-t02",
+  "order": 2,
+  "group": "Cost",
+  "title": "Cost levers",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "Six levers cut spend: trim the prompt, cache the stable prefix, cap output, choose a cheaper model, move work to batch tiers, and reuse whole answers. Each has a break-even and a catch.",
+  "useIf": "You know which token sink dominates and must pick the lever that fits it.",
+  "avoidIf": "You have not attributed spend yet, or you would trade answer quality you have not measured.",
+  "explain": [
+    { "t": "p", "md": "Pull levers in the order of **sink size, effort and risk**. Output tokens are the costliest class, and OpenAI's rule of thumb is that halving output tokens may cut about half the latency while halving the prompt may cut only 1% to 5% [[tr8]]. Input trimming still saves money in proportion to tokens, so latency and cost do not rank levers the same way." },
+    { "t": "p", "md": "**Prompt caching** reads a repeated prefix at 0.1x but writes it at 1.25x on GPT-5.6 and later, so it breaks even at the second request inside the lifetime: 1.25 + 0.1(N-1) against N [[r25]]. Anthropic's 1-hour entry writes at 2x and needs three requests (2.2x against 3x) [[r26]]. A **semantic cache** skips the whole call on a hit but pays an embedding and a vector lookup on every miss, and Microsoft warns hits can be incorrect, outdated or unsafe [[tr1]]. **Batch** and **Flex** halve the price in return for time [[r12]] [[r11]]." },
+    { "t": "table", "caption": "The levers in one view", "head": ["Lever", "What it cuts", "Evidence", "Catch"], "rows": [
+      ["Trim prompt", "Input tokens", "Cost falls in proportion; latency barely moves [[tr8]]", "Dropped context lowers answer quality"],
+      ["Prompt cache", "Input price of a reused prefix", "Read 0.1x, write 1.25x [[r25]]", "Silent misses when the prefix drifts"],
+      ["Cap output", "Output tokens", "Azure advises lower max_tokens and stop sequences [[r27]]", "Truncated answers"],
+      ["Cheaper or routed model", "Price per token", "Cascades matched the best model with up to 98% lower cost in 2023 tests [[r20]]", "Needs evals; splits the cache"],
+      ["Batch or Flex", "Price per token", "50% less [[r12]] [[r11]]", "24-hour target or no SLA"],
+      ["Semantic cache", "Whole calls", "Policy pair lookup and store [[tr1]]", "Wrong, stale or leaked answers"],
+      ["Prompt compression", "Input tokens", "LLMLingua up to 20x with little loss on tested sets [[r22]]", "Exact quotations can break"]
+    ] }
+  ],
+  "whereToUse": [
+    "A cost sprint after attribution shows the biggest token sink",
+    "Designing a prompt so the stable part comes first and caches",
+    "Deciding which workloads move to Batch or Flex",
+    "Setting max_tokens and stop sequences per endpoint",
+    "Tuning an APIM semantic cache for a public FAQ"
+  ],
+  "whenToUse": {
+    "use": ["Input is dominated by a long, stable prefix: cache it", "Nobody waits for the result: batch it", "Many queries are paraphrases of each other and low risk: semantic cache", "Outputs are longer than users need: cap them"],
+    "avoid": ["Caching a prefix reused once per lifetime: the write premium loses", "Semantic caching answers built from permissioned or fast-changing data", "Compressing prompts that contain quotations the answer must reproduce"],
+    "flips": ["Gaps between requests exceed the lifetime: a longer TTL or prewarm, or skip caching", "Quality evals fail on the cheaper model: keep the large model and cut elsewhere", "Answers depend on the user's permissions: scope or skip the semantic cache"]
+  },
+  "alternatives": {
+    "title": "Choosing between levers",
+    "head": ["Lever", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Prompt cache", "Long stable prefix, steady traffic", "Prefix changes every call, one use per lifetime", "Write at 1.25x, hit rate must be monitored"],
+      ["Semantic cache", "High paraphrase rate, public, low-risk content", "Permissioned data, fast-changing facts, regulated answers", "Wrong or leaked answers, extra lookup on misses"],
+      ["Batch or Flex", "Delay-tolerant work", "Interactive requests", "No real-time SLA; Flex can return 429 or 408"],
+      ["Routing to a smaller model", "Wide difficulty spread, trusted evals", "Uniform hard tasks", "Quality regressions, split prompt cache"],
+      ["Trimming and capping", "Verbose prompts or answers", "Context really is needed", "Quality loss that is hard to see"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Cache hit ratio is near zero after a release", "cause": "A timestamp, reordered tools or a changed effort setting moved the prefix", "fix": "Put static content first, keep tool order stable, alert on cached tokens over prompt tokens" },
+    { "symptom": "A semantic cache returns another user's answer", "cause": "The cache key ignores tenant, user, model or prompt version", "fix": "Partition with `vary-by` and include model, embedding model, template and policy versions in the key [[tr2]]" },
+    { "symptom": "Semantic cache saves nothing", "cause": "Low repeat rate, so most requests pay embedding plus lookup plus the normal call", "fix": "Measure net savings per miss and hit; drop the cache if hits stay low" }
+  ],
+  "scenarios": [
+    {
+      "id": "w16-t02-s1",
+      "title": "A fat, stable prefix in an agent loop",
+      "situation": "A tool-using agent makes 8 to 15 calls per task. Each call carries 12,000 tokens of tool definitions and system text plus a growing history.",
+      "constraints": ["The tool set is stable inside a session", "Tasks are interactive", "Traffic is steady through the day"],
+      "unknowns": ["Is the prefix byte-identical across calls?", "How often do sessions go idle longer than the lifetime?", "Is the deployment PTU-M, which has no breakpoints?"],
+      "question": "Which change saves the most first?",
+      "options": [
+        { "name": "Order tools and system first, keep history append-only, remove early timestamps", "verdict": "best", "why": "Calls after the first read the 12,000 tokens at a tenth of the price and with lower time to first token.", "tradeoff": "Any tool change or compaction resets reuse, and each first write costs 1.25x." },
+        { "name": "Trim tool results and compact old history", "verdict": "good", "why": "Shrinks the growing part of the prompt.", "tradeoff": "Compaction rewrites the prefix and resets the cache." },
+        { "name": "Move every step to the smallest model", "verdict": "poor", "why": "Weaker planning can add steps, which multiplies the re-sent prefix.", "tradeoff": "Fine for narrow sub-steps behind a router once evals pass." }
+      ],
+      "flips": [
+        { "if": "Sessions rarely make a second call inside the lifetime", "then": "Caching saves little; shrink the tool list instead." },
+        { "if": "Gaps between calls run 5 to 60 minutes on Anthropic", "then": "The 1-hour TTL can pay, but only from the third request." }
+      ],
+      "takeaway": "In loops the repeated prefix is the bill. Make it cacheable first."
+    },
+    {
+      "id": "w16-t02-s2",
+      "title": "Nightly enrichment of two million records",
+      "situation": "A pipeline classifies and summarises records overnight. Results are read the next morning. Volume is large and the model is fixed.",
+      "constraints": ["Nobody waits for individual results", "Window is eight hours", "Volume repeats every night"],
+      "unknowns": ["Does the model support the batch tier?", "Is enqueued-token quota enough for one night's input?", "How are partial failures retried?"],
+      "question": "Where does the work run?",
+      "options": [
+        { "name": "Batch tier with a 24-hour target", "verdict": "best", "why": "Half price on Azure, OpenAI and Anthropic, with separate quota that does not touch interactive traffic.", "tradeoff": "No real-time SLA, so the eight-hour window is a risk if jobs queue longer; split jobs and monitor." },
+        { "name": "Flex processing", "verdict": "good", "why": "Also 50% off with a synchronous API shape.", "tradeoff": "Preview on Azure, preemptible: expect 429 and 408 and build your own retry. It shares quota with Standard." },
+        { "name": "Provisioned throughput for the nightly peak", "verdict": "poor", "why": "PTUs bill every hour whether or not requests arrive, so a nightly job pays for idle days.", "tradeoff": "Right for steady, latency-sensitive volume." }
+      ],
+      "flips": [
+        { "if": "Results must be ready within 30 minutes", "then": "Batch is too slow; use Flex with fallback or Standard." },
+        { "if": "The model has no batch support", "then": "Use Standard with a client-side rate limiter and off-peak scheduling." }
+      ],
+      "takeaway": "If nobody waits, do not pay for waiting."
+    },
+    {
+      "id": "w16-t02-s3",
+      "title": "A public FAQ assistant",
+      "situation": "A public assistant answers product questions from one shared knowledge base. About 40% of questions are paraphrases of the same few hundred. No user data is involved.",
+      "constraints": ["Content is identical for every caller", "A wrong answer is a minor support cost", "Answers change when the knowledge base is republished"],
+      "unknowns": ["What is the measured paraphrase rate?", "How strict can the similarity threshold be?", "How is the cache invalidated on republish?"],
+      "question": "Is a semantic cache worth it?",
+      "options": [
+        { "name": "Yes: gateway semantic cache, strict threshold, TTL, flush on republish", "verdict": "best", "why": "Content is shared and low risk, so a hit saves the whole call. Start near 0.05 on the APIM scale and add the model and prompt version to the partition.", "tradeoff": "Every miss pays embedding plus lookup; wrong hits are possible." },
+        { "name": "Exact-match response cache only", "verdict": "good", "why": "No similarity risk and simple invalidation.", "tradeoff": "Misses paraphrases, so hit rate is lower." },
+        { "name": "No cache; rely on prompt caching", "verdict": "poor", "why": "It leaves 40% repeat traffic paying full output cost.", "tradeoff": "Right when answers are permissioned or the repeat rate is low." }
+      ],
+      "flips": [
+        { "if": "Answers depend on the caller's entitlements", "then": "Partition by identity scope or skip semantic caching." },
+        { "if": "Repeat rate measures under 10%", "then": "Net savings are small; skip it." }
+      ],
+      "takeaway": "Semantic caching pays for shared, low-risk, repetitive content only."
+    }
+  ],
+  "quiz": [
+    { "id": "w16-t02-q1", "type": "numeric", "tag": "numeric", "q": "An Anthropic 1-hour cache entry writes at 2x and reads at 0.1x. What is the smallest number of requests inside the hour for which caching costs less than uncached?", "answer": 3, "tolerancePct": 0, "unit": "requests", "explain": "Cost is 2 + 0.1(N-1) against N. N=2 gives 2.1 against 2, which loses. N=3 gives 2.2 against 3, which wins [[r26]].", "difficulty": 2 },
+    { "id": "w16-t02-q2", "type": "single", "tag": "tradeoff", "q": "You deploy an APIM semantic cache for the first time. Which `score-threshold` is the safest start?", "options": ["0.8, because higher means more hits", "0.5, the midpoint", "About 0.05, then tune with measured wrong-hit rates"], "answer": 2, "explain": "In APIM a lower score is stricter. Microsoft suggests starting low and warns that above 0.2 may mismatch [[tr1]]. Higher values add hits and wrong answers; 0.8 would match loosely.", "difficulty": 2 },
+    { "id": "w16-t02-q3", "type": "match", "tag": "concept", "q": "Match each lever to its main catch.", "pairs": [ { "l": "Prompt cache", "r": "Silent misses when the prefix drifts" }, { "l": "Semantic cache", "r": "Wrong, stale or leaked answers" }, { "l": "Batch", "r": "24-hour target, no real-time SLA" }, { "l": "Prompt compression", "r": "Exact quotations can break" } ], "explain": "Each lever fails differently. The prompt cache keeps the model output unchanged but needs monitoring; a semantic cache changes what users see.", "difficulty": 1 }
+  ],
+  "flashcards": [
+    { "front": "When does a 1.25x write plus 0.1x reads beat uncached?", "back": "From the second request inside the lifetime: 1.25 + 0.1(N-1) against N. One use loses 25%." },
+    { "front": "Which saves more latency: halving output or halving input?", "back": "Output, roughly half the latency by OpenAI's rule of thumb. Halving input may save only 1% to 5% of latency, though it still cuts cost." },
+    { "front": "What does a semantic cache cost on a miss?", "back": "An embedding call plus a vector lookup before the normal model call. Net savings need a high hit rate." }
+  ],
+  "related": ["w16-t01", "w16-t03", "w16-t06", "w02-t11", "w02-t15", "w16-l1"],
+  "refs": ["r25", "r26", "r27", "r12", "r11", "r20", "r22", "tr1", "tr2", "tr8"]
+}

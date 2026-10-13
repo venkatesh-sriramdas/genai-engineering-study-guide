@@ -1,0 +1,114 @@
+{
+  "id": "w11-t09",
+  "order": 9,
+  "group": "Behaviour",
+  "title": "Looping and bounded retries",
+  "minutes": 7,
+  "difficulty": "advanced",
+  "summary": "A loop re-invokes an agent until a completion condition holds (marker, todos done, background tasks done, AI judge or your own callback), always with a maximum. It is experimental.",
+  "useIf": "One run often stops early and you want the agent to keep working until a checkable condition is met, within a hard cap.",
+  "avoidIf": "The condition cannot be checked cheaply and reliably, or one run is normally enough. Never loop without a cap.",
+  "explain": [
+    { "t": "p", "md": "`LoopAgent` (.NET) wraps any `AIAgent`; `AgentLoopMiddleware` (Python) plugs into a regular `Agent`. After each invocation an **evaluator** decides whether to continue. The default maximum is **10 invocations**; Python judge loops default to **5**. The loop stops and returns when a tool approval is pending. The docs warn: always bound autonomous loops, because a completion condition can fail, a model can stall and an evaluator can be probabilistic [[tr9]]." },
+    { "t": "table", "caption": "Completion conditions (.NET evaluator names, Python equivalent in brackets)", "head": ["Evaluator", "Continues while", "Cost profile"], "rows": [
+      ["`CompletionMarkerLoopEvaluator` (predicate on `last_result.text`)", "The reply lacks a marker such as DONE", "Free, brittle if the model forgets the marker"],
+      ["`TodoCompletionLoopEvaluator` (`todos_remaining()`)", "Todos remain, optionally only in selected modes", "Free, needs the todo provider"],
+      ["`BackgroundTaskCompletionLoopEvaluator` (`background_tasks_running()`)", "Background child tasks still run", "Free, needs background agents"],
+      ["`AIJudgeLoopEvaluator` (`AgentLoopMiddleware.with_judge`)", "A separate judge says the request is not fully answered", "One extra model call per iteration, judge sees your data"],
+      ["`DelegateLoopEvaluator` (custom predicate)", "Your callback returns continue, optionally with feedback", "Whatever your code does"]
+    ] },
+    { "t": "p", "md": "**Context control.** By default one session is reused and the winning evaluator's feedback becomes the next input. `FreshContextPerIteration` (.NET) or `fresh_context=True` (Python) restarts each pass from the original request plus a progress log and restores the session snapshot. Non-streaming runs return an aggregated transcript unless `NonStreamingReturnsLastResponseOnly` / `return_final_only=True`. Pass `max_iterations=None` only when the predicate is guaranteed to terminate [[tr9]]." },
+    { "t": "tabs", "tabs": [
+      { "label": "C#", "blocks": [ { "t": "code", "lang": "csharp", "code": "AIAgent loop = new LoopAgent(\n    chatClient.AsAIAgent(),\n    new AIJudgeLoopEvaluator(judgeClient, new AIJudgeLoopEvaluatorOptions\n    {\n        Criteria = [\"Answer every part of the request.\",\n                    \"Support conclusions with evidence.\"],\n    }),\n    new LoopAgentOptions { MaxIterations = 4 });" } ] },
+      { "label": "Python", "blocks": [ { "t": "code", "lang": "python", "code": "from agent_framework import Agent, AgentLoopMiddleware\n\ndef needs_more_work(*, last_result, iteration, **kwargs):\n    if iteration >= 5:               # belt and braces on top of max_iterations\n        return False\n    return 'DONE' not in last_result.text   # or (True, 'feedback text')\n\nagent = Agent(client=client,\n              middleware=[AgentLoopMiddleware(needs_more_work, max_iterations=5)])\n\n# judge-driven variant (default 5 iterations):\nloop = AgentLoopMiddleware.with_judge(judge_client,\n    criteria=['Answer every part of the request.'], max_iterations=4)" } ] }
+    ] },
+    { "t": "callout", "kind": "preview", "title": "Experimental (checked 2026-10-13)", "md": "Agent looping is marked experimental. Only use a judge endpoint you trust with the original request and the generated response [[tr9]]." }
+  ],
+  "whereToUse": [
+    "Execute-mode Harness runs that must finish every todo",
+    "Drafts that need a quality bar: loop with a judge until the criteria pass or the cap hits",
+    "Agents that delegate to background child tasks and must wait for all of them",
+    "Retry-with-feedback for outputs that must contain a required structure"
+  ],
+  "whenToUse": {
+    "use": [
+      "The stop condition is cheap and checkable: todos, marker, test result",
+      "A cap and a cost ceiling per run are acceptable",
+      "A second pass really improves the result more than it costs"
+    ],
+    "avoid": [
+      "The only evaluator is another model with the same blind spots",
+      "No cap: a stuck condition means unbounded cost",
+      "The task is deterministic: use a workflow loop edge with an explicit exit test"
+    ],
+    "flips": [
+      "Judge rarely says done: reduce criteria, lower the cap or replace the judge with a code check",
+      "Iterations grow context: switch to fresh context per iteration with a progress log"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Agent loop middleware", "Re-run one agent against a condition", "Steps differ per iteration", "Experimental, up to cap x run cost"],
+      ["Tool iteration limits", "Bounding tool calls inside one run", "You need whole-run retries", "Does not re-invoke the agent"],
+      ["Workflow with a conditional back-edge", "Explicit retry, audited exit test", "Open-ended retry", "Design effort, still needs a counter"],
+      ["Evaluator-optimizer pattern", "Separate generator and critic agents", "One agent can self-check", "Two agents and two prompts"],
+      ["No loop, bigger prompt", "Failures are rare", "Early stops are frequent", "Silent incomplete results"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Cost per request is 10 times the single-run cost", "cause": "The condition never becomes true and the loop runs to the default cap of 10", "fix": "Lower `max_iterations`, fix the condition, monitor iterations per request" },
+    { "symptom": "A loop ends silently while an approval is pending", "cause": "The loop stops and returns when a tool approval is pending", "fix": "Handle `user_input_requests` or approval content after the loop returns and resume with the same session" },
+    { "symptom": "Judge leaks sensitive input", "cause": "The judge client receives the original request and the generated response", "fix": "Use a judge endpoint in the same trust and data boundary" }
+  ],
+  "scenarios": [
+    {
+      "id": "w11-t09-s1",
+      "title": "Finish all todos, bounded",
+      "situation": "A Harness agent works through 15 todos in execute mode but returns after 4 to 6 of them. Users want completion without babysitting. A run costs about 0.40 in tokens.",
+      "constraints": ["Cost cap of about 3 per request", "Todo state is available", "No judge budget"],
+      "unknowns": ["Is the early stop a model habit or a context problem?", "Can the cap be 6 or 7 iterations?"],
+      "question": "How do you get completion?",
+      "options": [
+        { "name": "Todo-completion loop limited to execute mode, cap of 7 iterations", "verdict": "best", "why": "A free, exact condition. 7 iterations x 0.40 is about 2.80, under the 3.00 cap.", "tradeoff": "Experimental API, and incomplete work is returned if the cap hits." },
+        { "name": "AI judge loop", "verdict": "poor", "why": "Adds a model call per iteration for a condition the todo list answers exactly.", "tradeoff": "Right for fuzzy quality criteria with no checkable state." },
+        { "name": "Remove the cap", "verdict": "poor", "why": "A stuck condition becomes unbounded cost.", "tradeoff": "Acceptable only when the predicate is guaranteed to terminate." }
+      ],
+      "flips": [
+        { "if": "Todos are often unclear", "then": "Add a short judge for the final answer on top of the todo condition." },
+        { "if": "Context balloons by iteration 5", "then": "Enable fresh context per iteration with a progress log." }
+      ],
+      "takeaway": "Prefer exact conditions over judges, and compute the worst-case bill from the cap."
+    },
+    {
+      "id": "w11-t09-s2",
+      "title": "Quality bar for a customer letter",
+      "situation": "Letters must cover five required points. A quality reviewer rejects 30 percent of first drafts. Letters are not time critical.",
+      "constraints": ["Five checkable required points", "Latency not critical", "Data is confidential"],
+      "unknowns": ["Can the points be checked in code?", "Is a judge allowed to see the letter?"],
+      "question": "What loop do you build?",
+      "options": [
+        { "name": "A delegate evaluator that checks the five points in code and returns feedback, cap of 3", "verdict": "best", "why": "Exact, free and gives targeted feedback; confidential text stays in your process.", "tradeoff": "You write and maintain the checks." },
+        { "name": "A judge model in the same data boundary with criteria", "verdict": "good", "why": "Flexible for softer criteria such as tone.", "tradeoff": "Extra cost per iteration and probabilistic verdicts." },
+        { "name": "A judge on a public endpoint", "verdict": "poor", "why": "The judge receives the request and response, which are confidential.", "tradeoff": "Fine for public data." }
+      ],
+      "flips": [
+        { "if": "Tone matters as much as coverage", "then": "Use code checks first, then a judge for tone with a lower cap." },
+        { "if": "Letters are generated in bulk overnight", "then": "A higher cap is affordable, still bound it." }
+      ],
+      "takeaway": "Check what you can in code, judge only what you must, and keep the judge inside your data boundary."
+    }
+  ],
+  "quiz": [
+    { "id": "w11-t09-q1", "type": "numeric", "tag": "numeric", "q": "A looped agent run costs 0.50 per iteration and the judge adds 0.10 per iteration. With the Python judge-loop default of 5 iterations, what is the worst-case cost per request?", "answer": 3, "tolerancePct": 1, "unit": "currency units", "explain": "5 iterations x (0.50 + 0.10) = 3.00. A cap turns an open-ended loop into a known worst case.", "ref": "tr9" },
+    { "id": "w11-t09-q2", "type": "multi", "tag": "concept", "q": "Which statements about looping are true? Select all.", "options": ["The default maximum is 10 agent invocations", "The loop stops and returns when a tool approval is pending", "Looping is a stable, GA feature in every SDK", "`max_iterations=None` is safe whenever you trust the model"], "answers": [0, 1], "explain": "Looping is experimental and absent in Go, and `None` is only for predicates guaranteed to terminate.", "ref": "tr9" }
+  ],
+  "flashcards": [
+    { "front": "What is the default loop cap?", "back": "10 agent invocations (`LoopAgent`, `AgentLoopMiddleware`). Python judge loops default to 5." },
+    { "front": "Name three loop evaluators besides a judge.", "back": "Completion marker, todo completion, background-task completion, or a delegate callback." },
+    { "front": "What does fresh context per iteration do?", "back": "Rebuilds each pass from the original request plus a progress log and restores the session snapshot, so context does not grow." }
+  ],
+  "related": ["w11-t08", "w11-t06", "w10-t10", "w10-t06"],
+  "refs": ["tr9"]
+}

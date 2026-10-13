@@ -1,0 +1,108 @@
+{
+  "id": "w08-l04",
+  "order": 4,
+  "title": "Ask, wait and listen",
+  "kind": "problem",
+  "minutes": 18,
+  "brief": "A tool needs a human answer halfway through, or it runs for ten minutes while the client may disconnect. The expected duration, whether secrets are involved and whether the client supports extensions are open. Choose how the call pauses, waits and reports changes.",
+  "blocks": [
+    { "t": "h", "text": "Five ways to pause or outlive a call", "level": 2 },
+    { "t": "compare", "title": "Handling input and duration", "intro": "Server-initiated requests such as `elicitation/create` are gone in 2026-07-28. These are the replacements and the portable fallbacks.", "options": [
+      { "name": "Block the request", "tag": "Baseline", "summary": "Hold the request open until the tool finishes.", "pros": ["No extension and no extra code", "Easy to reason about"], "cons": ["Proxies and clients impose timeouts", "No crash resilience: a dropped stream loses the call because SSE resumption was removed in 2026-07-28", "Cannot ask the user anything"], "bestWhen": "Calls finish in a few seconds and the timeout budget is known.", "avoidWhen": "Calls take minutes or need input.", "meta": [{ "k": "State", "v": "none" }, { "k": "Needs", "v": "nothing extra" }] },
+      { "name": "Multi Round-Trip Request", "tag": "Core 2026-07-28", "summary": "Return `resultType: \"input_required\"` with `inputRequests` and optional `requestState`. The client retries the same request with `inputResponses`.", "pros": ["No server state or shared storage", "Any instance can finish the retry", "Carries elicitation, sampling and roots requests"], "cons": ["Only allowed on `tools/call`, `resources/read` and `prompts/get`", "`requestState` is attacker-controlled input and needs integrity protection", "Does not help long computation"], "bestWhen": "A call needs one or two answers from the user and then completes quickly.", "avoidWhen": "The work itself runs for minutes.", "meta": [{ "k": "State", "v": "in requestState" }, { "k": "Needs", "v": "client declares the capability" }] },
+      { "name": "Tasks extension", "tag": "Extension", "summary": "The server returns a `CreateTaskResult` (`resultType: \"task\"`) with `taskId`, `status`, `ttlMs` and `pollIntervalMs`. The client polls `tasks/get` and answers input through `tasks/update`.", "pros": ["Durable handle that survives disconnects", "Progress status and cooperative cancel", "Mid-flight input through the `input_required` state"], "cons": ["Opt-in extension that SDKs may skip", "The server decides per request whether to create a task", "Needs durable task storage"], "bestWhen": "Work runs minutes or hours, or the client connection is unreliable.", "avoidWhen": "The client does not advertise `io.modelcontextprotocol/tasks`.", "meta": [{ "k": "State", "v": "durable task" }, { "k": "Needs", "v": "extension on both sides" }] },
+      { "name": "Start-and-poll tools", "tag": "Portable", "summary": "A `start_export` tool returns a handle and `get_export_status` and `approve_export` tools take it.", "pros": ["Works on any client that supports tools", "Handles are explicit and testable"], "cons": ["The model must manage polling and approvals", "Every call must authorize the handle", "No first-class cancellation or progress"], "bestWhen": "You cannot rely on extension support.", "avoidWhen": "A first-class task lifecycle is available and expected.", "meta": [{ "k": "State", "v": "your store" }, { "k": "Needs", "v": "handle authorization" }] },
+      { "name": "Platform background mode", "tag": "Platform", "summary": "The agent platform runs the call in the background. Foundry's non-streaming MCP calls time out at 100 seconds, so long tools need background mode [[r15]].", "pros": ["The platform owns retries and waiting"], "cons": ["Ties the design to one platform", "Does not change the server's protocol surface"], "bestWhen": "The host is that platform and the server is private to it.", "avoidWhen": "The server must work across hosts.", "meta": [{ "k": "State", "v": "platform" }, { "k": "Needs", "v": "platform support" }] }
+    ] },
+    { "t": "diagram", "id": "w08-l04-d1", "title": "Task lifecycle in the Tasks extension", "alt": "A task starts in working. It can move to input required and back to working after tasks update, and it ends in completed, failed or cancelled.", "src": "stateDiagram-v2\n  [*] --> working\n  working --> input_required\n  input_required --> working: tasks/update\n  working --> completed\n  working --> failed\n  working --> cancelled: tasks/cancel\n  completed --> [*]\n  failed --> [*]\n  cancelled --> [*]", "caption": "Statuses are `working`, `input_required`, `completed`, `failed` and `cancelled`. `tasks/result` and `tasks/list` were removed when Tasks became an extension [[r7]] [[r1]]." },
+    { "t": "table", "caption": "Elicitation has two modes. Neither is deprecated [[r27]]", "head": ["Aspect", "Form mode", "URL mode"], "rows": [
+      ["Use for", "Flat structured input: strings, numbers, booleans and enums", "Sensitive or out-of-band steps: sign-in, payment, third-party authorization"],
+      ["Data path", "Through the MCP client and host", "The user acts in a browser. Third-party credentials never pass through the client"],
+      ["Hard rule", "Servers MUST NOT ask for passwords, API keys, access tokens or payment credentials", "No user PII in the URL and no pre-authenticated URL. Clients MUST NOT prefetch it or open it without consent"],
+      ["Client declares", "`elicitation: {}` or `{ \"form\": {} }`. Form is the default when `mode` is omitted", "`{ \"url\": {} }`"],
+      ["User actions", "`accept`, `decline` or `cancel`", "`accept`, `decline` or `cancel`"]
+    ], "highlightCol": 2 },
+    { "t": "dials", "id": "w08-l04-pause", "title": "How should this call pause or outlive a connection?", "prompt": "Flip duration, the need for user input and extension support.",
+      "dials": [
+        { "id": "duration", "label": "Typical duration", "values": [ { "id": "short", "label": "Under 10 seconds" }, { "id": "minutes", "label": "A few minutes" }, { "id": "hours", "label": "Many minutes or hours" } ] },
+        { "id": "input", "label": "User input mid-call", "values": [ { "id": "none", "label": "None" }, { "id": "needed", "label": "One or two answers" } ] },
+        { "id": "support", "label": "Client supports the Tasks extension", "values": [ { "id": "yes", "label": "Yes" }, { "id": "no", "label": "No" } ] }
+      ],
+      "options": [
+        { "id": "block", "name": "Block the request", "summary": "Wait on one open request." },
+        { "id": "mrtr", "name": "MRTR input_required", "summary": "Stateless re-ask and retry." },
+        { "id": "tasks", "name": "Tasks extension", "summary": "Durable handle with polling." },
+        { "id": "poll", "name": "Start-and-poll tools", "summary": "Handles passed as ordinary arguments." }
+      ],
+      "scores": {
+        "block": {
+          "duration": { "short": { "s": 2, "why": "A short call completes before any timeout." }, "minutes": { "s": -1, "why": "Proxy and client timeouts start to bite, and a dropped stream loses the call." }, "hours": { "s": -2, "why": "No connection survives that long, and there is no resumption in 2026-07-28." } },
+          "input": { "none": { "s": 0, "why": "Nothing to ask." }, "needed": { "s": -2, "why": "A blocked request cannot ask without MRTR or tasks." } },
+          "support": { "yes": { "s": 0, "why": "Not used by this option." }, "no": { "s": 0, "why": "Not used by this option." } }
+        },
+        "mrtr": {
+          "duration": { "short": { "s": 1, "why": "Cheap for quick calls that need one answer." }, "minutes": { "s": -1, "why": "MRTR keeps no state, so it does not carry a long job." }, "hours": { "s": -2, "why": "It cannot outlive the request." } },
+          "input": { "none": { "s": 0, "why": "Nothing to ask." }, "needed": { "s": 2, "why": "Built for this: `input_required`, then a retry with answers, with no server state." } },
+          "support": { "yes": { "s": 0, "why": "Core feature, no extension needed." }, "no": { "s": 1, "why": "MRTR is core and works without the extension." } }
+        },
+        "tasks": {
+          "duration": { "short": { "s": -1, "why": "Task overhead for a quick call." }, "minutes": { "s": 2, "why": "A durable handle with polling fits." }, "hours": { "s": 2, "why": "The task id survives client restarts and reconnects." } },
+          "input": { "none": { "s": 0, "why": "Not needed." }, "needed": { "s": 1, "why": "The task enters `input_required` and the client answers through `tasks/update`." } },
+          "support": { "yes": { "s": 2, "why": "Both sides advertise the extension." }, "no": { "s": -2, "why": "Without the extension the client cannot handle a task result." } }
+        },
+        "poll": {
+          "duration": { "short": { "s": -1, "why": "Extra tools for no gain." }, "minutes": { "s": 1, "why": "Works, with polling logic in the model's loop." }, "hours": { "s": 1, "why": "Works if you store handles durably." } },
+          "input": { "none": { "s": 0, "why": "Not needed." }, "needed": { "s": -1, "why": "Input must arrive as further tool calls, which is awkward." } },
+          "support": { "yes": { "s": 0, "why": "A first-class task lifecycle is usually better." }, "no": { "s": 2, "why": "It needs only tools and handles, so any client works." } }
+        }
+      },
+      "takeaway": "Duration decides whether you need a durable handle. Input decides whether you need MRTR. Extension support decides whether the handle is first class or hand rolled." },
+    { "t": "failure", "title": "Failure modes and how to detect them", "items": [
+      { "symptom": "A form asks the user for an API key", "cause": "Form mode was used for a secret, which servers MUST NOT do", "fix": "Use URL mode so the credential goes straight from the user to the third party. Review elicitation schemas in code review" },
+      { "symptom": "A client changes `requestState` and approves its own request", "cause": "State that influences authorization was unsigned. `requestState` is attacker-controlled input", "fix": "Protect it with HMAC or AEAD, bind principal, expiry and request identity, and enforce single use server-side when needed [[r3]]" },
+      { "symptom": "Stale tool lists after a deploy", "cause": "The client ignores `ttlMs` or a shared cache serves a `private` result to another user", "fix": "Honor `ttlMs`, treat a list-changed notification as stale early, and never share `private` entries across authorization contexts. `input_required` results and MRTR retries MUST NOT be cached" },
+      { "symptom": "A server sends an elicitation the client cannot handle", "cause": "The server did not check the client's declared capabilities in `_meta`", "fix": "Servers MUST NOT send requests or modes the client has not declared. Detect it with a capability mismatch counter" },
+      { "symptom": "Clients poll a task forever", "cause": "No task TTL or poll interval, and no cooperative cancellation path", "fix": "Return `ttlMs` and `pollIntervalMs`, support `tasks/cancel`, and expire abandoned tasks" }
+    ] },
+    { "t": "accordion", "items": [
+      { "title": "Sampling, roots and logging: what to do instead", "blocks": [
+        { "t": "table", "caption": "All three are Deprecated in 2026-07-28 and still work. Earliest removal is the first revision released on or after 2027-07-28 [[r9]]", "head": ["Deprecated", "What it did", "Migrate to"], "rows": [
+          ["Sampling", "A server asked the client's model for a completion", "Call the model provider API directly"],
+          ["Roots", "A client told the server which directories it may work in", "Pass paths in tool parameters or resource URIs, or use server configuration"],
+          ["Logging", "`logging/setLevel` and `notifications/message`", "Write to stderr on stdio or use OpenTelemetry. The per-request level is `io.modelcontextprotocol/logLevel` in `_meta`"]
+        ] },
+        { "t": "p", "md": "Under MRTR, `inputRequests` values can still be an elicitation, a sampling request or a roots request. Those last two are Deprecated, so build new flows on elicitation and ordinary parameters [[r3]]." }
+      ] },
+      { "title": "Subscriptions and caching hints", "blocks": [
+        { "t": "list", "style": "ul", "items": [
+          "`subscriptions/listen` opens one long-lived POST response stream. The client opts in to `toolsListChanged`, `promptsListChanged`, `resourcesListChanged` and `resourceSubscriptions`. Notifications carry `io.modelcontextprotocol/subscriptionId` in `_meta`. Progress and message notifications stay on the stream of their own request [[r1]].",
+          "`ttlMs` is an integer of at least 0 and works like `max-age`. Absent means 0. `cacheScope` is `public` or `private`. Both are required on `server/discover`, `tools/list`, `prompts/list`, `resources/list`, `resources/templates/list` and `resources/read` results [[r1]].",
+          "A `private` result may be reused only within the same authorization context. A different access token needs a different cache entry [[r1]]."
+        ] }
+      ] },
+      { "title": "MRTR rules worth memorizing", "blocks": [
+        { "t": "list", "style": "ul", "items": [
+          "Every `InputRequiredResult` MUST include `inputRequests`, `requestState` or both.",
+          "The retry MUST use a new JSON-RPC id and echo `requestState` exactly. Clients MUST NOT parse or modify it.",
+          "`inputRequests` and `requestState` apply only to the retry of that one request, never to parallel requests.",
+          "If the client does not send everything requested, the server SHOULD ask again with a new `input_required` result instead of returning an error [[r3]]."
+        ] }
+      ] }
+    ] }
+  ],
+  "quiz": [
+    { "id": "w08-l04-q1", "type": "single", "tag": "security", "q": "A tool needs the user's personal access token for a third-party API. Which design follows the spec?", "options": ["Form mode elicitation with a password-style field, because the host masks the input", "Return the token request as a tool description so the model asks the user in chat", "Use `sampling/createMessage` so the model collects the token", "URL mode elicitation, so the user enters the credential at the third party and it never passes through the MCP client"], "answer": 3, "explain": "Servers MUST NOT use form mode for passwords, API keys, access tokens or payment credentials, even with masking, because the value passes through the client. Asking in chat sends the secret through the model. Sampling is Deprecated and also routes the content through the model. URL mode keeps the credential out of the client.", "difficulty": 2, "ref": "r27" },
+    { "id": "w08-l04-q2", "type": "single", "tag": "bug", "q": "What is the main defect in this MRTR server code?", "code": { "lang": "python", "code": "state = base64.b64encode(json.dumps({\"user\": user, \"step\": 2, \"approved\": False}).encode())\nreturn {\"resultType\": \"input_required\", \"inputRequests\": reqs, \"requestState\": state.decode()}\n\n# on retry\nctx = json.loads(base64.b64decode(params[\"requestState\"]))\nif ctx[\"approved\"]:\n    run_privileged_action(ctx[\"user\"])" }, "options": ["The server should have returned a JSON-RPC protocol error instead of `input_required` whenever a retry needs more information from the user", "`requestState` is plain base64, so a client can edit it. Authorization state needs an HMAC or AEAD, a bound principal and an expiry", "`resultType` must be `complete` whenever `inputRequests` is present", "The retry must reuse the original JSON-RPC id for the server to match it"], "answer": 1, "explain": "The client controls what it sends back, so unsigned state lets it set `approved` to true. The spec requires integrity protection when state affects authorization. `input_required` is the correct result type. The retry must use a new id, not the old one.", "difficulty": 2, "ref": "r3" },
+    { "id": "w08-l04-q3", "type": "match", "tag": "concept", "q": "Match each Deprecated MCP feature to its documented migration path.", "pairs": [ { "l": "Sampling", "r": "Call the model provider API directly" }, { "l": "Roots", "r": "Pass paths in tool parameters or resource URIs" }, { "l": "Logging", "r": "Write to stderr on stdio or use OpenTelemetry" }, { "l": "Dynamic Client Registration", "r": "Client ID Metadata Documents" } ], "explain": "These are the migration paths in the deprecated features registry. None of the four is removed yet, so all still work, but new designs should not depend on them.", "difficulty": 2, "ref": "r9" },
+    { "id": "w08-l04-q4", "type": "single", "tag": "flip", "q": "A 12-minute export sometimes needs one approval mid-way. The host does not support the Tasks extension. Which design fits best?", "options": ["Block one request for 12 minutes and use MRTR for the approval, since MRTR keeps the connection alive on the server side", "Start-and-poll tools with a handle, plus a separate approve tool that takes the handle", "Return a task handle anyway and hope the client polls `tasks/get`", "Ask the model to wait using a sampling request"], "answer": 1, "explain": "Blocking for 12 minutes runs into timeouts and loses the call if the stream drops. A task result the client does not understand is unusable. Sampling is Deprecated and does not wait for external work. Handles passed as ordinary arguments work on any tool-capable client, provided each call authorizes the handle.", "difficulty": 3, "ref": "r7" }
+  ],
+  "defend": null,
+  "refs": ["r1", "r3", "r7", "r9", "r15", "r27"],
+  "takeaways": [
+    "MRTR replaces server-initiated requests: `input_required`, then a retry with `inputResponses` and the echoed `requestState`.",
+    "`requestState` is attacker-controlled. Sign it, bind principal, expiry and request identity.",
+    "Secrets go through URL mode elicitation, never form mode.",
+    "Use Tasks for durable, long-running work when both sides support the extension, and handles in ordinary tools when they do not.",
+    "Sampling, roots and logging still work but are Deprecated, so do not design new flows around them."
+  ]
+}

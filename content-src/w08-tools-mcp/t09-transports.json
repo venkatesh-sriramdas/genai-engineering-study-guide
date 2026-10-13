@@ -1,0 +1,112 @@
+{
+  "id": "w08-t09",
+  "order": 9,
+  "group": "Transports and spec",
+  "title": "Transports: stdio and Streamable HTTP",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "MCP defines two transports. stdio runs a server as a local subprocess for one client. Streamable HTTP serves many clients from one endpoint. The older HTTP+SSE transport is Deprecated.",
+  "useIf": "You must decide how a host reaches a server: spawn it locally, or call it as a shared network service.",
+  "avoidIf": "You are tempted to start new work on HTTP+SSE or to put secrets on a local HTTP port with no Origin check.",
+  "explain": [
+    { "t": "p", "md": "**stdio**: the client launches the server as a subprocess and exchanges newline-delimited JSON-RPC over stdin and stdout, with no embedded newlines. The server MUST NOT write anything but MCP messages to `stdout`. `stderr` is free for any logging and clients SHOULD NOT treat it as an error. The trust boundary is the operating-system process and its environment [[tr8]]." },
+    { "t": "p", "md": "**Streamable HTTP** (2026-07-28): one MCP endpoint that accepts POST. Every JSON-RPC message is its own POST with an `Accept` header listing `application/json` and `text/event-stream`. The reply is one JSON object or a per-request SSE stream. Required headers include `MCP-Protocol-Version`, `Mcp-Method` and, for `tools/call`, `resources/read` and `prompts/get`, `Mcp-Name`. Servers MUST validate `Origin` (403 if invalid), SHOULD bind local servers to `127.0.0.1` and SHOULD send `X-Accel-Buffering: no` on SSE [[r2]]." },
+    { "t": "p", "md": "In 2025-11-25 the same endpoint also supported GET and DELETE for a session, tied to an `Mcp-Session-Id` [[r22]]. In 2026-07-28 the GET stream and DELETE are gone, closing an SSE stream cancels the request, and long-lived notifications use one `subscriptions/listen` POST. The legacy **HTTP+SSE** transport (2024-11-05, a `/sse` stream plus a `/messages` endpoint) was replaced in 2025-03-26 and is Deprecated [[r9]]." },
+    { "t": "diagram", "id": "w08-t09-d1", "title": "Choosing a transport", "alt": "Decision flow: if the server runs on one user's machine for one client use stdio, otherwise use Streamable HTTP with OAuth and a gateway, and avoid legacy HTTP+SSE.", "src": "flowchart TD\n  A{Server on one user's machine?} -->|yes| B{One client only?}\n  B -->|yes| C[stdio subprocess]\n  B -->|no| D[Streamable HTTP on 127.0.0.1]\n  A -->|no| E[Streamable HTTP service]\n  E --> F[OAuth, Origin check, gateway]" },
+    { "t": "table", "caption": "Deployment shapes", "head": ["Shape", "Transport", "Who runs it", "Auth and trust"], "rows": [["Local tool for one user", "stdio", "The client spawns it", "Process boundary and env vars"], ["Local daemon for many local clients", "Streamable HTTP on 127.0.0.1", "The user or an installer", "Origin check plus a token or socket permissions"], ["Shared remote service", "Streamable HTTP", "A platform team", "OAuth 2.1 resource server, optional gateway"], ["Legacy `/sse` service", "HTTP+SSE (Deprecated)", "Old deployments", "Migrate to Streamable HTTP"]] },
+    { "t": "callout", "kind": "note", "title": "Vendor support is not spec status", "md": "OpenAI's remote MCP tool accepts Streamable HTTP or HTTP/SSE servers [[tr12]]. A host that still connects to `/sse` does not make HTTP+SSE current in the spec. Plan to Streamable HTTP." }
+  ],
+  "whereToUse": [
+    "stdio for developer tools that touch local files, git or a local database",
+    "Streamable HTTP for shared services owned by a platform team and used by many hosts",
+    "Streamable HTTP behind a gateway when you need rate limits, quotas and central logging",
+    "A localhost HTTP daemon when several local clients share one expensive process"
+  ],
+  "whenToUse": {
+    "use": ["Use stdio when one client owns one server process on one machine", "Use Streamable HTTP when users, tenants or hosts differ from the operator", "Use a gateway when governance needs central control", "Use OAuth on remote servers for user-delegated access"],
+    "avoid": ["Starting new work on HTTP+SSE", "Binding a local HTTP server to all interfaces", "Writing logs to stdout on a stdio server"],
+    "flips": ["Many users need the tool: move from stdio to a remote service with OAuth", "Cold start per user is too slow: share a long-lived remote server"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["stdio", "One user, local resources, no network", "Shared access, central audit", "Arbitrary code runs with the client's privileges"],
+      ["Streamable HTTP", "Shared service, OAuth, gateways", "Offline single-user tools", "Needs auth, TLS, Origin checks and operations"],
+      ["Local HTTP daemon", "Several local clients share a process", "Anyone else can reach the port", "DNS rebinding unless Origin is validated"],
+      ["HTTP+SSE (legacy)", "Only an old host requires it", "Any new build", "Deprecated and a migration debt"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A stdio server fails to start in the host with parse errors", "cause": "A library or print statement wrote text to `stdout`", "fix": "Log to `stderr` only and keep `stdout` for MCP messages" },
+    { "symptom": "A website can call a developer's local MCP server", "cause": "The HTTP server bound to all interfaces and skipped `Origin` validation, enabling DNS rebinding", "fix": "Bind to `127.0.0.1`, validate `Origin` (403) and require an auth token" },
+    { "symptom": "Streamed progress arrives in bursts behind a reverse proxy", "cause": "The proxy buffered the SSE response", "fix": "Send `X-Accel-Buffering: no` and disable buffering for the MCP route" }
+  ],
+  "scenarios": [
+    {
+      "id": "w08-t09-s1",
+      "title": "A local file tool for one developer",
+      "situation": "A developer wants an assistant to search and edit files in a project on their own laptop. Nobody else will connect. Startup time is not a problem.",
+      "constraints": ["One user, one machine", "Local resources only", "No shared operations team"],
+      "unknowns": ["Is the server code trusted and from a known source?", "Does the host ask for consent before launching it?"],
+      "question": "Which transport do you choose?",
+      "options": [
+        { "name": "stdio subprocess launched by the host", "verdict": "best", "why": "No network surface, no token flow, and the process boundary limits who can talk to it.", "tradeoff": "The server runs with the user's privileges, so only run reviewed code." },
+        { "name": "Local HTTP server on 127.0.0.1 with a token", "verdict": "good", "why": "Allows several local clients to share it.", "tradeoff": "You now own Origin checks and port access control." },
+        { "name": "A remote Streamable HTTP service with OAuth", "verdict": "poor", "why": "It exposes local files over a network and adds auth work for no sharing benefit.", "tradeoff": "Right when many users need the capability or the data is remote." }
+      ],
+      "flips": [
+        { "if": "Several local tools share one expensive index", "then": "Run a localhost HTTP daemon." },
+        { "if": "The team wants the same tool for everyone", "then": "Move to a remote service with OAuth." }
+      ],
+      "takeaway": "Local and single-user means stdio."
+    },
+    {
+      "id": "w08-t09-s2",
+      "title": "A shared tenant service with central controls",
+      "situation": "A platform team offers tools to hundreds of employees across several hosts. It needs per-user identity, rate limits and a central audit log.",
+      "constraints": ["Hundreds of users", "User-delegated access", "Central logging and quotas"],
+      "unknowns": ["Which identity provider issues tokens?", "Do consumers need resources and prompts, or tools only?"],
+      "question": "How do you expose the capability?",
+      "options": [
+        { "name": "Remote Streamable HTTP server behind a gateway with OAuth", "verdict": "best", "why": "One endpoint, per-request auth, and the gateway applies limits and logging.", "tradeoff": "You operate a service and need to match the gateway's MCP feature coverage." },
+        { "name": "Remote Streamable HTTP server reached directly by hosts", "verdict": "good", "why": "Simplest to run and still OAuth protected.", "tradeoff": "Each service must implement its own limits and audit." },
+        { "name": "Spawn a stdio process per user through a web proxy", "verdict": "poor", "why": "A proxy that spawns processes is an escalation path from web attacks to code execution and offers no central control.", "tradeoff": "stdio is right only when the client itself launches a local, reviewed server." }
+      ],
+      "flips": [
+        { "if": "Only one team consumes the server", "then": "Skip the gateway and call it directly." },
+        { "if": "Consumers need prompts and resources and the gateway supports tools only", "then": "Reach the server directly or choose another gateway." }
+      ],
+      "takeaway": "Shared, governed access needs a remote transport with real auth."
+    },
+    {
+      "id": "w08-t09-s3",
+      "title": "An old `/sse` server in production",
+      "situation": "A server built from an early tutorial exposes `/sse` and `/messages`. Some hosts are newer and some are not. You can add endpoints but cannot update every host quickly.",
+      "constraints": ["Mixed hosts", "Existing legacy endpoint", "Cannot force upgrades"],
+      "unknowns": ["What share of traffic still uses `/sse`?", "Which hosts support Streamable HTTP?"],
+      "question": "What is the migration path?",
+      "options": [
+        { "name": "Add a Streamable HTTP endpoint, keep `/sse` while you watch traffic, then retire it", "verdict": "best", "why": "Moves new clients to the supported transport with no breakage and metrics decide when to cut.", "tradeoff": "Two transports to maintain for a while." },
+        { "name": "Remove `/sse` today", "verdict": "poor", "why": "Breaks every host that still uses it.", "tradeoff": "Right only when metrics show no legacy traffic." },
+        { "name": "Stay on HTTP+SSE only", "verdict": "good", "why": "No change cost now.", "tradeoff": "Deprecated transport, and new hosts may stop supporting it." }
+      ],
+      "flips": [
+        { "if": "No client uses `/sse` for a full release cycle", "then": "Remove it." },
+        { "if": "A key host supports only HTTP+SSE", "then": "Keep it for that host with a retirement date." }
+      ],
+      "takeaway": "Run both transports until traffic data says the old one is dead."
+    }
+  ],
+  "quiz": [
+    { "id": "w08-t09-q1", "type": "single", "tag": "bug", "q": "A stdio MCP server crashes the host on connect. The server prints a startup banner with `print`. What is the cause?", "options": ["`stderr` was used for logs", "The banner went to `stdout`, which must carry only MCP messages", "stdio forbids JSON-RPC", "The banner exceeded 128 characters"], "answer": 1, "explain": "The server MUST NOT write anything but MCP messages to stdout, so the host fails to parse the banner. `stderr` is the correct place for logs. stdio uses JSON-RPC and has no 128-character limit." },
+    { "id": "w08-t09-q2", "type": "single", "tag": "security", "q": "A local Streamable HTTP server binds to 0.0.0.0 and does not check `Origin`. What attack does this enable?", "options": ["Token passthrough", "DNS rebinding from a website", "Tool shadowing", "Session fixation through `Mcp-Session-Id`"], "answer": 1, "explain": "Without Origin validation and with a wide bind, a remote web page can use DNS rebinding to reach the local server. The others are different issues: passthrough is about tokens, shadowing about tool descriptions, and 2026-07-28 has no session id." }
+  ],
+  "flashcards": [
+    { "front": "What must a stdio MCP server never write to stdout?", "back": "Anything except MCP messages. Use `stderr` for logs." },
+    { "front": "How does Streamable HTTP work in 2026-07-28?", "back": "One endpoint. Every JSON-RPC message is its own POST. The reply is a JSON object or a per-request SSE stream. GET and DELETE are gone." },
+    { "front": "What is the status of HTTP+SSE?", "back": "Deprecated. It was replaced by Streamable HTTP in 2025-03-26. Do not start new work on it." }
+  ],
+  "related": ["w08-t10", "w08-t13", "w08-t16", "w08-l03", "w08-l06"],
+  "refs": ["tr8", "r2", "r22", "r9", "tr12"]
+}

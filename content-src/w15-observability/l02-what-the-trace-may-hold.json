@@ -1,0 +1,89 @@
+{
+  "id": "w15-l2",
+  "order": 2,
+  "title": "Decide what the trace may hold: the content capture board",
+  "kind": "problem",
+  "minutes": 20,
+  "brief": "Debuggers want the full prompt and the tool result. Privacy and retention rules want none of it in the trace. Decide what spans carry, where content lives, who can read it, and which switch controls which layer. The dials are not given.",
+  "blocks": [
+    { "t": "h", "text": "Three patterns, from the spec", "level": 2 },
+    { "t": "table", "caption": "Content capture patterns in the GenAI conventions (status Development, checked 2026-10-13)", "head": ["Pattern", "What spans carry", "Fits", "Catch"], "rows": [
+      ["Record nothing (the default)", "Metadata: names, models, token counts, finish reasons, durations, errors", "Production by default", "You cannot read the prompt that failed"],
+      ["Content on spans", "Opt-in attributes `gen_ai.system_instructions`, `gen_ai.input.messages`, `gen_ai.output.messages`, `gen_ai.tool.definitions`, `gen_ai.tool.call.arguments`, `gen_ai.tool.call.result`", "Pre-production, or telemetry that meets your privacy rules", "Content reaches every trace consumer and every retention tier"],
+      ["Store externally, references on spans", "A reference to content held in your own store", "Production. The spec recommends it", "The spec still lists a common way to record external references as TODO, so the convention is yours"]
+    ], "highlightCol": 0 },
+    { "t": "p", "md": "The spec says instrumentations SHOULD NOT capture content by default [[r4]]. It also describes an in-process upload hook that runs regardless of the span sampling decision and independent of the opt-in flags, so a content store needs its own access control and retention (topic w15-t06)." },
+    { "t": "h", "text": "Dial board: content capture policy", "level": 2 },
+    { "t": "dials", "id": "w15-l2-capture", "title": "Choose what the trace may hold", "prompt": "Flip the constraints. Redaction is on the board as a real option with a real miss rate, not as a cure.",
+      "dials": [
+        { "id": "sens", "label": "Data sensitivity", "values": [ { "id": "low", "label": "Low: public or synthetic data" }, { "id": "reg", "label": "Regulated or personal data" } ] },
+        { "id": "debug", "label": "Debugging need", "values": [ { "id": "rare", "label": "Rare: metrics usually answer" }, { "id": "freq", "label": "Frequent: must read the failing prompt" } ] },
+        { "id": "access", "label": "Who may see what", "values": [ { "id": "same", "label": "Trace readers may see user data" }, { "id": "separate", "label": "Operators must not see user data" } ] },
+        { "id": "effort", "label": "Engineering capacity", "values": [ { "id": "small", "label": "Small team, no platform to spare" }, { "id": "platform", "label": "A platform team can build and run a store" } ] }
+      ],
+      "options": [
+        { "id": "meta", "name": "Metadata only (default)", "summary": "Names, tokens, finish reasons, durations and errors. No content." },
+        { "id": "spans", "name": "Content on spans", "summary": "Prompts, outputs, tool arguments and results as span attributes." },
+        { "id": "split", "name": "Content in pre-production only", "summary": "Full capture with synthetic data before release, metadata in production." },
+        { "id": "ext", "name": "External store, references on spans", "summary": "Content sits in a governed store. Spans carry references." },
+        { "id": "redact", "name": "Redact, then record on spans", "summary": "A processor masks entities before export, then content goes on spans." }
+      ],
+      "scores": {
+        "meta": {
+          "sens": { "low": { "s": 0, "why": "Safe, but you give up debugging power you could have had." }, "reg": { "s": 2, "why": "Nothing sensitive is recorded, which matches the spec's default." } },
+          "debug": { "rare": { "s": 2, "why": "Tokens, finish reasons, durations and errors answer most questions." }, "freq": { "s": -2, "why": "You cannot read the prompt or tool result that failed." } },
+          "access": { "same": { "s": 0, "why": "Access is not the issue." }, "separate": { "s": 2, "why": "Operators see only metadata." } },
+          "effort": { "small": { "s": 1, "why": "Nothing to build." }, "platform": { "s": 0, "why": "Nothing to build, and nothing gained from the platform either." } }
+        },
+        "spans": {
+          "sens": { "low": { "s": 2, "why": "Synthetic or public data is safe to keep, and the spec names this pattern for pre-production and compliant telemetry." }, "reg": { "s": -2, "why": "Content reaches every trace consumer and every retention tier, against the spec's default of not capturing it." } },
+          "debug": { "rare": { "s": 0, "why": "You pay storage for content you rarely read." }, "freq": { "s": 2, "why": "The failing prompt and tool result sit on the span." } },
+          "access": { "same": { "s": 1, "why": "Anyone who may see traces may see content." }, "separate": { "s": -2, "why": "Operators who read traces read user data." } },
+          "effort": { "small": { "s": 1, "why": "One flag per layer, nothing to build." }, "platform": { "s": 0, "why": "A platform team would build something safer." } }
+        },
+        "split": {
+          "sens": { "low": { "s": 1, "why": "Fine when pre-production data is synthetic." }, "reg": { "s": 2, "why": "Regulated data never reaches the verbose tier, because pre-production holds none." } },
+          "debug": { "rare": { "s": 1, "why": "Production metadata is enough most days." }, "freq": { "s": -1, "why": "Production failures cannot be read, so you reproduce them in pre-production." } },
+          "access": { "same": { "s": 0, "why": "Neutral." }, "separate": { "s": 2, "why": "Production traces stay clean of user data." } },
+          "effort": { "small": { "s": 2, "why": "Two settings, one per environment." }, "platform": { "s": 0, "why": "Neutral." } }
+        },
+        "ext": {
+          "sens": { "low": { "s": 0, "why": "Works, but it is more machinery than public data needs." }, "reg": { "s": 2, "why": "Spans carry references. The store has its own access control and retention, which is what the spec recommends for production." } },
+          "debug": { "rare": { "s": -1, "why": "You built and run a store you rarely open." }, "freq": { "s": 2, "why": "Follow the reference from the span to the stored prompt and result." } },
+          "access": { "same": { "s": 0, "why": "Extra friction with no extra separation needed." }, "separate": { "s": 2, "why": "Operators see spans, and only a cleared group opens the store." } },
+          "effort": { "small": { "s": -2, "why": "The reference convention, the store and the access flow are yours to design, because the spec still lists external references as TODO." }, "platform": { "s": 1, "why": "A platform team can build and run it once for every team." } }
+        },
+        "redact": {
+          "sens": { "low": { "s": 0, "why": "Redaction adds work for data that did not need it." }, "reg": { "s": 1, "why": "Masked entities lower the risk, but a missed pattern leaks into every consumer." } },
+          "debug": { "rare": { "s": -1, "why": "Processing cost on every span for rare reads." }, "freq": { "s": 2, "why": "Prompts stay readable with sensitive spans masked." } },
+          "access": { "same": { "s": 2, "why": "Masked content is acceptable for an audience that may already see user data." }, "separate": { "s": 0, "why": "Operators still read whatever the detector missed." } },
+          "effort": { "small": { "s": 0, "why": "A redaction step is yours to build and tune." }, "platform": { "s": 0, "why": "A platform team can run it and still faces the miss rate." } }
+        }
+      },
+      "takeaway": "Every option wins in some corner of the board. External stores are the production recommendation, yet a small team with frequent debugging may still do better reproducing failures in pre-production." },
+    { "t": "table", "caption": "Which switch controls which layer", "head": ["Switch", "Layer and what it covers", "Default", "Gotcha"], "rows": [
+      ["`ENABLE_SENSITIVE_DATA`, `enable_sensitive_data=True` (Python), `EnableSensitiveData` (.NET)", "Agent Framework telemetry: prompts, responses, tool arguments and results, and workflow `executor.input`, `executor.output`, `message.content` [[r10]] [[r11]]", "False. Python instrumentation has been on by default since python-1.6.0 (2026-05-21), but no exporter is installed and sensitive data stays off", "In .NET, wrapping both the client and the agent duplicates content on both spans"],
+      ["`OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true`", "The OTel and Azure SDK layer used by Foundry client-side tracing [[r13]]", "Off", "A different layer from the Agent Framework flag, so check both"],
+      ["`AZURE_TRACING_GEN_AI_CONTENT_RECORDING_ENABLED`", "The older Foundry classic content recording flag", "Off", "Old posts still use it. The current page uses the OTel variable [[r13]]"],
+      ["`@trace_function`", "Foundry client-side helper that traces your own function", "Always records parameters and return values", "It ignores the content flag [[r13]]"]
+    ] },
+    { "t": "failure", "title": "Failure modes of content capture", "items": [
+      { "symptom": "Customer text shows up in the backend although `ENABLE_SENSITIVE_DATA` is false.", "cause": "A `@trace_function` decorator records parameters and return values regardless, a hand-written span attribute holds content, or another layer's flag is on.", "fix": "Audit custom spans, check the flag of every layer, and prove it with a canary: put a unique marker in a test prompt, then search the backend for it." },
+      { "symptom": "Prompts appear twice on a .NET trace and ingestion cost jumps.", "cause": "Both the chat client and the agent are wrapped with OpenTelemetry while sensitive data is on.", "fix": "Instrument one layer. The Harness wraps both by default, so check its settings (`DisableOpenTelemetry`, `OpenTelemetrySourceName`)." },
+      { "symptom": "On-call cannot explain a production wrong answer because there is only metadata.", "cause": "The safe default is working as designed, and no governed route to content exists.", "fix": "Add the external store with references on spans, a request-and-expiry access flow and its own retention. Do not switch content capture on for everyone." }
+    ] }
+  ],
+  "quiz": [
+    { "id": "w15-l2-q1", "type": "single", "tag": "security", "difficulty": 2, "q": "Which statement about prompt and output content matches the GenAI conventions?", "options": ["Content is recorded by default and sampling decides whether it leaves the process", "Content on spans is the pattern the spec recommends for production, because backends encrypt attributes and apply retention rules to them", "Content capture is controlled only by the Agent Framework flag, whichever instrumentation emits the span", "Instrumentations should not capture it by default. For production the spec recommends storing it externally with references on spans"], "answer": 3, "explain": "The spec says SHOULD NOT capture by default and recommends external storage with references for production. Sampling is not a privacy control (the upload hook runs regardless of the sampling decision), and each layer has its own flag, so the Agent Framework flag does not cover an Azure SDK or OTel instrumentation.", "ref": "r4" },
+    { "id": "w15-l2-q2", "type": "multi", "tag": "security", "difficulty": 3, "q": "You must show that a canary string in a user prompt never reaches the telemetry backend. Select every item you need to check.", "options": ["Agent Framework `ENABLE_SENSITIVE_DATA` is false", "`OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT` is not true", "Custom `@trace_function` decorators and hand-written span attributes", "`OTEL_SERVICE_NAME` is set", "The exporter protocol is gRPC", "Only one of the client and the agent is wrapped in .NET"], "answers": [0, 1, 2], "explain": "Each layer has its own content switch, and `@trace_function` and your own attributes bypass them. The service name only labels telemetry, the transport protocol does not decide what is recorded, and wrapping both .NET layers duplicates content rather than creating it.", "ref": "r10" },
+    { "id": "w15-l2-q3", "type": "single", "tag": "flip", "difficulty": 2, "q": "A team captures full content on spans in pre-production with synthetic data. The product moves to production with customer data. What should change?", "options": ["Default to metadata, keep content in a separate store with references on spans, with its own access control and retention", "Keep content on spans and set head sampling to 5 percent, because a smaller sample of customer data is a smaller privacy risk", "Turn capture off entirely and stop investigating production answers", "Move content into span events so it is no longer stored with the trace"], "answer": 0, "explain": "Customer data flips the sensitivity dial, and the spec recommends external storage with references for production. Sampling reduces volume, not exposure, so each retained span still carries customer text. Dropping all content gives up debugging for no reason, and events are still telemetry stored with the trace.", "ref": "r4" }
+  ],
+  "defend": null,
+  "refs": ["r4", "r10", "r11", "r12", "r13"],
+  "takeaways": [
+    "Content is opt-in by the spec and by Agent Framework (`ENABLE_SENSITIVE_DATA` is false by default). The spec's production pattern is an external store with references on spans.",
+    "Every layer has its own switch, and `@trace_function` records parameters and returns regardless, so prove privacy with a canary and not by reading flags.",
+    "Pick the policy by sensitivity, debugging need, who may see what and engineering capacity. The right answer changes when a dial flips.",
+    "Wrap one layer in .NET. Wrapping both duplicates content and cost."
+  ]
+}

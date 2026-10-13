@@ -1,0 +1,134 @@
+{
+  "id": "w01-t15",
+  "order": 15,
+  "group": "Adapting models",
+  "title": "Fine-tuning methods: SFT, DPO, RFT and LoRA",
+  "minutes": 9,
+  "difficulty": "advanced",
+  "summary": "SFT learns from correct answers, DPO from preferred and rejected pairs, RFT from a grader, and LoRA is a cheap way to train adapters. Platform availability is the first question.",
+  "useIf": "You need a consistent format, tone, tool-use behaviour or a smaller model and you have examples.",
+  "avoidIf": "You want to add facts or current information. Evidence favours retrieval for that.",
+  "explain": [
+    { "t": "p", "md": "**SFT** (supervised fine-tuning) trains on input and ideal-output examples. OpenAI needs at least 10 examples, often sees gains at 50 to 100, and lists the `gpt-4.1` family [[r52]]. **DPO** (direct preference optimization) trains on preferred and rejected pairs with a `beta` between 0 and 2, where higher stays closer to the base model. It replaces the RLHF reward model and RL loop with a classification loss [[r53]] [[r46]]. **RFT** (reinforcement fine-tuning) scores outputs with a grader you write, and OpenAI lists `o4-mini` only [[r54]]." },
+    { "t": "p", "md": "**LoRA** freezes the weights and trains small low-rank matrices. Against full Adam fine-tuning of GPT-3 175B it cut trainable parameters 10,000 times and GPU memory 3 times, with no added inference latency [[r45]]. **QLoRA** fine-tunes a 65B model on one 48GB GPU using 4-bit NormalFloat, double quantization and paged optimizers [[r25]]. These are paper results, not product limits." },
+    { "t": "diagram", "id": "w01-t15-d1", "title": "Which method for which signal", "alt": "Decision flow: if you need facts use retrieval; otherwise choose SFT with correct answers, DPO with preference pairs, RFT with a reliable grader, or LoRA and QLoRA for open weights you host.", "src": "flowchart TD\n  A[What do you need] -->|Facts| B[RAG or context]\n  A -->|Behaviour| C{What signal do you have}\n  C -->|Correct answers| D[SFT]\n  C -->|Preferred and rejected pairs| E[DPO]\n  C -->|A reliable grader| F[RFT]\n  C -->|Open weights you host| G[LoRA or QLoRA]" },
+    { "t": "callout", "kind": "warn", "title": "OpenAI is winding down self-serve fine-tuning", "md": "Notice date 2026-05-07. Organisations that never ran fine-tuning cannot create jobs. From 2026-07-02, organisations with no fine-tuned inference in 60 days cannot. On 2027-01-06 active customers can no longer create jobs. Fine-tuned inference ends only when its base model is deprecated, several fine-tuned ids end on 2026-10-23, and the GPT-6 Astra page marks the fine-tuning endpoint unsupported [[r11]]." },
+    { "t": "p", "md": "**Azure** keeps managed SFT, DPO and RFT. Interactive training is Preview and needs approval. Training types are Standard, Data zone (US only), Global and Developer (preemptible, no SLA). Deployment options are Serverless, Managed compute (Preview, LoRA adapters) and Fireworks on Foundry (Preview). Models include the `gpt-4.1` family (SFT, DPO), `gpt-4o` (SFT, DPO), `gpt-4o-mini` (SFT), `o4-mini` (RFT) and open-weight models, with `gpt-5` RFT by invitation only. Training on the `gpt-4.1` family ends no earlier than 2027-04-14 for existing customers [[r17]] [[r13]]. Azure retires `o4-mini`, the RFT model, on 2026-11-19, so plan a replacement [[tr5]]." }
+  ],
+  "whereToUse": [
+    "A strict output format or house style that few-shot prompts follow unreliably",
+    "Tool-use habits, such as always calling a tool in a certain situation",
+    "Replacing a long few-shot prompt with a tuned smaller model at high volume",
+    "Preference alignment, such as concise versus verbose answers (DPO)",
+    "Self-hosted open-weight models adapted with LoRA or QLoRA"
+  ],
+  "whenToUse": {
+    "use": [
+      "SFT when you can show the right answer and have hundreds of clean examples",
+      "DPO when you can compare two outputs but not write the ideal one",
+      "RFT when a reliable programmatic grader exists",
+      "LoRA or QLoRA when you host open weights and GPU memory is limited"
+    ],
+    "avoid": [
+      "Fine-tuning to teach facts or keep knowledge current",
+      "Tuning on a base model that retires soon without a migration plan",
+      "RFT with a noisy or gameable grader"
+    ],
+    "flips": [
+      "The platform blocks new jobs: use structured outputs and few-shot prompting, or use Azure or open weights",
+      "The prompt baseline already meets the bar: do not tune",
+      "Data is small and noisy: improve data or prompts before tuning"
+    ]
+  },
+  "alternatives": {
+    "title": "Methods compared",
+    "head": ["Method", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["SFT", "You can show correct answers", "Examples are few or inconsistent", "Needs clean data, can overfit"],
+      ["DPO", "You hold preferred and rejected pairs", "Only single gold answers exist", "Pair quality and `beta` tuning"],
+      ["RFT", "A reliable grader scores outputs", "Quality is subjective", "Few models, grader gaming"],
+      ["LoRA or QLoRA", "You host open weights on limited GPUs", "You use a managed API only", "Hosting and serving operations"],
+      ["Prompting and structured outputs", "A prompt baseline nearly works", "Behaviour must be baked into a small model", "Longer prompts, higher run cost"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A new organisation cannot start a fine-tuning job on OpenAI", "cause": "Since 2026-05-07 orgs that never ran fine-tuning cannot create jobs", "fix": "Check eligibility first, or use Azure, open weights or prompting" },
+    { "symptom": "The tuned model repeats old facts", "cause": "Facts were trained into weights and the source changed", "fix": "Keep facts in retrieval and tune behaviour only" },
+    { "symptom": "A tuned model disappears from a deployment plan", "cause": "Fine-tuned inference ends when its base model is deprecated", "fix": "Record the base-model retirement date and schedule a re-tune" },
+    { "symptom": "RFT improves the grader score and not the task", "cause": "The grader is gameable or measures a proxy", "fix": "Audit the grader on held-out samples and add checks" }
+  ],
+  "scenarios": [
+    {
+      "id": "w01-t15-s1",
+      "title": "A new team wants SFT for a format task",
+      "situation": "A team with no fine-tuning history on the OpenAI API has 1,500 approved examples and wants a model that always produces a five-section report. There is no hard platform constraint.",
+      "constraints": ["Behaviour and format, not facts", "1,500 clean examples", "No prior fine-tuning on OpenAI direct"],
+      "unknowns": ["Does a strict schema plus few-shot prompting already meet the bar?", "When does the candidate base model retire?"],
+      "question": "What is the plan?",
+      "options": [
+        { "name": "Run SFT on Azure Foundry on a supported model after confirming its retirement date, and keep a prompt baseline to beat", "verdict": "best", "why": "The need is format with data in hand, and Azure offers managed SFT while OpenAI blocks new organisations [[r17]] [[r11]].", "tradeoff": "Training effort, a retirement date to track (`gpt-4.1` training ends no earlier than 2027-04-14) and a re-tune later." },
+        { "name": "Use structured outputs and a few-shot prompt, and skip training", "verdict": "good", "why": "Nothing to train or retire, and may already pass.", "tradeoff": "Longer prompts and weaker format consistency at volume." },
+        { "name": "Plan on OpenAI fine-tuning next quarter", "verdict": "poor", "why": "Organisations that never ran fine-tuning have been blocked from creating jobs since 2026-05-07.", "tradeoff": "It remains valid for orgs with eligible fine-tuning history." }
+      ],
+      "flips": [
+        { "if": "The prompt baseline already meets the bar", "then": "Skip tuning." },
+        { "if": "Data must stay in a specific region", "then": "Pick the Azure training type that matches residency." }
+      ],
+      "takeaway": "Check platform availability and the baseline before you collect data."
+    },
+    {
+      "id": "w01-t15-s2",
+      "title": "Shifting style from rater preferences",
+      "situation": "Raters compared pairs of answers and chose the better one in 2,000 cases. There is no ideal answer for each prompt, and quality is subjective.",
+      "constraints": ["Preference pairs exist", "No single gold answer", "No programmatic grader"],
+      "unknowns": ["How consistent are the raters?", "Which base model is supported for DPO?"],
+      "question": "Which method fits?",
+      "options": [
+        { "name": "SFT on the chosen answers only", "verdict": "good", "why": "Easy to run and uses part of the signal.", "tradeoff": "It discards the rejected examples that teach what to avoid." },
+        { "name": "DPO on the pairs, tuning `beta`", "verdict": "best", "why": "It uses the preferred and rejected signal directly, and `beta` controls how far the model moves from the base [[r53]].", "tradeoff": "Pair quality matters and results need an eval set." },
+        { "name": "RFT with a grader", "verdict": "poor", "why": "Subjective quality has no reliable programmatic grader, so the model may chase the grader.", "tradeoff": "RFT suits tasks with checkable answers, such as structured correctness." }
+      ],
+      "flips": [
+        { "if": "A reliable grader exists", "then": "RFT becomes an option on supported models." },
+        { "if": "You gather ideal answers", "then": "SFT is simpler." }
+      ],
+      "takeaway": "Match the method to the signal you have."
+    },
+    {
+      "id": "w01-t15-s3",
+      "title": "Adapting an open-weight model on one GPU",
+      "situation": "A team hosts an open-weight 65B model and has one 48GB GPU. They need domain-specific behaviour and cannot send data to a hosted API.",
+      "constraints": ["Self-hosted", "One 48GB GPU", "Data cannot leave the environment"],
+      "unknowns": ["How many training examples?", "Is a 4-bit base acceptable for quality?"],
+      "question": "How do you train it?",
+      "options": [
+        { "name": "Full fine-tuning of all weights", "verdict": "poor", "why": "It needs far more memory than a single 48GB GPU provides for a 65B model.", "tradeoff": "Full tuning suits a small model or a large cluster." },
+        { "name": "LoRA on a 16-bit base", "verdict": "good", "why": "Adapters cut trainable parameters and memory.", "tradeoff": "The 16-bit base itself may not fit a single 48GB GPU at this size." },
+        { "name": "QLoRA with a 4-bit base", "verdict": "best", "why": "It fine-tuned a 65B model on one 48GB GPU in the paper, with LoRA adapters [[r25]].", "tradeoff": "Paper results are not a product guarantee, and 4-bit quantization may cost some quality." }
+      ],
+      "flips": [
+        { "if": "A multi-GPU node is available", "then": "LoRA on a higher-precision base is an option." },
+        { "if": "Data may go to a managed service", "then": "Azure managed fine-tuning is simpler." }
+      ],
+      "takeaway": "QLoRA trades some precision for fitting big models on small GPUs."
+    }
+  ],
+  "quiz": [
+    { "id": "w01-t15-q1", "type": "match", "tag": "concept", "q": "Match each method to the signal it needs.", "pairs": [
+      { "l": "SFT", "r": "Input and ideal-output examples" },
+      { "l": "DPO", "r": "Preferred and rejected pairs" },
+      { "l": "RFT", "r": "A reliable grader" },
+      { "l": "QLoRA", "r": "A 4-bit base with LoRA adapters on limited GPU memory" }
+    ], "explain": "Each method consumes a different training signal. LoRA and QLoRA are parameter-efficient ways to train, and are not signals themselves." },
+    { "id": "w01-t15-q2", "type": "single", "tag": "bug", "q": "A team that never ran fine-tuning on the OpenAI API tries to create a job and is refused. Why?", "options": ["The dataset is too small", "OpenAI wound down self-serve fine-tuning for orgs without prior use, from 2026-05-07", "The model is unsupported by SFT", "Jobs need an invitation on every platform"], "answer": 1, "explain": "Notice date 2026-05-07: organisations that never ran fine-tuning cannot create jobs. Dataset size and model support are separate issues, and Azure offers managed methods." },
+    { "id": "w01-t15-q3", "type": "numeric", "tag": "numeric", "q": "LoRA cut trainable parameters 10,000 times against full Adam fine-tuning of GPT-3 175B. Roughly how many parameters does that leave to train?", "answer": 17500000, "tolerancePct": 5, "unit": "parameters", "explain": "175,000,000,000 divided by 10,000 is 17,500,000 trainable parameters. The ratio is a paper result for that setup, not a general constant." }
+  ],
+  "flashcards": [
+    { "front": "When do you choose DPO over SFT?", "back": "When you have preferred and rejected pairs but no single ideal answer per prompt. `beta` (0 to 2) sets how far the model moves from the base." },
+    { "front": "What did the QLoRA paper show?", "back": "A 65B model fine-tuned on one 48GB GPU using 4-bit NormalFloat, double quantization and paged optimizers." },
+    { "front": "When does OpenAI stop new fine-tuning jobs for active customers?", "back": "2027-01-06. Fine-tuned inference ends when the base model is deprecated." },
+    { "front": "Which methods does Azure offer for managed fine-tuning?", "back": "SFT, DPO and RFT, with Standard, Data zone, Global and Developer training types." }
+  ],
+  "related": ["w01-t14", "w01-t16", "w01-l6", "w18-t01"],
+  "refs": ["r52", "r53", "r54", "r46", "r45", "r25", "r11", "r17", "r13", "tr5"]
+}

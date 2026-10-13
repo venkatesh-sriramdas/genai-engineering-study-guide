@@ -1,0 +1,109 @@
+{
+  "id": "w11-t10",
+  "order": 10,
+  "group": "State and memory",
+  "title": "Sessions",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "An agent object is stateless. An AgentSession carries the conversation state: local history or a service conversation id, plus state for context providers and Harness features. You create it, pass it on every run and persist it yourself.",
+  "useIf": "You need multi-turn conversations, approvals that span runs, todos, memory or resumption after a restart.",
+  "avoidIf": "Every request is independent and stateless: skip sessions and keep the agent single-shot.",
+  "explain": [
+    { "t": "p", "md": "A session is created by the agent: `await agent.CreateSessionAsync()` in .NET, `agent.create_session()` in Python. In Python it has `session_id` (local), `service_session_id` (a remote conversation or response id when history is service-managed) and `state`, a mutable dictionary shared with providers. In .NET `AgentSession` is abstract with a `StateBag`, and concrete types add details such as a conversation id [[tr10]]. Pass the **same session** to every run of one conversation." },
+    { "t": "p", "md": "**Persist the whole object, not only the messages.** Python: `session.to_dict()` and `AgentSession.from_dict()`. .NET: `SerializeSessionAsync` and `DeserializeSessionAsync`. A session can hold local history, provider state keyed by `source_id`, queued messages, pending tool approvals, Harness state (todos, mode, file memory, approvals, background-task metadata) and a service id. Sessions are agent- and service-specific: restore with the same agent and provider configuration that created them [[tr10]] [[tr11]]." },
+    { "t": "diagram", "id": "w11-t10-d1", "title": "What a session can hold", "alt": "A session contains local history or a service session id, provider state keyed by source id, and Harness state such as todos, mode and pending approvals.", "src": "flowchart TB\n  S[AgentSession] --> H[Local history or service_session_id]\n  S --> P[Provider state by source_id]\n  S --> Z[Harness state]\n  Z --> T[Todos and mode]\n  Z --> A[Pending approvals]\n  Z --> F[File memory scope]" },
+    { "t": "callout", "kind": "warn", "title": "A service id is not an authorization boundary", "md": "OpenAI `resp_*` and `conv_*` ids are scoped to the API key or project. If one key serves many end users, do not echo raw ids to clients or accept them back. Store them in trusted storage, map client-visible session ids to them and verify the authenticated user or tenant before resuming [[tr10]]." },
+    { "t": "tabs", "tabs": [
+      { "label": "C#", "blocks": [ { "t": "code", "lang": "csharp", "code": "AgentSession session = await agent.CreateSessionAsync();\nawait agent.RunAsync(\"My name is Alice.\", session);\nawait agent.RunAsync(\"What is my name?\", session);\n\nJsonElement saved = await agent.SerializeSessionAsync(session);\n// store `saved` in a durable, access-controlled store keyed by user + conversation\nAgentSession resumed = await agent.DeserializeSessionAsync(saved);\n\n// existing service conversation (ChatClientAgent)\nAgentSession fromService = await chatClientAgent.CreateSessionAsync(conversationId);" } ] },
+      { "label": "Python", "blocks": [ { "t": "code", "lang": "python", "code": "session = agent.create_session()\nawait agent.run('My name is Alice.', session=session)\nawait agent.run('What is my name?', session=session)\n\nsaved = session.to_dict()          # store with an owner key (user or tenant)\nresumed = AgentSession.from_dict(saved)\n\n# continue a service-managed conversation\nsession = agent.get_session(service_session_id=conv_id_from_your_store)" } ] }
+    ] }
+  ],
+  "whereToUse": [
+    "Chat apps: one session per conversation, saved after each turn",
+    "Harness agents: todos, mode, file memory and approvals live in the session",
+    "Approval flows: the same session must carry the pending request and the answer",
+    "Hosted agents: the host keeps session stores for you (Foundry) or you supply one (self-hosting)"
+  ],
+  "whenToUse": {
+    "use": [
+      "The conversation or its state must survive between calls",
+      "You need to resume after a restart or scale-out",
+      "You want providers to keep per-conversation state without instance fields"
+    ],
+    "avoid": [
+      "Stateless one-shot calls: sessions add storage and a privacy surface",
+      "Using a service id from a client as proof of ownership",
+      "Restoring a session with a different agent configuration"
+    ],
+    "flips": [
+      "Multiple app instances: store sessions in a shared durable store; .NET ships no general-purpose durable `AgentSessionStore`",
+      "Compaction or model switching needed: keep history local to the session rather than service-managed"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Local session state (in-memory history)", "Caller owns history, compaction and model switching", "State must outlive the process unless you persist it", "You store and secure it"],
+      ["Service-managed conversation id", "The provider stores history (Responses, Foundry)", "You need compaction or provider portability", "Ids are not authorization; compaction has no effect"],
+      ["Custom history provider (database)", "Large or shared history, audit, search", "Simple demos", "You write and test a provider"],
+      ["Workflow checkpoints", "Resume a multi-step graph", "Plain chat memory", "Different mechanism: stores graph state"],
+      ["No session", "Single-shot calls", "Anything multi-turn", "Agent forgets everything"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "User A sees User B's conversation after a resume", "cause": "A client-supplied session or service id was trusted as ownership", "fix": "Bind stored sessions to the authenticated user or tenant before resume [[tr10]] [[tr31]]" },
+    { "symptom": "Restored session behaves oddly or fails", "cause": "It was restored with a different agent, provider or custom type registration", "fix": "Treat the session as opaque, restore with the same configuration, and register custom state types" },
+    { "symptom": "Harness approvals vanish after a redeploy", "cause": "The session was never serialized; pending approvals lived only in memory", "fix": "Serialize after each turn and restore before the approval answer" }
+  ],
+  "scenarios": [
+    {
+      "id": "w11-t10-s1",
+      "title": "Multi-tenant chat API with scale-out",
+      "situation": "A SaaS assistant runs on 6 instances behind a load balancer. Clients send a conversation id with each request. Tenants must never see each other's data.",
+      "constraints": ["Stateless instances", "Client sends the id", "Strict tenant isolation"],
+      "unknowns": ["Is history service-managed or local?", "Which store is available: Redis, Cosmos DB, SQL?", "How long must conversations live?"],
+      "question": "How do you design session handling?",
+      "options": [
+        { "name": "Your own opaque conversation id, a durable store keyed by tenant, user and id, serialize the session after each turn, map to service ids server-side", "verdict": "best", "why": "Any instance can resume, ownership is checked before load, service ids never reach the client.", "tradeoff": "You build the store, expiry and encryption; no shipped .NET durable store exists." },
+        { "name": "Return the provider `conv_*` id to clients and accept it back", "verdict": "poor", "why": "Ids are scoped to the key or project, not to the end user, so a guessed or leaked id crosses tenants.", "tradeoff": "Acceptable when each tenant has its own key or project and the id is verified." },
+        { "name": "Sticky sessions with in-memory state", "verdict": "good", "why": "Zero storage code.", "tradeoff": "State is lost on restart or scale-in, and failover breaks conversations." }
+      ],
+      "flips": [
+        { "if": "You host on Foundry hosted agents", "then": "The default Python stores namespace state by platform user and sandbox session, and expire sessions 30 days after last write." },
+        { "if": "Conversations must be searchable for audit", "then": "Add a history provider that writes a separate audit transcript." }
+      ],
+      "takeaway": "A conversation id identifies state; only your auth decides who may load it."
+    },
+    {
+      "id": "w11-t10-s2",
+      "title": "Desktop app with one user",
+      "situation": "A single-user desktop assistant keeps notes locally. Restarts happen daily. There is no server and no other tenant.",
+      "constraints": ["One user", "Local disk", "Low ops"],
+      "unknowns": ["Is the data sensitive on disk?", "Any need to sync devices?"],
+      "question": "What do you do?",
+      "options": [
+        { "name": "Serialize the session to an encrypted local file after each turn and restore on start", "verdict": "best", "why": "One trust boundary and simple resumption.", "tradeoff": "No sync across devices, and file protection is yours." },
+        { "name": "Service-managed history with the provider id stored locally", "verdict": "good", "why": "Less local data.", "tradeoff": "No compaction, provider-bound history." },
+        { "name": "Rebuild context from scratch each launch", "verdict": "poor", "why": "Users lose progress and approvals.", "tradeoff": "Fine for a stateless utility." }
+      ],
+      "flips": [
+        { "if": "Two devices must share the conversation", "then": "Move the session into a shared durable store with user auth." },
+        { "if": "Sessions grow large", "then": "Add compaction on local history." }
+      ],
+      "takeaway": "Single-user, single-device state can stay local: the boundary is the user."
+    }
+  ],
+  "quiz": [
+    { "id": "w11-t10-q1", "type": "single", "tag": "security", "q": "A hosted agent uses one OpenAI key for all users and returns `resp_*` ids to the browser, then accepts them back to resume. What is the problem?", "options": ["The ids expire after one minute", "The browser cannot store strings", "Resumption requires GPT models", "Service ids are scoped to the key or project and are not an end-user authorization boundary"], "answer": 3, "explain": "The docs say not to treat service-side ids as authorization boundaries when one key serves several users. Map client ids to stored service ids and verify the user.", "ref": "tr10" },
+    { "id": "w11-t10-q2", "type": "multi", "tag": "concept", "q": "What can be inside a serialized Harness session? Select all.", "options": ["Todos and current mode", "Pending tool approvals", "Provider state keyed by `source_id`", "The model weights"], "answers": [0, 1, 2], "explain": "Harness state (todos, mode, file memory, approvals, background-task metadata) lives in the session along with provider state. Model weights are never stored.", "ref": "tr10" },
+    { "id": "w11-t10-q3", "type": "single", "tag": "tradeoff", "q": "Which choice keeps compaction available and makes model switching mid-conversation possible?", "options": ["Local, caller-managed history in the session or your store", "Service-managed history", "Reusing `previous_response_id` across providers", "Not using sessions"], "answer": 0, "explain": "Compaction only works on locally held history, and `resp_*` ids are not portable across providers.", "ref": "tr11" }
+  ],
+  "flashcards": [
+    { "front": "What are the Python session fields?", "back": "`session_id` (local), `service_session_id` (remote conversation or response id) and `state` (dict shared with providers)." },
+    { "front": "How do you persist a session in each SDK?", "back": "Python `to_dict()` / `AgentSession.from_dict()`. .NET `SerializeSessionAsync` / `DeserializeSessionAsync`." },
+    { "front": "Why is a client-supplied session id dangerous?", "back": "An id identifies state but does not prove ownership. Bind stored sessions to the authenticated user or tenant." }
+  ],
+  "related": ["w11-t11", "w11-t12", "w11-t06", "w11-t25", "w12-t05"],
+  "refs": ["tr10", "tr11", "tr31"]
+}

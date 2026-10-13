@@ -1,0 +1,128 @@
+{
+  "id": "w07-t19",
+  "order": 19,
+  "group": "Operations and defences",
+  "title": "Testing access control",
+  "minutes": 9,
+  "difficulty": "advanced",
+  "summary": "Prove access control and revocation end to end with canary documents and test principals, red-team the retrieval path against named attack techniques, and keep a leak-response runbook you have rehearsed.",
+  "useIf": "You operate a RAG system over permissioned content and need evidence that revocation and isolation work.",
+  "avoidIf": "You only need the mechanism of one ACL option. Use the access control topics first.",
+  "explain": [
+    { "t": "p", "md": "Test through the **whole stack**: ingest, index, retrieval, cache, prompt, answer and citation. A filter-builder unit test passes while a revoked user still reads a cached answer. The interview probe to practise is: how do you test that revoking access really removes documents from answers? Use a canary document, a revoked test user and an end-to-end check." },
+    { "t": "table", "caption": "A minimum ACL test matrix", "head": ["Case", "Setup", "Expected"], "rows": [
+      ["Allowed reader", "Canary document, user in its group", "Document is retrieved and cited"],
+      ["Denied user", "Same document, user outside the group", "Absent from results, citations, caches and logs"],
+      ["Revoked user", "Remove the user, wait the stated SLA", "Absent, including cached answers"],
+      ["Nested group", "User reaches the group through two levels", "Present (or absent if the design excludes nesting, as stated)"],
+      ["No token", "Query without the user token", "Public documents only [[r12]]"],
+      ["Empty or unknown ACL", "Document whose ACL capture failed", "Hidden, never public"],
+      ["Deleted source", "Delete the canary at the source", "Gone from index and caches within the SLA"],
+      ["Overage user", "User with more than 200 groups", "Correct groups resolved [[r23]]"]
+    ] },
+    { "t": "p", "md": "Gate releases on **zero leaks** and watch **recall for restricted callers** as a separate metric, because a safe filter that hides everything also fails. Run the matrix in CI, nightly against production with synthetic principals, and after every ACL, cache or index change. Keep immutable retrieval logs of ids, principal, filter and decision, which OWASP LLM08 recommends [[r2]]. For debugging, use elevated read with a dedicated role rather than the application key [[r12]]." },
+    { "t": "p", "md": "**Red team** the retrieval path with named techniques: indirect injection (AML.T0051.001), RAG poisoning (AML.T0070), gathering RAG-indexed targets (AML.T0064) and exfiltration through agent tool invocation (AML.T0086) [[r4]]. Pair it with detection: Defender for Cloud AI threat protection alerts on data leakage, poisoning and jailbreak attempts for supported Azure AI services, with text tokens only and commercial cloud only [[tr16]]." },
+    { "t": "flow", "title": "Leak response runbook (design reasoning)", "direction": "h", "steps": [
+      { "title": "Contain", "md": "Hide the document or path, purge caches, flip the feature flag.", "tag": "minutes" },
+      { "title": "Preserve", "md": "Freeze retrieval logs: ids, principal, filter, decision.", "tag": "evidence" },
+      { "title": "Scope", "md": "Find who retrieved which documents in the window.", "tag": "impact" },
+      { "title": "Fix", "md": "Repair the ACL, sync, cache or filter cause and notify as required.", "tag": "cause" },
+      { "title": "Prevent", "md": "Add the case to the matrix and drill the runbook.", "tag": "learn" }
+    ] }
+  ],
+  "whereToUse": [
+    "CI and nightly production checks for any permissioned RAG system",
+    "Pre-launch security reviews and red-team exercises",
+    "Validating that a sync or cache change did not widen access",
+    "Incident drills and post-incident regression tests"
+  ],
+  "whenToUse": {
+    "use": ["Revocation or isolation is a stated promise", "You change ACL sync, caches or the index often", "A leak would trigger an incident or a notification duty"],
+    "avoid": ["Testing only the filter builder or only the index", "Treating a red-team report as a substitute for regression tests", "Running tests with an admin identity that bypasses the path users take"],
+    "flips": ["Content is public: reduce to a smoke test", "Revocation is seconds: test continuously with synthetic principals", "A new tool or source appears: add its attack path to the red-team plan"]
+  },
+  "alternatives": {
+    "title": "Test approaches compared",
+    "head": ["Approach", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["End-to-end canary matrix", "You promise revocation and isolation", "You never run it in production", "Needs synthetic users and documents"],
+      ["Unit tests of filter code", "Fast feedback on bugs", "Leaks come from sync, caches, indexes", "False confidence"],
+      ["Periodic red team", "New attack paths, new tools", "Findings are not turned into tests", "Costly, point in time"],
+      ["Drift audit on a sample", "A copy of permissions exists", "Rare scopes are missed", "Detects, does not prevent"],
+      ["Production monitoring and alerts", "Live misuse detection", "Unsupported services or modalities", "Coverage limits, alert fatigue"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Tests pass but users report leaks", "cause": "Tests ran against the index with an admin key, skipping caches and the user token path", "fix": "Test as a synthetic user through the production path and read results with a normal token" },
+    { "symptom": "Revocation test passes in CI and fails in production", "cause": "Production caches and sync intervals differ from the test setup", "fix": "Run the canary against production with the real SLA wait" },
+    { "symptom": "A fix is deployed and the leak returns next quarter", "cause": "No regression test was added", "fix": "Every incident adds a case to the matrix" },
+    { "symptom": "No one can say who retrieved the leaked document", "cause": "Retrieval logs hold no principal or document ids", "fix": "Log ids, principal, filter and decision in an immutable store" }
+  ],
+  "scenarios": [
+    {
+      "id": "w07-t19-s1",
+      "title": "What to test in CI",
+      "situation": "A team has unit tests for the function that builds the filter string and a manual check before release. Last month a revoked user read a cached answer. The team runs a pre-filter plus a semantic cache.",
+      "constraints": ["Pre-filter plus semantic cache", "Revocation promise of one hour", "Manual checks only"],
+      "unknowns": ["Can synthetic users be created in the identity provider?", "How long is the cache TTL?"],
+      "question": "What do you add first?",
+      "options": [
+        { "name": "More unit tests for the filter builder", "verdict": "poor", "why": "The leak came from a cache, which the filter builder never touches.", "tradeoff": "Worthwhile as fast feedback beside end-to-end tests." },
+        { "name": "An end-to-end canary matrix with allowed, denied, revoked, nested and no-token users, run through the full stack including caches", "verdict": "best", "why": "It exercises every copy of the permission and would have caught the cached answer.", "tradeoff": "Needs synthetic principals and waiting for the SLA." },
+        { "name": "Index-level tests with the admin key", "verdict": "good", "why": "Checks the ACL data in the index.", "tradeoff": "Skips caches, the token path and the answer." }
+      ],
+      "flips": [
+        { "if": "No semantic cache exists", "then": "Drop the cache case and keep the revoked-user wait." },
+        { "if": "Revocation target is seconds", "then": "Run the canary continuously in production." }
+      ],
+      "takeaway": "Test every copy of a permission."
+    },
+    {
+      "id": "w07-t19-s2",
+      "title": "A user shows an HR snippet",
+      "situation": "A user reports that the assistant quoted an HR document they should not see. The assistant serves several thousand users. You have retrieval logs with document ids and principals.",
+      "constraints": ["Live leak report", "Thousands of users", "Retrieval logs available"],
+      "unknowns": ["Is the document still retrievable?", "Which other users retrieved it?"],
+      "question": "What do you do in the first hour?",
+      "options": [
+        { "name": "Investigate the root cause before changing anything", "verdict": "poor", "why": "The document stays exposed while you investigate.", "tradeoff": "Right once containment is in place." },
+        { "name": "Contain first: hide the document and purge related caches, then freeze logs, scope who retrieved it, and only then fix the cause", "verdict": "best", "why": "It stops further exposure and keeps evidence for the scope and notification decision.", "tradeoff": "The document is unavailable to legitimate readers meanwhile." },
+        { "name": "Roll back to the previous index version", "verdict": "good", "why": "Fast and broad.", "tradeoff": "It may restore stale ACLs and drops other legitimate changes." }
+      ],
+      "flips": [
+        { "if": "The leak spans a whole scope", "then": "Disable that source and open a formal incident." },
+        { "if": "Personal data is involved", "then": "Involve the privacy and legal contacts for notification duties." }
+      ],
+      "takeaway": "Contain first, then preserve, scope and fix."
+    },
+    {
+      "id": "w07-t19-s3",
+      "title": "Small red-team budget",
+      "situation": "A team has three days for a red-team exercise on a RAG assistant that reads partner-supplied documents and can call one reply tool. They have a list of 500 generic jailbreak prompts.",
+      "constraints": ["Three days", "Partner-authored documents", "One tool"],
+      "unknowns": ["Which exits exist (rendering, tool, logs)?", "Which attack paths are already blocked deterministically?"],
+      "question": "How do you spend the time?",
+      "options": [
+        { "name": "Run all 500 generic jailbreak prompts", "verdict": "poor", "why": "They test direct injection and say little about poisoned documents and exits.", "tradeoff": "Useful as a baseline for direct prompt attacks." },
+        { "name": "Map the top attack paths to ATLAS techniques, test indirect injection, poisoning and tool exfiltration with real planted documents, and turn findings into regression tests", "verdict": "best", "why": "It follows how this system can actually be attacked and leaves durable tests [[r4]].", "tradeoff": "Needs a threat model first and fewer total prompts." },
+        { "name": "Run an automated scanner and accept its report", "verdict": "good", "why": "Cheap coverage of known patterns.", "tradeoff": "Misses system-specific flows." }
+      ],
+      "flips": [
+        { "if": "No tools and no rendering exist", "then": "Focus on permissions and poisoning." },
+        { "if": "A new tool is added", "then": "Re-run the tool-exfiltration cases." }
+      ],
+      "takeaway": "Red-team the paths your system really has."
+    }
+  ],
+  "quiz": [
+    { "id": "w07-t19-q1", "type": "order", "tag": "order", "q": "Order the first steps of a leak response.", "items": ["Contain: hide the document or path and purge caches", "Preserve: freeze retrieval logs with ids, principal and decision", "Scope: find who retrieved which documents in the window", "Fix the cause and add a regression test"], "explain": "Containment stops exposure, preserving logs keeps evidence, scoping sizes the impact and the fix plus a regression test prevents a repeat. Investigating before containing leaves the document exposed.", "ref": "r2" },
+    { "id": "w07-t19-q2", "type": "single", "tag": "diagnose", "q": "Your ACL tests pass but a revoked user still reads an answer. Which missing test most likely explains it?", "options": ["A unit test for the filter builder", "An end-to-end revoked-user test through caches, waiting for the stated SLA", "A test of the embedding model's recall", "A load test of the search service"], "answer": 1, "explain": "Only an end-to-end revoked-user test through every copy of the permission, including caches, catches a stale answer. Filter-builder, recall and load tests do not exercise revocation.", "ref": "r12" }
+  ],
+  "flashcards": [
+    { "front": "What is a canary document test?", "back": "A planted document with known permissions and synthetic users. You check that allowed users get it, denied and revoked users do not, and that deletes propagate, end to end." },
+    { "front": "What two metrics gate an ACL release?", "back": "Zero leaks as a hard gate, and recall for restricted callers as a watched metric, since a filter that hides everything also fails." },
+    { "front": "Name four ATLAS techniques to red-team a RAG path.", "back": "AML.T0051.001 indirect prompt injection, AML.T0070 RAG poisoning, AML.T0064 gather RAG-indexed targets and AML.T0086 exfiltration via agent tool invocation." }
+  ],
+  "related": ["w07-t15", "w07-t16", "w07-t17", "w07-l6", "w07-l7", "w14-t13", "w17-t09"],
+  "refs": ["r2", "r4", "r12", "r23", "tr16"]
+}

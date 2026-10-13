@@ -1,0 +1,95 @@
+{
+  "id": "w04-t10",
+  "order": 10,
+  "group": "Chunking",
+  "title": "Hierarchical summaries (RAPTOR)",
+  "minutes": 7,
+  "difficulty": "advanced",
+  "summary": "Cluster chunks, summarise each cluster with an LLM, then repeat on the summaries to build a tree. Search all levels so one query can reach a detail or a theme.",
+  "useIf": "Questions need whole-document or multi-section understanding, such as themes, arcs or comparisons across a long text.",
+  "avoidIf": "Questions are lookups answered by one passage, or the corpus changes often and rebuilding the tree is costly.",
+  "explain": [
+    { "t": "p", "md": "Plain chunk retrieval answers 'what does section 4 say about refunds?' but struggles with 'what is the overall argument of this report?'. No single chunk contains the answer. **RAPTOR** builds a tree of summaries. It embeds the leaf chunks, clusters similar ones, asks an LLM to summarise each cluster, embeds those summaries, clusters again and repeats until a few top-level summaries remain. Retrieval can then draw from any level: leaves for details, upper nodes for themes [[tr15]]." },
+    { "t": "diagram", "id": "w04-t10-d1", "title": "A summary tree", "alt": "Four leaf chunks are grouped into two cluster summaries, and those two summaries are grouped under a single top-level summary.", "src": "flowchart TB\n  R[\"Level 2: summary of summaries\"] --> S1[\"Level 1: cluster summary A\"]\n  R --> S2[\"Level 1: cluster summary B\"]\n  S1 --> C1[\"Chunk 1\"]\n  S1 --> C2[\"Chunk 2\"]\n  S2 --> C3[\"Chunk 3\"]\n  S2 --> C4[\"Chunk 4\"]" },
+    { "t": "p", "md": "The paper reports that, with GPT-4, retrieval over the tree raised the best QuALITY result by 20% absolute accuracy [[tr15]]. That benchmark asks questions about long narratives, which is the use case: understanding that spans many chunks. The paper compares walking the tree top-down with searching all nodes together; both are ways to use the levels." },
+    { "t": "formula", "title": "How many summary nodes?", "expr": "summary nodes = n / (f - 1)", "vars": [ { "k": "n", "v": "number of leaf chunks" }, { "k": "f", "v": "average children per summary node (fan-in)" } ], "example": "10,000 leaves with fan-in 5 give 2,000 + 400 + 80 + 16 + ... which is about 2,500 summary nodes, so about 2,500 LLM summarisation calls and a 25% larger index. Smaller fan-in means more nodes and more calls." },
+    { "t": "p", "md": "The costs are summarisation calls at ingest and **maintenance**. A change to one document alters its leaf chunks, the cluster summaries above them and possibly higher levels. Rebuild at least the affected subtrees, and decide how clusters are formed when new documents arrive. Summaries can also drop details, so keep the leaves searchable and cite them." },
+    { "t": "callout", "kind": "note", "title": "Neighbouring ideas", "md": "Parent-child retrieval returns the original surrounding text. RAPTOR returns generated summaries. GraphRAG builds entity graphs and community summaries for corpus-wide questions. Pick by question type, then by cost." }
+  ],
+  "whereToUse": [
+    "Long single documents such as books, transcripts, long reports and research papers",
+    "Assistants that must answer thematic or comparative questions as well as lookups",
+    "Corpora that change rarely, so the tree is built once and reused",
+    "Study aids and analyst tools where a summary of the whole is part of the product"
+  ],
+  "whenToUse": {
+    "use": ["Questions need synthesis across many chunks", "The corpus is stable or changes in whole-document steps", "You can afford LLM calls at ingest and storage for summaries"],
+    "avoid": ["Most questions are single-passage lookups", "Documents are edited continuously", "Summaries may not be treated as evidence"],
+    "flips": ["Lookups dominate: use parent-child or contextual chunks instead", "Corpus-wide entity questions dominate: evaluate graph-based retrieval", "A long-context model fits the whole document cheaply: compare against stuffing the document"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["RAPTOR summary tree", "Thematic questions over long text", "Lookups, volatile corpora", "LLM calls per cluster, rebuild on change"],
+      ["Parent-child retrieval", "Context around a precise match", "Questions needing global synthesis", "Lookup or storage cost"],
+      ["GraphRAG style graphs", "Corpus-wide questions about entities and relations", "Small corpora, tight budgets", "High extraction and summarisation cost"],
+      ["Long-context prompt", "One document that fits the window", "Many documents, high query volume", "Token cost per query"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Answers sound smooth but miss specific figures", "cause": "Retrieval returned summaries, which dropped the details", "fix": "Always keep leaf chunks in the search space and cite them, using summaries for orientation" },
+    { "symptom": "Index cost grows every time documents are edited", "cause": "Changes propagate up the tree, forcing re-clustering and re-summarising", "fix": "Version trees per document, rebuild only affected subtrees and batch updates" },
+    { "symptom": "Clusters mix unrelated passages", "cause": "Clustering on embeddings alone groups by surface similarity", "fix": "Cluster within a document or section first, then across documents if needed" }
+  ],
+  "scenarios": [
+    {
+      "id": "w04-t10-s1",
+      "title": "Thematic questions over long reports",
+      "situation": "Analysts ask for the main risks, recurring themes and how the argument develops across 300-page reports. The reports are published once and never edited.",
+      "constraints": ["Questions need synthesis", "Immutable documents", "Ingest budget allows summarisation", "Lookups also occur"],
+      "unknowns": ["What share of questions are thematic?", "Must summaries be citable?"],
+      "question": "What do you build?",
+      "options": [
+        { "name": "A summary tree with leaves kept searchable, citing leaves for facts", "verdict": "best", "why": "Upper levels answer thematic questions, leaves answer details, and immutable reports mean no rebuild cost.", "tradeoff": "Summarisation calls and a larger index." },
+        { "name": "Parent-child retrieval with section parents", "verdict": "good", "why": "Cheaper and keeps original text.", "tradeoff": "Cannot summarise across sections, so themes remain thin." },
+        { "name": "Fixed 128 token chunks, top 5", "verdict": "poor", "why": "Fragments of a long argument never reach the question's scope.", "tradeoff": "Right for narrow fact lookup." }
+      ],
+      "flips": [
+        { "if": "Most questions turn out to be lookups", "then": "Drop the tree and use parent-child retrieval." },
+        { "if": "A long-context model can take a whole report per query at acceptable cost", "then": "Compare that against the tree." }
+      ],
+      "takeaway": "Build a tree only when synthesis questions are common and the text is stable."
+    },
+    {
+      "id": "w04-t10-s2",
+      "title": "Support knowledge base with daily edits",
+      "situation": "A support team maintains thousands of short articles that are edited daily. Questions are lookups, with an occasional request for a summary of a topic area.",
+      "constraints": ["Daily edits", "Short articles", "Mostly lookups", "Limited LLM budget"],
+      "unknowns": ["How often are topic summaries requested?", "Do articles share topics?"],
+      "question": "Do you build a tree?",
+      "options": [
+        { "name": "Chunk with section paths and add parent-child retrieval, generate topic summaries on demand", "verdict": "best", "why": "Lookups are served cheaply and summaries are made only when asked, with no tree to maintain.", "tradeoff": "On-demand summaries cost latency and tokens per request." },
+        { "name": "Full summary tree rebuilt nightly", "verdict": "poor", "why": "Daily edits force heavy recomputation for a minority of questions.", "tradeoff": "Right for stable corpora where synthesis is the main use." },
+        { "name": "Summary nodes only for a few stable topic areas", "verdict": "good", "why": "Targets the topics that need synthesis.", "tradeoff": "Partial coverage and rules for which topics qualify." }
+      ],
+      "flips": [
+        { "if": "Topic summaries become a core feature", "then": "Cache generated summaries and refresh by article hash." },
+        { "if": "Articles are frozen into versions", "then": "A tree per version becomes affordable." }
+      ],
+      "takeaway": "Maintenance cost, not accuracy, usually decides whether a tree is worth it."
+    }
+  ],
+  "quiz": [
+    { "id": "w04-t10-q1", "type": "numeric", "tag": "numeric", "q": "A corpus has 10,000 leaf chunks and each summary node averages 5 children. About how many summary nodes (and LLM calls) are needed to build the tree?", "answer": 2500, "tolerancePct": 3, "unit": "summary nodes", "hint": "Sum a geometric series: n/f + n/f^2 + ...", "explain": "10,000/5 = 2,000, then 400, 80, 16 and so on, which sums to n / (f - 1) = 10,000 / 4 = 2,500." },
+    { "id": "w04-t10-q2", "type": "single", "tag": "flip", "q": "Which workload justifies the cost of a summary tree?", "options": ["Thematic questions over long, stable documents", "Single-passage lookups on a volatile wiki", "Short FAQ retrieval", "Exact identifier search"], "answer": 0, "explain": "RAPTOR helps when answers need synthesis across many chunks and the corpus is stable. Lookups, FAQs and identifier searches are served better and more cheaply by chunk retrieval or lexical search." },
+    { "id": "w04-t10-q3", "type": "multi", "tag": "bug", "q": "Which practices reduce the main risks of summary trees?", "options": ["Keep leaf chunks searchable and cite them", "Rebuild only the subtrees that changed", "Delete leaves once summaries exist", "Treat summaries as primary evidence"], "answers": [0, 1], "explain": "Leaves preserve details and citations, and subtree rebuilds limit cost. Deleting leaves loses facts and summaries are generated text, so they should not stand as evidence." }
+  ],
+  "flashcards": [
+    { "front": "How does RAPTOR build its tree?", "back": "Embed chunks, cluster them, summarise each cluster with an LLM, embed the summaries and repeat. Retrieval can use any level." },
+    { "front": "What result did the RAPTOR paper report?", "back": "With GPT-4, retrieval over the tree raised the best QuALITY accuracy by 20% absolute." },
+    { "front": "What does RAPTOR cost?", "back": "LLM summarisation at ingest and maintenance: edits propagate upward, so affected subtrees must be rebuilt." }
+  ],
+  "related": ["w04-t06", "w04-t08", "w05-t12", "w05-t15", "w04-l2"],
+  "refs": ["tr15"]
+}

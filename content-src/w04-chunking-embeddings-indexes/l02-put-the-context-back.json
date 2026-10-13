@@ -1,0 +1,98 @@
+{
+  "id": "w04-l2",
+  "order": 2,
+  "title": "Put the context back",
+  "kind": "problem",
+  "minutes": 16,
+  "brief": "A chunk that says 'the fee is 2%' no longer says which product, contract or year. Choose how to give small chunks their context back, and decide what to do with tables, code and figures. The ingest budget and the edit rate are not stated.",
+  "blocks": [
+    { "t": "h", "text": "A small chunk forgets where it came from", "level": 2 },
+    { "t": "p", "md": "Small chunks match precisely and lose their surroundings. Topics `w04-t06` to `w04-t11` explain parent-child retrieval, propositions, contextual retrieval, late chunking, RAPTOR and the handling of tables, code and figures. Each fix spends something different: ingest compute, index size or rebuild work after an edit. Prompt caching (see `w02-l4`) is what makes the per-chunk LLM pass affordable." },
+    { "t": "dials", "id": "w04-l2-context", "title": "Pick a way to restore context", "prompt": "Flip the constraints. Note how the edit rate changes the answer.",
+      "dials": [
+        { "id": "ask", "label": "Question type", "values": [ { "id": "lookup", "label": "Lookup of a fact in an ambiguous chunk" }, { "id": "multi", "label": "Multi-part or whole-document questions" } ] },
+        { "id": "churn", "label": "Edit rate", "values": [ { "id": "rare", "label": "Documents rarely change" }, { "id": "daily", "label": "Documents change daily" } ] },
+        { "id": "llm", "label": "Ingest budget", "values": [ { "id": "none", "label": "No LLM calls at ingest" }, { "id": "pass", "label": "An LLM pass per chunk is affordable" } ] }
+      ],
+      "options": [
+        { "id": "header", "name": "Title and section path headers", "summary": "Prepend the document title and heading path to each chunk's text." },
+        { "id": "parent", "name": "Parent-child retrieval", "summary": "Embed small children, return the larger parent or a window." },
+        { "id": "contextual", "name": "Contextual retrieval", "summary": "An LLM writes a 50 to 100 token context for each chunk before embedding and BM25." },
+        { "id": "late", "name": "Late chunking", "summary": "Embed the whole document with a long-context model, then pool per chunk." },
+        { "id": "proposition", "name": "Propositions", "summary": "Index atomic, self-contained facts extracted by an LLM." },
+        { "id": "raptor", "name": "RAPTOR summary tree", "summary": "Cluster and summarise chunks recursively, then search across levels." }
+      ],
+      "scores": {
+        "header": {
+          "ask": { "lookup": { "s": 1, "why": "A title and section path disambiguate many chunks for the price of a string join." }, "multi": { "s": 0, "why": "It does not connect facts across sections." } },
+          "churn": { "rare": { "s": 1, "why": "Cheap, and nothing to regenerate." }, "daily": { "s": 2, "why": "Rebuilt from the document's own structure at every change, with no model call." } },
+          "llm": { "none": { "s": 2, "why": "Needs no model." }, "pass": { "s": 0, "why": "Works, but leaves the extra budget unused." } }
+        },
+        "parent": {
+          "ask": { "lookup": { "s": 2, "why": "Small chunks match precisely, and the parent supplies the surroundings." }, "multi": { "s": 1, "why": "A bigger parent covers nearby facts, not facts in other documents." } },
+          "churn": { "rare": { "s": 0, "why": "Works, with an extra key and parent store to maintain." }, "daily": { "s": 1, "why": "Projected child keys carry a hash that changes with the parent, so stale chunks are replaced [[r42]]." } },
+          "llm": { "none": { "s": 1, "why": "No model calls, only more storage and keys." }, "pass": { "s": 0, "why": "The LLM budget is not what it spends." } }
+        },
+        "contextual": {
+          "ask": { "lookup": { "s": 2, "why": "Top-20 failures fell 35% with contextual embeddings, 49% with contextual BM25 and 67% with reranking in a vendor study [[r11]]." }, "multi": { "s": 0, "why": "It fixes ambiguity inside a document, not multi-hop reasoning." } },
+          "churn": { "rare": { "s": 1, "why": "A one-time cost of about 1.02 dollars per million document tokens with prompt caching, under the study's assumptions [[r11]]." }, "daily": { "s": -2, "why": "The context depends on the whole document, so every chunk of an edited document is regenerated." } },
+          "llm": { "none": { "s": -2, "why": "It needs an LLM call per chunk." }, "pass": { "s": 2, "why": "That budget is exactly what it spends, and caching the document prefix keeps it cheap [[r11]]." } }
+        },
+        "late": {
+          "ask": { "lookup": { "s": 1, "why": "Each chunk vector carries document context with no extra text [[r9]]." }, "multi": { "s": 0, "why": "It improves chunk meaning, not summaries across sections." } },
+          "churn": { "rare": { "s": 0, "why": "Neutral." }, "daily": { "s": -1, "why": "An edit means re-embedding the whole document." } },
+          "llm": { "none": { "s": 1, "why": "No LLM, but it needs a long-context embedding model (jina-embeddings-v2-base-en takes 8,192 tokens) [[r9]]." }, "pass": { "s": 0, "why": "The LLM budget is not what it spends." } }
+        },
+        "proposition": {
+          "ask": { "lookup": { "s": 1, "why": "Atomic, self-contained facts beat passage and sentence units for dense retrieval in Dense X [[r8]]." }, "multi": { "s": 0, "why": "Splitting into facts does not connect them." } },
+          "churn": { "rare": { "s": 0, "why": "The extraction cost is paid once." }, "daily": { "s": -1, "why": "Every edited document needs its propositions regenerated, and the vector count multiplies." } },
+          "llm": { "none": { "s": -2, "why": "It needs an LLM pass at ingest [[r8]]." }, "pass": { "s": 1, "why": "Affordable, but you hold many more vectors." } }
+        },
+        "raptor": {
+          "ask": { "lookup": { "s": -1, "why": "Summary levels add noise to exact lookups." }, "multi": { "s": 2, "why": "Summaries at several levels answer whole-document and thematic questions, with a 20 point absolute gain on QuALITY with GPT-4 [[r10]]." } },
+          "churn": { "rare": { "s": 1, "why": "A tree built once pays back over many questions." }, "daily": { "s": -2, "why": "Affected subtrees must be rebuilt when documents change [[r10]]." } },
+          "llm": { "none": { "s": -2, "why": "It needs summarisation calls." }, "pass": { "s": 1, "why": "Summaries cost LLM calls that grow with the corpus." } }
+        }
+      },
+      "takeaway": "Go cheap first: headers and parent-child. Pay for contextual retrieval when lookups fail on ambiguous chunks and documents rarely change. Reach for RAPTOR only when questions need whole-document reasoning." },
+    { "t": "stats", "items": [
+      { "label": "Top-20 failures cut by contextual embeddings", "value": "35%", "note": "5.7% down to 3.7% [[r11]]" },
+      { "label": "Plus contextual BM25", "value": "49%", "note": "Down to 2.9% [[r11]]" },
+      { "label": "Plus reranking", "value": "67%", "note": "Down to 1.9% [[r11]]" },
+      { "label": "One-time cost", "value": "about 1.02 dollars per million document tokens", "note": "With prompt caching, assuming 800-token chunks, 8k-token documents and 100 tokens of context per chunk. A vendor estimate [[r11]]" }
+    ] },
+    { "t": "diagram", "id": "w04-l2-parent", "title": "Parent-child retrieval with index projections", "alt": "A parent document is split into child chunks that each carry a parent id. A query matches child chunks. Top child hits are grouped by parent id, and the parent text or a window around the hit goes into the model prompt.", "src": "flowchart LR\n  DOC[Parent document] --> SPLIT[Split into child chunks]\n  SPLIT --> CH[(Child chunks with parent_id)]\n  Q[Query] --> CH\n  CH -->|top child hits| GRP[Group by parent_id]\n  GRP --> PAR[Parent text or window]\n  PAR --> LLM[Model prompt]", "caption": "In Azure AI Search the parent id field must be an Edm.String that is filterable and not the document key, and `skipIndexingParentDocuments` is the recommended projection mode [[r42]]." },
+    { "t": "table", "caption": "Tables, code and figures: pick the retrieval unit", "head": ["Content", "Chunk it as", "Wins when", "Loses when"], "rows": [
+      ["Small table", "One chunk with its caption and header row", "Questions span several rows", "The table exceeds the embedding input limit"],
+      ["Large table", "Row groups with the header repeated, plus a short summary chunk", "Questions look up rows or ask what the table shows", "A total across groups needs the full table, so fetch it through the parent id"],
+      ["Source code", "One chunk per function or class, with path and signature as metadata", "Questions name a symbol or a behaviour", "A fixed-size cut splits a function and loses its signature"],
+      ["Figure", "A caption plus a description chunk that carries the image URL", "The answer lives in a chart or diagram", "A description that splits across chunks loses the link, so repeat the image URL in each chunk [[r3]]"],
+      ["Chat or ticket", "A window of messages with overlap, or one ticket per chunk", "Answers sit in a short exchange", "A long thread dilutes the one useful message"]
+    ], "highlightCol": 1 },
+    { "t": "failure", "title": "Context-restoring failure modes", "items": [
+      { "symptom": "Search returns old context sentences after a document was edited", "cause": "The LLM context was written once, and it depends on the whole document.", "fix": "Key regeneration on the document version and rebuild every chunk of an edited document, not only the changed ones." },
+      { "symptom": "A parent-child answer blows the prompt budget", "cause": "The parent is a whole chapter, and several top hits share it.", "fix": "Use a mid-size parent or a window of neighbouring chunks, and cap tokens per parent." },
+      { "symptom": "Late chunking shows no gain", "cause": "The embedding model has a short context, so it cannot embed the whole document first [[r9]].", "fix": "Use a long-context embedding model (an 8,192 token model in the paper), or choose another technique." },
+      { "symptom": "Chunks of a deleted document remain searchable", "cause": "Index projections remove child chunks only when the data source has a deletion detection policy [[r42]].", "fix": "Add the policy and alert on chunks whose parent id has no source document." }
+    ] }
+  ],
+  "quiz": [
+    { "id": "w04-l2-q1", "type": "single", "tag": "flip", "difficulty": 2, "q": "Documents change hourly, you have no LLM budget at ingest, and lookups fail on ambiguous chunks such as 'the fee is 2%'. Which technique do you reach for first?", "options": ["Contextual retrieval, with an LLM sentence written for every chunk", "A RAPTOR summary tree built over the whole corpus", "Proposition chunking with an LLM extraction pass for each document", "Title and section path headers, returning the parent section"], "answer": 3, "explain": "Headers and parent-child need no model calls and rebuild with the document at each edit. Contextual retrieval, RAPTOR and propositions all need an LLM pass that must be repeated for every edited document, which fails both the budget and the edit-rate constraints [[r11]] [[r42]]." },
+    { "id": "w04-l2-q2", "type": "numeric", "tag": "numeric", "difficulty": 2, "q": "Using the vendor's stated assumptions and its estimate of 1.02 dollars per million document tokens, what is the one-time cost of contextualising a 40,000,000 token corpus?", "answer": 40.8, "tolerancePct": 5, "unit": "dollars", "hint": "The estimate scales linearly with document tokens.", "explain": "40 million tokens is 40 times the unit of one million, so about 40 x 1.02 = 40.8 dollars, one time. That assumes 800-token chunks, 8k-token documents and prompt caching, and each edited document costs again. Without caching, the document would be re-sent with every chunk, so the cost would be higher [[r11]]." },
+    { "id": "w04-l2-q3", "type": "match", "tag": "tradeoff", "difficulty": 2, "q": "Match each technique to the cost or constraint that most often decides against it.", "pairs": [
+      { "l": "Contextual retrieval", "r": "An LLM call per chunk, regenerated whenever the document changes" },
+      { "l": "Late chunking", "r": "Needs a long-context embedding model" },
+      { "l": "Propositions", "r": "An LLM extraction pass and many more vectors" },
+      { "l": "RAPTOR", "r": "Summarisation calls, with subtrees rebuilt after edits" },
+      { "l": "Parent-child", "r": "An extra parent key and store, with oversized parents risking the prompt budget" }
+    ], "explain": "Each technique restores context by spending something: LLM calls, a special embedding model, index size or rebuild work [[r8]] [[r9]] [[r10]] [[r11]] [[r42]]. Choosing means pricing that against your edit rate and question types." }
+  ],
+  "defend": null,
+  "refs": ["r3", "r8", "r9", "r10", "r11", "r42", "r39"],
+  "takeaways": [
+    "Small chunks match precisely and lose context, and every fix spends ingest compute, index size or rebuild work",
+    "Go cheap first: headers and parent-child cost no LLM calls and rebuild with the document",
+    "Contextual retrieval is a measured win on ambiguous lookups, but it regenerates on every edit, and the numbers are a vendor study",
+    "Pick the retrieval unit for tables, code and figures explicitly, and repeat the image URL if a description splits"
+  ]
+}

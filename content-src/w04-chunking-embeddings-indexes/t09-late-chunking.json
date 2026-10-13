@@ -1,0 +1,100 @@
+{
+  "id": "w04-t09",
+  "order": 9,
+  "group": "Chunking",
+  "title": "Late chunking",
+  "minutes": 7,
+  "difficulty": "advanced",
+  "summary": "Run the whole document through a long-context embedding model first, then cut the token embeddings into chunks and pool each one. Every chunk vector carries document context with no extra LLM calls.",
+  "useIf": "You run a long-context embedding model whose token-level outputs you can access and chunks lean on document context (pronouns, references).",
+  "avoidIf": "You only have a hosted embedding API that returns one pooled vector per input, or documents are longer than the model's context.",
+  "explain": [
+    { "t": "p", "md": "In normal chunking each chunk is embedded alone, so the model sees only its own tokens. A chunk that says 'the city has 3.4 million people' cannot know which city. **Late chunking** swaps the order. The whole document goes through the transformer once, so each token embedding is shaped by attention over the full text. Only then are the token embeddings split at chunk boundaries and **mean-pooled** into one vector per chunk. The chunk vector now carries context from the rest of the document [[tr14]]." },
+    { "t": "diagram", "id": "w04-t09-d1", "title": "Naive versus late chunking", "alt": "Naive chunking splits the document and embeds each chunk alone. Late chunking embeds the whole document into token vectors, splits the token vectors at chunk boundaries and mean-pools each span. Both produce one vector per chunk.", "src": "flowchart LR\n  A[\"Document\"] --> B[\"Naive: split, then embed each chunk\"]\n  A --> C[\"Late: embed whole text to token vectors\"]\n  C --> D[\"Split token vectors at boundaries\"]\n  D --> E[\"Mean-pool each span\"]\n  B --> F[\"One vector per chunk\"]\n  E --> F" },
+    { "t": "p", "md": "The method needs three things. First, an embedding model with a **long context**; the paper uses `jina-embeddings-v2-base-en`, which handles 8,192 tokens. Second, **access to token-level outputs** before pooling, which means a model you run or an endpoint that exposes them (practice: an API that returns only one vector per input cannot do this). Third, **chunk boundaries**: you still choose spans by fixed size, sentences or structure, and the boundary cues are applied after the transformer pass. It works without extra training [[tr14]]." },
+    { "t": "table", "caption": "Late chunking versus contextual retrieval", "head": ["Aspect", "Late chunking", "Contextual retrieval"], "rows": [
+      ["Where context is added", "Inside the vector, through attention", "As prepended text"],
+      ["LLM calls at ingest", "None", "One per chunk"],
+      ["Helps BM25", "No, text is unchanged", "Yes, enriched text is indexed"],
+      ["Needs", "Long-context model, token outputs", "A chat model and prompt caching"],
+      ["Document length limit", "Model context window", "Chat model context window"]
+    ] },
+    { "t": "callout", "kind": "note", "title": "Long documents", "md": "If a document exceeds the model's context window, you process it in windows. Chunks near a window edge see less context, so overlap the windows and test. This is an engineering extension, not part of the original method." }
+  ],
+  "whereToUse": [
+    "Self-hosted embedding pipelines on GPUs where token-level outputs are available",
+    "Pronoun-heavy or reference-heavy text such as articles and reports under the model's context length",
+    "Cost-sensitive ingest where an LLM call per chunk is too expensive",
+    "Experiments comparing vector quality against naive chunking on a labelled set"
+  ],
+  "whenToUse": {
+    "use": ["Chunks lean on document context", "You control the embedding model and its outputs", "Documents fit in the model's context window"],
+    "avoid": ["Only a hosted pooled-vector API is available", "Documents far exceed the model's context", "You rely on BM25 and need enriched text, not vectors"],
+    "flips": ["Compliance forces a managed API: use contextual retrieval or title and section path", "Documents are very long: window them with overlap or use parent-child", "Hybrid search is primary: add text-based context so BM25 benefits too"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Late chunking", "Self-hosted long-context model, no LLM budget", "Hosted pooled API, very long documents", "GPU serving, model lock-in"],
+      ["Contextual retrieval", "Ambiguous chunks, BM25 matters", "Tiny budgets, volatile documents", "LLM pass per chunk"],
+      ["Section path and title prepended", "Structured documents", "Context lies deep in the text", "Low, extra tokens per chunk"],
+      ["Naive chunking", "Self-contained chunks", "Chunks lean on document context", "Lost subjects, weaker recall"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "The team cannot implement it on their embedding endpoint", "cause": "The hosted API returns only a pooled vector, so token embeddings cannot be pooled by span", "fix": "Check the output contract before design, or choose contextual retrieval or a model you host" },
+    { "symptom": "Quality falls for chunks near the end of long documents", "cause": "The document was truncated or windowed, so late chunks lost context", "fix": "Stay within the context window, or overlap windows and measure by position" },
+    { "symptom": "Query results get worse after switching the embedding model for late chunking", "cause": "Query vectors and chunk vectors must come from the same model, and prefixes may differ", "fix": "Re-embed every document and query with one model and the same prefix rules" }
+  ],
+  "scenarios": [
+    {
+      "id": "w04-t09-s1",
+      "title": "Self-hosted GPUs, no LLM budget",
+      "situation": "A team hosts its own long-context embedding model. Documents are 3,000 to 6,000 tokens and full of pronouns and references. There is no budget for an LLM call per chunk.",
+      "constraints": ["Self-hosted embedding model", "Documents fit the context window", "No LLM enrichment budget", "Labelled questions exist"],
+      "unknowns": ["Does the serving stack expose token embeddings?", "Is BM25 also in use?"],
+      "question": "What do you try?",
+      "options": [
+        { "name": "Late chunking with the long-context model, tested against naive chunking", "verdict": "best", "why": "It adds document context to each vector with no LLM calls and fits the model limit.", "tradeoff": "GPU serving and a custom pooling step." },
+        { "name": "Contextual retrieval with a hosted chat model", "verdict": "good", "why": "Strong results and helps BM25 too.", "tradeoff": "A per-chunk LLM cost the team has no budget for." },
+        { "name": "Semantic chunking", "verdict": "poor", "why": "Moves boundaries but does not give each chunk its document context.", "tradeoff": "Fits text with sharp topic shifts and no headings." }
+      ],
+      "flips": [
+        { "if": "Hybrid search matters and BM25 is weak on chunks", "then": "Add text context as well as late chunking." },
+        { "if": "Documents grow beyond the context window", "then": "Window with overlap and re-measure." }
+      ],
+      "takeaway": "Late chunking is cheap context for teams that own the embedding model."
+    },
+    {
+      "id": "w04-t09-s2",
+      "title": "Managed embeddings only",
+      "situation": "Policy requires a managed embedding endpoint in a specific region. It returns one vector per input and no token embeddings. Chunks are pronoun-heavy.",
+      "constraints": ["Managed endpoint only", "One pooled vector per input", "Pronoun-heavy chunks", "A chat model is available"],
+      "unknowns": ["Is prompt caching available?", "How often do documents change?"],
+      "question": "How do you add document context?",
+      "options": [
+        { "name": "Contextual retrieval, or at least title and section path prepended", "verdict": "best", "why": "Works with any embedding endpoint because the context is plain text.", "tradeoff": "LLM cost for contextual retrieval, or less context for the cheap variant." },
+        { "name": "Late chunking via the managed endpoint", "verdict": "poor", "why": "Token-level outputs are not available, so spans cannot be pooled.", "tradeoff": "Right once you host a long-context model." },
+        { "name": "Larger chunks so context stays inside", "verdict": "good", "why": "No extra pipeline.", "tradeoff": "Vectors blur and the prompt grows." }
+      ],
+      "flips": [
+        { "if": "The policy changes to allow self-hosted models", "then": "Evaluate late chunking against contextual retrieval." },
+        { "if": "Documents are short", "then": "Larger chunks may be enough." }
+      ],
+      "takeaway": "Check what the embedding endpoint returns before designing around it."
+    }
+  ],
+  "quiz": [
+    { "id": "w04-t09-q1", "type": "order", "tag": "order", "q": "Put the late chunking steps in order.", "items": ["Embed the whole document into token embeddings", "Decide chunk boundaries as token spans", "Mean-pool the token embeddings inside each span", "Store one vector per chunk"], "explain": "The transformer runs first over the full text, so context flows into every token. Boundaries are then applied, each span is pooled and one vector per chunk is stored." },
+    { "id": "w04-t09-q2", "type": "single", "tag": "flip", "q": "Which constraint rules out late chunking most directly?", "options": ["Chunks are pronoun-heavy", "The embedding endpoint returns only one pooled vector per input", "The corpus is in English", "Documents have headings"], "answer": 1, "explain": "Late chunking pools token embeddings by span, so token-level outputs are required. Pronoun-heavy text is the case it helps, and language or headings do not prevent it." },
+    { "id": "w04-t09-q3", "type": "multi", "tag": "tradeoff", "q": "Compared with contextual retrieval, late chunking...", "options": ["needs no LLM call per chunk", "also improves the BM25 index", "needs a long-context model with token outputs", "adds context inside the vector, not as text"], "answers": [0, 2, 3], "explain": "Late chunking adds context through attention, needs a long-context model with token outputs and avoids per-chunk LLM calls. It leaves the text unchanged, so BM25 gets no help." }
+  ],
+  "flashcards": [
+    { "front": "What is late chunking?", "back": "Embed the whole document into token embeddings first, then split them at chunk boundaries and mean-pool each span, so every chunk vector carries document context." },
+    { "front": "What does late chunking require?", "back": "A long-context embedding model (for example one handling 8,192 tokens) and access to token-level outputs before pooling. It needs no extra training." },
+    { "front": "Does late chunking help BM25?", "back": "No. It changes vectors only, not the chunk text. Contextual retrieval enriches the text, so BM25 benefits too." }
+  ],
+  "related": ["w04-t08", "w04-t12", "w04-t15", "w04-t06", "w04-l2"],
+  "refs": ["tr14", "tr16"]
+}

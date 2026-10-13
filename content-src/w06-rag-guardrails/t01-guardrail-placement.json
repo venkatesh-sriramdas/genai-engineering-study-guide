@@ -1,0 +1,110 @@
+{
+  "id": "w06-t01",
+  "order": 1,
+  "group": "Placement",
+  "title": "Guardrail placement: input, retrieval, output, tool",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "A guard only sees what passes through its position. Input, retrieved content, tool calls and output each carry different risks, so placement decides what a guard can catch and what it costs in latency.",
+  "useIf": "You are deciding where to put checks around a RAG or agent request and how much latency each may add.",
+  "avoidIf": "You treat guardrails as one filter on the final answer: that misses untrusted documents, tool side effects and early leaks.",
+  "explain": [
+    { "t": "p", "md": "Foundry guardrails define four **intervention points**: user input, tool call (preview, agents only), tool response (preview, agents only) and output [[r1]]. NeMo Guardrails names five rail types: input, retrieval, dialog, execution and output, where retrieval rails filter chunks and execution rails check tool calls [[r13]]. Different names, same idea: each point sees different data." },
+    { "t": "p", "md": "**Input guards** catch attacks and unwanted topics before the model spends tokens. **Retrieval guards** treat retrieved chunks as untrusted: a document can carry an instruction that the user never typed, which Prompt Shields calls a document (indirect) attack [[r3]]. **Tool guards** run before a side effect happens, so they must sit in front of execution, not behind the answer. **Output guards** check what the user will see. Microsoft's defence-in-depth guidance combines prompt hardening, Spotlighting, Prompt Shields and deterministic blocking of exfiltration paths, not one filter [[r11]]." },
+    { "t": "p", "md": "**Latency.** No vendor in the sources publishes guard latency, so measure it. As an author estimate, a classifier call adds tens to a few hundred milliseconds, and an LLM judge adds a full model call of one to several seconds. Sequential guards add up. Independent guards run in parallel add only the slowest. Streaming changes the output trade-off: the default buffers and filters chunks, while the asynchronous filter streams token by token and guarantees the stop signal only within about 1,000 characters [[r9]]." },
+    { "t": "diagram", "id": "w06-t01-d1", "title": "Where each guard stands in a RAG request", "alt": "A user prompt passes an input guard, retrieval runs, a chunk guard checks retrieved content, the model runs, then a tool guard checks proposed tool calls and an output guard checks the answer before it reaches the user.", "src": "flowchart LR\n  U[User] --> G1[Input guard]\n  G1 --> R[Retrieve]\n  R --> G2[Chunk guard]\n  G2 --> M[Model]\n  M --> G3[Tool guard]\n  M --> G4[Output guard]\n  G4 --> A[Answer]" },
+    { "t": "callout", "kind": "gotcha", "title": "Retrieval can fail open", "md": "Retrieve calls without a user identity header return unfiltered results from indexed sources [[tr2]]. A guard placed after retrieval cannot restore a permission check that was skipped before it." }
+  ],
+  "whereToUse": [
+    "Designing the guard stack for a RAG assistant before choosing products",
+    "Reviewing an agent that can send email, write records or call external APIs",
+    "Deciding which checks run in parallel with retrieval to protect the latency budget",
+    "Explaining to security reviewers what each guard can and cannot see",
+    "Mapping Foundry intervention points or NeMo rail types onto your own pipeline"
+  ],
+  "whenToUse": {
+    "use": [
+      "Put an input guard in front of every model call that accepts user text",
+      "Put a chunk guard on retrieved or tool-returned content when sources are not fully trusted",
+      "Put a tool guard before any call with a side effect",
+      "Put an output guard where harm comes from what the user reads"
+    ],
+    "avoid": [
+      "Avoid a single output-only guard for agents: tool side effects happen before the answer",
+      "Avoid running every guard sequentially when they are independent",
+      "Avoid assuming the model-level guardrail covers tool calls on an agent"
+    ],
+    "flips": [
+      "Latency budget is tight: run input guards in parallel with retrieval and reserve LLM judges for high-risk routes",
+      "Sources are fully trusted and curated: the chunk guard can be lighter or sampled",
+      "Tools are read-only: tool-call guards matter less, tool-response scanning matters more"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Placement", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Input guard", "Stops attacks and off-policy topics early", "Risk is inside retrieved documents", "Adds latency to every request unless run in parallel"],
+      ["Retrieval or chunk guard", "Untrusted or user-supplied documents", "Corpus is curated and small", "More calls per request, false positives on benign text"],
+      ["Tool-call guard", "Tools write, send or delete", "Tools are read-only", "Must sit before execution, preview for Foundry agents"],
+      ["Output guard", "Harm comes from what is shown", "A side effect already happened", "Late: cost of generation is spent, streaming leaks if async"],
+      ["Post-hoc audit", "Low-risk analytics, review loops", "Harm is immediate", "Detects after the fact only"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "An agent sends a harmful email although the final answer passed the output guard", "cause": "No guard stood in front of the tool call", "fix": "Add tool-call controls or a deterministic allow list before execution" },
+    { "symptom": "Added guards double the response time", "cause": "Independent checks were chained in sequence", "fix": "Run independent guards in parallel and tier the expensive ones" },
+    { "symptom": "A planted instruction in a PDF steers the answer", "cause": "Only user input was scanned, not retrieved chunks", "fix": "Scan chunks and tool responses for document attacks and reduce tool privileges" },
+    { "symptom": "Tool calls are unscanned after an agent guardrail was created", "cause": "An agent's guardrail fully overrides its model's, and it had no tool controls", "fix": "Include tool call and tool response controls in the agent guardrail" }
+  ],
+  "scenarios": [
+    {
+      "id": "w06-t01-s1",
+      "title": "Read-only assistant over uploaded documents",
+      "situation": "Users upload PDFs and ask questions. The assistant has no tools and answers in under three seconds. Uploaded files come from outside the company.",
+      "constraints": ["No tools", "Untrusted documents", "3 second latency budget", "Moderate harm if the answer is steered"],
+      "unknowns": ["Can the answer reach other users?", "Is streaming used?"],
+      "question": "Which guards do you place?",
+      "options": [
+        { "name": "Input guard in parallel with retrieval, a chunk guard for document attacks, and an output guard", "verdict": "best", "why": "The risk sits in the documents, so chunk scanning is essential, and parallel input checks protect the budget.", "tradeoff": "More guard calls and a small false positive rate on benign text." },
+        { "name": "Output guard only", "verdict": "good", "why": "Cheap and catches visible harm.", "tradeoff": "A steered but plausible answer passes, and the cost of generation is already spent." },
+        { "name": "Input guard only", "verdict": "poor", "why": "The user prompt is clean while the attack lives in the document.", "tradeoff": "Right for chat with no retrieval and no documents." }
+      ],
+      "flips": [
+        { "if": "Documents come only from a curated, trusted library", "then": "Sample chunk scanning and keep input and output guards." },
+        { "if": "Latency budget shrinks below one second", "then": "Keep only deterministic checks inline and move model-based guards to async review." }
+      ],
+      "takeaway": "Guard the place where the untrusted content enters, not only the place where the user types."
+    },
+    {
+      "id": "w06-t01-s2",
+      "title": "Agent that can send email",
+      "situation": "An agent reads a mailbox through a tool and can send replies. It streams answers. A mistaken or injected send cannot be undone.",
+      "constraints": ["Irreversible side effect", "Tool responses contain external text", "Streaming UI", "Foundry Agent Service"],
+      "unknowns": ["Which recipients are allowed?", "Is human approval available for sends?"],
+      "question": "Where must the strongest guard stand?",
+      "options": [
+        { "name": "Before the send: tool-call guard plus a deterministic allow list and approval, with tool-response scanning on the mailbox read", "verdict": "best", "why": "The harm happens at execution, so the check has to stand in front of it, and mailbox text is an indirect attack path.", "tradeoff": "Tool-call and tool-response controls are preview, and approvals add friction." },
+        { "name": "Input and output guards, plus human review of sent mail afterwards", "verdict": "good", "why": "Catches obvious problems and gives an audit trail.", "tradeoff": "Review happens after an irreversible send." },
+        { "name": "Output guard only", "verdict": "poor", "why": "The email is already sent when the final answer is checked.", "tradeoff": "Right for text-only assistants with no side effects." }
+      ],
+      "flips": [
+        { "if": "Sends are reversible drafts", "then": "Output and audit guards are enough." },
+        { "if": "Preview controls are not allowed", "then": "Use deterministic allow lists and approvals in your own code." }
+      ],
+      "takeaway": "Put the strongest guard in front of the action that cannot be undone."
+    }
+  ],
+  "quiz": [
+    { "id": "w06-t01-q1", "type": "single", "tag": "diagnose", "q": "An agent's final answers pass the output guard, yet it sent a bad email. What is the most likely gap?", "options": ["The embedding model was too small", "The reranker was disabled", "The index was stale", "No guard stood in front of the tool call"], "answer": 3, "explain": "Side effects occur before the answer is produced, so a tool-call guard or deterministic control must stand in front of execution. Embedding size, reranking and staleness do not explain a bad send.", "ref": "r1" },
+    { "id": "w06-t01-q2", "type": "multi", "tag": "tradeoff", "q": "Which are valid ways to protect a tight latency budget?", "options": ["Run independent input guards in parallel with retrieval", "Chain every guard in sequence", "Reserve LLM judges for high-risk routes", "Use deterministic checks inline for the cheapest filters"], "answers": [0, 2, 3], "explain": "Parallelism, tiering and cheap deterministic checks save time. Sequential chains add the sum of their latencies." },
+    { "id": "w06-t01-q3", "type": "match", "tag": "concept", "q": "Match each NeMo Guardrails rail type to its job.", "pairs": [{ "l": "Input rail", "r": "Checks the user message before the model" }, { "l": "Retrieval rail", "r": "Filters retrieved chunks" }, { "l": "Execution rail", "r": "Checks tool calls" }, { "l": "Output rail", "r": "Checks the generated answer" }], "explain": "Each rail type sees a different part of the request. NeMo also has a dialog rail type that governs conversation flow.", "ref": "r13" }
+  ],
+  "flashcards": [
+    { "front": "Name the four Foundry guardrail intervention points.", "back": "User input, tool call (preview, agents only), tool response (preview, agents only) and output." },
+    { "front": "Why scan retrieved chunks and tool responses?", "back": "They are untrusted text that can carry instructions the user never typed, so input guards alone miss document attacks." },
+    { "front": "How do parallel guards affect latency?", "back": "Independent parallel guards add roughly the slowest one. Sequential guards add the sum." }
+  ],
+  "related": ["w06-t02", "w06-t05", "w06-t07", "w06-t10", "w06-l1", "w07-t02"],
+  "refs": ["r1", "r3", "r9", "r11", "r13", "tr2"]
+}

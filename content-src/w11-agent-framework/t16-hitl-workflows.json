@@ -1,0 +1,108 @@
+{
+  "id": "w11-t16",
+  "order": 16,
+  "group": "Workflows",
+  "title": "Human-in-the-loop in workflows",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "An executor sends a typed request out of the workflow and waits. The caller answers with a response, and the framework routes it back. Pending requests are saved in checkpoints and re-emitted on restore, so the wait can outlive the process.",
+  "useIf": "A step needs a person or an external system to decide, approve or supply data before the graph continues.",
+  "avoidIf": "The decision is one tool approval inside a single chat turn: a tool-level approval with the same session is simpler.",
+  "explain": [
+    { "t": "p", "md": "**.NET and Go:** create a `RequestPort` (for example `RequestPort.Create<NumberSignal, int>(\"GuessNumber\")`), add it to the graph; messages sent to it emit a `RequestInfoEvent`, and you reply with `handle.SendResponseAsync(evt.Request.CreateResponse(value))`. **Python:** an executor calls `await ctx.request_info(request_data=..., response_type=...)` and handles the answer in a method decorated with `@response_handler`. The caller sees an event with `type == \"request_info\"` and resumes with `workflow.run(responses={request_id: answer}, stream=True)` (this replaced `send_responses*` in 1.0.0b260210) [[tr19]]." },
+    { "t": "p", "md": "**Durability.** When a checkpoint is created, pending requests are saved with it. On restore they are re-emitted as request events. You can pass `checkpoint_id` and `responses` in one `run(...)` call to resume and answer together [[tr19]]. **In orchestrations**, tool approvals arrive through the same mechanism with `function_approval_request` content (Python) or `ToolApprovalRequestContent` (.NET). Handoff is interactive by default and returns control to the user when an agent does not hand off; sequential, concurrent and group chat do not pause for free text on their own, so pair them with a `RequestPort` in a custom graph when you need that control [[tr19]] [[tr25]]." },
+    { "t": "diagram", "id": "w11-t16-d1", "title": "Request, wait, resume", "alt": "An executor raises a request, the workflow pauses and saves a checkpoint, a human responds later, and the workflow resumes from the checkpoint with the response.", "src": "sequenceDiagram\n  participant E as Executor\n  participant W as Workflow\n  participant C as Checkpoint store\n  participant H as Human\n  E->>W: request_info(question)\n  W->>C: save pending request\n  W-->>H: request_info event\n  H->>W: run(checkpoint_id, responses)\n  W->>E: response_handler(answer)" },
+    { "t": "tabs", "tabs": [
+      { "label": "C#", "blocks": [ { "t": "code", "lang": "csharp", "code": "var approvalPort = RequestPort.Create<string, bool>(\"Approval\");\nvar workflow = new WorkflowBuilder(approvalPort)\n    .AddEdge(approvalPort, finalize)\n    .WithOutputFrom(finalize)\n    .Build();\n\nawait using StreamingRun handle = await InProcessExecution.RunStreamingAsync(workflow, \"Refund 4200?\");\nawait foreach (WorkflowEvent evt in handle.WatchStreamAsync())\n{\n    switch (evt)\n    {\n        case RequestInfoEvent req:\n            bool ok = await AskManagerAsync(req);   // may take hours: persist and resume later\n            await handle.SendResponseAsync(req.Request.CreateResponse(ok));\n            break;\n        case WorkflowOutputEvent o: Console.WriteLine(o.Data); return;\n    }\n}" } ] },
+      { "label": "Python", "blocks": [ { "t": "code", "lang": "python", "code": "class Reviewer(Executor):\n    def __init__(self):\n        super().__init__(id='reviewer')\n\n    @handler\n    async def start(self, draft: str, ctx: WorkflowContext[str, str]) -> None:\n        await ctx.request_info(request_data=ReviewRequest(draft), response_type=bool)\n\n    @response_handler\n    async def on_review(self, original: ReviewRequest, approved: bool,\n                        ctx: WorkflowContext[str, str]) -> None:\n        await ctx.yield_output('published' if approved else 'rejected')\n\nwf = WorkflowBuilder(start_executor=Reviewer(), checkpoint_storage=storage).build()\npending = [e async for e in wf.run(draft, stream=True) if e.type == 'request_info']\n# ... hours later, any process:\nreplies = {e.request_id: True for e in pending}\nasync for e in wf.run(checkpoint_id=cp_id, responses=replies, stream=True): ..." } ] }
+    ] }
+  ],
+  "whereToUse": [
+    "Manager sign-off on refunds, payouts or deployments",
+    "Collecting missing data from a user mid-process",
+    "Reviewing a Magentic plan before agents start (`MagenticPlanReviewRequest`)",
+    "Approving tool calls made by agents inside orchestrations",
+    "Pausing a durable workflow for days without paying for idle compute (Durable Extension)"
+  ],
+  "whenToUse": {
+    "use": [
+      "The approver may answer later or from another system",
+      "The wait must survive restarts, so pending state must be checkpointed",
+      "You need typed requests and a record of who answered what"
+    ],
+    "avoid": [
+      "A quick yes or no inside an open chat: a tool approval with the same session is enough",
+      "Approvals every few seconds: batch them or tighten the tool scope",
+      "Treating a request id as an authorisation: verify the responder's identity yourself"
+    ],
+    "flips": [
+      "Approvers answer in free text rather than yes or no: use handoff (interactive by default) or a request port with a richer response type",
+      "The wait is days and compute must be zero: run on the Durable Extension, where a workflow waits without consuming compute or tokens"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Workflow request port / `request_info`", "Durable, typed, auditable pauses", "A quick in-chat confirmation", "Needs checkpoint storage to outlive a process"],
+      ["Tool approval on the agent", "Per-tool gating in a chat", "Gating a graph step that is not a tool", "Pending state lives in the session"],
+      ["Handoff orchestration", "Free-form multi-turn conversation with a user", "Strict step-by-step gates", "Agents decide to hand off or ask"],
+      ["Durable Extension external events", "Days-long waits, zero idle compute", "You cannot adopt Beta or preview packages", "Different programming model"],
+      ["Magentic plan review", "Approve the manager's plan", "Per-tool approvals", "Magentic costs and limits"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Resume re-emits a request that was already answered", "cause": "The response was not delivered in the same call or checkpoint lineage, so the pending request is restored", "fix": "Resume with `checkpoint_id` and `responses` together, and track request ids you answered" },
+    { "symptom": "Python 1.0 samples with `RequestInfoExecutor` or `send_responses` do not run", "cause": "The concepts page and older samples differ from the HITL page; `send_responses*` was replaced by `run(responses=...)`", "fix": "Follow the HITL page, which has working graph-executor code" },
+    { "symptom": "Approvals from sequential or group chat never ask for free text", "cause": "Those orchestrations do not pause for free text on their own", "fix": "Use handoff, or add a `RequestPort` executor in a custom workflow" }
+  ],
+  "scenarios": [
+    {
+      "id": "w11-t16-s1",
+      "title": "Manager approves overnight",
+      "situation": "A procurement workflow raises a request for a manager. The manager answers the next morning from a different web app. The service restarts nightly.",
+      "constraints": ["Wait of 12 hours or more", "Responder is a different system", "Restarts expected"],
+      "unknowns": ["Where is checkpoint storage?", "How does the web app know the request id?", "What if the manager never answers?"],
+      "question": "How do you implement the wait?",
+      "options": [
+        { "name": "Request port (or `request_info`) with durable checkpoint storage; the web app stores the request id and later resumes with `checkpoint_id` and `responses`", "verdict": "best", "why": "Pending requests persist and are re-emitted on restore, independent of the process.", "tradeoff": "You build the inbox, id handling and a timeout path." },
+        { "name": "Block the executor on an in-memory future", "verdict": "poor", "why": "Lost on restart and holds resources for hours.", "tradeoff": "Fine for sub-minute waits in a demo." },
+        { "name": "Poll a database from a loop inside the executor", "verdict": "good", "why": "Simple, and survives if the executor reruns idempotently.", "tradeoff": "Holds compute while waiting and bypasses the framework's request model." }
+      ],
+      "flips": [
+        { "if": "Waits are days and compute costs matter", "then": "Run on the Durable Extension with `wait_for_external_event` and a timer." },
+        { "if": "No checkpoint store is allowed", "then": "Persist the request yourself and restart the graph from that point." }
+      ],
+      "takeaway": "A request survives restarts only if its checkpoint does."
+    },
+    {
+      "id": "w11-t16-s2",
+      "title": "Approvals inside a group chat",
+      "situation": "A group chat of three agents drafts an announcement. One agent has a publish tool that needs approval. A moderator should be able to approve in the same UI session within minutes.",
+      "constraints": ["Short wait", "Tool approval inside an orchestration", "Single UI session"],
+      "unknowns": ["Is the UI a web socket or request-response?", "Is the workflow checkpointed?"],
+      "question": "How do approvals reach the moderator?",
+      "options": [
+        { "name": "Handle the request event carrying the approval content from the orchestration stream, and reply with the response", "verdict": "best", "why": "Tool approvals in orchestrations arrive as request events through the HITL mechanism, with no extra graph.", "tradeoff": "The UI must keep the run attached or checkpoint it." },
+        { "name": "Disable approval on the publish tool", "verdict": "poor", "why": "Removes the control that protects publishing.", "tradeoff": "Acceptable only for a draft-only tool." },
+        { "name": "Add a free-text pause between rounds", "verdict": "good", "why": "Gives a moderator a say each round.", "tradeoff": "Group chat does not pause for free text on its own, so you need a custom graph." }
+      ],
+      "flips": [
+        { "if": "The moderator answers hours later", "then": "Add checkpoint storage so the pending request persists." },
+        { "if": "Several tools need approval in one batch", "then": "Collect all decisions; no tool runs until the whole batch is decided." }
+      ],
+      "takeaway": "Approvals ride the same request channel, whatever the orchestration."
+    }
+  ],
+  "quiz": [
+    { "id": "w11-t16-q1", "type": "order", "tag": "order", "q": "Order the Python request and resume flow.", "items": ["Executor calls `ctx.request_info(...)`", "Caller receives an event with `type == \"request_info\"`", "Caller gathers the answer for each `request_id`", "Caller calls `workflow.run(responses=..., checkpoint_id=...)`", "`@response_handler` runs with the answer"], "explain": "Requests surface as events, answers are keyed by request id, and the framework routes each answer to the executor's response handler. Pending requests are stored in checkpoints.", "ref": "tr19" },
+    { "id": "w11-t16-q2", "type": "single", "tag": "flip", "q": "Which orchestration returns control to the user by default when an agent does not hand off?", "options": ["Sequential", "Concurrent", "Handoff", "Group chat"], "answer": 2, "explain": "Handoff is interactive by default. Sequential, concurrent and group chat do not pause for free text on their own.", "ref": "tr19" }
+  ],
+  "flashcards": [
+    { "front": "How do .NET and Python differ in raising a request?", "back": ".NET and Go: a `RequestPort` emitting `RequestInfoEvent`. Python: `ctx.request_info(...)` plus an `@response_handler` method." },
+    { "front": "What happens to a pending request at a checkpoint?", "back": "It is saved with the checkpoint and re-emitted as a request event on restore. You can resume and answer in one call." },
+    { "front": "How are tool approvals surfaced inside orchestrations?", "back": "As request events carrying `function_approval_request` content (Python) or `ToolApprovalRequestContent` (.NET)." }
+  ],
+  "related": ["w11-t15", "w11-t06", "w11-t20", "w11-t24", "w10-t22"],
+  "refs": ["tr19", "tr25"]
+}

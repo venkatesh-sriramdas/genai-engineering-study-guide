@@ -1,0 +1,148 @@
+{
+  "id": "w01-t14",
+  "order": 14,
+  "group": "Adapting models",
+  "title": "Prompting vs RAG vs long context vs fine-tuning",
+  "minutes": 9,
+  "difficulty": "core",
+  "summary": "Prompting and context carry facts at run time, RAG fetches them per question, long context preloads them, and fine-tuning changes behaviour. Evidence says use fine-tuning for style, not for facts.",
+  "useIf": "You decide how a model gets knowledge or a behaviour it does not have.",
+  "avoidIf": "You pick a method before measuring corpus size, update rate, permissions, volume and accuracy needs.",
+  "explain": [
+    { "t": "p", "md": "Separate two needs. **Knowledge** (facts the model lacks) belongs in the context, supplied by a prompt, a preloaded long context or retrieval. **Behaviour** (format, tone, tool use, a smaller model) can be learned by fine-tuning. OpenAI lists fine-tuning benefits as format, shorter prompts, smaller models and private data [[r48]], and Azure says fine-tuning does not replace retrieval for current information [[r17]]." },
+    { "t": "p", "md": "**Cache-augmented generation (CAG)** preloads documents into a long context and caches the runtime state, so there is no retrieval step. The paper says it suits a limited, manageable knowledge base [[r24]]. Anthropic says a knowledge base under about 200,000 tokens (about 500 pages, an estimate) can go straight into the prompt, and prompt caching makes that cheaper and faster [[r42]]. Past that, or when access differs by user, retrieval wins." },
+    { "t": "dials", "id": "w01-t14-d1", "title": "How should the model get this knowledge?", "prompt": "Flip the dials. The ranking and the reasons update.", "dials": [
+      { "id": "size", "label": "Corpus size", "values": [ { "id": "small", "label": "Small, under about 200K tokens" }, { "id": "large", "label": "Large" } ] },
+      { "id": "rate", "label": "Update rate", "values": [ { "id": "stable", "label": "Stable" }, { "id": "fast", "label": "Frequent" } ] },
+      { "id": "perm", "label": "Permissions", "values": [ { "id": "one", "label": "One audience" }, { "id": "user", "label": "Per user" } ] }
+    ], "options": [
+      { "id": "ctx", "name": "Long context plus caching (CAG)", "summary": "Preload the documents and cache the prefix." },
+      { "id": "rag", "name": "RAG", "summary": "Retrieve the relevant chunks per question." },
+      { "id": "ft", "name": "Fine-tune on the documents", "summary": "Train facts into the weights." }
+    ], "scores": {
+      "ctx": { "size": { "small": { "s": 2, "why": "Fits the window and needs no retrieval stack." }, "large": { "s": -2, "why": "Exceeds the window or degrades deep in context." } },
+               "rate": { "stable": { "s": 1, "why": "The cached prefix keeps hitting." }, "fast": { "s": -1, "why": "Every change invalidates the cache." } },
+               "perm": { "one": { "s": 1, "why": "One shared prefix is safe." }, "user": { "s": -2, "why": "A shared prefix cannot hold per-user content." } } },
+      "rag": { "size": { "small": { "s": 0, "why": "Works, with more moving parts than needed." }, "large": { "s": 2, "why": "Retrieves only what matters." } },
+               "rate": { "stable": { "s": 0, "why": "Fine, no special gain." }, "fast": { "s": 2, "why": "Re-index changed content, no retraining." } },
+               "perm": { "one": { "s": 0, "why": "No special gain." }, "user": { "s": 2, "why": "Filters trim results per caller." } } },
+      "ft": { "size": { "small": { "s": -1, "why": "New facts are learned slowly and can raise hallucination." }, "large": { "s": -1, "why": "Weights cannot reliably hold a large corpus." } },
+              "rate": { "stable": { "s": -1, "why": "Still weaker than retrieval for facts." }, "fast": { "s": -2, "why": "Retraining for each change is impractical." } },
+              "perm": { "one": { "s": -1, "why": "No citations, hard to audit." }, "user": { "s": -2, "why": "Weights cannot enforce per-user access." } } }
+    }, "takeaway": "Fine-tuning scores low here because this board is about knowledge. It wins when the goal is format, tone, tool use or a smaller model. Combine RAG with a tuned model when you need both facts and style." },
+    { "t": "p", "md": "Evidence behind the dials: Chroma tested 18 LLMs and found performance grows unreliable as input grows [[r22]]. RULER found only about half of models claiming 32K or more stayed satisfactory at 32K [[r23]], and in NoLiMa 11 of 13 models fell below 50% of their short-context baseline at 32K [[r41]]. RAG consistently beat unsupervised fine-tuning for knowledge [[r43]], and new facts learned by fine-tuning raise hallucination [[r44]]." }
+  ],
+  "whereToUse": [
+    "Internal handbooks and policy sets: long context when small, RAG when large or permissioned",
+    "Product and support knowledge that changes weekly: RAG with incremental indexing",
+    "Brand voice, report formats and tool-use habits: fine-tuning or few-shot prompting",
+    "Cost control at volume: fine-tune a smaller model to replace a long prompt",
+    "Interview answers about grounding an assistant, using the dials above"
+  ],
+  "whenToUse": {
+    "use": [
+      "Long context plus caching when the corpus is small, stable and one audience",
+      "RAG when the corpus is large, changes often or access differs by user",
+      "Fine-tuning when you need behaviour or format and have examples",
+      "Hybrid when you need current facts and a consistent style"
+    ],
+    "avoid": [
+      "Fine-tuning to teach facts",
+      "Stuffing a large corpus into a prompt because the window allows it",
+      "RAG for a 50-page stable handbook that fits in a cached prompt"
+    ],
+    "flips": [
+      "Corpus outgrows about 200,000 tokens, or accuracy drops deep in context: move to RAG",
+      "Permissions become per user: choose retrieval with access filters",
+      "A long few-shot prompt costs too much at volume: consider fine-tuning a smaller model, if the platform allows"
+    ]
+  },
+  "alternatives": {
+    "title": "Four ways to adapt a model",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Prompt and long context (CAG)", "Small, stable corpus, one audience, repeated prefix", "Large or per-user content, deep-context accuracy needs", "Long-prompt price steps, context rot"],
+      ["RAG", "Large or changing corpus, citations, per-user access", "Poor retrieval, whole-document reasoning", "Ingestion, index and ranking work"],
+      ["Fine-tuning", "Format, tone, tool use, smaller model, private data", "You want to add facts or current information", "Data labelling, platform limits, retirement dates"],
+      ["Hybrid (RAG plus tuned model)", "Both facts and behaviour matter", "Either alone suffices", "Two systems to run and evaluate"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "The assistant answers confidently from outdated facts after fine-tuning", "cause": "Facts were trained into weights and the source changed", "fix": "Move facts to retrieval and keep fine-tuning for behaviour" },
+    { "symptom": "Answers miss facts placed deep in a very long prompt", "cause": "Accuracy falls as input grows and with position in the context", "fix": "Test with answers at different depths, shorten the context or use retrieval" },
+    { "symptom": "A shared cached prompt exposes content to the wrong users", "cause": "Per-user content was put into a shared prefix", "fix": "Keep per-user content out of shared prefixes and use filtered retrieval" }
+  ],
+  "scenarios": [
+    {
+      "id": "w01-t14-s1",
+      "title": "Large, fast-changing, permissioned knowledge",
+      "situation": "An assistant answers from several million tokens of documents that change hourly. Each employee may see only some documents, and answers need citations.",
+      "constraints": ["Corpus is large", "Hourly updates", "Per-user permissions", "Citations required"],
+      "unknowns": ["How fast must a revocation apply?", "What accuracy is expected on exact identifiers?"],
+      "question": "How does the model get the knowledge?",
+      "options": [
+        { "name": "Fine-tune a model on the documents weekly", "verdict": "poor", "why": "Facts go stale between runs, weights cannot enforce per-user access and there are no citations.", "tradeoff": "Fine-tuning is right for style or format on stable examples." },
+        { "name": "Long context with a cached prefix of the most-used documents", "verdict": "good", "why": "Fast for popular documents.", "tradeoff": "It cannot hold the corpus or enforce per-user access in a shared prefix." },
+        { "name": "RAG with incremental indexing and per-user security filters", "verdict": "best", "why": "Handles size, hourly changes, permissions and citations together.", "tradeoff": "You build and tune ingestion, retrieval and access control." }
+      ],
+      "flips": [
+        { "if": "Revocation must apply within seconds", "then": "Add a live permission check on hits." },
+        { "if": "Only a small slice is needed and is public", "then": "A cached prompt for that slice is simpler." }
+      ],
+      "takeaway": "Size, churn and permissions point to retrieval."
+    },
+    {
+      "id": "w01-t14-s2",
+      "title": "A 150,000 token handbook with a tight latency target",
+      "situation": "A team builds an HR helper over a single 150,000 token handbook. It changes quarterly, has one audience and needs answers within 3 seconds at p95.",
+      "constraints": ["Small, stable corpus", "One audience", "p95 of 3 seconds", "Low budget"],
+      "unknowns": ["Does accuracy hold at the deepest handbook positions?", "How many questions share the prefix?"],
+      "question": "Which approach do you start with?",
+      "options": [
+        { "name": "Preload the handbook and cache the prefix", "verdict": "best", "why": "It fits the roughly 200,000 token guidance, skips retrieval and keeps latency low [[r42]] [[r24]].", "tradeoff": "Test accuracy at different depths, and expect the cache to reset on each quarterly update." },
+        { "name": "RAG with hybrid search and a reranker", "verdict": "good", "why": "Scales if the handbook grows.", "tradeoff": "Adds ingestion, an index and tuning the constraints do not need." },
+        { "name": "Fine-tune a model on the handbook", "verdict": "poor", "why": "Facts are learned slowly, can raise hallucination and give no citations.", "tradeoff": "Tuning suits tone or format." }
+      ],
+      "flips": [
+        { "if": "The handbook grows well past the window", "then": "Move to RAG." },
+        { "if": "Different roles see different sections", "then": "Use retrieval with filters." }
+      ],
+      "takeaway": "Small and stable favours the simplest option that works."
+    },
+    {
+      "id": "w01-t14-s3",
+      "title": "A 6,000 token prompt run two million times a month",
+      "situation": "A support tool needs a strict five-section reply in a brand voice. A prompt with 20 examples works but costs too much at two million requests a month. The team has 2,000 approved replies and runs on Azure OpenAI.",
+      "constraints": ["Behaviour and format, not new facts", "High volume", "Azure OpenAI", "Approved examples exist"],
+      "unknowns": ["Does a smaller tuned model match the prompt baseline?", "When does the base model retire?"],
+      "question": "What do you try?",
+      "options": [
+        { "name": "Keep the long few-shot prompt and rely on prompt caching", "verdict": "good", "why": "No training and quick to run.", "tradeoff": "Pays for the cached prefix each call and relies on cache hits." },
+        { "name": "Fine-tune a smaller supported model with SFT on the approved replies, compare it with the prompt baseline, and check its retirement date", "verdict": "best", "why": "The need is format and tone with data in hand, and a shorter prompt cuts cost at volume.", "tradeoff": "Training effort, a retirement date to track, and re-tuning if the style changes." },
+        { "name": "Use RAG over past replies to teach the tone", "verdict": "poor", "why": "Retrieval supplies facts and examples per query. It is a weak way to enforce a consistent format.", "tradeoff": "RAG fits when the examples are knowledge, such as past answers to specific cases." }
+      ],
+      "flips": [
+        { "if": "The platform is OpenAI directly and the org has no fine-tuning history", "then": "New fine-tuning jobs may be blocked, so use prompting or Azure." },
+        { "if": "The style changes monthly", "then": "Prompting is cheaper than repeated tuning." }
+      ],
+      "takeaway": "Tune for behaviour at volume, and verify the platform still offers it."
+    }
+  ],
+  "quiz": [
+    { "id": "w01-t14-q1", "type": "single", "tag": "tradeoff", "q": "Which approach does the evidence favour for adding new facts to a model?", "options": ["Unsupervised fine-tuning", "A higher temperature", "A smaller model", "Retrieval or context supplied at run time"], "answer": 3, "explain": "Ovadia et al. found RAG consistently beat unsupervised fine-tuning, and Gekhman et al. found new facts learned through fine-tuning raise hallucination." },
+    { "id": "w01-t14-q2", "type": "multi", "tag": "flip", "q": "Which dial changes push you from a cached long prompt to RAG?", "options": ["The corpus outgrows about 200,000 tokens", "Permissions become per user", "The corpus changes hourly", "The team prefers shorter prompts"], "answers": [0, 1, 2], "explain": "Size, per-user access and frequent change all break a shared cached prefix. A preference for short prompts does not change the answer." },
+    { "id": "w01-t14-q3", "type": "match", "tag": "concept", "q": "Match each approach to its best-fit job.", "pairs": [
+      { "l": "Cached long context (CAG)", "r": "Small, stable corpus, one audience" },
+      { "l": "RAG", "r": "Large, changing or permissioned corpus with citations" },
+      { "l": "SFT fine-tuning", "r": "Format, tone and tool-use behaviour" },
+      { "l": "Distillation", "r": "Moving a large model's behaviour to a small model" }
+    ], "explain": "Each approach has a primary job. Mixing them up leads to fine-tuning for facts or RAG for tone." }
+  ],
+  "flashcards": [
+    { "front": "What does fine-tuning change best?", "back": "Behaviour: format, tone, tool use, shorter prompts and smaller models. It is weak for adding facts." },
+    { "front": "What is CAG and when does it fit?", "back": "Cache-augmented generation preloads documents and caches runtime state. It fits a small, stable corpus, roughly under 200,000 tokens per Anthropic's guidance." },
+    { "front": "Name three studies behind the long-context caution.", "back": "Chroma Context Rot (18 LLMs), RULER (17 models) and NoLiMa (13 models, 11 below 50% of baseline at 32K)." }
+  ],
+  "related": ["w01-t15", "w01-t16", "w01-l6", "w05-t15", "w02-t14"],
+  "refs": ["r48", "r17", "r24", "r42", "r22", "r23", "r41", "r43", "r44"]
+}

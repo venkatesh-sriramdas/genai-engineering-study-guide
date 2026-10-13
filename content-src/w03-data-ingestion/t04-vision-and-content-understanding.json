@@ -1,0 +1,116 @@
+{
+  "id": "w03-t04",
+  "order": 4,
+  "group": "Parsing",
+  "title": "Vision LLMs and Content Understanding for parsing",
+  "minutes": 8,
+  "difficulty": "advanced",
+  "summary": "A vision model reads a page image directly and can explain charts and messy layouts that OCR flattens. Azure Content Understanding wraps analysis in schema-defined fields with confidence and grounding.",
+  "useIf": "Pages carry meaning in charts, diagrams or irregular layouts, or you need typed fields with confidence and grounding rather than free text.",
+  "avoidIf": "Documents are clean text or ordinary tables and you need cheap, repeatable output: layout analysis wins on cost and determinism.",
+  "explain": [
+    { "t": "p", "md": "A **vision LLM** takes a page image and a prompt and returns text, Markdown or JSON. It can describe a chart, read a stamp or follow an odd layout that OCR turns into noise. The costs are real: image and output tokens per page, latency, and output that can differ between runs. Those costs and the determinism point below are engineering practice, not vendor figures: measure them on your pages." },
+    { "t": "p", "md": "**Azure Content Understanding** analyses documents, images, audio and video into schema-defined fields with confidence scores and grounding. API `2025-11-01` is GA and recommended for production. `2026-06-01-preview` adds signature detection, document metadata extraction and richer classification with in-page segmentation [[tr18]]." },
+    { "t": "p", "md": "Inside Azure AI Search, the Content Understanding skill is GA in REST `2026-04-01`. It extracts and chunks in one skill, can let chunks span pages, and its `chunkingProperties` set `method` (`fixedSize` by default, `semantic` in preview since `2026-05-01-preview`), `unit` (`characters`, or `tokens` with `semantic` only), `maximumLength` (300 to 50,000 characters or 100 to 8,000 tokens, default 500) and `overlapLength` (below half of `maximumLength`, `fixedSize` only). AI image descriptions are preview and need an Azure OpenAI chat model on the attached Foundry resource [[tr19]]. Asynchronous documents are limited to 200 MB and 300 pages [[tr35]]." },
+    { "t": "p", "md": "**Determinism matters for ingestion.** If a vision parse changes a few words on every run, your content hash changes, unchanged files look new and you re-embed them. Cache the parse keyed by file hash, parser version and prompt version, and re-parse only on purpose. Benchmarks such as OmniDocBench compare pipeline tools with end-to-end vision-language models, and ColPali skips parsing by embedding page images as multi-vector embeddings [[tr22]] [[tr39]]." },
+    { "t": "flow", "title": "Validate vision parsing before you trust it", "direction": "h", "steps": [
+      { "title": "Parse", "md": "Send the page image with a fixed prompt and a JSON schema.", "tag": "vision" },
+      { "title": "Schema check", "md": "Reject output that fails types or required fields.", "tag": "auto" },
+      { "title": "Cross-check", "md": "Confirm every number appears in the OCR or layout text of the same page.", "tag": "auto" },
+      { "title": "Sample", "md": "A person reviews a slice per document type.", "tag": "human" },
+      { "title": "Cache", "md": "Store output with file hash, parser and prompt version.", "tag": "store" }
+    ] }
+  ],
+  "whereToUse": [
+    "Slide decks, dashboards and infographics where charts carry the facts",
+    "Invoices, forms and statements where typed fields with confidence feed a downstream system",
+    "Handwritten or irregular pages where classic OCR output is unusable",
+    "Figure captioning at ingest so charts become searchable text",
+    "Mixed media (documents, audio, video) analysed under one schema with Content Understanding"
+  ],
+  "whenToUse": {
+    "use": [
+      "Use a vision model when the answer lives in a chart, diagram or irregular layout",
+      "Use Content Understanding when you need schema-defined fields, confidence scores and grounding",
+      "Use the Content Understanding skill when you want extraction and chunking in one indexing step",
+      "Use caching and validation for every model-based parser"
+    ],
+    "avoid": [
+      "Avoid a vision model as the default for plain text files: cost and variability buy nothing",
+      "Avoid trusting transcribed numbers without a cross-check against a second source",
+      "Avoid semantic chunking and image descriptions in production until their preview status changes"
+    ],
+    "flips": [
+      "Pages are mostly visual and retrieval of whole pages is enough: embed page images instead of parsing",
+      "Output must be reproducible for audit: prefer a layout model or cache every parse with versions",
+      "Volume is huge and layouts are uniform: a template-based layout model is cheaper than a vision call per page"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["OCR or layout model", "Text, tables, forms, uniform volume", "Charts and diagrams carry the meaning", "Misses visual content"],
+      ["Content Understanding analyzer", "Typed fields with confidence and grounding", "You need free-form page description", "Schema design effort, preview features in `2026-06-01-preview`"],
+      ["General vision LLM with a prompt", "Charts, odd layouts, quick prototypes", "Reproducibility or low cost per page", "Variable output, hallucinated numbers, token cost"],
+      ["Page-image embeddings (ColPali style)", "Visually rich pages, no parsing wanted", "You need text for keyword search or citations", "Multi-vector index size and a different retrieval stack"],
+      ["Hybrid: layout text plus vision captions for figures", "Mixed pages", "Budget cannot carry two passes", "Two pipelines to keep in sync"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Unchanged files are re-embedded on every run", "cause": "A vision parse returns slightly different text each time, so the content hash changes", "fix": "Cache parse output by file hash plus parser and prompt version, and hash the cached text" },
+    { "symptom": "A table total is wrong in the answer", "cause": "The vision model transcribed a number incorrectly and nothing checked it", "fix": "Cross-check numbers against layout text and route mismatches to review" },
+    { "symptom": "Pipeline breaks when semantic chunking is enabled", "cause": "Semantic chunking is preview in `2026-05-01-preview` and the GA API does not offer it", "fix": "Use `fixedSize` on `2026-04-01` and evaluate semantic chunking separately" },
+    { "symptom": "Tables arrive as plain text from one skill and as Markdown from another", "cause": "The Content Understanding skill page and the Document Layout skill page disagree on table output", "fix": "Test both skills on your own tables before choosing" }
+  ],
+  "scenarios": [
+    {
+      "id": "w03-t04-s1",
+      "title": "Quarterly decks full of charts",
+      "situation": "An assistant answers questions about slide decks. Many answers sit in charts and diagrams. About 2,000 decks arrive per quarter and answers need not be byte-identical between runs.",
+      "constraints": ["Moderate volume", "Charts carry facts", "Cloud processing allowed", "Budget for a second pass on figures"],
+      "unknowns": ["Do users ask for exact chart values or trends?", "Can a human sample the output?"],
+      "question": "How do you parse the decks?",
+      "options": [
+        { "name": "Layout text for the slides, plus vision-generated captions for figures, cached and cross-checked", "verdict": "best", "why": "Text stays cheap and repeatable while charts become searchable sentences.", "tradeoff": "Two passes and a cache to maintain." },
+        { "name": "Vision model on every page", "verdict": "good", "why": "One uniform path that sees everything.", "tradeoff": "Highest token cost and the most run-to-run variation." },
+        { "name": "OCR text only", "verdict": "poor", "why": "Chart content never becomes text, so those questions fail.", "tradeoff": "Right for text-only slides." }
+      ],
+      "flips": [
+        { "if": "Users need exact chart values", "then": "Extract the underlying data when available and validate captions against it." },
+        { "if": "Most decks are text only", "then": "Layout analysis alone is enough." }
+      ],
+      "takeaway": "Spend vision tokens only on the regions where text parsing cannot see."
+    },
+    {
+      "id": "w03-t04-s2",
+      "title": "Invoices feeding a finance system",
+      "situation": "Scanned supplier invoices must yield supplier, total and due date for a downstream system. Auditors want to see how confident each extraction is and where on the page it came from.",
+      "constraints": ["Typed fields required", "Audit needs confidence and provenance", "Several layouts", "Production GA preferred"],
+      "unknowns": ["How many layouts and languages?", "What error rate is acceptable before human review?"],
+      "question": "What do you use?",
+      "options": [
+        { "name": "Content Understanding analyzer with a field schema, GA API `2025-11-01`", "verdict": "best", "why": "It returns schema-defined fields with confidence scores and grounding, which matches the audit need.", "tradeoff": "You design and test the schema and pay per analysis." },
+        { "name": "Vision LLM with a JSON schema and your own validation", "verdict": "good", "why": "Flexible and quick to start.", "tradeoff": "You must build confidence, grounding and caching yourself." },
+        { "name": "OCR text plus regular expressions", "verdict": "poor", "why": "Several layouts break brittle patterns.", "tradeoff": "Right for a single fixed template." }
+      ],
+      "flips": [
+        { "if": "A rare field needs the preview `2026-06-01-preview` features", "then": "Isolate that path and label it preview." },
+        { "if": "One uniform template covers 99 percent of invoices", "then": "A cheaper template-based layout model suffices." }
+      ],
+      "takeaway": "Typed fields with provenance favour an analyzer over a free-form prompt."
+    }
+  ],
+  "quiz": [
+    { "id": "w03-t04-q1", "type": "single", "tag": "concept", "q": "Which Content Understanding API version is GA and recommended for production as of 2026-10-13?", "options": ["`2026-06-01-preview`", "`2025-11-01`", "`2024-11-30`", "`2026-08-01-preview`"], "answer": 1, "explain": "`2025-11-01` is the GA version. `2026-06-01-preview` is a preview that adds signature detection and metadata extraction. `2024-11-30` is Document Intelligence v4.0 and `2026-08-01-preview` is an AI Search preview.", "ref": "tr18" },
+    { "id": "w03-t04-q2", "type": "multi", "tag": "tradeoff", "q": "Which are genuine drawbacks of a general vision LLM as your page parser?", "options": ["Output can vary between runs", "Image and output tokens add cost per page", "It cannot read charts", "Numbers can be mis-transcribed"], "answers": [0, 1, 3], "explain": "Variation, per-page token cost and transcription errors are the trade-offs. Reading charts is the strength, not a drawback." },
+    { "id": "w03-t04-q3", "type": "order", "tag": "order", "q": "Put the validation steps for vision parsing in order.", "items": ["Parse the page with a fixed prompt and schema", "Reject output that fails the schema", "Cross-check numbers against layout text", "Sample for human review", "Cache with file hash and versions"], "explain": "Cheap automatic checks come before human review, and the cache stores only output that survived them." }
+  ],
+  "flashcards": [
+    { "front": "Why can vision-based parsing cause re-embedding churn?", "back": "Small run-to-run text differences change the content hash. Cache parses by file hash, parser version and prompt version." },
+    { "front": "Content Understanding skill chunking options?", "back": "`method`: `fixedSize` (default) or `semantic` (preview). `maximumLength` default 500, `overlapLength` below half, `fixedSize` only." },
+    { "front": "What does Content Understanding add over a plain prompt?", "back": "Schema-defined fields with confidence scores and grounding across documents, images, audio and video." }
+  ],
+  "related": ["w03-t03", "w03-t05", "w03-t08", "w04-t11"],
+  "refs": ["tr18", "tr19", "tr22", "tr35", "tr39"]
+}

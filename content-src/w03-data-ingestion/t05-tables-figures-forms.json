@@ -1,0 +1,110 @@
+{
+  "id": "w03-t05",
+  "order": 5,
+  "group": "Parsing",
+  "title": "Tables, figures and forms",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "Tables, figures and forms hold facts that plain text parsing scrambles. You choose a representation at ingest: a table block, row sentences, a structured store, a figure caption or typed form fields.",
+  "useIf": "Answers depend on cells, charts or checkboxes and you must decide how each is stored and retrieved.",
+  "avoidIf": "Tables are tiny decoration: indexing them as ordinary text is fine.",
+  "explain": [
+    { "t": "p", "md": "A table is a grid whose meaning comes from its headers. Layout v4.0 returns Markdown with tables as **HTML tables** that keep merged cells and multi-row headers, and selection marks as ☒ and ☐ [[tr16]]. The Content Understanding skill outputs tables and figures as Markdown and lets chunks span pages, but its page and the Document Layout skill page disagree about the output format, so test both on your own tables [[tr19]] [[tr17]]." },
+    { "t": "p", "md": "You then pick a **representation**. Keep a small table whole so its headers travel with its values. For a large table, split by rows and repeat the header and caption in every chunk, or serialise each row as a sentence. For questions that need sums, ranks or filters, parse the table into a structured store, because an embedding of text cannot add numbers. Index projections can write one chunk per row with a parent id that links back to the source table [[tr11]]." },
+    { "t": "code", "lang": "text", "title": "One table, row-wise representation", "code": "Table: Q3 revenue by region (report.pdf, page 12)\nRegion: EMEA | Q3 revenue: 4.2M | Change: +6%\nRegion: APAC | Q3 revenue: 3.1M | Change: -2%", "caption": "Each chunk repeats the caption and column names, so any single row is understandable alone." },
+    { "t": "p", "md": "**Figures** need text before they can be retrieved. Layout analysis returns each figure's `boundingRegions`, `spans` and `elements`, so you can crop it, caption it with a vision model and store the caption with the region for citations. Note that for Word, Excel, PowerPoint and HTML the layout model extracts embedded text only, not embedded images [[tr16]]. **Forms** are best stored as typed key-value fields, with selection marks as booleans." },
+    { "t": "diagram", "id": "w03-t05-d1", "title": "Where each piece of layout output goes", "alt": "Layout output splits into tables and figures. Small tables stay whole, large tables become row chunks with a header, numeric questions use a structured store. Figures get a caption and a region id.", "src": "flowchart TD\n  L[Layout output] --> T{Table size}\n  T -->|small| K[Keep whole table chunk]\n  T -->|large| R[Row chunks with header]\n  T -->|numeric questions| S[Structured store]\n  L --> F[Figure region]\n  F --> C[Caption plus region id]" }
+  ],
+  "whereToUse": [
+    "Financial statements, price lists and compatibility matrices where each cell answers a question",
+    "Scientific and technical reports with figures that carry results",
+    "Forms, applications and checklists with selection marks and handwriting",
+    "Slide decks and dashboards whose charts need captions to become searchable",
+    "Any corpus where users ask for totals, comparisons or the largest value in a table"
+  ],
+  "whenToUse": {
+    "use": [
+      "Use whole-table chunks for small tables with a few rows",
+      "Use row chunks with repeated headers and captions for large lookup tables",
+      "Use a structured store plus a query tool when questions aggregate or compare numbers",
+      "Use stored figure regions so answers can cite the page area"
+    ],
+    "avoid": [
+      "Avoid fixed-size splitting of table text: it cuts rows and strips headers",
+      "Avoid indexing only an LLM summary of a table when users ask for exact cell values",
+      "Avoid assuming embedded images in Office files were captured by layout analysis"
+    ],
+    "flips": [
+      "Questions become numeric aggregations: move from text chunks to a structured store with SQL or code execution",
+      "Tables span many pages with repeated headers: stitch them before chunking",
+      "Figures are decorative: skip captioning and save the vision cost"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Representation", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Whole table as HTML or Markdown chunk", "Small tables, mixed text and cells", "Table exceeds the chunk size", "Large chunks dilute the embedding"],
+      ["Row chunks with repeated header", "Lookup tables, one fact per row", "Questions need many rows together", "More chunks, header tokens repeated"],
+      ["LLM summary of the table", "Questions about what the table shows", "Users need exact values", "Summaries drop cells, add a model call"],
+      ["Structured store plus query tool", "Sums, ranks, filters, joins", "Tables are irregular or one-off", "Schema work, an extra tool and its guardrails"],
+      ["Vision caption for a figure", "Charts and diagrams", "Exact plotted values matter", "Model cost, variable text, needs validation"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "The answer names the wrong column for a value", "cause": "A split table lost its header row in later chunks", "fix": "Repeat the header and caption in every chunk or serialise rows as sentences" },
+    { "symptom": "Values shift columns after parsing", "cause": "Merged cells were flattened into pipe-style Markdown", "fix": "Keep HTML tables from layout v4.0 and test merged-cell documents" },
+    { "symptom": "Charts in Word and PowerPoint never appear in answers", "cause": "The layout model extracts embedded text only for Office and HTML files, not embedded images", "fix": "Extract embedded images separately and caption them" },
+    { "symptom": "The model adds up a table incorrectly", "cause": "Arithmetic over retrieved text cells is unreliable", "fix": "Route numeric questions to a structured store or a code tool" }
+  ],
+  "scenarios": [
+    {
+      "id": "w03-t05-s1",
+      "title": "Financial statements with aggregate questions",
+      "situation": "Analysts ask for totals, year-on-year change and the highest cost line across many statements. Every number must be traceable to a page.",
+      "constraints": ["Numeric aggregation is common", "Citations required", "Statements share a few formats", "Errors are costly"],
+      "unknowns": ["How regular are the statement formats?", "Is a query tool allowed in the pipeline?"],
+      "question": "How do you represent the tables?",
+      "options": [
+        { "name": "Parse tables into a structured store with page references, and keep a text chunk per table for context", "verdict": "best", "why": "Sums and comparisons run as queries, and the page reference supports citations.", "tradeoff": "Schema mapping work and an extra tool to secure." },
+        { "name": "Row chunks with repeated headers", "verdict": "good", "why": "Good for single lookups and simple to build.", "tradeoff": "Cross-row arithmetic still falls on the model." },
+        { "name": "Fixed-size text chunks of flattened table text", "verdict": "poor", "why": "Cuts rows, strips headers and invites wrong cells.", "tradeoff": "Fine only for tiny, headerless tables." }
+      ],
+      "flips": [
+        { "if": "Questions are single-cell lookups only", "then": "Row chunks are enough and cheaper." },
+        { "if": "Formats are wildly irregular", "then": "Fall back to row chunks plus review for the irregular files." }
+      ],
+      "takeaway": "Aggregation questions need a query tool, not a better embedding."
+    },
+    {
+      "id": "w03-t05-s2",
+      "title": "Compatibility matrices in product manuals",
+      "situation": "Support staff ask whether product A works with accessory B. The answer sits in large matrices spread over several pages. Latency matters and exact cells are needed.",
+      "constraints": ["Single-cell lookups", "Tables span pages", "Interactive latency", "No structured store available"],
+      "unknowns": ["How many columns per matrix?", "Do matrices repeat headers on each page?"],
+      "question": "Which representation fits?",
+      "options": [
+        { "name": "Stitch page fragments, then row chunks with caption and column names repeated", "verdict": "best", "why": "Each chunk answers one lookup and carries its own headers.", "tradeoff": "More chunks and a stitching step." },
+        { "name": "One whole-table chunk per matrix", "verdict": "good", "why": "Simple and keeps headers with values.", "tradeoff": "Large chunks dilute retrieval and may exceed chunk limits." },
+        { "name": "LLM summary of each matrix", "verdict": "poor", "why": "Summaries drop the exact cells the users need.", "tradeoff": "Right for questions such as what a table covers." }
+      ],
+      "flips": [
+        { "if": "Matrices are small", "then": "Whole-table chunks win on simplicity." },
+        { "if": "A structured store becomes available", "then": "Query it for exact lookups and keep chunks for context." }
+      ],
+      "takeaway": "Make each retrievable unit understandable on its own."
+    }
+  ],
+  "quiz": [
+    { "id": "w03-t05-q1", "type": "single", "tag": "bug", "q": "Charts embedded in PowerPoint files never show up in your index. Layout analysis ran without errors. Why?", "options": ["Charts are always blocked by the service", "The model needs a GPU", "Selection marks hide them", "For Word, Excel, PowerPoint and HTML the layout model extracts embedded text only, not embedded images"], "answer": 3, "explain": "The documented behaviour is text only for those formats, so embedded images need separate extraction and captioning. The other options are not documented limits.", "ref": "tr16" },
+    { "id": "w03-t05-q2", "type": "multi", "tag": "tradeoff", "q": "Which choices protect the meaning of a large table split into chunks?", "options": ["Repeat the header row in each chunk", "Include the table caption", "Split every 500 characters regardless of rows", "Serialise rows as `Column: value` sentences"], "answers": [0, 1, 3], "explain": "Repeated headers, captions and labelled row sentences keep each chunk self-explanatory. Character-based splitting cuts rows and loses headers." },
+    { "id": "w03-t05-q3", "type": "match", "tag": "concept", "q": "Match each question type with the best representation.", "pairs": [{ "l": "Exact cell lookup in a long matrix", "r": "Row chunks with repeated headers" }, { "l": "Total or rank across many rows", "r": "Structured store plus query tool" }, { "l": "What does this chart show?", "r": "Vision caption stored with region id" }, { "l": "Which box is checked on a form?", "r": "Typed key-value field from a selection mark" }], "explain": "Match the retrieval unit to the question. Aggregations need computation, lookups need self-contained rows, charts need text captions and forms need typed fields.", "ref": "tr16" }
+  ],
+  "flashcards": [
+    { "front": "How does layout v4.0 represent tables and checkboxes?", "back": "Tables as HTML tables with merged cells and multi-row headers. Selection marks as the characters ☒ and ☐." },
+    { "front": "Why repeat the header in every table chunk?", "back": "A chunk without headers has values with no column meaning, so retrieval and the model can pair values with the wrong labels." },
+    { "front": "When should a table go to a structured store?", "back": "When questions need sums, ranks, filters or joins. Embeddings of cell text cannot compute them reliably." }
+  ],
+  "related": ["w03-t03", "w03-t04", "w03-t11", "w04-t11", "w05-t11"],
+  "refs": ["tr11", "tr16", "tr17", "tr19"]
+}

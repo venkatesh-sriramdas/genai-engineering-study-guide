@@ -1,0 +1,158 @@
+{
+  "id": "w15-t02",
+  "order": 2,
+  "group": "Standards",
+  "title": "OTel GenAI semantic conventions",
+  "minutes": 7,
+  "difficulty": "core",
+  "summary": "The OpenTelemetry GenAI semantic conventions define shared span names, attributes and metrics for model calls, agents, tools, workflows and MCP, so any instrumented app can feed any compatible backend. All of it has status Development.",
+  "useIf": "You instrument LLM or agent code and want dashboards, alerts and backends that survive a change of framework or vendor.",
+  "avoidIf": "You treat attribute and metric names as frozen: they are still changing and moved repositories on 2026-05-05.",
+  "explain": [
+    { "t": "p", "md": "The conventions cover client inference spans and metrics, model spans, agent and framework spans, events, exceptions, token metrics and MCP. Every part carries the status **Development** (checked 2026-10-13). The docs moved from `open-telemetry/semantic-conventions` to `open-telemetry/semantic-conventions-genai` (PR 3696, merged 2026-05-05). Release v1.41.1 (2026-05-11) of the old repository still holds the full text, v1.42.0 (2026-06-12) holds only a Moved stub, and opentelemetry.io shows Moved. The new repository has no tags or releases, so pin by commit [[r1]]." },
+    { "t": "table", "caption": "Attribute families you will meet [[r2]] [[r3]]", "head": ["Family", "Examples", "Use it for"], "rows": [
+      ["Operation and provider", "`gen_ai.operation.name` (`chat`, `embeddings`, `retrieval`, `execute_tool`, `invoke_agent`, `invoke_workflow`, `plan`), `gen_ai.provider.name`", "Filtering by kind of work and vendor"],
+      ["Request and response", "`gen_ai.request.model`, `gen_ai.request.temperature`, `gen_ai.request.max_tokens`, `gen_ai.response.finish_reasons`, `gen_ai.response.time_to_first_chunk`", "Reproducing a call, spotting truncation"],
+      ["Usage", "`gen_ai.usage.input_tokens`, `.output_tokens`, `.cache_read.input_tokens`, `.cache_write.input_tokens`, `.reasoning.output_tokens`", "Cost and cache analysis"],
+      ["Agent and conversation", "`gen_ai.agent.id`, `gen_ai.agent.name`, `gen_ai.conversation.id`", "Grouping runs by agent and session"],
+      ["Content (opt-in)", "`gen_ai.input.messages`, `gen_ai.output.messages`, `gen_ai.system_instructions`, `gen_ai.tool.call.arguments`, `gen_ai.tool.call.result`", "Debugging, under a privacy policy [[r4]]"],
+      ["Errors", "`error.type`", "Failure rates per operation"]
+    ] },
+    { "t": "p", "md": "Required on inference spans are `gen_ai.operation.name` and `gen_ai.provider.name`. Metric names have churned: the v1.41 text defined a `gen_ai.client.token.usage` histogram that no longer appears in the new repository, which defines token **counters** (`gen_ai.client.inference.usage.*`) instead, while Agent Framework's docs still list `gen_ai.client.token.usage` [[r5]] [[r10]]. Check what your build and backend emit before you build dashboards." },
+    { "t": "callout", "kind": "preview", "title": "Development status, checked 2026-10-13", "md": "Older v1.41.1 text said instrumentations that emitted v1.36.0 or earlier must not change their defaults and should offer `OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_latest_experimental`. The new docs do not repeat this, so whether instrumentations still honor it is UNVERIFIED." }
+  ],
+  "whereToUse": [
+    "Choosing attribute names for custom spans around model, retrieval and tool calls",
+    "Writing dashboards and alerts that should work across Agent Framework, other SDKs and gateways",
+    "Evaluating whether a backend understands GenAI traces without custom mapping",
+    "Setting an organization-wide telemetry standard for many teams",
+    "Reviewing vendor claims about OpenTelemetry compatibility"
+  ],
+  "whenToUse": {
+    "use": [
+      "Adopt the GenAI names for spans, operations and token usage in new instrumentation",
+      "Wrap them in one small internal module so a rename touches one place",
+      "Pin the convention commit or library version and record it in your runbook"
+    ],
+    "avoid": [
+      "Do not hard-code metric names in alerts without confirming what the build emits",
+      "Do not invent parallel attribute names for things the conventions already name",
+      "Do not enable content attributes by default"
+    ],
+    "flips": [
+      "A backend only understands its own schema: keep the OTel names and rely on its mapping, or map in a collector",
+      "You need stability for a regulated audit trail: record the convention version with each release",
+      "Your framework already emits the conventions: do not re-instrument by hand"
+    ]
+  },
+  "alternatives": {
+    "title": "Naming schemes for GenAI telemetry",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["OTel GenAI conventions", "You want portable telemetry across frameworks and backends", "You need guaranteed stability today", "Status Development, renames and repository moves [[r1]]"],
+      ["OpenInference (Phoenix ecosystem)", "You use Phoenix and its auto-instrumentation", "Your other tools expect `gen_ai.*`", "A second vocabulary to map [[r19]]"],
+      ["Vendor SDK attributes", "A single vendor backend with rich features", "You may switch vendors", "Lock-in to attribute names"],
+      ["Custom names only", "A narrow, internal-only need", "Any shared tooling", "No ecosystem support, every dashboard is bespoke"]
+    ]
+  },
+  "pitfalls": [
+    {
+      "symptom": "A token panel built on `gen_ai.client.token.usage` goes blank after an upgrade",
+      "cause": "Metric names changed: newer conventions use `gen_ai.client.inference.usage.*` counters",
+      "fix": "Inspect the names your build emits, pin versions and keep dashboard queries in one mapping layer [[r5]]"
+    },
+    {
+      "symptom": "Documentation links lead to a Moved page",
+      "cause": "The conventions moved repositories on 2026-05-05 and some docs still link the old URL",
+      "fix": "Cite and pin the semantic-conventions-genai repository by commit [[r1]]"
+    },
+    {
+      "symptom": "Traces show up in a backend but cost and agent views stay empty",
+      "cause": "The backend expects attribute names your instrumentation does not set, such as `gen_ai.usage.input_tokens`",
+      "fix": "Verify with a query on a few spans, then add the missing attributes or map them in a collector [[r14]]"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "w15-t02-s1",
+      "title": "Six teams, two backends, one telemetry standard",
+      "situation": "Six teams build agents on different frameworks. Two backends are in use. A platform team wants shared dashboards and alerts.",
+      "constraints": ["Mixed frameworks", "Two backends", "Conventions still in Development"],
+      "unknowns": ["Which frameworks already emit GenAI spans?", "Which backends map OTel attributes natively?"],
+      "question": "What standard do you set?",
+      "options": [
+        { "name": "Adopt the OTel GenAI names, pin a version and wrap custom spans in one internal helper", "verdict": "best", "why": "Shared names make dashboards portable and the helper absorbs renames.", "tradeoff": "You must track the repository and test upgrades." },
+        { "name": "Let each team choose its own attribute names", "verdict": "poor", "why": "No shared dashboard or alert can work across teams.", "tradeoff": "Only acceptable for throwaway prototypes." },
+        { "name": "Adopt one vendor SDK's attributes for everyone", "verdict": "good", "why": "Fast to roll out with one backend's features.", "tradeoff": "Lock-in and poor fit for the second backend." }
+      ],
+      "flips": [
+        { "if": "Compliance requires a frozen schema", "then": "Snapshot the convention version and run a collector transform to a stable internal schema." },
+        { "if": "Only one team and one backend exist", "then": "The framework's defaults are enough." }
+      ],
+      "takeaway": "Standardize on shared names and isolate change in one place."
+    },
+    {
+      "id": "w15-t02-s2",
+      "title": "A dashboard goes blank after a framework upgrade",
+      "situation": "A token usage dashboard stopped showing data the day a framework was upgraded. Traces still arrive.",
+      "constraints": ["Traces arrive", "Metric series vanished", "Upgrade is the only change"],
+      "unknowns": ["Which metric names does the new build emit?", "Do other panels use the same names?"],
+      "question": "What do you do?",
+      "options": [
+        { "name": "List the emitted metric names, update the queries and keep names in one mapping layer", "verdict": "best", "why": "It fixes the cause and prevents repeats when names change again.", "tradeoff": "A small amount of indirection to maintain." },
+        { "name": "Roll back the framework", "verdict": "good", "why": "Restores the panel quickly.", "tradeoff": "Delays the upgrade and the next one breaks it again." },
+        { "name": "Assume the metrics are lost and rebuild the dashboard from traces", "verdict": "poor", "why": "Traces are sampled, so totals will be wrong.", "tradeoff": "Traces help explain a spike but are not a source for totals." }
+      ],
+      "flips": [
+        { "if": "The new names are documented and stable", "then": "Update once and move on." },
+        { "if": "Both old and new builds run together", "then": "Query both names during the migration." }
+      ],
+      "takeaway": "Verify what is emitted before trusting a dashboard."
+    }
+  ],
+  "quiz": [
+    {
+      "id": "w15-t02-q1",
+      "type": "single",
+      "tag": "concept",
+      "q": "What is the status of the OpenTelemetry GenAI semantic conventions as of 2026-10-13?",
+      "options": ["Stable", "Development", "Release candidate", "Deprecated"],
+      "answer": 1,
+      "explain": "All GenAI conventions carry the status Development. They moved to the semantic-conventions-genai repository on 2026-05-05 and have no tagged release yet, so names can change."
+    },
+    {
+      "id": "w15-t02-q2",
+      "type": "match",
+      "tag": "concept",
+      "q": "Match each attribute to the question it helps answer.",
+      "pairs": [
+        { "l": "`gen_ai.operation.name`", "r": "Is this a chat, tool or agent step?" },
+        { "l": "`gen_ai.response.finish_reasons`", "r": "Was the output truncated?" },
+        { "l": "`gen_ai.usage.cache_read.input_tokens`", "r": "How much input hit the cache?" },
+        { "l": "`gen_ai.conversation.id`", "r": "Which session did this run belong to?" }
+      ],
+      "explain": "Operation name classifies the work, finish reasons reveal truncation, cache-read tokens measure caching and the conversation id groups runs."
+    },
+    {
+      "id": "w15-t02-q3",
+      "type": "single",
+      "tag": "bug",
+      "q": "After an upgrade, a panel based on `gen_ai.client.token.usage` is empty although traces arrive. What is the most likely cause?",
+      "options": [
+        "Sampling removed all the data",
+        "The backend dropped traces older than a day",
+        "The build emits different metric names, such as token counters under `gen_ai.client.inference.usage.*`",
+        "Content capture was turned on"
+      ],
+      "answer": 2,
+      "explain": "Metric names differ between convention versions and builds. Metrics are not sampled, retention does not explain a blank live panel and content capture does not affect metric names."
+    }
+  ],
+  "flashcards": [
+    { "front": "Where do the OTel GenAI conventions live since 2026-05-05?", "back": "In the `open-telemetry/semantic-conventions-genai` repository. It has no tagged release, so pin by commit." },
+    { "front": "Which two attributes are required on inference spans?", "back": "`gen_ai.operation.name` and `gen_ai.provider.name`." },
+    { "front": "Why are metric names risky to hard-code?", "back": "Older text defined a `gen_ai.client.token.usage` histogram. The new repository uses `gen_ai.client.inference.usage.*` counters, so builds differ." }
+  ],
+  "related": ["w15-t01", "w15-t03", "w15-t04", "w15-t12", "w11-t26"],
+  "refs": ["r1", "r2", "r3", "r4", "r5", "r10", "r14", "r19"]
+}

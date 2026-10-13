@@ -1,0 +1,120 @@
+{
+  "id": "w16-t11",
+  "order": 11,
+  "group": "Gateway and resilience",
+  "title": "Regional failover and capacity planning",
+  "minutes": 9,
+  "difficulty": "advanced",
+  "summary": "Foundry does not fail over for you. You pick a recovery tier, build the second region, size both for the load they must carry, set SLOs with an error budget, and rehearse the switch.",
+  "useIf": "A regional incident would break your availability target, or a launch will multiply traffic.",
+  "avoidIf": "Your availability target is low enough that a documented hot/cold recovery meets it.",
+  "explain": [
+    { "t": "p", "md": "Foundry does not provide automatic failover or disaster recovery. Microsoft's guidance is two resources in two regions with two project connections, Service Health alerts and availability tests. It describes three tiers: **hot/hot** with an RTO of minutes and an RPO near zero, **hot/warm** with an RTO of 30 minutes to 2 hours, and **hot/cold** with an RTO of 2 to 8 hours [[r15]]. Global and Data Zone Standard are not a failover: if the primary region has an interruption, all traffic initially routed to it is affected, so they do not replace a second region [[r5]]." },
+    { "t": "p", "md": "A second region must hold **quota and capacity**, and quota is not capacity [[r6]]. It starts with a **cold prompt cache**, because caches are per region. APIM counters are per gateway, not aggregated across regions [[r2]]. Residency may limit which region you can use. State kept in the primary resource does not follow you, so keep conversation state in a store you control (author synthesis)." },
+    { "t": "p", "md": "Write **SLIs** first: time to first token p95, total latency p95 bucketed by output tokens, success rate excluding client quota errors, 429 and 503 rates, breaker open time, cache hit ratio and cost per successful task (author synthesis from the Azure latency guidance [[r27]]). An **error budget** is the rate at which the SLO may be missed; SLOs of 100% are neither realistic nor useful [[tr7]]." },
+    { "t": "formula", "title": "Error budget", "expr": "budget minutes = (1 - SLO) x minutes in the period", "vars": [ { "k": "SLO", "v": "target success ratio, for example 0.999" }, { "k": "period", "v": "30 days = 43,200 minutes" } ], "example": "99.9% over 30 days leaves 43.2 minutes. A 40-minute regional outage burns 40 / 43.2 = 93% of it. A 99% SLO leaves 432 minutes (derived)." },
+    { "t": "diagram", "id": "w16-t11-d1", "title": "A hot/warm two-region topology", "alt": "A gateway routes to a primary region with a PTU deployment and standard spillover, and to a warm secondary region with its own deployment. Health probes feed the gateway.", "src": "flowchart LR\n  U[Users] --> G[Gateway]\n  G --> P[Primary region]\n  G -.-> S[Secondary region]\n  P --> PTU[PTU baseline]\n  PTU --> SP[Standard spillover]\n  S --> W[Warm deployment]\n  H[Health probes] --> G" },
+    { "t": "table", "caption": "Recovery tiers", "head": ["Tier", "RTO", "Cost shape", "Fits when"], "rows": [
+      ["Hot/hot", "Minutes, RPO near zero", "Two live regions, each able to carry the load", "Tight availability SLO"],
+      ["Hot/warm", "30 minutes to 2 hours", "Secondary deployed but lightly used", "Moderate SLO, cost aware"],
+      ["Hot/cold", "2 to 8 hours", "Runbook and quota, deploy on demand", "Internal tools with relaxed SLOs"]
+    ] }
+  ],
+  "whereToUse": [
+    "Production assistants with an availability SLO above 99%",
+    "Launch planning before traffic multiplies",
+    "Quarterly game days that fail the primary region on purpose",
+    "Budget reviews that compare failover cost with outage cost",
+    "Quota and capacity requests for secondary regions"
+  ],
+  "whenToUse": {
+    "use": ["The SLO cannot tolerate hours of recovery", "A second region is permitted by residency", "Load tests show how much capacity each region needs", "A drill proves the switch works"],
+    "avoid": ["Hot/hot for an internal tool that tolerates a few hours of downtime", "Assuming quota or a reservation in the secondary region means capacity", "Failing over to a region you have never load tested"],
+    "flips": ["SLO tightens from 99% to 99.9%: move from hot/cold to hot/warm or hot/hot", "Residency forbids a second region: invest in fallback models and degradation instead", "Traffic is 5x at launch: size from a load test and request capacity early"]
+  },
+  "alternatives": {
+    "title": "Availability designs compared",
+    "head": ["Design", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Single region, retries only", "Low SLO, small scale", "A regional incident occurs", "Downtime equals the incident"],
+      ["Hot/cold runbook", "SLO of hours is acceptable", "Tight SLO", "Slow, needs rehearsed steps and quota"],
+      ["Hot/warm with gateway failover", "Moderate SLO", "Both regions hit by the same event", "Idle capacity, cold cache"],
+      ["Hot/hot across regions", "Tight SLO, large traffic", "Budget limited, residency bound", "Double capacity, split caches, complex state"],
+      ["Degradation only (no second region)", "Residency blocks a region", "Provider outage is total", "Reduced function during outages"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Failover works in a drill but the secondary returns 429 under load", "cause": "Quota or capacity in the secondary was sized for tests, not for the full peak", "fix": "Load test the secondary at full peak and hold quota and capacity for it" },
+    { "symptom": "After failover, latency and cost jump", "cause": "The secondary starts with a cold prompt cache and a different deployment mix", "fix": "Budget for the jump, prewarm where supported, and watch cache hit ratio during failover" },
+    { "symptom": "Conversations vanish at failover", "cause": "State lived in the primary resource", "fix": "Keep session state in your own replicated store" },
+    { "symptom": "Failover never triggers", "cause": "No health signal watches model errors, only the gateway", "fix": "Use availability tests, Service Health alerts and breaker state as inputs" }
+  ],
+  "scenarios": [
+    {
+      "id": "w16-t11-s1",
+      "title": "A 40-minute regional outage",
+      "situation": "A regional incident took an assistant offline for 40 minutes. The SLO is 99.9% monthly. The team has one region and Global Standard deployments.",
+      "constraints": ["99.9% monthly SLO", "EU residency applies", "Budget exists for modest standby cost"],
+      "unknowns": ["Which second EU region has quota and capacity?", "Is conversation state external?", "What failover time is acceptable?"],
+      "question": "What do you build?",
+      "options": [
+        { "name": "Hot/warm in a second EU region behind the gateway, with a drill and a cold-cache budget", "verdict": "best", "why": "It brings the RTO to minutes to two hours at a standby cost the SLO justifies and keeps residency.", "tradeoff": "Idle capacity, a cold cache and a drill schedule." },
+        { "name": "Hot/cold runbook", "verdict": "good", "why": "Cheapest, with a 2 to 8 hour RTO.", "tradeoff": "One incident exceeds the monthly budget of 43.2 minutes by hours." },
+        { "name": "Add retries and a longer timeout", "verdict": "poor", "why": "Retries cannot cross a dead region.", "tradeoff": "Retries are right for blips inside a healthy region." }
+      ],
+      "flips": [
+        { "if": "The SLO is relaxed to 99%", "then": "Hot/cold may be enough." },
+        { "if": "Residency allows any region", "then": "Hot/hot across regions becomes feasible." }
+      ],
+      "takeaway": "Pick the tier from the SLO arithmetic, then prove it with a drill."
+    },
+    {
+      "id": "w16-t11-s2",
+      "title": "An internal tool with a relaxed SLO",
+      "situation": "An internal research assistant serves 200 staff during working hours. The business accepts up to a few hours of downtime a month.",
+      "constraints": ["99% SLO", "Small budget", "Single geography"],
+      "unknowns": ["Is there a documented owner for incidents?", "Is quota in the backup region pre-approved?"],
+      "question": "How much resilience do you buy?",
+      "options": [
+        { "name": "Hot/cold: a runbook, pre-approved quota and an availability test", "verdict": "best", "why": "A 99% SLO allows 432 minutes a month, so a 2 to 8 hour recovery fits the arithmetic at low cost.", "tradeoff": "Slow recovery and a manual step." },
+        { "name": "Hot/hot across two regions", "verdict": "poor", "why": "Double capacity for a tolerant SLO.", "tradeoff": "Right for a tight SLO and large traffic." },
+        { "name": "No plan; rely on the provider", "verdict": "poor", "why": "Foundry has no automatic failover.", "tradeoff": "Acceptable only if downtime has no business cost." }
+      ],
+      "flips": [
+        { "if": "The tool becomes customer-facing", "then": "Re-evaluate the SLO and move to hot/warm." },
+        { "if": "An incident exceeds 8 hours", "then": "The runbook failed; invest in warm standby." }
+      ],
+      "takeaway": "Match resilience spend to the error budget."
+    },
+    {
+      "id": "w16-t11-s3",
+      "title": "A launch with five times the traffic",
+      "situation": "A launch in three weeks is expected to bring five times current traffic. Current peak is 400 RPM on PTU with Standard spillover.",
+      "constraints": ["Three weeks of lead time", "Spillover exists", "Capacity in the region is unconfirmed"],
+      "unknowns": ["What is the measured token mix and cache rate?", "How fast can quota and capacity be added?"],
+      "question": "What do you do first?",
+      "options": [
+        { "name": "Re-run PTU sizing at 2,000 RPM, load test, create the larger deployment early to confirm capacity, and rehearse failover", "verdict": "best", "why": "Capacity is not guaranteed by quota or reservation, so creating the deployment early proves it exists.", "tradeoff": "Pays for capacity before launch." },
+        { "name": "Rely on spillover for the extra load", "verdict": "good", "why": "No upfront cost.", "tradeoff": "Standard quota may not cover 5x and latency varies." },
+        { "name": "Buy a one-year reservation and wait", "verdict": "poor", "why": "Reservations do not guarantee capacity.", "tradeoff": "Right after the deployment exists and utilization is known." }
+      ],
+      "flips": [
+        { "if": "A prefix redesign raises the cache rate", "then": "Fewer PTUs are needed, so re-run the sizing." },
+        { "if": "The launch is a one-day event", "then": "Priority processing or spillover may beat a reservation." }
+      ],
+      "takeaway": "Prove capacity before the launch, not during it."
+    }
+  ],
+  "quiz": [
+    { "id": "w16-t11-q1", "type": "numeric", "tag": "numeric", "q": "Your SLO is 99.95% over a 30-day month. How many minutes of error budget do you have?", "answer": 21.6, "tolerancePct": 1, "unit": "minutes", "hint": "43,200 minutes x 0.0005", "explain": "(1 - 0.9995) x 43,200 = 21.6 minutes. A 40-minute outage uses 185% of that budget (derived) [[tr7]].", "difficulty": 2 },
+    { "id": "w16-t11-q2", "type": "match", "tag": "concept", "q": "Match each tier to its documented recovery time.", "pairs": [ { "l": "Hot/hot", "r": "RTO of minutes, RPO near zero" }, { "l": "Hot/warm", "r": "RTO of 30 minutes to 2 hours" }, { "l": "Hot/cold", "r": "RTO of 2 to 8 hours" } ], "explain": "These are the Foundry guidance tiers; they are approximate and you must verify them with drills [[r15]].", "difficulty": 1 },
+    { "id": "w16-t11-q3", "type": "single", "tag": "diagnose", "q": "After failover latency and cost jump. Which is the most likely cause?", "options": ["The secondary region starts with a cold prompt cache", "Quota was reduced automatically", "Retries are disabled"], "answer": 0, "explain": "Prompt caches are per region, so the secondary starts cold and pays full prefill and input prices until it warms [[r25]]. Quota and retries are unrelated to the jump.", "difficulty": 2 }
+  ],
+  "flashcards": [
+    { "front": "Does Foundry fail over automatically?", "back": "No. Build two resources in two regions with two project connections, plus Service Health alerts and availability tests." },
+    { "front": "Error budget for 99.9% over 30 days?", "back": "43.2 minutes. A 40-minute outage burns about 93% of it." },
+    { "front": "What does failover cost that a drill may hide?", "back": "A cold prompt cache, secondary quota and capacity that may be sized for tests, and state that lived in the primary region." }
+  ],
+  "related": ["w16-t05", "w16-t07", "w16-t10", "w16-l4", "w16-l5", "w15-t10"],
+  "refs": ["r15", "r5", "r6", "r2", "r27", "r25", "tr7"]
+}

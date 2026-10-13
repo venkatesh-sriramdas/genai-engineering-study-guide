@@ -1,0 +1,126 @@
+{
+  "id": "w14-l1",
+  "order": 1,
+  "title": "Draw the map before you pick a metric",
+  "kind": "concept",
+  "minutes": 12,
+  "brief": "A team asks how it will know the assistant works. The stage, the traffic, the risk and the label budget are all unspecified. Decide which checks run where, when they run and what they are allowed to cost.",
+  "blocks": [
+    { "t": "h", "text": "Three questions before any metric", "level": 2 },
+    { "t": "p", "md": "Every evaluation answers three questions. **Unit**: do you score one component (retriever, tool selector, judge) or the whole path? **Time**: do you run before release against a fixed set, or after release against live traffic? **Reference**: do you hold an expected answer, or only the question and the output?\n\nFoundry frames the lifecycle as base model selection, pre-production evaluation and post-production monitoring [[r1]]. LangSmith draws the same line from the data side: offline runs use dataset examples that carry reference outputs, while online runs score production traces that have none [[r29]]. Capability evals start at a low pass rate and ask what the agent can do at all. Regression evals should sit near 100% and guard what already works [[r17]]." },
+    { "t": "diagram", "id": "w14-l1-d1", "title": "Where each check lives in the lifecycle", "alt": "A loop from model selection to pre-production evaluation, release, post-production monitoring and failing traces that feed back into the pre-production set.", "src": "flowchart LR\n  M[\"Choose base model\"] --> P[\"Pre-production evals\"]\n  P --> G[\"CI gate\"]\n  G --> R[\"Release\"]\n  R --> O[\"Post-production monitoring\"]\n  O --> T[\"Failing traces\"]\n  T --> P", "caption": "Pre-production holds the golden set, red team scans and the CI gate. Foundry lists post-production monitoring as operational metrics, continuous evaluation, scheduled evaluation, scheduled red teaming and Azure Monitor alerts." },
+    { "t": "compare", "title": "Four layers, four jobs", "intro": "These layers stack. The question is which one carries the most weight for your dials.", "options": [
+      { "name": "Component evals", "summary": "Score one stage alone: retriever ranking, tool selection, parser output, the judge itself.", "pros": ["A failure points at one stage", "Mostly deterministic or cheap, so it runs on every commit"], "cons": ["Parts can pass while the whole path fails", "Needs labels at the stage boundary, such as relevant chunk ids"], "bestWhen": "You change one stage often, or a regression must be localized in minutes.", "avoidWhen": "It is your only check, because interactions between stages stay invisible.", "meta": [{ "k": "Cost", "v": "low" }, { "k": "Signal", "v": "localizes the fault" }] },
+      { "name": "End-to-end offline suite", "summary": "Run golden tasks through the full system and grade the outcome.", "pros": ["Tests the path users actually take", "Gives a stable baseline for a release gate"], "cons": ["Judge calls multiply: items x evaluators x trials", "A drop does not say which stage moved"], "bestWhen": "Before every release and after any prompt, model or tool change.", "avoidWhen": "You need to know why it failed and have no component scores beside it.", "meta": [{ "k": "Cost", "v": "medium to high" }, { "k": "Signal", "v": "does the whole path work" }] },
+      { "name": "Online sampled scoring", "tag": "Preview", "summary": "Score a sample of live traces with reference-free judges and safety evaluators, off the request path.", "pros": ["Sees real queries and drift", "Needs no reference answers", "Scoring logged traces adds no user-facing latency"], "cons": ["Detects problems after users saw the answer", "Judge tokens per trace, so sampling and caps control spend", "Reads real content, so privacy rules apply"], "bestWhen": "Traffic exists and you need drift and safety coverage.", "avoidWhen": "You are pre-launch, or it is the only guard on high-harm output.", "meta": [{ "k": "Foundry cap", "v": "100 runs per hour by default" }, { "k": "Status", "v": "Foundry preview, 2026-10-13" }] },
+      { "name": "Expert trace review", "summary": "A named domain expert reads sampled traces and writes pass/fail verdicts with critiques.", "pros": ["Finds failure types no metric names yet", "Produces the labels that calibrate judges"], "cons": ["Slowest and most expensive per item", "Reviewers drift without a shared rubric"], "bestWhen": "Outputs are high-harm, or you need labels to calibrate a judge.", "avoidWhen": "Volume is high and errors are cheap to undo.", "meta": [{ "k": "Cost", "v": "high per item" }, { "k": "Signal", "v": "ground truth for judges" }] }
+    ] },
+    { "t": "dials", "id": "w14-l1-mix", "title": "Pick the evaluation mix", "prompt": "Flip the constraints. The ranking shows which layer carries the most weight, and why.", "dials": [
+      { "id": "stage", "label": "Stage", "values": [{ "id": "pre", "label": "Before launch, no traces" }, { "id": "live", "label": "Live, traffic exists" }] },
+      { "id": "harm", "label": "Cost of a wrong answer", "values": [{ "id": "low", "label": "Cheap to undo" }, { "id": "high", "label": "Causes real harm" }] },
+      { "id": "budget", "label": "Judge and expert budget", "values": [{ "id": "tight", "label": "Scarce" }, { "id": "ample", "label": "Available" }] }
+    ], "options": [
+      { "id": "comp", "name": "Component evals", "summary": "Score retriever, tool selection and parsers alone." },
+      { "id": "e2e", "name": "End-to-end golden suite", "summary": "Whole-path tasks as a release gate." },
+      { "id": "online", "name": "Online sampled scoring", "summary": "Reference-free judges on live traces." },
+      { "id": "human", "name": "Expert trace review", "summary": "A named reviewer reads sampled traces." },
+      { "id": "shadow", "name": "Shadow run", "summary": "Score a candidate on mirrored live requests." }
+    ], "scores": {
+      "comp": {
+        "stage": { "pre": { "s": 2, "why": "Runs on synthetic and hand-written cases, so no traffic is needed." }, "live": { "s": 1, "why": "Still localizes a regression, though live traces show more." } },
+        "harm": { "low": { "s": 1, "why": "Cheap, narrow checks are enough when mistakes are cheap." }, "high": { "s": 0, "why": "Necessary but not sufficient, because parts can pass while the whole path fails." } },
+        "budget": { "tight": { "s": 2, "why": "Mostly code checks and rank metrics, with little judge spend." }, "ample": { "s": 0, "why": "Keeps its value, but extra budget buys more elsewhere." } }
+      },
+      "e2e": {
+        "stage": { "pre": { "s": 2, "why": "The only way to test the whole path before users do." }, "live": { "s": 1, "why": "Still the release gate, kept fresh by failing production traces." } },
+        "harm": { "low": { "s": 0, "why": "Worth having, though not urgent when errors are cheap." }, "high": { "s": 2, "why": "Whole-path failures such as a wrong tool sequence only show up here." } },
+        "budget": { "tight": { "s": -1, "why": "Items x evaluators x trials adds up in judge calls." }, "ample": { "s": 1, "why": "Affords more trials and harder cases." } }
+      },
+      "online": {
+        "stage": { "pre": { "s": -2, "why": "There is no traffic to sample." }, "live": { "s": 2, "why": "Real queries, and judge scorers need no reference answers." } },
+        "harm": { "low": { "s": 1, "why": "A cheap way to spot drift." }, "high": { "s": 0, "why": "It detects problems after users saw them, so it cannot be the only guard." } },
+        "budget": { "tight": { "s": -1, "why": "Every scored trace costs judge tokens. Sampling is the control." }, "ample": { "s": 1, "why": "Allows a higher sampling rate and more scorers." } }
+      },
+      "human": {
+        "stage": { "pre": { "s": -1, "why": "Few real traces exist, so reviewers read synthetic rows at best." }, "live": { "s": 1, "why": "Reading real traces finds failures no metric names." } },
+        "harm": { "low": { "s": -1, "why": "Expert time is wasted on cheap mistakes." }, "high": { "s": 2, "why": "A named reviewer is accountable for high-stakes output." } },
+        "budget": { "tight": { "s": -2, "why": "Expert hours are the scarcest budget." }, "ample": { "s": 1, "why": "Reviews also produce the labels that calibrate judges." } }
+      },
+      "shadow": {
+        "stage": { "pre": { "s": -2, "why": "Needs a live baseline and traffic to mirror." }, "live": { "s": 2, "why": "Real requests, and users never see the candidate." } },
+        "harm": { "low": { "s": 0, "why": "A direct rollout may be fine, so the extra safety buys little." }, "high": { "s": 2, "why": "Users never see the candidate's answers, so a bad version costs nothing." } },
+        "budget": { "tight": { "s": -1, "why": "It doubles inference on mirrored traffic and adds scoring." }, "ample": { "s": 1, "why": "Allows mirroring a larger share of traffic." } }
+      }
+    }, "takeaway": "No layer wins on every dial. Say which dial drove your pick, then say which layer you would add next." },
+    { "t": "failure", "title": "Failure modes of the map", "items": [
+      { "symptom": "The score fell 6 points and nobody knows which stage moved", "cause": "Only an end-to-end score exists", "fix": "Add component scores at each stage boundary (ranked chunks, tool selection, judge agreement) and log them in the same run." },
+      { "symptom": "The offline suite is green while production quality falls", "cause": "The golden set stopped matching real queries", "fix": "Sample failing production traces into the golden set on a schedule, tag them by origin, and watch online scores for drift." },
+      { "symptom": "Every release is blocked by a suite that never passes", "cause": "Capability tasks sit inside the release gate", "fix": "Gate on regression and safety suites. Keep capability suites advisory until their tasks graduate." },
+      { "symptom": "Online dashboards look healthy and users disagree", "cause": "The reference-free judge was never compared with human labels", "fix": "Sample traces for expert review, compare verdicts with the judge, and recalibrate before trusting the dashboard." }
+    ] },
+    { "t": "callout", "kind": "preview", "title": "Preview status, checked 2026-10-13", "md": "Foundry continuous evaluation, recurring evaluations, red team scans, alerts and many agent evaluators carry preview labels. Preview features come without a service-level agreement, so plan for change and keep a code-first fallback [[r7]] [[r2]]." },
+    { "t": "accordion", "items": [
+      { "title": "Go deeper: the tool landscape on 2026-10-13", "blocks": [
+        { "t": "table", "head": ["Need", "Fits", "Watch for"], "rows": [
+          ["Azure-native, portal results, red teaming, continuous evaluation", "Foundry evaluators with `azure-ai-evaluation` and `azure-ai-projects`", "Many evaluators and runs are preview. Two SDK paths exist, so check the banner at the top of each docs page [[r2]] [[r38]]."],
+          ["Metric definitions you can read", "RAGAS", "Open source. The API moved to a collections API in 0.4, and the legacy `SingleTurnSample` code is deprecated [[r20]]."],
+          ["Pytest-style tests with trajectory metrics", "DeepEval", "Over 50 metrics, almost all LLM-judged. Default `threshold` is 0.5 [[r28]]."],
+          ["Config-file evals and red teaming in CI", "promptfoo", "Open source, driven by `promptfooconfig.yaml`. OpenAI agreed to acquire it on 2026-03-09 and the open-source suite continues [[r27]] [[r45]]."],
+          ["Tracing, datasets and online evaluators in one product", "LangSmith, Braintrust", "LangSmith sets sampling rate, filters and spend limits per attached project or dataset, not per evaluator. Braintrust experiments are immutable snapshots [[r29]] [[r30]]."],
+          ["Agent Framework applications", "`evaluate_agent()` with `LocalEvaluator` and `FoundryEvals`", "Local checks for CI, cloud judges for depth [[r10]]."]
+        ] }
+      ] },
+      { "title": "Go deeper: the OpenAI Evals shutdown", "blocks": [
+        { "t": "p", "md": "OpenAI announced on 2026-06-03 that the Evals platform is deprecated. Existing evals become read-only on 2026-10-31, and the dashboard and API are scheduled to shut down on 2026-11-30. Graders documented for eval workflows are part of the transition, and OpenAI points to Promptfoo as the migration path [[r19]]." },
+        { "t": "p", "md": "Export what you need and move to a code-first harness. The Learn pages checked on 2026-10-13 show no matching retirement notice for Azure OpenAI graders, so treat the effect on Foundry's OpenAI-style evaluation API as unconfirmed. The judge and dataset advice in OpenAI's guide still holds [[r18]]." }
+      ] }
+    ] }
+  ],
+  "quiz": [
+    {
+      "id": "w14-l1-q1", "type": "single", "tag": "diagnose", "difficulty": 1, "ref": "r1",
+      "q": "After a retriever swap the end-to-end pass rate fell 6 points, and nobody can say whether retrieval or generation is at fault. Which earlier choice would have located the fault fastest?",
+      "options": [
+        "Add several hundred more golden tasks, scored only end to end, to tighten the interval",
+        "Switch to a stronger judge model for the final answer",
+        "Score the ranked chunks with a retrieval evaluation before generation runs",
+        "Lower the generator temperature so runs repeat"
+      ],
+      "answer": 2,
+      "explain": "A separate retrieval score shows whether the ranked chunks changed, which splits the fault between retrieval and generation. More end-to-end tasks tighten the interval but still give one number for the whole path. A stronger judge improves how the answer is graded, not where the fault sits. Lower temperature reduces run-to-run noise but does not localize a regression."
+    },
+    {
+      "id": "w14-l1-q2", "type": "multi", "tag": "concept", "difficulty": 2, "ref": "r30",
+      "q": "Select every statement about online evaluation of live traffic that holds.",
+      "options": [
+        "Production traces carry no reference outputs, so it leans on reference-free judges and safety checks",
+        "Scoring can run asynchronously on logged traces without adding user-facing latency",
+        "It makes the offline golden set unnecessary because live queries are more realistic",
+        "Sampling rate and filters are the main lever on judge cost"
+      ],
+      "answers": [0, 1, 3],
+      "explain": "Live traces have no expected answer, so online scoring uses reference-free judges and safety checks [[r29]]. Braintrust scores logged traces asynchronously with no latency impact [[r30]]. Judge tokens scale with the number of scored traces, so sampling is the cost control. The third statement fails: online scoring cannot run reference-based metrics or gate a release against a fixed baseline, so the offline set stays."
+    },
+    {
+      "id": "w14-l1-q3", "type": "order", "tag": "order", "difficulty": 1,
+      "q": "Put the evaluation feedback loop in order.",
+      "items": [
+        "Write cases from real failures",
+        "Run the suite as a release gate",
+        "Release and score sampled live traffic",
+        "Add failing production traces to the golden set",
+        "Rerun the gate on the enlarged set"
+      ],
+      "explain": "Cases come first because the gate needs something to run. Release and live scoring follow the gate. Failing traces only exist after live scoring, and the enlarged set is what the next gate run uses. This is the loop Foundry draws between pre-production evaluation and post-production monitoring."
+    }
+  ],
+  "defend": null,
+  "refs": ["r1", "r2", "r7", "r10", "r11", "r17", "r18", "r19", "r20", "r27", "r28", "r29", "r30", "r38", "r45"],
+  "takeaways": [
+    "Name the unit, the timing and the reference before you name a metric.",
+    "Component scores localize a fault. End-to-end scores say whether users are affected. You need both.",
+    "Offline sets gate releases, online scoring watches drift, and failing traces flow back into the offline set.",
+    "Capability suites stay advisory. Regression and safety suites block the release.",
+    "Label every preview feature with its date and keep a code-first fallback."
+  ]
+}

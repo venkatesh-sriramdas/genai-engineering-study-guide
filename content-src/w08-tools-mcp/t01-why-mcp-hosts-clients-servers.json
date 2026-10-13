@@ -1,0 +1,113 @@
+{
+  "id": "w08-t01",
+  "order": 1,
+  "group": "Foundations",
+  "title": "Why MCP: hosts, clients and servers",
+  "minutes": 7,
+  "difficulty": "core",
+  "summary": "The Model Context Protocol is an open JSON-RPC 2.0 protocol that lets any AI application (host) discover and use capabilities owned by separate servers, so integrations are written once per side instead of once per pair.",
+  "useIf": "Several AI applications must reach the same systems, or the team that owns a capability is not the team that builds the agent.",
+  "avoidIf": "One application in one codebase calls a few functions it owns, so a protocol boundary adds hops and auth work for no reuse.",
+  "explain": [
+    { "t": "p", "md": "Without a shared protocol every AI application needs custom code for every system it touches: M hosts times N systems. MCP turns that into M plus N. A host implements a client once and a system owner implements a server once. See [[r23]]." },
+    { "t": "p", "md": "Three roles matter. The **host** is the AI application the user talks to. It coordinates one or more **clients**. Each client keeps one connection to one **server**, which provides context and capabilities. Messages are JSON-RPC 2.0, carried over stdio for local servers or Streamable HTTP for remote ones." },
+    { "t": "diagram", "id": "w08-t01-d1", "title": "One host, many servers", "alt": "A host application contains two clients. One client talks to a local server over stdio and the other to a remote server over Streamable HTTP. The host passes tool definitions to the model.", "src": "flowchart LR\n  U[User] --> H[Host app]\n  H --> M[Model]\n  H --> C1[Client A]\n  H --> C2[Client B]\n  C1 -->|stdio| S1[Local server]\n  C2 -->|Streamable HTTP| S2[Remote server]" },
+    { "t": "p", "md": "Servers expose three primitives, each with a different controller: **tools** (the model decides), **resources** (the application decides) and **prompts** (the user decides). Clients can offer **elicitation** to servers, and the older **sampling** and **roots** features are Deprecated in 2026-07-28 [[r28]]." },
+    { "t": "callout", "kind": "gotcha", "title": "MCP is not function calling", "md": "Function calling is how a model asks for a call. MCP is how a host finds and invokes capabilities on a separate server, with its own versions, auth and transports. The host usually converts MCP tool definitions into the model's function-calling format." },
+    { "t": "table", "caption": "Who does what", "head": ["Role", "Owns", "Example"], "rows": [["Host", "User experience, model calls, consent, which servers to connect", "An IDE assistant or a chat app"], ["Client", "One protocol connection and its capability negotiation", "A connector object inside the host"], ["Server", "The capability: tools, resources, prompts", "A ticketing server run by the ticketing team"]] },
+    { "t": "p", "md": "Governance moved on 2025-12-09 when Anthropic donated MCP to the Agentic AI Foundation under the Linux Foundation. Maintainers still steer the spec through the SEP process [[r12]]. Revisions are dated strings such as `2025-11-25` and `2026-07-28` that mark the last backwards-incompatible change, and 2026-07-28 is the Current one [[tr21]]." }
+  ],
+  "whereToUse": [
+    "A platform team publishes internal systems (tickets, data, deploys) once for every agent in the company",
+    "A SaaS vendor ships one server that works in many third-party hosts",
+    "An IDE or chat host wants a plugin ecosystem without writing each integration",
+    "Local developer tools (files, git, databases) exposed to coding assistants over stdio"
+  ],
+  "whenToUse": {
+    "use": ["More than one host or agent will reuse the capability", "The capability owner differs from the agent builder", "You want independent versioning and auth for each capability", "You need a discoverable catalog rather than hard-coded functions"],
+    "avoid": ["A single app owns three functions and nothing else will call them", "Latency budget cannot afford an extra process or network hop", "You cannot operate or secure another server and its auth"],
+    "flips": ["A second host appears that needs the same functions: wrap them as a server", "Governance requires central audit and rate limits: add a gateway in front of the servers"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["MCP server", "Many hosts, separate owners, discoverable catalog", "One app, tight latency", "Server to run, auth and version to manage"],
+      ["Plain function calling in the app", "One codebase owns the functions", "Many hosts need the same tools", "Duplicated code per host"],
+      ["OpenAPI tool in a platform", "A REST API with a spec already exists", "You need prompts, resources or rich client features", "Limited to HTTP operations"],
+      ["A2A peer agent", "The other side is an opaque agent with its own tasks", "You only need a deterministic function", "Network, task lifecycle and trust work"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Team says MCP replaced function calling and the design mixes the two layers", "cause": "The model API call and the host-to-server protocol were treated as one thing", "fix": "Draw both: the host speaks MCP to servers and function calling to the model" },
+    { "symptom": "A new server works in one host and not another", "cause": "Hosts and SDKs lag the spec and support different revisions or features", "fix": "Check supported revisions and features per host, and test against the oldest host you must support" },
+    { "symptom": "Everything is exposed as a tool", "cause": "Resources and prompts were skipped", "fix": "Choose the primitive by who triggers it, then check side effects and payload size" }
+  ],
+  "scenarios": [
+    {
+      "id": "w08-t01-s1",
+      "title": "Five hosts, many owners",
+      "situation": "A company runs a chat assistant, an IDE plugin and two workflow agents. Four teams own systems the agents need. Each team ships on its own schedule.",
+      "constraints": ["Four or more hosts", "Capability owners are not the agent builders", "Independent release cycles"],
+      "unknowns": ["Do all hosts support the same MCP revision?", "Who handles auth and audit?", "Are some hosts third-party products?"],
+      "question": "How do you connect the hosts to the systems?",
+      "options": [
+        { "name": "One MCP server per owning team", "verdict": "best", "why": "Each owner publishes once and every host reuses it, so work scales as M plus N.", "tradeoff": "Each team operates a server and must handle auth, versioning and the host compatibility matrix." },
+        { "name": "Custom integration code inside every host", "verdict": "poor", "why": "Four systems times four hosts means sixteen integrations that drift apart.", "tradeoff": "Reasonable only when there is exactly one host." },
+        { "name": "One shared monolith tool library imported by every host", "verdict": "good", "why": "Reuse works if every host shares a language and a release train.", "tradeoff": "Couples release cycles and gives owners no independent control." }
+      ],
+      "flips": [
+        { "if": "Only one host will ever exist", "then": "Plain function calling in that app is simpler." },
+        { "if": "Central audit and rate limits are required", "then": "Keep per-team servers and front them with a gateway." }
+      ],
+      "takeaway": "A protocol pays off when integrations multiply across hosts and owners."
+    },
+    {
+      "id": "w08-t01-s2",
+      "title": "One app, three internal functions",
+      "situation": "A small team builds one assistant in one service. It needs three functions that read from the team's own database. Latency matters and nobody else will reuse them.",
+      "constraints": ["Single host", "Same team owns functions and agent", "Tight latency budget"],
+      "unknowns": ["Will another host need these soon?", "Is there a compliance need for separate audit?"],
+      "question": "Should the functions be an MCP server?",
+      "options": [
+        { "name": "Function tools defined in the app", "verdict": "best", "why": "No extra process, no network hop and no second auth boundary for code the team already owns.", "tradeoff": "If a second host appears you must extract the functions later." },
+        { "name": "A remote MCP server behind OAuth", "verdict": "poor", "why": "It adds a hop, a token flow and a deployment for functions nobody else calls.", "tradeoff": "Right once several hosts or teams need the same capability." },
+        { "name": "A local stdio MCP server spawned by the app", "verdict": "good", "why": "Keeps a clean boundary and makes later reuse easy.", "tradeoff": "A subprocess to supervise, with little benefit today." }
+      ],
+      "flips": [
+        { "if": "A second team wants the same functions next quarter", "then": "Wrap them in a server now and reuse it." },
+        { "if": "The functions need independent versioning or audit", "then": "Move them behind a server boundary." }
+      ],
+      "takeaway": "Do not add a protocol boundary until reuse or ownership demands it."
+    },
+    {
+      "id": "w08-t01-s3",
+      "title": "A partner's reasoning agent",
+      "situation": "Your agent must hand work to another organisation's agent. That agent plans its own steps, may ask follow-up questions and keeps its internals private.",
+      "constraints": ["Remote party is an agent, not a function", "Work may take minutes and span turns", "Internals are opaque"],
+      "unknowns": ["Does the partner publish an A2A endpoint or agent card?", "How will identity be established across organisations?"],
+      "question": "Is MCP the right boundary?",
+      "options": [
+        { "name": "A2A peer call with tasks", "verdict": "best", "why": "A2A is built for opaque agents with a task lifecycle, contexts and artifacts.", "tradeoff": "You take on network, retry, versioning and cross-org identity work." },
+        { "name": "Wrap the partner as one MCP tool", "verdict": "good", "why": "Works for short, single-shot requests and reuses your tool stack.", "tradeoff": "No native multi-turn task model unless you add the Tasks extension." },
+        { "name": "Expose the partner's database as MCP resources", "verdict": "poor", "why": "It bypasses the partner's agent and logic and is probably not permitted.", "tradeoff": "Fits only when the partner explicitly publishes data as resources." }
+      ],
+      "flips": [
+        { "if": "The partner offers a deterministic API with a fast response", "then": "A tool or an OpenAPI tool is simpler than A2A." },
+        { "if": "The partner only supports MCP", "then": "Use the Tasks extension for long-running work." }
+      ],
+      "takeaway": "MCP connects an agent to tools and data. Peer agents belong on A2A."
+    }
+  ],
+  "quiz": [
+    { "id": "w08-t01-q1", "type": "single", "tag": "concept", "q": "In MCP, which component keeps a connection to exactly one server?", "options": ["The host", "The client", "The model", "The registry"], "answer": 1, "explain": "A host coordinates one or more clients and each client holds one connection to one server. The host is the application, the model is not part of the protocol, and a registry only lists servers." },
+    { "id": "w08-t01-q2", "type": "match", "tag": "concept", "q": "Match each primitive to who decides when it is used.", "pairs": [{ "l": "Tools", "r": "The model" }, { "l": "Resources", "r": "The application" }, { "l": "Prompts", "r": "The user" }], "explain": "Tools are model-controlled, resources are application-controlled and prompts are user-controlled. This describes who decides, not who writes the content." }
+  ],
+  "flashcards": [
+    { "front": "Why does MCP turn M times N integrations into M plus N?", "back": "Each host implements a client once and each system owner implements a server once, so pairs no longer need custom code." },
+    { "front": "Name the three MCP roles.", "back": "Host (the AI app), client (one connection per server) and server (provides tools, resources, prompts). Messages are JSON-RPC 2.0." },
+    { "front": "Is MCP the same as function calling?", "back": "No. Function calling is a model feature. MCP is the wire protocol between host and server, with its own auth, versioning and transports." }
+  ],
+  "related": ["w08-l01", "w08-t02", "w08-t09", "w08-t17"],
+  "refs": ["r23", "r28", "r12", "tr21", "r29"]
+}

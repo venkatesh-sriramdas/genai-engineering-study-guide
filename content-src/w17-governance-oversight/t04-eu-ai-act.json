@@ -1,0 +1,120 @@
+{
+  "id": "w17-t04",
+  "order": 4,
+  "group": "Regulation and standards",
+  "title": "EU AI Act",
+  "minutes": 10,
+  "difficulty": "core",
+  "summary": "The EU AI Act sorts AI systems by risk and assigns duties to providers and deployers on a dated timetable. The 2026 Omnibus moved the high-risk dates, while transparency and general-purpose AI enforcement began on 2026-08-02.",
+  "useIf": "You build or deploy AI for people in the EU and must say which obligations apply to you and from when.",
+  "avoidIf": "You treat a blog post date as final or this page as legal advice: confirm legal text with counsel.",
+  "explain": [
+    { "t": "p", "md": "The Act is a regulation with **risk tiers**: prohibited practices, **high-risk** systems, systems with **transparency duties**, and **general-purpose AI (GPAI) models**. A system is high-risk under Article 6 when it is a safety component of a product covered by Annex I law that needs third-party conformity assessment, or when it falls in an Annex III use case. Annex III systems can escape the label if they pose no significant risk, such as narrow procedural tasks, but profiling of people is always high-risk, and the provider must document the assessment [[tr5]]. Duties depend on your **role**: providers design and place systems on the market, deployers use them. Examples: Article 14 oversight, Article 12 logging and Article 11 technical documentation for providers [[r5]] [[r8]] [[tr3]]; Article 26 operating duties for deployers [[tr1]]; Article 73 serious incident reporting [[r7]]. Article 4 also asks providers and deployers to support the AI literacy of their staff [[tr2]]." },
+    { "t": "p", "md": "Penalties under Article 99 reach EUR 35,000,000 or 7% of worldwide turnover for prohibited practices, EUR 15,000,000 or 3% for other operator obligations, and EUR 7,500,000 or 1% for incorrect information. Undertakings face the higher figure, SMEs the lower, and since the Omnibus small mid-caps get the lower figure for the two smaller tiers [[r4]]. The **Digital Omnibus on AI** (Regulation (EU) 2026/1744) was signed on 2026-07-08, published on 2026-07-24 and entered into force on 2026-07-27 (dates from a law-firm alert, secondary-sourced) [[r3]]. It moved Annex III to 2027-12-02 and Annex I to 2028-08-02 [[r2]]." },
+    { "t": "table", "caption": "Dated obligations (checked 2026-10-13)", "head": ["Date", "What applies", "Source"], "rows": [
+      ["2024-08-01", "Entry into force", "[[r1]]"],
+      ["2025-02-02", "Prohibitions and AI literacy", "[[r1]]"],
+      ["2025-08-02", "GPAI obligations; Code of Practice published 2025-07-10, voluntary", "[[r1]] [[r9]]"],
+      ["2026-08-02", "Article 50 transparency applies; enforcement starts for GPAI, prohibitions, transparency and AI literacy", "[[r1]]"],
+      ["2026-12-02", "New prohibitions; Article 50(2) marking transition ends for systems on the market before 2026-08-02", "[[r1]] [[r3]]"],
+      ["2027-12-02", "Annex III high-risk rules", "[[r2]]"],
+      ["2028-08-02", "Annex I product-embedded high-risk rules", "[[r2]]"]
+    ] },
+    { "t": "callout", "kind": "warn", "title": "Older posts are out of date", "md": "Many posts say high-risk rules apply on 2026-08-02. Since the Omnibus entered into force on 2026-07-27 that date is 2027-12-02 for Annex III. Article 50 and GPAI enforcement did start on 2026-08-02. This page is study material, not legal advice." }
+  ],
+  "whereToUse": [
+    "Scoping an EU launch: which tier, which role, which date",
+    "Customer questionnaires that ask for AI Act readiness",
+    "Planning logging, documentation and oversight features for 2027",
+    "Choosing disclosure and marking features for generative outputs",
+    "Vendor reviews of GPAI model providers and their documentation"
+  ],
+  "whenToUse": {
+    "use": ["Use the tier and role to decide which duties apply, system by system", "Use the dated table to plan the roadmap, not blog posts", "Treat Article 50 and AI literacy as live duties as of 2026-08-02"],
+    "avoid": ["Claiming certification: the Act is not an ISO-style certificate for chatbots", "Treating the GPAI Code of Practice as law", "Assuming a GPAI vendor covers your duties as the provider of the system"],
+    "flips": ["A use case lands in Annex III: plan for 2027-12-02 and Articles 11, 12, 14 and 26", "The system generates synthetic content: Article 50(2) marking applies, with a 2026-12-02 transition for older systems", "You fine-tune or rebrand a model: re-check whether you became a provider"]
+  },
+  "alternatives": {
+    "title": "How the Act relates to other frameworks",
+    "head": ["Framework", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["EU AI Act", "EU market access, legal duties", "You need a certifiable management system", "Binding, with fines and dated duties"],
+      ["ISO/IEC 42001", "Customers ask for a certificate", "You need to show compliance with a specific Article", "Certifies an organization's AIMS, not one system"],
+      ["NIST AI RMF", "A shared risk vocabulary", "A regulator wants legal evidence", "Voluntary, version 1.0 under revision"],
+      ["GPAI Code of Practice", "Showing a GPAI provider's Article 53 and 55 approach", "You are not a GPAI provider", "Voluntary, adequacy-confirmed tool"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A roadmap uses 2026-08-02 for high-risk compliance", "cause": "It relies on a pre-Omnibus article or slide", "fix": "Use 2027-12-02 for Annex III and 2028-08-02 for Annex I, and cite the Commission page" },
+    { "symptom": "A public chatbot has no AI notice", "cause": "Article 50(1) was read as part of the later high-risk wave", "fix": "Tell people they are interacting with an AI system at the latest at first interaction, unless obvious" },
+    { "symptom": "A team assumes the model vendor's compliance covers it", "cause": "Provider and deployer duties were mixed up", "fix": "Map duties per role and per system, and keep vendor documentation on file" }
+  ],
+  "scenarios": [
+    {
+      "id": "w17-t04-s1",
+      "title": "A public chatbot in the EU",
+      "situation": "A company runs a customer chatbot for EU users. It is not an Annex III use case. Nobody has added an AI notice.",
+      "constraints": ["Date of review is 2026-10-13", "The chat UI looks like a human agent in places", "Engineering capacity is limited"],
+      "unknowns": ["Is it obvious to a reasonably informed person that this is an AI?", "Does the bot generate synthetic images or audio?"],
+      "question": "What do you do first?",
+      "options": [
+        { "name": "Add a clear notice at first interaction and AI literacy measures for staff", "verdict": "best", "why": "Article 50 transparency applies since 2026-08-02, and Article 50(5) wants the information clear and distinguishable at the latest at first interaction.", "tradeoff": "A UI change and a short training programme." },
+        { "name": "Wait for 2027-12-02, when high-risk rules apply", "verdict": "poor", "why": "That date concerns Annex III high-risk systems, not Article 50.", "tradeoff": "Right for a high-risk system's other duties." },
+        { "name": "Mention AI use in the terms of service only", "verdict": "poor", "why": "A clause people do not see at first interaction does not meet Article 50(5).", "tradeoff": "Fine as an addition to a visible notice." }
+      ],
+      "flips": [
+        { "if": "It is obvious to a reasonably well-informed person that they are talking to an AI", "then": "Article 50(1) allows an exception, but a notice is cheap insurance." },
+        { "if": "The chatbot makes eligibility decisions about people", "then": "Check Annex III and plan for high-risk duties." }
+      ],
+      "takeaway": "Article 50 is already live. Do not confuse it with the later high-risk date."
+    },
+    {
+      "id": "w17-t04-s2",
+      "title": "Screening candidates in 2027",
+      "situation": "A team plans an AI feature in 2027 that ranks job applicants in the EU. They assume they have until 2026-08-02 and are surprised to hear it moved.",
+      "constraints": ["Likely an Annex III use case", "Provider and deployer roles are split across two companies", "Launch is mid-2027"],
+      "unknowns": ["Does the Article 6(3) derogation apply, given profiling?", "Who is the provider?"],
+      "question": "How do you plan?",
+      "options": [
+        { "name": "Plan to the 2027-12-02 date, but build logging, oversight and technical documentation into the design now", "verdict": "best", "why": "Articles 11, 12 and 14 are design-level capabilities that are costly to retrofit, and dates can change again.", "tradeoff": "Early engineering cost for duties that apply later." },
+        { "name": "Ignore the Act until late 2027", "verdict": "poor", "why": "Retrofitting oversight, logs and documentation after launch is slow and risky.", "tradeoff": "Reasonable only for systems clearly outside the Act." },
+        { "name": "Exclude EU users", "verdict": "good", "why": "Avoids the duties.", "tradeoff": "Loses the market and may be impractical for hiring tools used by EU employers." }
+      ],
+      "flips": [
+        { "if": "Profiling of natural persons is involved", "then": "The Article 6(3) derogation does not help: treat it as high-risk." },
+        { "if": "Another Omnibus change moves the date", "then": "Re-check the Commission timeline page." }
+      ],
+      "takeaway": "Dates moved, but the design work did not."
+    },
+    {
+      "id": "w17-t04-s3",
+      "title": "An image generator already on the market",
+      "situation": "A product generating images has been on the EU market since before 2026-08-02. The team believes it is exempt from marking rules.",
+      "constraints": ["As of 2026-10-13", "The product outputs synthetic images", "Marking is not yet implemented"],
+      "unknowns": ["Does the system only assist standard editing?", "Which technical marking standard will you use?"],
+      "question": "What is the plan?",
+      "options": [
+        { "name": "Implement machine-readable marking and detectability before 2026-12-02, which is 50 days from 2026-10-13", "verdict": "best", "why": "Systems on the market before 2026-08-02 get until 2026-12-02 for Article 50(2) marking, not an exemption.", "tradeoff": "Engineering and testing effort on a fixed deadline." },
+        { "name": "Add a visible watermark only", "verdict": "good", "why": "Helps humans.", "tradeoff": "Article 50(2) asks for machine-readable marking and detectability." },
+        { "name": "Do nothing because the product pre-dates the rule", "verdict": "poor", "why": "The transition ends on 2026-12-02.", "tradeoff": "Right only if the system is out of scope, for example assistive editing that does not substantially alter input." }
+      ],
+      "flips": [
+        { "if": "The system only performs an assistive function that does not substantially alter input", "then": "The Article 50(2) obligation may not apply." },
+        { "if": "Deployers publish deepfakes", "then": "Article 50(4) disclosure duties apply to them." }
+      ],
+      "takeaway": "A transition period is a deadline, not an exemption."
+    }
+  ],
+  "quiz": [
+    { "id": "w17-t04-q1", "type": "numeric", "tag": "numeric", "q": "How many days are there from 2026-10-13 to 2026-12-02, the end of the Article 50(2) transition for systems on the market before 2026-08-02?", "answer": 50, "tolerancePct": 0, "unit": "days", "hint": "18 days left in October, 30 in November, 2 in December", "explain": "18 + 30 + 2 = 50 days (derived) [[r3]].", "difficulty": 1 },
+    { "id": "w17-t04-q2", "type": "match", "tag": "concept", "q": "Match each date to what applies.", "pairs": [ { "l": "2025-02-02", "r": "Prohibitions and AI literacy" }, { "l": "2025-08-02", "r": "GPAI obligations" }, { "l": "2026-08-02", "r": "Article 50 transparency and enforcement for GPAI" }, { "l": "2027-12-02", "r": "Annex III high-risk rules" } ], "explain": "These are the Commission timeline dates, with Annex III moved by the Omnibus [[r1]] [[r2]].", "difficulty": 2 },
+    { "id": "w17-t04-q3", "type": "single", "tag": "flip", "q": "An Annex III system performs profiling of natural persons. Does the Article 6(3) derogation let the provider treat it as not high-risk?", "options": ["Yes, if the task is narrow", "Yes, if human review exists", "No, profiling is always high-risk"], "answer": 2, "explain": "Article 6(3) lists derogation conditions, but an Annex III system that performs profiling is always considered high-risk [[tr5]].", "difficulty": 3 }
+  ],
+  "flashcards": [
+    { "front": "When do Annex III high-risk rules apply after the Omnibus?", "back": "2027-12-02. Annex I product-embedded systems follow on 2028-08-02. Article 50 and GPAI enforcement began 2026-08-02." },
+    { "front": "Article 99 maximum fines?", "back": "EUR 35M or 7% for prohibited practices, EUR 15M or 3% for other operator duties, EUR 7.5M or 1% for incorrect information. Higher figure for undertakings, lower for SMEs (and small mid-caps on the 3% and 1% tiers)." },
+    { "front": "Is the GPAI Code of Practice law?", "back": "No. Published 2025-07-10, it is voluntary, with Transparency, Copyright and Safety and Security chapters." }
+  ],
+  "related": ["w17-t01", "w17-t05", "w17-t06", "w17-t08", "w17-l2", "w00-t05"],
+  "refs": ["r1", "r2", "r3", "r4", "r5", "r7", "r8", "r9", "tr1", "tr2", "tr3", "tr5"]
+}

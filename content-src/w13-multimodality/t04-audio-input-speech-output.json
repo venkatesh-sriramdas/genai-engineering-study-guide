@@ -1,0 +1,109 @@
+{
+  "id": "w13-t04",
+  "order": 4,
+  "group": "Audio and voice",
+  "title": "Audio input and speech output",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "Speech to text and text to speech are separate services with separate modes: live streaming, fast synchronous files and batch. Pick the mode by latency need, volume and the extras you need, such as speaker labels or word timestamps.",
+  "useIf": "You turn audio into text for search, captions, analytics or an agent, or you speak a text answer back.",
+  "avoidIf": "The user is in a live conversation and you want one model to listen and speak. See the realtime topic instead.",
+  "explain": [
+    { "t": "p", "md": "**Transcription** has three delivery modes. *Live* audio (a call, a microphone) goes to a streaming service. *Files* go to a synchronous call that returns a transcript, sometimes faster than real time. *Large backlogs* go to an asynchronous batch service. Azure Speech names these real-time, fast transcription and batch transcription, and adds diarization (up to 35 speakers), phrase lists and custom speech [[tr4]]." },
+    { "t": "p", "md": "On OpenAI's file endpoint (checked 2026-10-13) start with `gpt-transcribe` for recorded speech in its original language [[tr1]]. Files can be up to 25 MB in `mp3`, `mp4`, `mpeg`, `mpga`, `m4a`, `wav` or `webm`. Add context with `prompt`, `keywords` and `languages` (it replaces the singular `language`, so never send both). Keywords are hints, so check they do not make unspoken terms appear. Use `gpt-4o-transcribe-diarize` only for speaker labels (`diarized_json`, and `chunking_strategy` set for audio over 30 seconds). Use `whisper-1` for word timestamps or translation into English." },
+    { "t": "p", "md": "**Speech output** on OpenAI uses `gpt-4o-mini-tts`, which accepts `instructions` for tone, accent and speed. `tts-1` has lower latency and `tts-1-hd` higher quality. Audio streams over chunked transfer, and `wav` or `pcm` give the fastest response [[tr2]]. Policy requires telling users the voice is AI-generated. Azure offers over 600 standard voices across 150 or more locales through Voice Live [[r7]]." },
+    { "t": "diagram", "id": "w13-t04-d1", "title": "Pick the transcription mode", "alt": "Live audio goes to streaming transcription. Recorded audio needing an answer in seconds goes to fast transcription. Large backlogs go to batch.", "src": "flowchart TB\n  A[Audio] --> L{Arriving live?}\n  L -->|Yes| S[Streaming transcription]\n  L -->|No| Q{Need seconds, predictable?}\n  Q -->|Yes| F[Fast or file transcription]\n  Q -->|No| B[Batch transcription]" },
+    { "t": "callout", "kind": "note", "title": "Check limits per deployment", "md": "The 25 MB file limit is documented for OpenAI's endpoint. A one hour mp3 at 128 kbps is about 58 MB, so long recordings must be split or compressed, or sent to a batch service built for them." }
+  ],
+  "whereToUse": [
+    "Live captions for webinars and meetings (streaming)",
+    "Voicemail and short recordings that need a transcript within seconds (fast or file)",
+    "Call-centre archives and lecture libraries (batch, with diarization)",
+    "Voice assistants that read answers aloud with a steerable voice",
+    "Subtitles that need word timestamps"
+  ],
+  "whenToUse": {
+    "use": [
+      "Streaming when a person or agent reads the text while the audio is still arriving",
+      "Fast or file transcription when audio is complete and predictable latency matters",
+      "Batch when volume is large and nobody waits"
+    ],
+    "avoid": [
+      "File transcription in a loop of small chunks to fake live captions: latency and cost add up",
+      "Diarization models for ordinary transcription, since they are specialised",
+      "Synthetic voices with no disclosure to users"
+    ],
+    "flips": [
+      "Domain terms are mis-heard: add a phrase list or keywords and re-measure",
+      "Speaker labels needed: switch to a diarization-capable path and set chunking",
+      "A caller expects spoken replies in one second: move to realtime speech-to-speech"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Mode", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Streaming transcription", "Live captions, agent assist", "Audio is already recorded", "Partial results change, and connections must be managed"],
+      ["Fast or file transcription", "Voicemail, short clips, predictable latency", "Files exceed limits", "25 MB per file on OpenAI's endpoint"],
+      ["Batch transcription", "Large archives, analytics", "A person waits", "Asynchronous jobs and polling"],
+      ["Speech-to-speech model", "Live spoken conversation", "You need a stable transcript for audit", "Audio token cost grows with the session [[r5]]"],
+      ["Multimodal chat model with audio input", "Small volume, tone matters", "Volume, timestamps, diarization", "Higher cost per hour"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Brand names and codes are transcribed wrongly", "cause": "No domain context was given", "fix": "Add `prompt`, `keywords` or a phrase list, then measure that spoken terms improve and unspoken ones do not appear." },
+    { "symptom": "Request rejected with language errors", "cause": "Both `language` and `languages` were sent, or a code was unsupported", "fix": "With `gpt-transcribe` send only `languages`, and use supported codes." },
+    { "symptom": "Long recordings fail", "cause": "The file exceeds the 25 MB limit", "fix": "Compress, split on silence, or use a batch service." },
+    { "symptom": "Diarization of a long meeting fails or gives unusable segments", "cause": "The docs require `chunking_strategy` for audio over 30 seconds and it was omitted", "fix": "Set `chunking_strategy` to `auto` or a voice activity configuration." }
+  ],
+  "scenarios": [
+    {
+      "id": "w13-t04-s1",
+      "title": "Archive of 5,000 hours",
+      "situation": "A company needs transcripts of years of recorded support calls, with speaker labels, for analytics. Nobody is waiting on any single file.",
+      "constraints": ["Large volume", "No latency target", "Speaker labels needed"],
+      "unknowns": ["Which languages?", "Is custom vocabulary needed?", "Any residency rule?"],
+      "question": "Which mode do you use?",
+      "options": [
+        { "name": "Batch transcription with diarization", "verdict": "best", "why": "Batch is built for large volumes of recorded files and supports diarization [[tr4]].", "tradeoff": "Asynchronous: results arrive later and you manage jobs." },
+        { "name": "Fast transcription per file", "verdict": "good", "why": "Synchronous and simple per file.", "tradeoff": "Fine for moderate volume, but you manage concurrency and file limits yourself." },
+        { "name": "Realtime speech-to-speech replay", "verdict": "poor", "why": "It is a conversation engine and bills audio tokens for a growing session.", "tradeoff": "Right only when a live caller needs spoken answers." }
+      ],
+      "flips": [
+        { "if": "A supervisor needs results within seconds of the call ending", "then": "Use fast transcription for new calls and batch for the backlog." },
+        { "if": "Only a keyword search is needed", "then": "Skip diarization to cut cost." }
+      ],
+      "takeaway": "Large, patient workloads belong in batch."
+    },
+    {
+      "id": "w13-t04-s2",
+      "title": "Live captions for a webinar",
+      "situation": "A platform shows captions during webinars with thousands of attendees. Captions must appear within a second or two of speech.",
+      "constraints": ["Live audio", "Low latency", "Partial results acceptable"],
+      "unknowns": ["How many languages at once?", "Is there a caption accuracy target?"],
+      "question": "What do you use?",
+      "options": [
+        { "name": "Streaming transcription (real-time speech to text)", "verdict": "best", "why": "It returns intermediate results as audio arrives, which live captions need [[tr4]].", "tradeoff": "Partial text is revised, so the interface must handle updates." },
+        { "name": "File transcription of 10-second chunks", "verdict": "poor", "why": "Chunking adds delay, breaks words at boundaries and multiplies calls.", "tradeoff": "Acceptable for delayed captions where a lag of tens of seconds is fine." },
+        { "name": "Batch transcription after the event", "verdict": "good", "why": "Cheap and accurate for the recording.", "tradeoff": "Gives no live captions, so use it for the on-demand replay only." }
+      ],
+      "flips": [
+        { "if": "Captions may lag by half a minute", "then": "Chunked file transcription becomes acceptable." },
+        { "if": "Terminology is specialised", "then": "Add phrase lists or custom speech." }
+      ],
+      "takeaway": "Live text needs a streaming path."
+    }
+  ],
+  "quiz": [
+    { "id": "w13-t04-q1", "type": "numeric", "tag": "numeric", "q": "OpenAI's file transcription limit is 25 MB. About how many minutes of 128 kbps mp3 audio fit in one file?", "answer": 26, "tolerancePct": 6, "unit": "minutes", "hint": "25 MB is about 200 megabits.", "explain": "128 kbps is 16 KB per second. 25 MB divided by 16 KB is about 1,560 seconds, roughly 26 minutes. Binary megabytes give about 27 minutes, inside the tolerance." },
+    { "id": "w13-t04-q2", "type": "single", "tag": "bug", "q": "A diarization request for a 40-minute meeting is misbehaving. Which setting does the documentation require for audio longer than 30 seconds?", "options": ["`response_format` set to `mp3`", "`keywords` listing every speaker", "`chunking_strategy` set to `auto` or a voice activity configuration", "`tts-1-hd` as the model"], "answer": 2, "explain": "The diarization guide requires `chunking_strategy` for audio over 30 seconds. An output format name, keywords and a TTS model do not address it." },
+    { "id": "w13-t04-q3", "type": "multi", "tag": "tradeoff", "q": "Which are reasons to choose batch over streaming transcription?", "options": ["Audio is already recorded", "Volume is large and nobody waits", "You need captions during a live event", "Intermediate results must reach an agent mid-call"], "answers": [0, 1], "explain": "Recorded audio at volume suits asynchronous jobs. Live captions and mid-call assist need streaming." }
+  ],
+  "flashcards": [
+    { "front": "Name the three speech-to-text delivery modes in Azure Speech.", "back": "Real-time (streaming with intermediate results), fast transcription (synchronous files, faster than real time), and batch (asynchronous, large volumes)." },
+    { "front": "When do you use `gpt-4o-transcribe-diarize`?", "back": "Only when you need speaker labels. Request `diarized_json` and set `chunking_strategy` for audio longer than 30 seconds." },
+    { "front": "Which TTS output formats give the fastest response on OpenAI?", "back": "`wav` or `pcm`. The default is `mp3`, and audio can stream as it is generated." }
+  ],
+  "related": ["w13-t05", "w13-t06", "w13-t07", "w13-l4", "w12-t02"],
+  "refs": ["tr1", "tr2", "tr4", "r5", "r7"]
+}

@@ -1,0 +1,100 @@
+{
+  "id": "w04-t03",
+  "order": 3,
+  "group": "Chunking",
+  "title": "Recursive and sentence-based chunking",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "Split on the largest natural boundary that keeps pieces under the limit: paragraph first, then line, then sentence, then space. Sentence-based chunking packs whole sentences, or embeds single sentences and returns a window around them.",
+  "useIf": "The text is prose with paragraphs and sentences, and you want cleaner boundaries than a blind cut at the same low cost.",
+  "avoidIf": "The text has real structure (headings, tables, code) that separators cannot see, or the language lacks reliable sentence punctuation.",
+  "explain": [
+    { "t": "p", "md": "A **recursive splitter** holds an ordered list of separators, for example paragraph break, line break, sentence end, space. It splits on the first one. Any piece still over the size limit is split again with the next separator. Small neighbours are then merged back up to the limit. The result follows paragraph and sentence edges wherever the limit allows and only cuts mid-sentence as a last resort." },
+    { "t": "diagram", "id": "w04-t03-d1", "title": "Recursive splitting", "alt": "Text is split on the largest separator. Pieces over the limit are split again with the next separator. Small pieces are merged up to the limit and emitted as chunks.", "src": "flowchart TD\n  A[\"Text\"] --> B[\"Split on largest separator\"]\n  B --> C{\"Piece fits the limit?\"}\n  C -->|yes| D[\"Keep piece\"]\n  C -->|no| E[\"Split on next separator\"]\n  E --> C\n  D --> F[\"Merge small neighbours up to limit\"]\n  F --> G[\"Emit chunks with offsets\"]" },
+    { "t": "p", "md": "**Sentence-based** chunking comes in two forms. Packing groups whole sentences until the size limit. A **sentence window** embeds each sentence alone for precise matching and returns the sentence plus its neighbours to the model. In AI Search the Text Split skill has `textSplitMode` of `pages` or `sentences`. Pages mode has a maximum length but tries not to truncate a sentence, so chunks can run shorter. Sentences mode splits at sentence-ending punctuation and assumes the language has some [[tr2]]. The Azure Architecture Center lists sentence-based splitting as a fallback approach [[tr9]]." },
+    { "t": "p", "md": "Parameters matter more than the name. Chroma found the default `RecursiveCharacterTextSplitter` separators produced very short chunks, while a well-parametrised recursive splitter performed competitively [[tr22]]. Unstructured defaults to `max_characters` 500 with no overlap [[tr44]]. Check what your library does before you trust it." },
+    { "t": "table", "caption": "A separator hierarchy and what each level preserves", "head": ["Separator", "Keeps together", "Typical failure"], "rows": [
+      ["Paragraph break", "One idea or a short passage", "A long paragraph exceeds the limit and falls through"],
+      ["Line break", "List items, wrapped lines", "Hard-wrapped PDF text breaks sentences"],
+      ["Sentence end", "A full statement", "'Dr.', 'e.g.' and decimals confuse naive splitters"],
+      ["Space", "Words only, last resort", "Cuts mid-sentence"]
+    ] },
+    { "t": "p", "md": "You can see these boundaries in the chunk visualizer lab in the fixed-size chunking topic. Paste your own text, switch between recursive and sentence groups and look at where each boundary lands." }
+  ],
+  "whereToUse": [
+    "Prose-heavy knowledge bases: articles, emails, reports, support answers",
+    "A default splitter when you cannot rely on headings or layout",
+    "Citation-heavy tasks where a sentence is the unit of evidence (sentence window)",
+    "Pre-splitting inside a section after structure-aware splitting, to cap size"
+  ],
+  "whenToUse": {
+    "use": ["Text is prose with usable paragraph or sentence edges", "You want clean boundaries without extra model calls", "Evidence must be cited at sentence level (use a window)"],
+    "avoid": ["Tables, code or forms where separators cut the structure", "Languages or text types without reliable sentence punctuation", "Hard-wrapped extracted text where line breaks are noise"],
+    "flips": ["Headings exist: split on them first and use recursion only to cap size", "Questions need larger context: keep the sentence match but return a parent or window", "Chunk sizes vary wildly: lower the limit or add a minimum-size merge"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Recursive splitting", "Prose with paragraphs, a strong general default", "Structure the separators cannot see", "Uneven sizes, tuning of separators"],
+      ["Sentence packing", "You need whole-sentence boundaries and even size", "Sentences are very long or punctuation is odd", "Sentence detection errors"],
+      ["Sentence window", "Precise matching plus context at answer time", "Latency budget excludes a second lookup", "More vectors, extra expansion step"],
+      ["Fixed size with overlap", "Flat text, cheapest baseline", "You care about clean boundaries", "Mid-sentence cuts and overlap inflation"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "The index holds thousands of tiny chunks", "cause": "Library default separators and size produced very short pieces", "fix": "Set the size and separators yourself, add a minimum-size merge and inspect chunk length histograms" },
+    { "symptom": "A chunk ends at 'Dr.' or in the middle of a decimal", "cause": "The sentence splitter treats every period as a boundary", "fix": "Use a splitter with abbreviation handling, or add exceptions and test on your own text" },
+    { "symptom": "Extracted PDF text splits every few words", "cause": "Hard line breaks from the PDF are treated as meaningful separators", "fix": "Normalise line breaks before splitting, or use layout-based parsing" }
+  ],
+  "scenarios": [
+    {
+      "id": "w04-t03-s1",
+      "title": "Sentence-level citations on dense text",
+      "situation": "Users ask for the exact statement that supports an answer in dense regulatory prose. Each sentence is a separate obligation. Latency is moderate and storage is not tight.",
+      "constraints": ["Citation granularity is one sentence", "Precision matters more than cost", "Moderate latency budget"],
+      "unknowns": ["How many neighbouring sentences does an answer need?", "Do obligations cross paragraph breaks?"],
+      "question": "Which approach fits?",
+      "options": [
+        { "name": "Sentence window: embed sentences, return the sentence plus neighbours", "verdict": "best", "why": "A single sentence matches the question sharply and the window supplies context. The cited sentence is exact.", "tradeoff": "Many more vectors and an expansion step at query time." },
+        { "name": "Recursive chunks of about 400 tokens", "verdict": "good", "why": "Clean boundaries and fewer vectors.", "tradeoff": "Citations point to a paragraph, not the exact sentence." },
+        { "name": "Fixed 512 tokens with 25% overlap", "verdict": "poor", "why": "Chunks cut through sentences and the cited unit is arbitrary.", "tradeoff": "Right for flat text where no sentence structure exists." }
+      ],
+      "flips": [
+        { "if": "Storage or latency becomes the main constraint", "then": "Use recursive chunks and cite the paragraph." },
+        { "if": "Obligations routinely span paragraphs", "then": "Widen the window or use parent sections." }
+      ],
+      "takeaway": "Match on the smallest unit you cite, return the larger unit the model needs."
+    },
+    {
+      "id": "w04-t03-s2",
+      "title": "Many languages, one splitter",
+      "situation": "A knowledge base mixes several languages, including some without spaces between words and some with different sentence punctuation. The team wants a single ingestion path.",
+      "constraints": ["Mixed languages", "One shared pipeline", "Moderate corpus size", "Quality tested per language"],
+      "unknowns": ["Which languages carry most traffic?", "Is language detected per document?"],
+      "question": "How do you split?",
+      "options": [
+        { "name": "Recursive splitting with per-language separators and a size cap, tested per language", "verdict": "best", "why": "Respects each script's boundaries and bounds sizes regardless of punctuation.", "tradeoff": "A separator set to maintain per language." },
+        { "name": "Text Split in `sentences` mode with `defaultLanguageCode`", "verdict": "good", "why": "Minimal setup for languages with sentence-ending punctuation.", "tradeoff": "It assumes the language has such punctuation, so some languages need a different path." },
+        { "name": "One English sentence regex for everything", "verdict": "poor", "why": "Produces wrong boundaries or no boundaries in other scripts.", "tradeoff": "Fine for an English-only corpus." }
+      ],
+      "flips": [
+        { "if": "Only two languages carry nearly all traffic", "then": "Tune those two well and use a size cap for the rest." },
+        { "if": "Documents have headings in every language", "then": "Split on structure first and recurse only for size." }
+      ],
+      "takeaway": "Separators are language assumptions, so test them in each language."
+    }
+  ],
+  "quiz": [
+    { "id": "w04-t03-q1", "type": "order", "tag": "order", "q": "Put the recursive splitting steps in order.", "items": ["Split on the largest separator, such as a paragraph break", "Check each piece against the size limit", "Re-split oversized pieces with the next separator", "Merge small neighbours up to the limit", "Emit chunks with offsets"], "explain": "The splitter tries the coarse boundary first, tests size, falls through to finer separators only for oversized pieces, then merges small pieces so chunks are not tiny." },
+    { "id": "w04-t03-q2", "type": "single", "tag": "diagnose", "q": "After a library upgrade your index has three times as many chunks and retrieval quality drops. Chunk lengths are mostly under 100 tokens. Most likely cause?", "options": ["Default separators and size now produce very short chunks", "The embedding dimensions changed", "The vector index switched to exhaustive search", "Overlap was set to 100%"], "answer": 0, "explain": "Chroma observed that default recursive separators can yield very short chunks. Dimensions and index type do not change chunk count, and overlap of 100% would never advance the window." },
+    { "id": "w04-t03-q3", "type": "match", "tag": "concept", "q": "Match each approach to its main strength.", "pairs": [ { "l": "Recursive splitting", "r": "Follows paragraph and sentence edges within a size limit" }, { "l": "Sentence packing", "r": "Keeps whole sentences with even chunk sizes" }, { "l": "Sentence window", "r": "Matches one sentence, returns its neighbours" }, { "l": "Fixed size with overlap", "r": "Cheapest, ignores meaning" } ], "explain": "Each pairing follows the mechanism: recursion uses a separator hierarchy, packing groups sentences, a window separates match from context, and fixed size cuts blindly." }
+  ],
+  "flashcards": [
+    { "front": "How does a recursive splitter work?", "back": "It splits on the largest separator, re-splits oversized pieces with the next one (paragraph, line, sentence, space), then merges small pieces up to the limit." },
+    { "front": "What does `textSplitMode: pages` do about sentences?", "back": "It caps length at `maximumPageLength` but tries not to truncate a sentence, so chunks can be shorter than the maximum." },
+    { "front": "What is a sentence window?", "back": "Embed each sentence alone, then return the sentence plus its neighbours so the model sees context while the match stays precise." }
+  ],
+  "related": ["w04-t02", "w04-t05", "w04-t06", "w03-t03", "w04-l1"],
+  "refs": ["tr2", "tr9", "tr22", "tr44"]
+}

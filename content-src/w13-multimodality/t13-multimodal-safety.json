@@ -1,0 +1,145 @@
+{
+  "id": "w13-t13",
+  "order": 13,
+  "group": "Safety",
+  "title": "Multimodal safety: image injection, content safety and PII",
+  "minutes": 9,
+  "difficulty": "advanced",
+  "summary": "Anything an image says can be an instruction, a leak or a harm. No single service covers prompt injection, harmful content, PII and faces, so you layer controls and treat text read from images as untrusted.",
+  "useIf": "Users or documents supply images or scans that a model reads, and the system can take actions or handle personal data.",
+  "avoidIf": "Images are produced and consumed only by your own trusted pipeline with no tools and no personal data.",
+  "explain": [
+    { "t": "p", "md": "OWASP names **multimodal injection**: an attacker hides instructions in an image that accompanies benign text, and reliable defences are still an open research area [[r15]]. Treat any text read from an image as **untrusted input**, like a retrieved document. Three more risks follow: harmful image content, personal data inside image text, and misuse of faces. Coverage is patchy, so check each limit (verified 2026-10-13)." },
+    { "t": "p", "md": "Hidden text works because a model reads words in an image the way it reads your prompt, so small, low-contrast or off-screen text can ride along as an instruction, and the model has no reliable way to tell your instructions from instructions embedded in the data. Harmful content, injection, personal data and faces are four different problems with four different controls. Accessibility belongs here too: give every figure a text alternative and a data table, and review generated descriptions, because vision models can misread graphs and counts [[r1]]." },
+    { "t": "table", "caption": "What each control covers and where it stops", "head": ["Control", "Covers", "Limits and gaps"], "rows": [
+      ["Content Safety image API", "Hate, sexual, violence and self-harm in images", "4 MB, 50 x 50 to 7,200 x 7,200 px, JPEG, PNG, GIF, BMP, TIFF or WEBP [[r16]]. Image severities return as 0, 2, 4 or 6 [[tr5]]"],
+      ["Content Safety multimodal API (preview)", "Image with text together, full 0 to 7 severity scale", "Text up to 1K characters, preview [[r16]] [[tr5]]"],
+      ["Prompt Shields", "User prompt attacks and document attacks (hidden instructions in third-party content)", "Prompts up to 10K characters, up to five documents totalling 10K [[r16]] [[tr6]]. Whether it reads text inside images is UNVERIFIED"],
+      ["Azure Language document PII redaction", "PII in .txt, .pdf (including scanned PDFs) and .docx", "Digital images with embedded text are not supported [[r21]]"],
+      ["Face API", "Face detection, identification, verification", "Identification and verification need registration. Detection does not. Use is prohibited for US police departments [[tr7]]"],
+      ["OCR, then text controls", "Injection and PII inside image text", "You build and test the glue (practice)"]
+    ] },
+    { "t": "flow", "title": "A layered path for an uploaded image", "direction": "h", "steps": [
+      { "title": "Validate", "md": "Check type and size against every service's limits." },
+      { "title": "Moderate", "md": "Run image safety for harmful content." },
+      { "title": "Extract", "md": "OCR the text and mark it untrusted." },
+      { "title": "Redact", "md": "Run PII redaction on the extracted text." },
+      { "title": "Answer", "md": "Call the model with least-privilege tools and no secrets." },
+      { "title": "Check output", "md": "Screen the answer and avoid auto-loading remote images." }
+    ] },
+    { "t": "callout", "kind": "warn", "title": "Test before you claim coverage", "md": "The docs describe Prompt Shields for prompts and documents. Whether it reads text inside images was not verified on 2026-10-13. Red-team with hidden-text images before telling anyone it is covered." }
+  ],
+  "whereToUse": [
+    "Customer-support assistants that read screenshots and attachments",
+    "User-generated photo and video platforms needing moderation",
+    "KYC and onboarding flows that accept ID photos",
+    "Agents with tools (email, tickets, payments) that process uploaded images",
+    "Accessibility reviews that ensure figures have text alternatives"
+  ],
+  "whenToUse": {
+    "use": [
+      "Least-privilege tools and human approval for actions after reading untrusted images",
+      "Image moderation on untrusted public uploads",
+      "OCR first, then text PII redaction and injection checks"
+    ],
+    "avoid": [
+      "Relying on one filter to cover injection, harm and PII together",
+      "Running document PII redaction on a JPEG and assuming it was scrubbed",
+      "Identifying people from faces without registration, legal basis and a clear use case"
+    ],
+    "flips": [
+      "High-impact actions: add human approval and shorter tool scopes",
+      "Uploads are internal and trusted: reduce moderation, keep injection controls",
+      "Preview tolerance is zero: avoid the multimodal moderation preview and use the GA image API"
+    ]
+  },
+  "alternatives": {
+    "title": "Controls compared",
+    "head": ["Control", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Content Safety image API", "Moderating public uploads for harm", "The risk is injection or PII", "Size and format limits, severities in steps of 2"],
+      ["Multimodal API (preview)", "Image and caption must be judged together", "GA is required", "Preview, text up to 1K characters"],
+      ["OCR then text controls", "Hidden text and PII in images", "Visual-only attacks with no text", "Glue code to build and test"],
+      ["Least privilege and approvals", "Any agent with tools", "Pure read-only chat", "Friction for users"],
+      ["Human review", "Ambiguous or high-stakes cases", "High volume", "Slow and costly"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "The agent emails a report after reading an uploaded screenshot", "cause": "Instructions hidden in the image were trusted", "fix": "Treat extracted text as untrusted, keep tools least privilege and require approval for actions. Red-team with hidden-text images." },
+    { "symptom": "An ID photo passes PII redaction untouched", "cause": "Native document PII redaction does not process digital images with embedded text", "fix": "OCR the image, redact the text, or block ID uploads from the general flow." },
+    { "symptom": "A guardrail never fires on a long OCR dump", "cause": "Foundry guardrails moderate only the first 1,000 characters of text", "fix": "Chunk the text or call the text analysis API, whose default maximum is 10K characters." }
+  ],
+  "scenarios": [
+    {
+      "id": "w13-t13-s1",
+      "title": "Public photo uploads",
+      "situation": "A community app lets anyone post photos. Moderators drown in reports. Photos are typically 2 to 6 MB from phones.",
+      "constraints": ["Untrusted public images", "Harm categories matter", "GA preferred"],
+      "unknowns": ["Which categories and thresholds fit the policy?", "What happens on borderline scores?"],
+      "question": "How do you moderate?",
+      "options": [
+        { "name": "Resize to the limits, run the Content Safety image API, and queue borderline results for review", "verdict": "best", "why": "It is built for harmful image categories, and resizing handles the 4 MB limit [[r16]].", "tradeoff": "Severities come in steps of 0, 2, 4, 6 and thresholds need tuning." },
+        { "name": "Ask a general vision model whether the photo is safe", "verdict": "poor", "why": "There are no calibrated severities, behaviour drifts with prompts and the call costs more.", "tradeoff": "Useful as a second opinion on borderline items." },
+        { "name": "Human review of everything", "verdict": "good", "why": "Highest accuracy.", "tradeoff": "Cannot scale to volume." }
+      ],
+      "flips": [
+        { "if": "Captions matter to meaning", "then": "Consider the multimodal API, accepting preview status." },
+        { "if": "Volume is tiny", "then": "Human review is enough." }
+      ],
+      "takeaway": "Public images get a dedicated harm classifier first."
+    },
+    {
+      "id": "w13-t13-s2",
+      "title": "Support agent with tools",
+      "situation": "A support agent reads customer screenshots and can issue refunds and send emails. A customer uploads an image with tiny white text telling the agent to refund an order.",
+      "constraints": ["Tools with real effects", "Untrusted images", "Defences are an open research area"],
+      "unknowns": ["Which actions are irreversible?", "Can refunds be capped?"],
+      "question": "What is the primary defence?",
+      "options": [
+        { "name": "Treat image text as untrusted, give the agent least-privilege tools, cap refunds and require approval", "verdict": "best", "why": "Reliable detection is still open research [[r15]], so limit what an injected instruction can do.", "tradeoff": "Slower flow and some manual approvals." },
+        { "name": "Rely on Prompt Shields to catch the hidden text", "verdict": "poor", "why": "Whether it reads text inside images is unverified.", "tradeoff": "Valuable as one layer for text prompts and documents." },
+        { "name": "OCR the image and strip suspicious phrases", "verdict": "good", "why": "Reduces obvious attacks.", "tradeoff": "Attackers rephrase, so it cannot be the only control." }
+      ],
+      "flips": [
+        { "if": "The agent is read-only", "then": "Injection impact drops to leaking context, so focus on output controls." },
+        { "if": "Refunds are tiny and reversible", "then": "Lighter approvals may be acceptable." }
+      ],
+      "takeaway": "Limit blast radius, since detection is unproven."
+    },
+    {
+      "id": "w13-t13-s3",
+      "title": "ID photos in onboarding",
+      "situation": "A fintech accepts photos of identity cards. The team plans to run document PII redaction on the JPEGs before storing them for debugging.",
+      "constraints": ["PII in image text", "Debug logging planned", "Regulated data"],
+      "unknowns": ["Is the image itself needed after verification?", "What retention rule applies?"],
+      "question": "What do you do?",
+      "options": [
+        { "name": "Do not store ID images for debugging. If text is needed, OCR it and redact the text, and keep originals under strict access and retention", "verdict": "best", "why": "Native document PII redaction does not support digital images with embedded text [[r21]].", "tradeoff": "Debugging is harder, and you build the OCR and redaction glue." },
+        { "name": "Run document PII redaction on the JPEG and store the result", "verdict": "poor", "why": "Images with embedded text are unsupported, so PII stays.", "tradeoff": "The service fits .txt, .pdf (including scanned PDFs) and .docx." },
+        { "name": "Blur faces and keep the rest", "verdict": "good", "why": "Reduces some exposure.", "tradeoff": "Names and numbers remain in the image text." }
+      ],
+      "flips": [
+        { "if": "Only a verification result is needed", "then": "Store the result, not the image." },
+        { "if": "Documents arrive as scanned PDFs", "then": "Native redaction supports scanned PDFs, test it first." }
+      ],
+      "takeaway": "Redact text, not files, and do not keep what you do not need."
+    }
+  ],
+  "quiz": [
+    { "id": "w13-t13-q1", "type": "single", "tag": "security", "q": "A JPEG of an ID card goes through Azure Language native document PII redaction. What happens?", "options": ["PII in the image text is redacted", "It is unsupported: digital images with embedded text are not processed", "Only faces are removed", "The image is converted to PDF first"], "answer": 1, "explain": "The docs support .txt, .pdf (including scanned PDFs) and .docx, and say digital images with embedded text are not supported. OCR first, then redact the text." },
+    { "id": "w13-t13-q2", "type": "multi", "tag": "security", "q": "Which controls reduce the damage of instructions hidden in an uploaded image?", "options": ["Least-privilege tools", "Human approval for actions", "A higher image detail setting", "Treating extracted text as untrusted"], "answers": [0, 1, 3], "explain": "Limiting tools, approving actions and treating extracted text as untrusted shrink the impact of an injection. Higher detail only makes hidden text more readable to the model." },
+    { "id": "w13-t13-q3", "type": "match", "tag": "concept", "q": "Match each limit to its service.", "pairs": [
+      { "l": "4 MB, 50 to 7,200 px per side", "r": "Content Safety image API" },
+      { "l": "Up to 10K characters per prompt", "r": "Prompt Shields" },
+      { "l": "Registration for identification and verification", "r": "Face API" },
+      { "l": "Digital images with embedded text unsupported", "r": "Document PII redaction" }
+    ], "explain": "These limits were checked on 2026-10-13. Each service covers a different risk." }
+  ],
+  "flashcards": [
+    { "front": "How should an agent treat text it reads from an image?", "back": "As untrusted input, like a retrieved document. Defences against hidden instructions are an open research area, so use least privilege and approvals." },
+    { "front": "What are the Content Safety image API limits?", "back": "4 MB, 50 x 50 to 7,200 x 7,200 px, JPEG, PNG, GIF, BMP, TIFF or WEBP. Image severities come back as 0, 2, 4 or 6." },
+    { "front": "What does native document PII redaction support?", "back": ".txt, .pdf (including scanned PDFs) and .docx. Digital images with embedded text are not supported, so OCR the image first." }
+  ],
+  "related": ["w13-t09", "w13-t03", "w13-l5", "w06-t04", "w06-t05", "w06-t09", "w07-t02", "w07-t17"],
+  "refs": ["r15", "r16", "r21", "r1", "r2", "tr5", "tr6", "tr7"]
+}

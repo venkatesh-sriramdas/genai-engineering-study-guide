@@ -1,0 +1,118 @@
+{
+  "id": "w07-t16",
+  "order": 16,
+  "group": "Operations and defences",
+  "title": "Cache and log leakage",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "Caches and logs hold copies of permissioned content outside the ACL. A semantic cache can answer one user from another user's retrieved documents, and a content log can expose what the index protected.",
+  "useIf": "You cache answers, embeddings or prompts, or you log prompts, chunks or responses.",
+  "avoidIf": "You have no cache and log identifiers only. Then this topic is already satisfied.",
+  "explain": [
+    { "t": "p", "md": "The index enforces ACLs. Everything downstream that stores content does not. Four stores matter: **provider prompt caches**, your **exact-match response cache**, a **semantic cache** and **logs and stored conversation state**." },
+    { "t": "table", "caption": "Where permissioned content can leak (checked 2026-10-13)", "head": ["Store", "Leak vector", "Scoping control"], "rows": [
+      ["Provider prompt cache", "Reuse of an identical prefix across users", "OpenAI: not shared across organizations, with an optional prompt_cache_key [[tr10]]. Azure OpenAI: not shared across subscriptions [[r30]]. Anthropic: per organization, and per workspace on several surfaces [[tr11]]"],
+      ["Semantic cache", "A similar question returns an answer built from another user's documents", "Azure API Management llm-semantic-cache-lookup with vary-by on user or group id, and a strict score-threshold [[r28]]"],
+      ["Exact-match response cache", "Same question, different rights", "Key on the normalized question plus the caller's ACL scope"],
+      ["Logs and stored state", "Content copied into a store with no ACLs", "Log ids and decisions. Responses API, threads and stored completions keep history at rest in your Foundry resource, so they need retention and access rules [[r38]]"]
+    ] },
+    { "t": "p", "md": "**Semantic caches** need the most care. The APIM policy uses a `score-threshold` from 0.0 to 1.0 where lower means a stricter match. The docs suggest starting near 0.05 and warn that values above 0.2 may cause mismatches, and that semantic caching can return incorrect, outdated or unsafe answers. `vary-by` partitions the cache, for example by user or group id, to control cross-user access [[r28]]." },
+    { "t": "p", "md": "**Provider prompt caches** are scoped by the provider, and same-tenant users share an entry only when the whole prefix matches, which already includes the same retrieved text (design reasoning). Use `prompt_cache_key` for accounting or routing, not as a security control [[tr10]]. A timing side-channel audit (ICML 2025) found global cache sharing across users in seven API providers at study time and showed timing differences can leak other users' prompts. Provider docs now state organization or workspace scoping, so read the paper as the reason to prefer scoped caches and not as current behaviour [[r29]]." },
+    { "t": "callout", "kind": "gotcha", "title": "A cache TTL is part of the revocation SLA", "md": "A cached answer outlives a revoked grant by up to its TTL. Set the TTL below the revocation target, and skip the cache when any source document carries a restricted label (design reasoning)." }
+  ],
+  "whereToUse": [
+    "Cost reduction work that adds a semantic or response cache in front of generation",
+    "Logging design for assistants over permissioned content",
+    "Reviews of stateful features such as stored conversations or threads",
+    "Multi-user gateways where one cache serves different principals"
+  ],
+  "whenToUse": {
+    "use": ["Scope every cache entry by ACL scope or user", "Keep TTLs below the revocation target", "Log ids and decisions by default"],
+    "avoid": ["A global semantic cache over permissioned answers", "Loosening the similarity threshold to raise hit rate", "Writing full prompts and chunks to a broadly readable log workspace"],
+    "flips": ["ACL scope is nearly unique per user: a semantic cache has a near-zero hit rate, so drop it", "Content is public: a shared cache is fine", "An incident needs content: capture it for a bounded window under its own access control"]
+  },
+  "alternatives": {
+    "title": "Cache and log options compared",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["No cache", "Revocation target is seconds, scope varies per user", "Cost and latency matter and scope is shared", "Higher generation cost"],
+      ["Exact-match cache keyed by user or ACL scope", "Repeated identical questions in a group", "Rights change faster than the TTL", "Low hit rate for fine scopes"],
+      ["Semantic cache with vary-by", "Many similar questions inside one scope", "Scope is nearly unique, content is volatile", "Mismatch and stale answers"],
+      ["Provider prompt cache only", "Long shared prefixes", "You expected it to save retrieval or answer text", "Little leakage risk, little saving across users"],
+      ["Content logs under strict access", "Incident analysis", "Retention rules are loose", "Protected text outside the ACL"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A user gets an answer citing documents they cannot open", "cause": "A semantic cache served another user's answer", "fix": "Partition with vary-by on the ACL scope and tighten the threshold" },
+    { "symptom": "A revoked user still gets the old answer", "cause": "The answer cache TTL is longer than the revocation target", "fix": "Shorten the TTL and key by ACL scope" },
+    { "symptom": "Support staff can read confidential prompts", "cause": "The log workspace has broad read and holds full content", "fix": "Log ids and decisions, and put any content capture under its own access control and expiry" },
+    { "symptom": "Deleted conversations remain retrievable", "cause": "Stored state in the Responses API or threads was not covered by retention rules", "fix": "Include stateful stores in deletion and access reviews [[r38]]" }
+  ],
+  "scenarios": [
+    {
+      "id": "w07-t16-s1",
+      "title": "Semantic cache for 5,000 employees",
+      "situation": "An internal assistant sees many repeated questions. Cost is high. Groups define access, and employees fall into a few hundred distinct group sets. Revocation target is one hour.",
+      "constraints": ["Few hundred distinct ACL scopes", "Revocation within an hour", "Cost pressure"],
+      "unknowns": ["Do restricted labels exist in the corpus?", "How similar are repeated questions in a scope?"],
+      "question": "How do you cache?",
+      "options": [
+        { "name": "A global semantic cache with a loose threshold for hit rate", "verdict": "poor", "why": "It will return answers built from other users' documents and above 0.2 it may mismatch [[r28]].", "tradeoff": "Right only for public content." },
+        { "name": "Exact-match cache keyed by user", "verdict": "good", "why": "Safe and simple.", "tradeoff": "Low hit rate because each user is a separate key." },
+        { "name": "Semantic cache partitioned by ACL scope with vary-by, a strict threshold, a TTL under an hour and a skip for restricted labels", "verdict": "best", "why": "Users in the same scope share answers, and the TTL fits the revocation target.", "tradeoff": "More cache entries, tuning, and a bypass rule to maintain." }
+      ],
+      "flips": [
+        { "if": "Scope is nearly unique per user", "then": "The semantic cache rarely hits, so drop it." },
+        { "if": "Revocation tightens to minutes", "then": "Shorten the TTL or remove the cache for restricted tiers." }
+      ],
+      "takeaway": "Partition semantic caches by ACL scope."
+    },
+    {
+      "id": "w07-t16-s2",
+      "title": "Debugging needs versus content in logs",
+      "situation": "Engineers want full prompts and retrieved chunks in logs to debug bad answers. The log workspace is readable by a large operations group. Documents are confidential.",
+      "constraints": ["Confidential content", "Broad log readership", "Debugging need"],
+      "unknowns": ["How long is content needed?", "Can access to the log store be narrowed?"],
+      "question": "What do you log?",
+      "options": [
+        { "name": "Document ids, principal id, filter hash and decision by default, with content capture only for a bounded window under its own access control", "verdict": "best", "why": "Ids reproduce the retrieval, and content is available only when an incident needs it.", "tradeoff": "Debugging text quality takes an extra step." },
+        { "name": "Full prompts and chunks to the shared workspace", "verdict": "poor", "why": "It copies ACL-protected text into a store with broad read access.", "tradeoff": "Acceptable for public content in a private workspace." },
+        { "name": "Redacted snippets only", "verdict": "good", "why": "Useful quality signal.", "tradeoff": "Redaction misses things and the store still needs access control." }
+      ],
+      "flips": [
+        { "if": "An incident requires content", "then": "Open a time-limited capture with its own ACL and delete after." },
+        { "if": "The corpus is public", "then": "Full logging is acceptable." }
+      ],
+      "takeaway": "Logs copy content out of the ACL, so default to ids."
+    },
+    {
+      "id": "w07-t16-s3",
+      "title": "prompt_cache_key as a tenant wall",
+      "situation": "A team plans to set prompt_cache_key per tenant and says that stops tenants sharing cached prefixes, so they can put any tenant's documents in a shared prefix.",
+      "constraints": ["Shared multi-tenant prefix", "OpenAI-style API", "Cost saving goal"],
+      "unknowns": ["What does the provider say about cache scope?", "What is actually in the shared prefix?"],
+      "question": "How do you respond?",
+      "options": [
+        { "name": "Treat the key as routing and accounting, rely on provider scoping, and keep tenant documents out of any shared prefix", "verdict": "best", "why": "Caches are not shared across organizations, and the key is not documented as a security control [[tr10]].", "tradeoff": "Less prefix reuse across tenants." },
+        { "name": "Use the key as the isolation control and put tenant data in the shared prefix", "verdict": "poor", "why": "It turns a hit-rate setting into a security claim it does not make.", "tradeoff": "Fine to use as accounting alongside enforced separation." },
+        { "name": "Disable prompt caching everywhere", "verdict": "good", "why": "Removes the question.", "tradeoff": "Higher cost and latency for stable prefixes." }
+      ],
+      "flips": [
+        { "if": "Prefixes hold only public instructions", "then": "Share them freely and keep tenant content in the suffix." },
+        { "if": "Zero Data Retention applies", "then": "The default becomes in-memory retention for models that support both modes, so check the retention setting per model [[tr10]]." }
+      ],
+      "takeaway": "Cache keys tune hit rate. They do not enforce access."
+    }
+  ],
+  "quiz": [
+    { "id": "w07-t16-q1", "type": "single", "tag": "security", "q": "Users report seeing answers that cite documents they cannot open. A semantic cache sits in front of generation. What is the most likely fix?", "options": ["Raise the temperature", "Partition the cache with vary-by on the ACL scope and tighten the similarity threshold", "Increase the cache TTL", "Switch to a larger embedding model"], "answer": 1, "explain": "The cache returned another user's answer. Partitioning by ACL scope and tightening the threshold prevents cross-user hits. A longer TTL makes it worse, and temperature or model size are unrelated.", "ref": "r28" },
+    { "id": "w07-t16-q2", "type": "multi", "tag": "concept", "q": "Which statements are supported by provider documentation? Choose all that apply.", "options": ["OpenAI prompt caches are not shared across organizations", "Azure OpenAI prompt caches are not shared between Azure subscriptions", "prompt_cache_key is a security control for tenant isolation", "Anthropic isolates caches per workspace on the Claude API"], "answers": [0, 1, 3], "explain": "OpenAI, Azure OpenAI and Anthropic documents state organization, subscription and workspace scoping. prompt_cache_key routes and separates accounting and is not described as a security control.", "ref": "tr10" }
+  ],
+  "flashcards": [
+    { "front": "What do APIM's score-threshold and vary-by do for semantic caches?", "back": "score-threshold sets match strictness (lower is stricter, start near 0.05, above 0.2 may mismatch). vary-by partitions the cache, for example by user or group id." },
+    { "front": "Is prompt_cache_key a security control?", "back": "No. It routes requests and separates cache accounting. Isolation comes from provider scoping by organization, subscription or workspace and from your own design." },
+    { "front": "What should logs hold by default for permissioned content?", "back": "Document ids, principal id, filter hash and the decision. Capture content only for a bounded window under its own access control." }
+  ],
+  "related": ["w07-t15", "w07-t19", "w07-l4", "w02-t15", "w02-t12"],
+  "refs": ["r28", "r29", "r30", "r38", "tr10", "tr11"]
+}

@@ -1,0 +1,259 @@
+{
+  "id": "w19-l3",
+  "order": 3,
+  "title": "Boss: the agent platform, tools, MCP, A2A, patterns and Agent Framework",
+  "kind": "boss",
+  "minutes": 30,
+  "brief": "Three teams want agents: one needs internal tools, one must hand work to a vendor's agent, and one runs an approval process that lasts days. Design the platform that connects them, with tools, peers, patterns and runtime, and every dial unspecified.",
+  "blocks": [
+    { "t": "h", "text": "The interview prompt", "level": 2 },
+    { "t": "scenario", "title": "What you know and what to ask", "known": [
+      "Team A's agent must call internal systems, some of them with side effects",
+      "Team B must delegate part of its work to an agent that a vendor runs",
+      "Team C runs a multi-step process with human approvals that can last days",
+      "Security wants one identity and one audit story"
+    ], "ask": [
+      "Who owns each capability: the same team, another team or a vendor?",
+      "Which calls are stateless lookups and which are long tasks that can pause for input?",
+      "Which actions write or cost money, and who approves them?",
+      "What identity does each call run under, and how do tokens flow between agent, tool server and downstream system?",
+      "How long can a run last, what must survive a restart, and is GA required?",
+      "Which languages, hosting and telemetry do the teams use already?"
+    ], "tension": "Standardising on one connection type is tidy and wrong. The seam you choose should follow ownership, state and risk." },
+    { "t": "h", "text": "The platform on one page", "level": 2 },
+    { "t": "diagram", "id": "w19-l3-d1", "title": "Layers of the agent platform",
+      "alt": "A host agent built with Agent Framework calls local functions, reaches shared internal tool servers through an MCP gateway, delegates to a vendor agent through an A2A client, and hands long approval work to a workflow with checkpoints where a person approves.",
+      "src": "flowchart LR\n  U[User or app] --> H[Host agent in Agent Framework]\n  H --> F[Local functions]\n  H --> G[MCP gateway]\n  G --> T[Internal tool servers]\n  H --> A[A2A client]\n  A --> V[Vendor agent]\n  H --> W[Workflow with checkpoints]\n  W --> P[Person approves]",
+      "caption": "Functions stay in process, MCP serves shared tools through a gateway, A2A crosses an ownership boundary, and the workflow owns waiting, approval and recovery." },
+    { "t": "dials", "id": "w19-l3-pick", "title": "Pick the seam",
+      "prompt": "Flip who owns the capability, the shape of the work and the risk of the action. The ranking shows which connection fits.",
+      "dials": [
+        { "id": "owner", "label": "Who owns the capability", "values": [
+          { "id": "same", "label": "Same team, same codebase" },
+          { "id": "other", "label": "Another team in the company" },
+          { "id": "vendor", "label": "An outside vendor" }
+        ] },
+        { "id": "shape", "label": "Shape of the work", "values": [
+          { "id": "call", "label": "A stateless call that returns data" },
+          { "id": "task", "label": "A task of minutes to days that may need input" }
+        ] },
+        { "id": "risk", "label": "Risk of the action", "values": [
+          { "id": "read", "label": "Read-only and reversible" },
+          { "id": "write", "label": "Side effects that need approval and audit" }
+        ] }
+      ],
+      "options": [
+        { "id": "fn", "name": "In-process function or agent as tool", "summary": "Call it directly inside your own agent code." },
+        { "id": "mcp", "name": "MCP server behind a gateway", "summary": "A shared tool contract with OAuth, a registry and audit." },
+        { "id": "a2a", "name": "A2A peer agent", "summary": "Exchange tasks and messages with an opaque agent across a boundary." },
+        { "id": "wf", "name": "Workflow executor in your own graph", "summary": "Put the step in a graph with checkpoints, approvals and resume." }
+      ],
+      "scores": {
+        "fn": {
+          "owner": {
+            "same": { "s": 2, "why": "No network hop, no extra auth surface and no extra deployment. Agent Framework runs the tool loop." },
+            "other": { "s": -1, "why": "Another team's code would ship inside your release and version with it." },
+            "vendor": { "s": -2, "why": "You cannot import a vendor's agent. You need a protocol boundary." }
+          },
+          "shape": {
+            "call": { "s": 1, "why": "A stateless call is the simplest thing a function does." },
+            "task": { "s": -1, "why": "A long task blocks the loop unless you add state, polling and recovery yourself." }
+          },
+          "risk": {
+            "read": { "s": 1, "why": "Read-only, reversible calls need little ceremony." },
+            "write": { "s": 0, "why": "Side effects work, but approvals and audit are yours to add." }
+          }
+        },
+        "mcp": {
+          "owner": {
+            "same": { "s": 0, "why": "A server for one team's own tools adds a hop for little reuse." },
+            "other": { "s": 2, "why": "One contract serves many agents and teams, behind a gateway with OAuth and a curated catalog." },
+            "vendor": { "s": 1, "why": "A vendor's MCP server works for tools and data, with token audience, passthrough and poisoning risks to manage." }
+          },
+          "shape": {
+            "call": { "s": 2, "why": "Tools and resources fit stateless lookups, with typed schemas." },
+            "task": { "s": 0, "why": "Multi round-trip requests and the Tasks extension allow long work, but MCP is not a peer-agent protocol." }
+          },
+          "risk": {
+            "read": { "s": 1, "why": "Annotations can mark a tool read-only, though clients must treat them as untrusted hints." },
+            "write": { "s": 1, "why": "OAuth 2.1, resource indicators and a gateway give per-tool authorisation and audit, if you refuse token passthrough." }
+          }
+        },
+        "a2a": {
+          "owner": {
+            "same": { "s": -2, "why": "A network hop and an Agent Card for code you could call in process." },
+            "other": { "s": 1, "why": "A peer with its own roadmap and task lifecycle fits once calls are more than lookups." },
+            "vendor": { "s": 2, "why": "Opaque execution: the vendor keeps prompts, tools and state private, and you exchange tasks and messages." }
+          },
+          "shape": {
+            "call": { "s": -1, "why": "A task with states is heavy for a stateless lookup." },
+            "task": { "s": 2, "why": "Task states, INPUT_REQUIRED, streaming and push notifications are built for long, interruptible work." }
+          },
+          "risk": {
+            "read": { "s": 0, "why": "A2A does not change the risk of a read." },
+            "write": { "s": 1, "why": "A separate trust boundary with its own auth contains the blast radius, but AUTH_REQUIRED is not authorisation by itself." }
+          }
+        },
+        "wf": {
+          "owner": {
+            "same": { "s": 1, "why": "A graph you own gives a fixed order, retries and typed messages between steps." },
+            "other": { "s": -1, "why": "Another team's step is better behind a contract than inside your graph." },
+            "vendor": { "s": -2, "why": "A vendor's system cannot be an executor in your code." }
+          },
+          "shape": {
+            "call": { "s": -1, "why": "A graph for one call adds structure you do not need." },
+            "task": { "s": 2, "why": "Supersteps, checkpoints, pending requests and resume survive crashes and long waits." }
+          },
+          "risk": {
+            "read": { "s": 0, "why": "Reads need no gate." },
+            "write": { "s": 2, "why": "Human-in-the-loop requests are saved in checkpoints, and idempotent side effects make replays safe." }
+          }
+        }
+      },
+      "takeaway": "Functions for your own lookups, MCP for shared tools, A2A across an ownership boundary, and a workflow when the work waits, needs approval or must survive a crash." },
+    { "t": "table", "caption": "Climb the ladder only when a dial forces you", "head": ["Level", "Climb here when", "What it costs"], "rows": [
+      ["Direct call or plain function", "The task is one step, or you can write the function", "No autonomy, which is often fine"],
+      ["Workflow: chain, route, parallelize", "The steps are known and the order matters", "Someone writes and maintains the graph"],
+      ["Single agent with tools", "The next step depends on what the model finds", "Loops need step, token and time budgets"],
+      ["Harness Agent", "Long multi-step work needs todos, plan and execute modes, approvals and history persistence", "More defaults to understand and approve"],
+      ["Multi-agent: supervisor, handoff, group chat, Magentic", "Breadth beyond one context, tool overload or isolation", "About 15x chat tokens in one published research system, and conflicting parallel writes"]
+    ] },
+    { "t": "failure", "title": "Platform failure modes across chapters", "items": [
+      { "symptom": "Tool selection gets worse after the fourth MCP server", "cause": "Definitions crowd the context: a typical five-server setup uses about 55k tokens and selection degrades past 30 to 50 tools", "fix": "Curate a bundle per agent, load tools on demand with tool search, and keep the `tools/list` order deterministic so caching still hits." },
+      { "symptom": "A reviewed tool starts leaking data after an update", "cause": "A rug pull or poisoned description: tool text is model input and the server can change it", "fix": "Pin and diff definitions, show changes to a person, run tools with least privilege and treat annotations as untrusted." },
+      { "symptom": "A downstream API accepts a call it should reject", "cause": "The MCP server forwarded the inbound token, which was never issued for that API: token passthrough and a confused deputy", "fix": "Validate the audience, exchange tokens with on-behalf-of for downstream calls and never forward the inbound token." },
+      { "symptom": "Agents pass the user back and forth until the budget is gone", "cause": "A handoff mesh with no turn cap", "fix": "Cap turns, set token and time budgets in the harness and log every transfer." },
+      { "symptom": "A resumed run sends the email twice", "cause": "A checkpoint restores state, but the side effect had already happened after it", "fix": "Put an idempotency key on every write, record intent before acting and compensate where no key exists." }
+    ] }
+  ],
+  "quiz": [
+    { "id": "w19-l3-q1", "type": "single", "tag": "bug", "difficulty": 2, "ref": "r40",
+      "q": "What is wrong with this MCP tool handler?",
+      "code": { "lang": "python", "code": "@server.tool()\nasync def get_invoice(invoice_id: str, ctx):\n    token = ctx.request.headers[\"Authorization\"]  # issued to this MCP server\n    resp = await http.get(f\"{BILLING_API}/invoices/{invoice_id}\",\n                          headers={\"Authorization\": token})\n    return resp.json()" },
+      "options": [
+        "Nothing: forwarding the caller's token keeps the user's identity intact from the client all the way to the billing API and its audit log",
+        "It should return an MCP resource instead of JSON, because tools are not allowed to read data",
+        "It forwards a token issued for this MCP server to the billing API: token passthrough, a confused deputy risk",
+        "A tool handler must never call an HTTP API, so the billing lookup has to run in the host"
+      ],
+      "answer": 2,
+      "explain": "An MCP server must not accept or forward a token that was not issued for it. The client asked for a token with this server as the resource, so the billing API is the wrong audience and should reject it. Use an on-behalf-of or token-exchange step to obtain a token for the billing resource. Tools may return data and may call HTTP APIs, and the host does not need to run the lookup." },
+    { "id": "w19-l3-q2", "type": "multi", "tag": "tradeoff", "difficulty": 2, "ref": "r43",
+      "q": "Select every sound reason to reach a remote agent over A2A instead of wrapping it as an MCP tool.",
+      "options": [
+        "The remote agent belongs to a vendor and must keep its prompts, tools and state private",
+        "The work takes minutes and can pause in INPUT_REQUIRED for a person's reply",
+        "The caller needs streamed progress or a push notification when the task finishes",
+        "The remote capability is a single stateless lookup that returns JSON",
+        "You want your model to see the remote agent's own tool list and prompt templates"
+      ],
+      "answers": [0, 1, 2],
+      "explain": "A2A is built for opaque peers, long and interruptible tasks, and streaming or push updates. A stateless JSON lookup is a tool or a function, and a plain MCP tool is simpler. Exposing the remote agent's tools and prompts defeats the opacity that A2A preserves. MCP and A2A are complementary, so a remote agent may well use MCP tools internally." },
+    { "id": "w19-l3-q3", "type": "order", "tag": "order", "difficulty": 2, "ref": "r50",
+      "q": "A workflow pauses for a manager's approval, then the host process crashes. Put the recovery in order.",
+      "items": [
+        "The approval executor emits a request and the superstep ends, so a checkpoint is written",
+        "The host process crashes while the request is pending",
+        "A new process restores the latest checkpoint from durable storage",
+        "The pending approval request is re-emitted to the caller",
+        "The manager answers and the caller resumes with `workflow.run(responses=...)`",
+        "Downstream executors continue from the next superstep"
+      ],
+      "explain": "A checkpoint is written at the end of each superstep and holds executor state, pending messages, pending requests and responses and shared state. Because the request is stored in the checkpoint, a restore re-emits it and the answer resumes the run. In-memory storage does not survive the crash, so the storage must be durable. Any side effect after the last checkpoint is repeated on resume, which is why writes need idempotency keys." },
+    { "id": "w19-l3-q4", "type": "single", "tag": "flip", "difficulty": 3, "ref": "r46",
+      "q": "You chose parallel read-only sub-agents for a research question. The task changes to editing one codebase where each change depends on the others. What flips?",
+      "options": [
+        "One agent doing single-threaded writes, with other agents limited to read-only review",
+        "More parallel writer agents, each owning one file, with a supervisor that merges all of their results at the end",
+        "A group chat of peers that debate every change before one of them commits it",
+        "A Magentic manager with a task ledger so that it can keep several writers aligned"
+      ],
+      "answer": 0,
+      "explain": "Research reads parallelise well: Anthropic's multi-agent research system beat a single agent by 90.2% on an internal eval, at about 15x the tokens of chat. Tightly coupled writes are different, because each parallel writer makes implicit decisions that conflict with the others, which is Cognition's argument against parallel multi-agent designs. Keep writes single-threaded and use extra agents to review. A supervisor merge, a debate or a ledger add coordination cost without removing the conflicting decisions." },
+    { "id": "w19-l3-q5", "type": "numeric", "tag": "numeric", "difficulty": 2, "ref": "r41", "unit": "tokens", "answer": 561000, "tolerancePct": 1,
+      "q": "Five MCP servers add 55,000 tokens of tool definitions to every model call. An agent run makes 12 model calls. Tool search cuts the definitions by 85%. How many input tokens per run does it save?",
+      "explain": "55,000 x 0.85 = 46,750 tokens saved per call, and 46,750 x 12 = 561,000 tokens per run. The money saved is smaller if the stable definitions already hit a prompt cache at 0.1x, but selection accuracy still improves, because tool selection degrades past 30 to 50 tools. Tool search changes what the model sees, so keep the `tools/list` order deterministic or the cache hits disappear." },
+    { "id": "w19-l3-q6", "type": "single", "tag": "diagnose", "difficulty": 2, "ref": "r42",
+      "q": "A client follows up on a finished A2A task and gets the error below. What is the right fix?",
+      "code": { "lang": "text", "code": "SendMessage message{ messageId: m-9, role: ROLE_USER, taskId: t-41, contextId: c-7,\n  parts: [ text: \"Shorten the summary to two sentences\" ] }\n-> rejected: task t-41 is in a terminal state (TASK_STATE_COMPLETED)" },
+      "options": [
+        "Retry with the same taskId repeatedly until the server finally agrees to reopen the finished task",
+        "Generate a fresh taskId on the client side and send the follow-up message using that new id",
+        "Switch the binding from JSON-RPC to gRPC, because gRPC is the binding that lets terminal tasks restart",
+        "Start a new task: send the message in the same contextId with no taskId (optionally `referenceTaskIds`)"
+      ],
+      "answer": 3,
+      "explain": "COMPLETED, FAILED, CANCELED and REJECTED are terminal, and a terminal task cannot restart. A refinement is a new task in the same context, which may point to the earlier one with `referenceTaskIds`. Task ids are generated by the server, so the client cannot supply one for a new task. The three bindings are functionally equivalent, so changing it does not change task rules." }
+  ],
+  "defend": {
+    "prompt": "Three teams want agents. One needs to call internal systems, one has to delegate part of its work to an agent a vendor runs, and one runs an approval process that can take days and must survive restarts. Design the platform: how tools are exposed, how agents talk to each other, which patterns you allow and what runtime you standardise on. Walk me through the options and your choice, and tell me what you would refuse to standardise.",
+    "timebox": "7 min",
+    "clarify": [
+      "Who owns each capability and agent: the same team, another team or a vendor?",
+      "Which calls are stateless lookups and which are long tasks that can pause for input?",
+      "Which actions write or cost money, and who approves them?",
+      "What identity does each call run under, and how do tokens flow between agent, tool server and downstream system?",
+      "How long can a run last, what must survive a restart, and is GA required?",
+      "Which languages, hosting and telemetry do the teams use already?"
+    ],
+    "options": [
+      { "name": "Functions and agents-as-tools inside one Agent Framework codebase", "when": "One team, one codebase, and the calls are lookups.", "tradeoff": "Does not cross an ownership boundary, and reuse means copying code." },
+      { "name": "MCP servers behind a gateway, with a curated catalog", "when": "Several agents or teams share tools and you need one contract, OAuth and audit.", "tradeoff": "A gateway to run, the token cost of definitions, and tool poisoning and token passthrough to police." },
+      { "name": "A2A peers across ownership boundaries", "when": "A vendor or another team runs an opaque agent and the work is long and can need input.", "tradeoff": "An Agent Card, auth and task lifecycle to operate, and a network hop on every exchange." },
+      { "name": "A workflow with checkpoints and approvals for the long process", "when": "The steps are known, waits last days and side effects need approval.", "tradeoff": "You design the graph, durable storage and idempotency. The Durable Extension is Beta or preview as of 2026-10-13." }
+    ],
+    "modelAnswer": [
+      { "t": "p", "md": "**1. Clarify the dials.** Ownership of each capability, stateless versus long tasks, side effects and approvers, the identity and token path, run length and restart needs, GA versus preview, and the stacks the teams use." },
+      { "t": "p", "md": "**2. Options.** In-process functions, MCP servers behind a gateway, A2A peers, and a workflow with checkpoints. They are layers, not rivals." },
+      { "t": "p", "md": "**3. Choice for assumed dials.** Assume teams on Agent Framework in .NET and Python, internal tools shared by teams A and C, a vendor-owned agent, an approval process lasting up to a week, writes that need approval and audit, and Entra-issued OAuth tokens. I would standardise on layers, not on one connection type:" },
+      { "t": "list", "style": "ol", "items": [
+        "Start each agent as one agent with tools and climb only when a named dial forces it: a workflow for known steps, a Harness Agent for long open-ended work, multi-agent only for breadth, tool overload or isolation. If a function can do the job, use the function.",
+        "In-process functions for a team's own lookups, which add no auth surface.",
+        "Shared internal tools as MCP servers behind a gateway: OAuth 2.1 with protected resource metadata and resource indicators, no token passthrough (on-behalf-of for downstream calls), a curated catalog per agent, tool search when definitions take more than a few percent of the context, a deterministic `tools/list` order so caching still hits, and annotations treated as untrusted hints.",
+        "The vendor agent as an A2A peer: read its Agent Card, authenticate with the scheme it declares, treat AUTH_REQUIRED as a request for credentials and never as consent, and run long work as a task with streaming or push.",
+        "The approval process as a workflow: an executor per step, checkpoints on durable storage and not in memory, human-in-the-loop requests for approvals, tool approval bound to the same session for risky tools, and an idempotency key on every side effect because a restore replays from the last checkpoint.",
+        "Budgets in the harness: a step cap, token and time budgets, a turn cap on handoffs and a stop condition for every loop.",
+        "One telemetry convention: OpenTelemetry GenAI spans from Agent Framework, with trace context propagated across MCP and A2A calls."
+      ] },
+      { "t": "p", "md": "**What would flip it.** One team and one codebase: functions and a single agent, with no MCP and no A2A. A vendor that offers only an MCP server: use MCP for its tools and A2A only if it runs an agent. Runs under an hour with no approvals: skip the workflow and its durable storage. GA only: check the status of every checkpoint store and hosting package, since some are Beta or preview as of 2026-10-13." },
+      { "t": "table", "head": ["Failure mode", "How I detect it"], "rows": [
+        ["Tool poisoning or a rug pull", "Hash and diff tool definitions on every connect, and alert on any change"],
+        ["Token passthrough or a wrong audience", "Gateway checks of audience and issuer, and a deny test with a token issued for another resource"],
+        ["Handoff or agent loops", "Turns per run, repeated state hashes and budget-exceeded events"],
+        ["Duplicate side effects after a resume", "A chaos test that kills the process after each superstep and asserts one effect per idempotency key"],
+        ["Tool overload", "Tool-selection accuracy on an eval slice, and definition tokens as a share of the context"]
+      ] },
+      { "t": "p", "md": "**5. Metrics and rollout.** Task success rate, cost per successful task, steps per run, tool-call error rate, approval latency, resume success after a forced crash, and definition tokens as a share of context. Roll out one team on the gateway with read-only tools, then writes with approval, then the vendor peer, with a kill switch per tool and per agent." },
+      { "t": "callout", "kind": "interview", "title": "What I refuse to standardise", "md": "One connection type for everything, an uncurated tool catalog, and any multi-agent topology that no named dial forced. Each of them trades a visible convenience for a hidden cost in tokens, risk or debuggability." }
+    ],
+    "rubric": [
+      { "pt": "Asks about ownership, task length, side effects, identity and GA before choosing protocols", "w": 3 },
+      { "pt": "Places each seam by ownership, state and risk: functions, MCP, A2A and workflow, not one for all", "w": 3 },
+      { "pt": "Applies MCP authorization correctly: protected resource metadata, resource indicators and no token passthrough", "w": 2 },
+      { "pt": "Explains why A2A suits opaque, long, interruptible work and how it differs from MCP", "w": 2 },
+      { "pt": "Starts with one agent or a workflow and names the dial that justifies each added agent", "w": 2 },
+      { "pt": "Designs the long process for recovery: durable checkpoints, human requests and idempotent side effects", "w": 3 },
+      { "pt": "Sets budgets, turn caps and stop conditions, and names loop and tool-catalog failure modes", "w": 2 },
+      { "pt": "Labels preview or Beta pieces and gives metrics and a rollout", "w": 1 }
+    ],
+    "followUps": [
+      { "q": "The vendor's agent answers AUTH_REQUIRED in the middle of a task. What does your client do?", "a": "Treat it as a request for credentials or consent, not as authorization. Obtain the credential through the declared security scheme, ideally with a person in the loop, and continue the same task. The transition itself never approves an operation." },
+      { "q": "Tool definitions take 15% of the context. What do you change?", "a": "Curate a smaller bundle per agent, load tools on demand with tool search, shorten descriptions and keep the `tools/list` order deterministic so caching works. Anthropic reports selection degrading past 30 to 50 tools and a five-server setup near 55k tokens." },
+      { "q": "How do you stop two agents from editing the same file?", "a": "Give writes to one agent, single-threaded, and make the others read-only reviewers. Parallel writers make conflicting implicit decisions. If you must parallelise, partition ownership by file and merge through one writer." }
+    ],
+    "redFlags": [
+      "Proposes A2A or multi-agent for everything, with no dial that forced it.",
+      "Forwards the user's token through the MCP server, or treats tool annotations as a security control.",
+      "Keeps workflow checkpoints in memory for a process that waits for days, or retries side effects with no idempotency.",
+      "Gives agent loops no step, token or turn budget."
+    ]
+  },
+  "refs": ["r17", "r37", "r38", "r39", "r40", "r41", "r42", "r43", "r44", "r45", "r46", "r47", "r48", "r49", "r50", "r51"],
+  "takeaways": [
+    "Choose the seam by ownership, state and risk: functions inside a team, MCP for shared tools, A2A across a boundary, a workflow when the work waits or needs approval.",
+    "Never forward a token that was not issued for your server. Exchange it, and treat tool annotations and AUTH_REQUIRED as signals, not as permission.",
+    "Climb from a function to a workflow to one agent to many agents only when a named dial forces it, and put budgets on every loop.",
+    "Make long runs recoverable: durable checkpoints, human-in-the-loop requests and idempotency keys on every side effect.",
+    "Curate the tool catalog, keep definitions stable and watch definition tokens as a share of the context."
+  ]
+}

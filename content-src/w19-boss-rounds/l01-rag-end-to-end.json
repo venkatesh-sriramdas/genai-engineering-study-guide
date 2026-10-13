@@ -1,0 +1,260 @@
+{
+  "id": "w19-l1",
+  "order": 1,
+  "title": "Boss: RAG end to end, from ingest to a cited answer under access control",
+  "kind": "boss",
+  "minutes": 30,
+  "brief": "An interviewer hands you a mixed document estate and asks for an assistant that answers with citations and respects each person's access, with every dial unspecified. Carry one design from ingest to cited answer and defend what each stage promises the next one.",
+  "blocks": [
+    { "t": "h", "text": "The interview prompt", "level": 2 },
+    { "t": "scenario", "title": "What you know and what to ask", "known": [
+      "Employees ask questions over files, wiki pages and tickets that live in several systems",
+      "Every answer must carry citations",
+      "Each person may read only what the source systems allow",
+      "Two weeks after launch, part-number questions return wrong answers and security asks you to prove that a revoked contractor sees nothing"
+    ], "ask": [
+      "Which sources, how big is the corpus, and how fast does each source change?",
+      "What does a permission look like: tenant tag, groups, per-document rules, deny entries, sharing links?",
+      "How fast must revocation take effect for each sensitivity tier?",
+      "What share of the corpus does a typical caller see, and how skewed are tenants?",
+      "What is the time to first token target, and is preview acceptable in production?",
+      "Which questions are exact lookups (identifiers, dates, names) and which are paraphrases?"
+    ], "tension": "Freshness, recall, instant revocation and latency pull in different directions. Say which one you trade, and for which tier of content." },
+    { "t": "h", "text": "The path, stage by stage", "level": 2 },
+    { "t": "flow", "title": "One answer, five chapters", "steps": [
+      { "title": "Ingest", "tag": "w03", "md": "Detect change by etag or content hash, parse with layout analysis, redact PII and capture the ACL in the same pass. Make deletes visible with a tombstone and make every write idempotent." },
+      { "title": "Chunk and embed", "tag": "w04", "md": "Split along structure with a parent id and keep tables whole. Copy the ACL fields onto every chunk. Re-embed through a second index and an alias, never in place." },
+      { "title": "Retrieve", "tag": "w05", "md": "Hybrid search with the access filter inside the query, rerank the top 50, then apply a score cutoff and abstain below it." },
+      { "title": "Guard", "tag": "w06", "md": "Run the input shield beside retrieval, spotlight the retrieved text, and check groundedness and citations before the answer leaves." },
+      { "title": "Authorize", "tag": "w07", "md": "Resolve the caller from the token, live-check the restricted tier, scope caches and logs by ACL, and prove revocation with canaries." }
+    ] },
+    { "t": "h", "text": "Flip the dials", "level": 2 },
+    { "t": "dials", "id": "w19-l1-pick", "title": "Pick the RAG spine",
+      "prompt": "Flip the sources, the permission model and the corpus size. The ranking shows which spine fits and why it stops fitting.",
+      "dials": [
+        { "id": "change", "label": "Sources and change rate", "values": [
+          { "id": "batch", "label": "Files in storage, changes daily" },
+          { "id": "mixed", "label": "Mixed sources, changes in minutes" },
+          { "id": "msft", "label": "Content stays in a system of record such as Microsoft 365" }
+        ] },
+        { "id": "perm", "label": "Permission model and revocation", "values": [
+          { "id": "groups", "label": "Group ACLs, revocation in minutes" },
+          { "id": "strict", "label": "Per-document rules, revocation in seconds" },
+          { "id": "open", "label": "Everyone reads nearly everything" }
+        ] },
+        { "id": "size", "label": "Corpus size", "values": [
+          { "id": "small", "label": "Under about 200,000 tokens, rarely changes" },
+          { "id": "large", "label": "Millions of chunks" }
+        ] }
+      ],
+      "options": [
+        { "id": "managed", "name": "Managed indexers and integrated vectorization", "summary": "Pull on a schedule, chunk and embed in the pipeline, pre-filter with security filters." },
+        { "id": "custom", "name": "Event-driven pipeline you own", "summary": "Push on events with idempotent upserts, pre-filter, and live-check a restricted tier." },
+        { "id": "delegate", "name": "Delegate retrieval to the source", "summary": "Query the system of record with the user's token and keep no copy of the content." },
+        { "id": "context", "name": "No index: long context or cache-augmented generation", "summary": "Put the whole corpus in the prompt and cache the prefix." }
+      ],
+      "scores": {
+        "managed": {
+          "change": {
+            "batch": { "s": 2, "why": "GA indexers read Blob Storage, SQL, Cosmos DB for NoSQL and OneLake on a 5 to 1,440 minute schedule with change and delete detection built in." },
+            "mixed": { "s": 0, "why": "Indexers cover only some sources and the SharePoint indexer is preview, so minute-level freshness needs push or events beside them." },
+            "msft": { "s": -1, "why": "The SharePoint indexer is preview and copies content, so permissions and deletes become your sync problem." }
+          },
+          "perm": {
+            "groups": { "s": 1, "why": "Security filters (GA) or native ACL scopes (preview) pre-filter inside the index. Revocation lags by the sync interval." },
+            "strict": { "s": -1, "why": "A scheduled sync cannot promise seconds, and the managed path has no live check to cover the gap." },
+            "open": { "s": 1, "why": "A tenant or public tag as a filter is cheap and there is little to maintain." }
+          },
+          "size": {
+            "small": { "s": 0, "why": "It works, but a pipeline and an index are more than a tiny corpus needs." },
+            "large": { "s": 1, "why": "Index size and filtered search scale on the service, and integrated vectorization handles chunking and embedding." }
+          }
+        },
+        "custom": {
+          "change": {
+            "batch": { "s": -1, "why": "A queue, hashing and replay logic is more machinery than a daily file drop needs." },
+            "mixed": { "s": 2, "why": "Storage events and change data capture arrive in seconds, at least once and out of order, so stable ids and idempotent upserts keep replays safe." },
+            "msft": { "s": 0, "why": "Graph change notifications work, but you own throttling, delta sync and permission capture." }
+          },
+          "perm": {
+            "groups": { "s": 1, "why": "You control how ACL fields land on every chunk and how fast membership changes propagate." },
+            "strict": { "s": 2, "why": "A pre-filter for the bulk plus a live check on the restricted tier gives seconds-level revocation where it matters." },
+            "open": { "s": -1, "why": "Live checks and ACL sync are cost with no benefit when almost everything is visible." }
+          },
+          "size": {
+            "small": { "s": -1, "why": "Operating a pipeline for a corpus that fits in a prompt is hard to justify." },
+            "large": { "s": 1, "why": "You can tune chunking, filters and the index for large corpora and skewed tenants." }
+          }
+        },
+        "delegate": {
+          "change": {
+            "batch": { "s": -2, "why": "Files in storage have no query API that honours file permissions, so you would still build an index." },
+            "mixed": { "s": -1, "why": "Each source needs its own connector and rate-limit handling, and ranking across sources is hard." },
+            "msft": { "s": 2, "why": "The source answers with its current permissions, so there is no copy, no ACL sync and no drift. Check its rate limits before you commit." }
+          },
+          "perm": {
+            "groups": { "s": 1, "why": "Permissions are honoured at query time with the user's token." },
+            "strict": { "s": 2, "why": "The source of truth decides every request, so revocation is as fast as the source." },
+            "open": { "s": 0, "why": "It works, but you pay source latency and quota for a rule that almost never denies." }
+          },
+          "size": {
+            "small": { "s": 0, "why": "Fine, with little to build, though a long prompt may be cheaper." },
+            "large": { "s": 0, "why": "Scale and ranking are the source's problem, so you control little of recall." }
+          }
+        },
+        "context": {
+          "change": {
+            "batch": { "s": 1, "why": "Rebuilding a cached prefix nightly is cheap when files change daily and the corpus is small." },
+            "mixed": { "s": -2, "why": "Every change invalidates the prefix and forces a new prefill, so freshness costs money on each update." },
+            "msft": { "s": -2, "why": "Permissioned content cannot sit in one shared prefix, and one prefix per user multiplies the cost." }
+          },
+          "perm": {
+            "groups": { "s": -1, "why": "You must assemble a context per permission set and scope every cache entry to it." },
+            "strict": { "s": -2, "why": "Per-document rules mean a different prompt per user, which defeats the shared prefix." },
+            "open": { "s": 1, "why": "One shared context works when everyone may read everything." }
+          },
+          "size": {
+            "small": { "s": 2, "why": "Under about 200,000 tokens a knowledge base can go straight into the prompt, with no chunking, index or retrieval to fail." },
+            "large": { "s": -2, "why": "Long contexts degrade well before the advertised limit, and cost scales with every request." }
+          }
+        }
+      },
+      "takeaway": "The spine follows the dials: managed for files and group ACLs, a pipeline you own when changes arrive in seconds or revocation is strict, delegation when the source already owns permissions, and no index at all when the corpus is small and open." },
+    { "t": "h", "text": "Failure modes that cross chapters", "level": 2 },
+    { "t": "failure", "title": "Where one stage breaks the next", "items": [
+      { "symptom": "A revoked user still gets a snippet a day later", "cause": "The index ACL syncs nightly and a semantic cache keyed on the question text holds the answer", "fix": "Set a revocation SLA per tier, live-check the restricted tier, key caches by ACL scope, and run a nightly canary with a revoked test user." },
+      { "symptom": "Part numbers never match while paraphrases work", "cause": "Vector-only retrieval, or a generative query rewrite that drops the identifier", "fix": "Add the keyword leg with hybrid search and RRF, and skip rewriting for identifier-shaped queries. Keep an identifier slice in the golden set." },
+      { "symptom": "Callers with narrow access get empty or thin answers", "cause": "A post-filter over a short candidate list, or a filtered vector search that returns too few rows", "fix": "Pre-filter inside the index, check `vectorFilterMode`, raise the candidate count and track results per query by permission tier." },
+      { "symptom": "Old policy text is still cited after the page changed", "cause": "Timestamp change detection misses renames, restores and deletes, and child chunks of a replaced parent stay in the index", "fix": "Hash content, use soft deletes or a change feed, delete by parent id and compare source and index counts daily." },
+      { "symptom": "A fluent answer carries a citation that does not support the claim", "cause": "A citation proves where text came from, not that it backs the claim", "fix": "Add a groundedness check, a score cutoff with abstention, and a citation precision metric in the evaluation." }
+    ] }
+  ],
+  "quiz": [
+    { "id": "w19-l1-q1", "type": "single", "tag": "diagnose", "difficulty": 2, "ref": "r6",
+      "q": "Users report that questions containing part numbers such as ZX-4410-B return confident wrong answers, while paraphrased questions work. The manual is indexed. Which diagnosis fits this request best?",
+      "code": { "lang": "json", "code": "{\n  \"vectorQueries\": [\n    { \"kind\": \"text\", \"text\": \"torque for ZX-4410-B flange bolts\", \"fields\": \"contentVector\", \"k\": 10 }\n  ],\n  \"queryType\": \"semantic\",\n  \"queryRewrites\": \"generative|count-3\",\n  \"top\": 5\n}" },
+      "options": [
+        "The embedding model is too small, so move to the largest dimension size and re-embed every chunk with the new vectors",
+        "There is no keyword leg, and a generative rewrite can drop the identifier, so exact part numbers never match",
+        "The value of top is 5, so raising it to 50 will surface the right passage",
+        "Semantic ranking overwrites the vector order and hides the best chunk from the model"
+      ],
+      "answer": 1,
+      "explain": "The request is vector-only with a rewrite on top. Azure AI Search recommends keyword search for product codes, dates and names because it finds exact matches, and the query rewrite feature (preview) can drop exact identifiers. Add the keyword leg with hybrid search and skip rewriting for identifier-shaped queries. A bigger embedding does not make a vector match an exact token, a larger top cannot return a chunk the vector leg never ranks, and the semantic ranker only reorders a shortlist of at most 50 results." },
+    { "id": "w19-l1-q2", "type": "order", "tag": "order", "difficulty": 2, "ref": "r1",
+      "q": "You are moving a live index to a new embedding model. Put the steps in order.",
+      "items": [
+        "Create a second index with the new vector profile and the same ACL fields",
+        "Re-embed and load every chunk while dual-writing live changes to both indexes",
+        "Run the golden set and the access canaries against the new index",
+        "Repoint the alias to the new index",
+        "Keep the old index for a rollback window, then delete it"
+      ],
+      "explain": "Vectors from different embedding models cannot share an index, and Azure embedding models cannot be upgraded in place, so the new index comes first. Dual-writing stops live changes from being lost during the backfill. Evaluation, including the access canaries because the new index is a fresh copy of every permission, must pass before cutover. The alias repoint is the atomic switch, and keeping the old index makes rollback a repoint." },
+    { "id": "w19-l1-q3", "type": "multi", "tag": "security", "difficulty": 2, "ref": "r18",
+      "q": "A contractor's access is revoked in the source system at 09:00. Select every place that can still serve them protected content after 09:00.",
+      "options": [
+        "Index ACL fields that the nightly sync has not refreshed",
+        "A group-membership cache with a 24-hour TTL",
+        "A semantic cache keyed on the question text only",
+        "The provider's prompt cache holding the KV state of a shared system prompt",
+        "Retrieval logs that store full chunk text"
+      ],
+      "answers": [0, 1, 2, 4],
+      "explain": "A stale index ACL, a stale membership cache and a semantic cache with no ACL scope all return content under an old permission. Logs with full chunk text are a copy outside the ACL that an operator or a log search can read. The provider prompt cache holds model state for a repeated prefix and only helps a request that arrives with that prefix and valid authorisation, so it does not hand protected text to a revoked user. Its separate risk is timing probes across users, which is a different control." },
+    { "id": "w19-l1-q4", "type": "single", "tag": "tradeoff", "difficulty": 3, "ref": "r10",
+      "q": "Your time to first token target drops from 3 s to 1.2 s. The request path runs serially: generative query rewrite, hybrid retrieval, semantic rerank, input attack shield, live permission check on the top hits, then generation. Which change recovers the most time without removing a control that stops leaks or injection?",
+      "options": [
+        "Drop the live permission check because the index filter already restricts results for every tier, including the restricted one",
+        "Remove the reranker and send the top 20 chunks so there is one stage less to wait for",
+        "Replace hybrid retrieval with a vector-only query so that one retrieval leg is saved on every single request",
+        "Run the shield beside retrieval and gate generation on its verdict, and skip the rewrite for identifier queries"
+      ],
+      "answer": 3,
+      "explain": "The shield needs only the user text, so it can overlap with retrieval and still gate generation, and skipping the rewrite removes a whole model call on queries where it also hurts recall. Dropping the live check removes the only defence against a stale index ACL on the restricted tier. Removing the reranker lowers precision and lengthens the prompt, which costs time to first token elsewhere. The two retrieval legs already run in parallel, so going vector-only saves almost no time and loses exact matches." },
+    { "id": "w19-l1-q5", "type": "numeric", "tag": "numeric", "difficulty": 2, "ref": "r5", "unit": "chunks", "answer": 5, "tolerancePct": 5,
+      "q": "Callers can read about 5% of the chunks, independent of relevance. An application post-filter fetches the top 100 candidates and must show 8 readable chunks. On average, how many readable chunks does it end up with?",
+      "explain": "100 candidates times 0.05 readable gives 5 chunks, fewer than the 8 you need. To expect 8 you must fetch 160 candidates, and every denied candidate has already reached the reranker, caches or logs. A pre-filter applies the rule inside the search, so the top k is full of readable chunks from the start. This is why Azure AI Search exposes `vectorFilterMode` with `preFilter` and `postFilter` and why selective access favours the pre-filter." },
+    { "id": "w19-l1-q6", "type": "match", "tag": "diagnose", "difficulty": 1, "ref": "r2",
+      "q": "Match each symptom to the first place you look.",
+      "pairs": [
+        { "l": "Old policy text is still quoted after the page changed", "r": "Change and delete detection in ingestion" },
+        { "l": "The answer cites the right document but the wrong paragraph", "r": "Chunk boundaries and the mapping from citation to chunk id" },
+        { "l": "A fluent claim that no retrieved passage supports", "r": "The groundedness check and the abstention threshold" },
+        { "l": "A user sees a snippet from a file they cannot open", "r": "The access filter path, ACL sync and caches" },
+        { "l": "A part number is never found but paraphrases work", "r": "The keyword leg and the query rewrite settings" }
+      ],
+      "explain": "Each symptom points to the stage that owns the promise. Ingestion owns deletes and renames, since the blob indexer tracks changes through LastModified and does not track deletes by default. Chunking owns what a citation can point at. Guards own unsupported claims. Access control owns who sees what. Retrieval owns exact matches." }
+  ],
+  "defend": {
+    "prompt": "Design a RAG assistant for a company whose knowledge sits in file shares, a wiki and a ticket system. It must answer employee questions with citations and respect each person's access rights. Walk me through ingest to answer, the options at each stage, what you would choose and how you would know it works. Two weeks after launch the CFO says part-number answers are wrong, and the security lead asks you to prove that a revoked contractor sees nothing. What do you do?",
+    "timebox": "7 min",
+    "clarify": [
+      "Which sources, how large is the corpus and how fast does each source change?",
+      "What do permissions look like (groups, per-document rules, deny entries, sharing links, guests) and how selective is access?",
+      "How fast must revocation take effect for each sensitivity tier?",
+      "What time to first token do users expect, and which questions are exact lookups versus paraphrases?",
+      "Is GA required in production or is preview acceptable for a pilot, and how many tenants are there?",
+      "Does the user's token reach retrieval, and what do caches and logs hold today?"
+    ],
+    "options": [
+      { "name": "Managed indexers, integrated vectorization and security filters (or native ACL scopes)", "when": "Sources are files, SQL or Cosmos DB, permissions are group based and minutes of revocation lag is acceptable.", "tradeoff": "Sync lag, and no live check for a restricted tier. Several connectors and the native ACL features are preview as of 2026-10-13." },
+      { "name": "Event-driven pipeline you own, pre-filter plus live check on a restricted tier", "when": "Mixed sources change in minutes, or revocation must take seconds for part of the corpus.", "tradeoff": "You own idempotency, replay, throttling and ACL capture, so it needs a team that will operate it." },
+      { "name": "Delegate retrieval to the source with the user's token (or agentic retrieval over knowledge sources, preview)", "when": "Content lives in a system of record such as Microsoft 365 and permissions must be honoured at query time.", "tradeoff": "Little control of ranking and filters, plus the source's latency and rate limits. Agentic retrieval planning is preview." },
+      { "name": "No index: long context or cache-augmented generation", "when": "The corpus is under about 200,000 tokens, changes rarely and almost everyone may read all of it.", "tradeoff": "Cost per request, degraded recall in long contexts, and no clean way to enforce per-user permissions." }
+    ],
+    "modelAnswer": [
+      { "t": "p", "md": "**1. Clarify the dials.** I would ask about sources, corpus size, change rate, the permission model, revocation SLA per tier, the latency target, GA versus preview, and the mix of exact lookups and paraphrases." },
+      { "t": "p", "md": "**2. Options.** Four spines: managed indexers with integrated vectorization, an event-driven pipeline I own, delegation to the source, and the boring no-index option of long context or cache-augmented generation." },
+      { "t": "p", "md": "**3. Choice for assumed dials.** Assume 200,000 documents across a file lake, SharePoint and tickets, files that change daily and tickets that change in minutes, group-based ACLs, callers who see about 5% of the corpus, revocation in minutes for most content and seconds for a restricted tier, GA required, and a time to first token target under 2 s at p95. I would run a hybrid of the first two spines, landing in one Azure AI Search index:" },
+      { "t": "list", "style": "ol", "items": [
+        "Ingest: a blob indexer on a short schedule for files, and storage events or change feeds for tickets pushed with `mergeOrUpload` and stable ids. Hash content to skip unchanged items, make deletes visible with tombstones, and send poison items to a dead-letter queue with replay.",
+        "Parse and chunk: layout analysis for PDFs, tables kept whole, splits along headings with a parent id, starting near 512 tokens with overlap and tuned on the golden set. Copy the ACL fields onto every chunk at ingest.",
+        "Retrieve: hybrid search with RRF so exact identifiers and paraphrases both match, the security filter as a pre-filter in the same query, the semantic ranker over the top 50, then a score cutoff with abstention.",
+        "Guard: Prompt Shields beside retrieval, spotlighted context, a groundedness check (preview) and citation enforcement on the output, and link and image stripping before rendering.",
+        "Authorize: the user's token end to end with on-behalf-of, group overage handled through Graph, fail closed on any error, a live check on the restricted tier, caches keyed by ACL scope with TTLs below the revocation SLA, and logs that hold ids and decisions, not chunk text.",
+        "Change safely: blue-green re-embedding behind an alias, with the golden set and access canaries gating the cutover."
+      ] },
+      { "t": "p", "md": "**What would flip it.** Files only and no per-document permissions: the managed spine alone. Seconds-level revocation for everything in Microsoft 365: delegate to the source. Preview accepted: native ACL scopes replace my own group resolution. Under 200,000 tokens and open to all: skip the index." },
+      { "t": "table", "head": ["Failure mode", "How I detect it"], "rows": [
+        ["Missed deletes or renames, stale text", "Daily count and hash comparison of source against index, and the age of the oldest unsynced change"],
+        ["Identifier misses", "An identifier slice in the golden set, with recall@k on exact-match queries"],
+        ["Filtered recall loss, thin answers for narrow-access users", "Results per query by permission tier, and filtered recall against a brute-force baseline"],
+        ["ACL drift or revocation lag", "Canary documents and a revoked test user in CI, and revocation lag at p95 per tier"],
+        ["Ungrounded answers or wrong citations", "Groundedness and citation precision on a sampled stream, and the abstention rate"],
+        ["Injection through a document", "Red-team documents with planted instructions, and egress alerts for unknown hosts"]
+      ] },
+      { "t": "p", "md": "**5. Metrics and rollout.** I would track recall@k and nDCG by slice, groundedness rate, citation precision, abstention rate, time to first token at p95, revocation lag at p95, ACL drift rate and cost per answered question. Rollout: one department behind a flag, shadow traffic against the golden set, canaries in CI, then widen." },
+      { "t": "callout", "kind": "interview", "title": "The two-week review", "md": "**Part numbers.** Reproduce with the identifier slice. Check whether the request has a keyword leg and whether a rewrite dropped the identifier. Fix with hybrid search, skip rewriting for identifier-shaped queries and add those queries to the golden set. **Revoked contractor.** Show a canary: a document only the contractor could read, revoked at a known time. Assert that retrieval, the answer cache, the semantic cache, logs and traces return nothing after the SLA window, and show revocation lag at p95 from the run history." }
+    ],
+    "rubric": [
+      { "pt": "Asks about sources, change rate, permission model, revocation SLA, corpus size and latency before naming a tool", "w": 3 },
+      { "pt": "Offers at least three architectures, including the boring no-index or managed one, and picks for stated dials", "w": 3 },
+      { "pt": "Treats ingestion as a correctness stage: change and delete detection, stable ids, replay and ACL capture on every chunk", "w": 2 },
+      { "pt": "Combines keyword and vector retrieval and puts the access filter inside the query", "w": 2 },
+      { "pt": "Places guards with latency in mind: parallel input shield, groundedness check, citations and abstention", "w": 2 },
+      { "pt": "Handles identity and revocation: user token, group overage, live check, scoped caches and logs", "w": 3 },
+      { "pt": "Labels preview features (native ACLs, groundedness detection) and names the GA alternative", "w": 1 },
+      { "pt": "Names metrics by stage and a rollout with canaries, and answers the two-week review in order", "w": 2 }
+    ],
+    "followUps": [
+      { "q": "One tenant holds half the corpus and keeps growing. What changes?", "a": "Check filtered recall and index size under the skew. A dedicated index or partition for that tenant keeps its filter cheap and its blast radius small, while the rest stay in the shared index. Use an alias per index so re-embedding stays blue-green." },
+      { "q": "Quality drops after you switch embedding models. How do you decide on rollback?", "a": "Compare recall@k and nDCG by slice on both indexes, including the identifier and low-access slices. Because the alias still points at the old index until the evaluation passes, rollback is a repoint. Diagnose the slice that fell before the next attempt." },
+      { "q": "Security refuses preview features in production. What do you give up?", "a": "Native ACL scopes and token-based enforcement. You move to security filters, which are GA on any API version, and you own group resolution through Graph, overage handling and ACL updates. The canary, drift and cache rules stay the same." }
+    ],
+    "redFlags": [
+      "Names a vector database before asking about permissions or update rate.",
+      "Puts the access rule in the system prompt, or filters after retrieval without mentioning starvation and denied text reaching rerankers, caches and logs.",
+      "Treats ingestion as a one-off load with no deletes, replays, idempotency or ACL capture.",
+      "Calls preview features GA, or offers no revocation test."
+    ]
+  },
+  "refs": ["r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15", "r16", "r17", "r18"],
+  "takeaways": [
+    "Clarify sources, change rate, permission model, revocation SLA and latency before naming any tool.",
+    "Each stage hands the next a promise: ingest owns deletes and ACLs, chunking owns citations, retrieval owns exact matches, guards own unsupported claims, access control owns who sees what.",
+    "Pre-filter for the bulk, live-check the restricted tier, scope caches and logs, and test revocation with a canary on a schedule.",
+    "Say preview out loud: native ACL scopes and groundedness detection are preview as of 2026-10-13.",
+    "Replay the round with one dial changed: seconds-level revocation, then no permissions at all, and watch the spine change."
+  ]
+}

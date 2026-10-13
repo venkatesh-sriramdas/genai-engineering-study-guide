@@ -1,0 +1,94 @@
+{
+  "id": "w13-l3",
+  "order": 3,
+  "title": "Find the figure",
+  "kind": "problem",
+  "minutes": 18,
+  "brief": "The answer sits in a chart, a diagram or a layout that text extraction flattens. How much meaning lives in visuals, whether you need text citations and the storage budget are open. Choose how pages and figures become searchable.",
+  "blocks": [
+    { "t": "h", "text": "Four ways to index what a page shows", "level": 2 },
+    { "t": "p", "md": "Azure AI Search documents two image paths [[r12]]. **Verbalize** with the GenAI Prompt skill, one LLM call per image, which supports hybrid text queries and citations. **Embed directly** with the Azure Vision or AML skill, which needs no LLM at index time and supports image-to-vector queries but gives no reasons or citation text. Mixed corpora often need both. A third idea skips parsing: embed the page image itself with a vision-language model (ColPali family) [[r14]]. The status of these features is mixed GA and preview as of 2026-10-13, so check each skill." },
+    { "t": "compare", "title": "Retrieval approaches for visual content", "options": [
+      { "name": "Parse, then text-embed", "summary": "OCR or layout extraction, then chunk and embed the text.", "pros": ["Cheapest path", "Citable text and hybrid search"], "cons": ["Figures and layout are flattened or dropped", "Brittle parsing on complex pages"], "bestWhen": "Meaning lives in prose and simple tables.", "avoidWhen": "The answer is in charts or spatial layout.", "meta": [{ "k": "Index cost", "v": "low" }, { "k": "Citations", "v": "text" }] },
+      { "name": "Caption, then embed", "summary": "An LLM describes each figure, then the description is embedded as text.", "pros": ["Citable text", "Hybrid text queries work"], "cons": ["One LLM call per image at index time", "A caption can miss or invent detail", "No image queries"], "bestWhen": "Charts and diagrams need explanations and text citations.", "avoidWhen": "Index-time LLM cost is prohibitive or users search by image.", "meta": [{ "k": "Index cost", "v": "medium to high" }, { "k": "Citations", "v": "text" }] },
+      { "name": "Single-vector multimodal embedding", "summary": "One vector per image or text, in one space (Azure Vision, Cohere embed, jina-embeddings-v4).", "pros": ["Image-to-vector queries", "Look-alike search with no LLM at index time"], "cons": ["No reasons or citation text", "Vectors from different models are not comparable"], "bestWhen": "Users search by example image or need look-alikes.", "avoidWhen": "You must justify results with citable text.", "meta": [{ "k": "Index cost", "v": "low to medium" }, { "k": "Citations", "v": "image only" }] },
+      { "name": "Page-image multi-vector (ColPali family)", "tag": "Research", "summary": "A VLM embeds each page image into many vectors, and late interaction (MaxSim) scores queries against them.", "pros": ["No brittle parsing", "Strong results on the ViDoRe benchmark"], "cons": ["About 30 times the storage of a text vector per page", "Evidence is a page image, not text"], "bestWhen": "Figure-heavy pages where parsing fails and storage is available.", "avoidWhen": "Tight index budget or text citations are mandatory.", "meta": [{ "k": "Index cost", "v": "high" }, { "k": "Citations", "v": "page image" }] }
+    ] },
+    { "t": "dials", "id": "w13-l3-retrieval", "title": "Pick a retrieval approach", "prompt": "Change where meaning lives, how users query, the storage budget and the evidence form.",
+      "dials": [
+        { "id": "meaning", "label": "Where meaning lives", "values": [ { "id": "prose", "label": "Mostly prose" }, { "id": "visual", "label": "Figures and layout" } ] },
+        { "id": "query", "label": "How users query", "values": [ { "id": "text", "label": "Text questions" }, { "id": "image", "label": "Image as the query too" } ] },
+        { "id": "storage", "label": "Index budget", "values": [ { "id": "tight", "label": "Tight" }, { "id": "loose", "label": "Not a constraint" } ] },
+        { "id": "cite", "label": "Evidence form", "values": [ { "id": "text", "label": "Text passages" }, { "id": "page", "label": "Page images are fine" } ] }
+      ],
+      "options": [
+        { "id": "parse", "name": "Parse then text-embed", "summary": "Text pipeline." },
+        { "id": "caption", "name": "Caption then embed", "summary": "Verbalize figures." },
+        { "id": "mm", "name": "Single-vector multimodal", "summary": "One vector per image." },
+        { "id": "colpali", "name": "Page-image multi-vector", "summary": "ColPali family." }
+      ],
+      "scores": {
+        "parse": {
+          "meaning": { "prose": { "s": 2, "why": "Cheap and accurate for prose." }, "visual": { "s": -2, "why": "Figures are lost." } },
+          "query": { "text": { "s": 1, "why": "Hybrid text search works." }, "image": { "s": -2, "why": "No image queries." } },
+          "storage": { "tight": { "s": 2, "why": "Small text vectors." }, "loose": { "s": 0, "why": "Neutral." } },
+          "cite": { "text": { "s": 2, "why": "Natural text citations." }, "page": { "s": -1, "why": "Needs the page kept alongside." } }
+        },
+        "caption": {
+          "meaning": { "prose": { "s": 0, "why": "Extra LLM cost for little gain." }, "visual": { "s": 2, "why": "Turns charts into citable text." } },
+          "query": { "text": { "s": 1, "why": "Hybrid text queries work." }, "image": { "s": -1, "why": "No native image query." } },
+          "storage": { "tight": { "s": 1, "why": "Text vectors plus captions." }, "loose": { "s": 0, "why": "Neutral." } },
+          "cite": { "text": { "s": 2, "why": "Captions are citable text." }, "page": { "s": 0, "why": "Neutral." } }
+        },
+        "mm": {
+          "meaning": { "prose": { "s": 0, "why": "No edge over text embeddings." }, "visual": { "s": 1, "why": "Embeds images directly." } },
+          "query": { "text": { "s": 0, "why": "Neutral." }, "image": { "s": 2, "why": "Image-to-vector, look-alike search." } },
+          "storage": { "tight": { "s": 1, "why": "One vector per item." }, "loose": { "s": 0, "why": "Neutral." } },
+          "cite": { "text": { "s": -2, "why": "No reasons or citation text." }, "page": { "s": 1, "why": "Returns the matching image." } }
+        },
+        "colpali": {
+          "meaning": { "prose": { "s": -1, "why": "Overkill for prose." }, "visual": { "s": 2, "why": "Reads the page as an image." } },
+          "query": { "text": { "s": 1, "why": "Text queries match page patches." }, "image": { "s": 0, "why": "Not its main use." } },
+          "storage": { "tight": { "s": -2, "why": "About 257.5 KB per page." }, "loose": { "s": 1, "why": "Storage is affordable." } },
+          "cite": { "text": { "s": -1, "why": "Evidence is an image." }, "page": { "s": 2, "why": "The page is the evidence." } }
+        }
+      },
+      "takeaway": "Text pipelines lead until meaning moves into visuals. Then evidence form and storage budget decide between captions, single vectors and page images." },
+    { "t": "stats", "items": [
+      { "label": "ColPali storage per page", "value": "257.5 KB", "note": "float16, from the paper" },
+      { "label": "BGE-M3 storage per page", "value": "8.6 KB", "note": "text vector baseline" },
+      { "label": "Ratio", "value": "about 30x", "note": "arithmetic from the two figures" },
+      { "label": "Query encoding", "value": "about 30 ms vs 22 ms", "note": "ColPali versus BGE-M3" }
+    ] },
+    { "t": "diagram", "id": "w13-l3-d1", "title": "Two index paths for one page", "alt": "A page or image is either verbalized by an LLM into a text index with citations, or embedded directly into a vector index for look-alike search. Both feed a hybrid query.", "src": "flowchart LR\n  P[Page or image] --> V[Verbalize with an LLM]\n  P --> E[Embed directly]\n  V --> T[Text index with citations]\n  E --> I[Vector index for look-alike]\n  T --> H[Hybrid query]\n  I --> H", "caption": "Mixed corpora often run both paths side by side." },
+    { "t": "failure", "title": "Failure modes", "items": [
+      { "symptom": "The right page is retrieved but the answer misquotes a chart", "cause": "Generation misread the figure, and retrieval quality was never measured apart from answer quality", "fix": "Evaluate retrieval and answer separately. Raise image detail or crop the figure for the generator." },
+      { "symptom": "Image search finds look-alikes but cannot say why or cite", "cause": "The embedding-only path gives no reasons or citation text", "fix": "Add a verbalization path for the same corpus." },
+      { "symptom": "Similarity scores look arbitrary across queries", "cause": "Azure Vision relevance scores do not compare across queries, and vectors from different model versions are not comparable", "fix": "Use per-query ranks, and re-embed the whole corpus when you change the model version." },
+      { "symptom": "Index storage balloons after adopting page-image retrieval", "cause": "Multi-vector pages cost about 30 times a text vector", "fix": "Apply compression or token pooling, or restrict it to figure-heavy pages." },
+      { "symptom": "Evaluation passes but users keep asking chart questions", "cause": "The golden set is text only", "fix": "Stratify the golden set by modality and report each stratum." }
+    ] },
+    { "t": "accordion", "items": [
+      { "title": "Go deeper: Azure AI Search multimodal skills", "blocks": [
+        { "t": "p", "md": "The Content Understanding skill gives cross-page tables, bounding polygons and semantic chunking [[r12]]. Image descriptions in that skill need REST `2026-05-01-preview`. The Document Layout skill stays supported, but new skillsets should use the Content Understanding skill." }
+      ] },
+      { "title": "Go deeper: embedding model limits", "blocks": [
+        { "t": "p", "md": "Azure Vision multimodal embeddings have 1,024 dimensions, take images under 20 MB between 10 x 10 and 16,000 x 16,000 px and text of 1 to 70 words. Model `2023-04-15` is multilingual and `2022-04-11` is English only [[r13]]. Cohere `embed-v4.0` handles text, images and mixed PDFs with 128k context and dimensions 256, 512, 1024 or 1536 (default) [[r22]]. The newer `embed-v5.0-pro` and `embed-v5.0-fast` offer up to 2048 (default). `jina-embeddings-v4` has 3.8 billion parameters, supports single-vector and multi-vector output with LoRA adapters, and introduced the Jina-VDR benchmark [[r23]]." }
+      ] },
+      { "title": "Go deeper: ColPali numbers", "blocks": [
+        { "t": "p", "md": "ColPali uses PaliGemma-3B with 1,024 patches per page projected to 128 dimensions and scores with MaxSim as ColBERT does [[r14]]. ColQwen2 caps patches at 768 and adds 5.3 nDCG@5 over ColPali. The benchmark is ViDoRe. Compression and token pooling cut storage." }
+      ] },
+      { "title": "Go deeper: evaluating multimodal RAG (practice)", "blocks": [
+        { "t": "p", "md": "Score three layers apart: parse fidelity (was the figure captured), retrieval (page recall at k and element recall) and answer faithfulness to the visual. Build a golden set stratified by modality, compare with a text-only baseline, and use a public benchmark such as ViDoRe only as a sanity check [[r20]]. World w14 covers the metrics." }
+      ] }
+    ] }
+  ],
+  "quiz": [
+    { "id": "w13-l3-q1", "type": "numeric", "tag": "numeric", "q": "A page-image index stores about 257.5 KB per page. How many GB does it need for 2 million pages (1 GB = 1,000,000 KB)?", "answer": 515, "tolerancePct": 2, "unit": "GB", "hint": "pages x KB per page, then divide by 1,000,000.", "explain": "2,000,000 x 257.5 KB = 515,000,000 KB, which is 515 GB. The same corpus at 8.6 KB per page of BGE-M3 vectors would need about 17.2 GB, which is the roughly 30 times gap that drives the storage dial.", "difficulty": 2, "ref": "r14" },
+    { "id": "w13-l3-q2", "type": "single", "tag": "flip", "q": "Users upload a photo of a part and want look-alike parts. Text citations are not required and the index budget is tight. Which approach fits?", "options": ["Single-vector multimodal embeddings, which support image-to-vector queries with one vector per item", "Parse then text-embed, because text pipelines are the cheapest way to index and search any collection of pages", "Caption then embed, since captions give citable text for every part", "Page-image multi-vector retrieval, because it leads on the ViDoRe benchmark"], "answer": 0, "explain": "Image-to-vector queries and look-alike search are the strength of single-vector embeddings, and the cost is one vector per item. A text pipeline cannot take an image query, captions add an LLM call per image for a citation need that does not exist here, and page-image multi-vector costs about 30 times the storage.", "difficulty": 2, "ref": "r12" },
+    { "id": "w13-l3-q3", "type": "single", "tag": "diagnose", "q": "Retrieval finds the right page every time, yet answers misquote a chart's axis labels. What is the best next step?", "options": ["Swap in an embedding model with more dimensions so the chart page ranks even higher in the results", "Measure retrieval and answer quality apart, then raise image detail or crop the figure", "Move to a multi-vector index to improve recall", "Lower top k so fewer pages distract the model"], "answer": 1, "explain": "Recall is already fine, so the fault sits in reading the figure. Separate measurement confirms it, and higher detail or a cropped figure helps the generator. Larger embeddings, multi-vector storage and a lower top k all target retrieval, not reading.", "difficulty": 2, "ref": "r1" }
+  ],
+  "defend": null,
+  "refs": ["r1", "r12", "r13", "r14", "r20", "r22", "r23"],
+  "takeaways": ["Text pipelines win until meaning lives in visuals", "Verbalizing gives citable text, single vectors give image queries, page images give layout fidelity at about 30 times the storage", "Mixed corpora often run two paths side by side", "Measure parse, retrieval and answer layers separately, with a golden set stratified by modality"]
+}

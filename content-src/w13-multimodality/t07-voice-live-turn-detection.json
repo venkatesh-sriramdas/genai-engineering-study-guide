@@ -1,0 +1,112 @@
+{
+  "id": "w13-t07",
+  "order": 7,
+  "group": "Audio and voice",
+  "title": "Voice Live and turn detection",
+  "minutes": 8,
+  "difficulty": "advanced",
+  "summary": "Voice Live is Azure's managed speech-to-speech service. Turn detection decides when a caller has finished and when to let them interrupt, and it is the setting that most changes how a voice agent feels.",
+  "useIf": "You build a voice agent on Azure, or tune when an agent should start and stop talking.",
+  "avoidIf": "You need a stage-by-stage pipeline you can inspect, or the whole stack must be GA only, in which case check each Voice Live surface first.",
+  "explain": [
+    { "t": "p", "md": "**Voice Live** bundles speech recognition, a generative model and speech synthesis behind one WebSocket interface whose events mostly match the Azure OpenAI Realtime API [[r7]]. You send audio and get audio, avatar video and action triggers, without hosting orchestration. It lists over 140 locales for speech to text, over 600 standard voices across 150 or more locales, noise suppression, echo cancellation, phrase lists, custom speech, custom voice and function calling. Models include `gpt-realtime-2.1` (also `-datazone` and `-regional`), `gpt-realtime-2.1-mini`, `gpt-realtime-1.5`, `gpt-realtime`, `gpt-realtime-mini`, `gpt-4o` and `gpt-4o-mini`. The agent surface is preview as of 2026-10-13." },
+    { "t": "p", "md": "**Turn detection** finds when the user started and stopped speaking. A silence timer cannot tell a thinking pause from a finished thought, so semantic types also read the words [[tr3]]. A short silence window feels snappy but cuts in on thinking pauses, and a long one is patient but adds dead air, so tune it against the measured interruption rate." },
+    { "t": "table", "caption": "Voice Live `turn_detection.type` (checked 2026-10-13)", "head": ["Type", "Detects by", "Models", "Notes"], "rows": [
+      ["`server_vad` (default)", "Audio volume", "All", "`threshold` default 0.5, `silence_duration_ms` default 500"],
+      ["`semantic_vad`", "Classifier on the words", "`gpt-realtime` and `gpt-realtime-mini` only", "`eagerness`: `low`, `medium`, `high`, `auto` (equals `medium`)"],
+      ["`azure_semantic_vad`", "Semantic meaning", "All", "Primarily English. Optional `remove_filler_words`, `interrupt_response` (default true)"],
+      ["`azure_semantic_vad_multilingual`", "Semantic meaning", "All", "English, Spanish, French, Italian, German, Japanese, Portuguese, Chinese, Korean, Hindi"]
+    ] },
+    { "t": "diagram", "id": "w13-t07-d1", "title": "Turn-taking states", "alt": "The agent listens, the user speaks, an end-of-turn check decides whether the user continues or the agent answers, and a barge-in returns control to the user.", "src": "stateDiagram-v2\n  [*] --> Listening\n  Listening --> UserSpeaking: speech detected\n  UserSpeaking --> EndCheck: silence\n  EndCheck --> UserSpeaking: user continues\n  EndCheck --> AgentSpeaking: turn complete\n  AgentSpeaking --> UserSpeaking: barge-in\n  AgentSpeaking --> Listening: reply done" },
+    { "t": "code", "lang": "json", "title": "Session setting for a multilingual agent", "code": "{\n  \"turn_detection\": {\n    \"type\": \"azure_semantic_vad_multilingual\",\n    \"remove_filler_words\": true,\n    \"silence_duration_ms\": 500,\n    \"interrupt_response\": true\n  }\n}", "caption": "Field names from the Voice Live how-to. `remove_filler_words` defaults to false and ignores fillers such as 'uh' and 'hmm' while a response plays." },
+    { "t": "callout", "kind": "note", "title": "Other platforms", "md": "OpenAI Realtime offers `server_vad` (default) and `semantic_vad` with `eagerness`. Azure OpenAI Realtime accepts `none`, `semantic_vad` or `server_vad` [[r4]] [[r6]]." }
+  ],
+  "whereToUse": [
+    "Contact-centre bots on Azure that need noise suppression and wide locale coverage",
+    "Kiosks and in-car assistants with short commands and background noise",
+    "Voice tutors where learners pause to think mid-sentence",
+    "Multilingual lines where a language-aware end-of-turn check helps"
+  ],
+  "whenToUse": {
+    "use": [
+      "Semantic turn detection when callers pause mid-thought, read numbers or switch languages",
+      "Tuned `server_vad` for short commands where speed beats patience",
+      "`remove_filler_words` when 'uh-huh' keeps cutting the agent off"
+    ],
+    "avoid": [
+      "Short `silence_duration_ms` with long-winded callers: the agent will talk over them",
+      "`semantic_vad` on models other than `gpt-realtime` and `gpt-realtime-mini` in Voice Live",
+      "Treating turn detection as only a latency dial"
+    ],
+    "flips": [
+      "Callers pause to think: raise patience (`eagerness` low or a longer silence window)",
+      "Lines are very noisy: retune `threshold` and test semantic types against server VAD",
+      "Your model is `gpt-5` or `gpt-4.1`: use the Azure semantic types, not `semantic_vad`"
+    ]
+  },
+  "alternatives": {
+    "title": "Turn detection options",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["`server_vad`", "Short commands, predictable speech", "Callers pause mid-thought", "Cuts callers off or waits too long"],
+      ["`semantic_vad`", "Natural speech on supported realtime models", "Another model is selected", "Model restriction in Voice Live"],
+      ["`azure_semantic_vad`", "English agents on any model", "Many languages", "Primarily English"],
+      ["`azure_semantic_vad_multilingual`", "The ten listed languages", "A language outside the list", "Other languages are ignored"],
+      ["Manual or no turn detection", "Push-to-talk, transcription-only sessions", "Open conversation", "You build the control logic"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "The agent cuts in when callers pause to think", "cause": "Silence-based detection cannot tell thinking from finishing", "fix": "Use a semantic type with patient settings, and measure the interruption rate." },
+    { "symptom": "Backchannels like 'mm-hm' stop the agent mid-sentence", "cause": "Barge-in fires on any detected speech", "fix": "Enable `remove_filler_words` and set `languages`. It assumes the client plays audio as it arrives." },
+    { "symptom": "Config is rejected on a chosen model", "cause": "`semantic_vad` works only with `gpt-realtime` and `gpt-realtime-mini` in Voice Live", "fix": "Use `azure_semantic_vad` or its multilingual form." }
+  ],
+  "scenarios": [
+    {
+      "id": "w13-t07-s1",
+      "title": "Callers reading account numbers",
+      "situation": "A contact-centre agent on Azure takes digit strings. Callers pause between groups of digits and the agent keeps answering mid-number.",
+      "constraints": ["Pauses mid-utterance", "English only", "Model is gpt-4.1"],
+      "unknowns": ["How long are the pauses?", "Is background noise high?"],
+      "question": "What do you change?",
+      "options": [
+        { "name": "Use `azure_semantic_vad` with a longer `silence_duration_ms`", "verdict": "best", "why": "It reads meaning, works with all models, and a longer window tolerates digit pauses [[tr3]].", "tradeoff": "Slightly slower responses on short replies." },
+        { "name": "Switch to `semantic_vad`", "verdict": "poor", "why": "It works only on `gpt-realtime` and `gpt-realtime-mini` in Voice Live, so it is invalid on gpt-4.1.", "tradeoff": "Right if you move to a supported realtime model." },
+        { "name": "Raise `threshold` only", "verdict": "good", "why": "May reduce noise triggers.", "tradeoff": "Does nothing about thinking pauses and can miss quiet callers." }
+      ],
+      "flips": [
+        { "if": "Callers speak mostly Spanish", "then": "Use the multilingual semantic type with `languages` set." },
+        { "if": "Answers are one-word commands", "then": "Return to tuned `server_vad`." }
+      ],
+      "takeaway": "Pauses mid-utterance call for semantic detection and patience."
+    },
+    {
+      "id": "w13-t07-s2",
+      "title": "Noisy kiosk commands",
+      "situation": "A public kiosk takes short spoken commands in a loud hall. Users expect an instant reply. Long pauses never occur.",
+      "constraints": ["Short utterances", "Loud environment", "Speed first"],
+      "unknowns": ["Is echo from the kiosk speaker an issue?", "How many languages?"],
+      "question": "Which turn detection and settings?",
+      "options": [
+        { "name": "Tuned `server_vad` with a short silence window and tested `threshold`, plus noise suppression and echo cancellation", "verdict": "best", "why": "Short commands do not need semantic patience, and Voice Live adds noise suppression and echo cancellation [[r7]].", "tradeoff": "Occasional early cut-offs for slow speakers." },
+        { "name": "Semantic turn detection with patient settings", "verdict": "poor", "why": "Waiting for meaning adds delay the kiosk does not need.", "tradeoff": "Valuable for conversational flows with pauses." },
+        { "name": "Disable turn detection and use push-to-talk", "verdict": "good", "why": "Deterministic and noise-proof.", "tradeoff": "Changes the interaction and adds a button." }
+      ],
+      "flips": [
+        { "if": "Users start giving longer requests", "then": "Test semantic types." },
+        { "if": "Echo causes self-interruptions", "then": "Check echo cancellation and client audio routing first." }
+      ],
+      "takeaway": "Speed-first command voices can stay on tuned silence detection."
+    }
+  ],
+  "quiz": [
+    { "id": "w13-t07-q1", "type": "single", "tag": "bug", "q": "A Voice Live agent on `gpt-4.1` rejects `\"type\": \"semantic_vad\"`. What is the right fix?", "options": ["Raise `eagerness` to high", "Use `azure_semantic_vad`, which works with all models", "Set `threshold` to 0.01", "Remove `silence_duration_ms`"], "answer": 1, "explain": "In Voice Live `semantic_vad` is limited to `gpt-realtime` and `gpt-realtime-mini`. The Azure semantic types work with all models. `eagerness` applies only to `semantic_vad`, and the other settings do not change availability." },
+    { "id": "w13-t07-q2", "type": "multi", "tag": "concept", "q": "Which are documented effects of `remove_filler_words` in Voice Live?", "options": ["It ignores fillers such as 'uh' or 'hmm' while a response is in progress", "It defaults to false", "It translates speech into English", "It reduces barge-in false alarms"], "answers": [0, 1, 3], "explain": "The option ignores listed English fillers during a response to reduce false barge-in, and is off by default. It has no translation role." }
+  ],
+  "flashcards": [
+    { "front": "Which Voice Live turn detection types work with all models?", "back": "`server_vad` (default), `azure_semantic_vad` and `azure_semantic_vad_multilingual`. `semantic_vad` is limited to `gpt-realtime` and `gpt-realtime-mini`." },
+    { "front": "What does `eagerness` control?", "back": "How eagerly the model ends the user's turn with `semantic_vad`: `low` waits longer, `high` chunks as soon as possible, `auto` equals `medium`." },
+    { "front": "Why can silence-only turn detection misfire?", "back": "It cannot tell a thinking pause from a finished thought, so the agent cuts in. Semantic detection reads the words as well as the audio." }
+  ],
+  "related": ["w13-t05", "w13-t06", "w13-l4", "w12-t02"],
+  "refs": ["r7", "r4", "r6", "tr3", "r8"]
+}

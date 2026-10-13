@@ -1,0 +1,127 @@
+{
+  "id": "w12-t07",
+  "order": 7,
+  "group": "Foundry Agent Service",
+  "title": "Responses API direct vs agents",
+  "minutes": 7,
+  "difficulty": "core",
+  "summary": "Calling the Responses API from your own code gives an ephemeral agent: the definition lives in your app, nothing is created in Foundry, yet you still use Foundry models, tools, OBO auth and project governance.",
+  "useIf": "The agent already runs in your own process and the definition should ship and version with the application.",
+  "avoidIf": "You want Foundry to host, version, publish or give a stable endpoint to the agent.",
+  "explain": [
+    { "t": "p", "md": "The runtime has three objects: an **agent** (reusable model, instructions and tools), a **conversation** (persisted input and output items) and a **response** (one execution) [[tr1]]. A response can run with or without the other two, so the lightest design is a response alone [[tr1]]. When you call the Responses API directly, the agent's instructions, tools and model live in your code. Each call assembles the agent in your process, so there is nothing to create, update or delete in Foundry [[r1]]." },
+    { "t": "p", "md": "You still get catalog models, platform tools, project-scoped data, On-Behalf-Of authentication and project-level observability and governance through your project endpoint [[r1]]. What you give up is Foundry hosting, a versioned agent resource and the publishing flow that hangs off it. **State is a dial:** use a conversation for server-side history, reference a previous stored response, or resend earlier items [[tr1]]. Resending grows the input each turn. Ephemeral does not mean stateless: it only means the definition is not stored in Foundry. The trade-off is ownership. You must keep the definition consistent across app instances, secure the calling process and decide how to version changes, which a Foundry agent resource would otherwise do for you." },
+    { "t": "dials", "id": "w12-t07-pick", "title": "Responses direct, prompt agent or hosted agent", "prompt": "Flip the three dials and watch the ranking change.", "dials": [
+      { "id": "where", "label": "Where should the agent definition live?", "values": [ { "id": "app", "label": "In app code" }, { "id": "foundry", "label": "As a Foundry resource" } ] },
+      { "id": "code", "label": "Custom code inside the agent runtime", "values": [ { "id": "none", "label": "None needed" }, { "id": "custom", "label": "Required" } ] },
+      { "id": "compute", "label": "Who runs the process", "values": [ { "id": "mine", "label": "I already run compute" }, { "id": "foundry", "label": "Foundry runs it" } ] }
+    ], "options": [
+      { "id": "eph", "name": "Responses API direct", "summary": "Ephemeral agent defined in your code." },
+      { "id": "prompt", "name": "Prompt agent", "summary": "Config-only agent that Foundry runs." },
+      { "id": "hosted", "name": "Hosted agent", "summary": "Your code, run by Foundry." }
+    ], "scores": {
+      "eph": {
+        "where": { "app": { "s": 2, "why": "The definition ships and versions with the application code [[r1]]." }, "foundry": { "s": -2, "why": "There is no Foundry agent resource to hold the definition." } },
+        "code": { "none": { "s": 1, "why": "Fine, and the app stays small." }, "custom": { "s": 1, "why": "Your own process can hold any code you need." } },
+        "compute": { "mine": { "s": 2, "why": "You already host the caller, so there is no new compute." }, "foundry": { "s": -2, "why": "Foundry runs nothing for you in this pattern." } }
+      },
+      "prompt": {
+        "where": { "app": { "s": -1, "why": "Code-first definitions are possible, but the agent still lives in Foundry." }, "foundry": { "s": 2, "why": "A persisted, versioned resource with a stable endpoint." } },
+        "code": { "none": { "s": 2, "why": "Configuration covers it with nothing to maintain." }, "custom": { "s": -2, "why": "No place for custom runtime code." } },
+        "compute": { "mine": { "s": -1, "why": "You would still call a Foundry-run agent." }, "foundry": { "s": 2, "why": "No containers or compute to manage." } }
+      },
+      "hosted": {
+        "where": { "app": { "s": 0, "why": "Code is in your repo but deploys as a Foundry resource." }, "foundry": { "s": 1, "why": "Versions, endpoint and identity are Foundry resources [[r2]]." } },
+        "code": { "none": { "s": -1, "why": "Container effort for no gain." }, "custom": { "s": 2, "why": "Your framework, protocols and files [[r2]]." } },
+        "compute": { "mine": { "s": -1, "why": "It runs on Foundry-managed sandboxes, not your hosts." }, "foundry": { "s": 2, "why": "Foundry provisions per-session compute [[r2]]." } }
+      }
+    }, "takeaway": "Where the definition lives and who runs the process decide most of the choice." }
+  ],
+  "whereToUse": [
+    "A product backend that embeds an agent and releases it with the rest of the application",
+    "Agents already running on another platform that need Foundry models, tools and OBO auth",
+    "Prototypes and tests where creating Foundry agent resources is overhead",
+    "Services that need project-level observability and governance without a hosted runtime"
+  ],
+  "whenToUse": {
+    "use": [
+      "The definition should live in source control with the app and pass the app's code review",
+      "You already operate the process that makes the calls",
+      "You want Foundry capabilities without a resource to keep in sync"
+    ],
+    "avoid": [
+      "You want a stable Foundry endpoint, versions and publishing to Teams or Microsoft 365 for the agent itself",
+      "No one on the team wants to host or secure the calling process",
+      "You need a persisted agent definition that other teams or tools can discover, version and publish"
+    ],
+    "flips": [
+      "A non-engineering owner must edit the agent: use a prompt agent",
+      "You must run custom code but cannot host it: use a hosted agent",
+      "Context grows with each turn: move from resending items to a conversation or stored response reference"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Responses API direct (ephemeral)", "Definition in app code, you run the host", "You want Foundry to host, version or publish it", "You operate and secure the process [[r1]]"],
+      ["Prompt agent", "Config only, Foundry runs it", "Custom runtime code is needed", "Little control beyond config"],
+      ["Hosted agent", "Custom code on managed compute", "Behavior is config only", "Compute per active session [[r2]]"],
+      ["Prompt agent defined code-first", "Review and CI/CD for a Foundry-run agent", "You want no separate resource", "Portal edits can drift"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Follow-up questions lose context", "cause": "Each call is a fresh response with no conversation, previous response reference or resent items", "fix": "Create a conversation, reference the previous stored response, or resend items on purpose [[tr1]]." },
+    { "symptom": "Team expects to publish the agent to Teams from Foundry", "cause": "Publishing works on Foundry agent resources, and an ephemeral agent has none", "fix": "Create a prompt or hosted agent for the publish path [[r1]]." },
+    { "symptom": "Agent logic differs between environments", "cause": "Definitions are built in each process, and versions of the app drift", "fix": "Treat the definition as code: one module, pinned model, reviewed changes." }
+  ],
+  "scenarios": [
+    {
+      "id": "w12-t07-s1",
+      "title": "Agent inside a product backend",
+      "situation": "A product team embeds an assistant in its service. The instructions and tools change with every release and the service already runs on its own compute.",
+      "constraints": ["Definition must version with the app", "Service is already hosted and secured", "On-Behalf-Of calls needed"],
+      "unknowns": ["Does anyone outside engineering edit the agent?", "Will it need Teams publishing?"],
+      "question": "How do you build on Foundry?",
+      "options": [
+        { "name": "Call the Responses API directly (ephemeral agent)", "verdict": "best", "why": "The definition ships with the app, and you still get models, tools, OBO and project governance without an agent resource to sync.", "tradeoff": "No Foundry-hosted endpoint, versions or publishing for the agent." },
+        { "name": "Prompt agent defined through the SDK", "verdict": "good", "why": "Foundry runs it and you get a versioned resource.", "tradeoff": "The definition now lives in two places unless the pipeline owns it." },
+        { "name": "Hosted agent", "verdict": "poor", "why": "It adds a container, sandbox compute and a second deployment for logic the service already hosts.", "tradeoff": "Right when the agent code should be deployed and scaled separately." }
+      ],
+      "flips": [
+        { "if": "The agent must be published to Teams", "then": "Prompt or hosted agent." },
+        { "if": "Multiple services reuse the same agent", "then": "A Foundry agent resource avoids copies." }
+      ],
+      "takeaway": "Keep the definition where the code that depends on it lives."
+    },
+    {
+      "id": "w12-t07-s2",
+      "title": "Org-wide assistant for Teams",
+      "situation": "A business team wants an assistant everyone can find in Teams with a stable endpoint and the ability to roll out new versions behind it. They have no developers.",
+      "constraints": ["Published to Teams and Microsoft 365", "No custom code", "Portal authoring"],
+      "unknowns": ["Is admin approval available?", "Which tools are needed?"],
+      "question": "What do you choose?",
+      "options": [
+        { "name": "Prompt agent published through Foundry", "verdict": "best", "why": "A Foundry agent resource gives versions, a stable endpoint and the publishing flow, with no code.", "tradeoff": "Limited to what configuration and tools can express." },
+        { "name": "Responses API direct from a custom service", "verdict": "poor", "why": "No agent resource to publish, and nobody can host the service.", "tradeoff": "Right when developers own an app that embeds the agent." },
+        { "name": "Hosted agent", "verdict": "good", "why": "Publishable and fully flexible.", "tradeoff": "Needs developers and container compute for no gain." }
+      ],
+      "flips": [
+        { "if": "The assistant needs custom code later", "then": "Move to a hosted agent and keep the published endpoint." },
+        { "if": "Developers own the service and want review in Git", "then": "Responses direct or a code-first prompt agent." }
+      ],
+      "takeaway": "Publishing and versions belong to Foundry agent resources, not to ephemeral agents."
+    }
+  ],
+  "quiz": [
+    { "id": "w12-t07-q1", "type": "multi", "tag": "concept", "q": "What do you still get when you call the Responses API directly with an ephemeral agent?", "options": ["Catalog models and platform tools", "On-Behalf-Of authentication", "A versioned Foundry agent resource", "Project-level observability and governance"], "answers": [0, 1, 3], "explain": "The docs list models, tools, project data, OBO and project-level observability and governance. There is no persisted agent resource to version.", "ref": "r1" },
+    { "id": "w12-t07-q2", "type": "single", "tag": "flip", "q": "Which change most clearly moves you from a direct Responses call to a prompt agent?", "options": ["A non-engineer must edit and publish the agent to Teams", "The definition must ship with every app release", "The calling service is already hosted", "You want fewer Foundry features"], "answer": 0, "explain": "Non-engineering editing and publishing need a Foundry agent resource. The other options favor keeping the definition in app code.", "ref": "r1" },
+    { "id": "w12-t07-q3", "type": "single", "tag": "diagnose", "q": "A second turn ignores the first. The app makes two Responses calls with no extra parameters. What is missing?", "options": ["A conversation, a previous response reference or resent items", "A larger model", "A hosted agent", "Voice Live"], "answer": 0, "explain": "Context is carried by a conversation, a reference to a previous stored response, or by resending earlier items. Model size or agent type does not add history.", "ref": "tr1" }
+  ],
+  "flashcards": [
+    { "front": "What is an ephemeral agent in Foundry?", "back": "An agent whose definition lives in your code and is assembled per Responses API call. No Foundry agent resource is created, updated or deleted." },
+    { "front": "Three ways to carry context between Responses calls?", "back": "Use a conversation, reference a previous stored response, or resend earlier items. Resending grows the input each turn." }
+  ],
+  "related": ["w12-t01", "w12-t02", "w12-t03", "w12-t19", "w01-t11"],
+  "refs": ["r1", "r2", "tr1"]
+}

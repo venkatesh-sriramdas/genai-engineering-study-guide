@@ -1,0 +1,129 @@
+{
+  "id": "w13-t09",
+  "order": 9,
+  "group": "Video and documents",
+  "title": "Document understanding: OCR vs layout vs vision LLM",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "Four ways to read a document: layout or OCR only, a Document Intelligence form model, a Content Understanding analyzer, or a vision LLM called directly. They differ in fields, confidence, grounding, cost and where they can run.",
+  "useIf": "You turn scans, forms, contracts or reports into text or typed fields and must pick the tool by document shape, evidence need and hosting.",
+  "avoidIf": "The document is already clean digital text with no layout that matters. Plain text extraction is enough.",
+  "explain": [
+    { "t": "p", "md": "Microsoft's tool guide separates the choices [[r10]] (checked 2026-10-13). For **OCR or layout only**, use Content Understanding `prebuilt-read` or `prebuilt-layout`, which cost less and return richer layout. For **standard forms** (invoice, receipt, ID, tax, mortgage), use a Document Intelligence prebuilt model. For **contracts and unstructured text**, use `prebuilt-contract` or a zero-shot custom analyzer. For labelled custom extraction on structured forms, use a Document Intelligence custom model, which can start from as few as 5 labelled samples. **On-premises or air-gapped**, Document Intelligence containers are the only option. Build directly on a vision model only when you need full model and prompt control." },
+    { "t": "p", "md": "A direct vision LLM call is flexible but you then build chunking, confidence and grounding yourself. Versions: Content Understanding GA is `2025-11-01`, while `2026-06-01-preview` adds agentic mode, in-page segmentation, signature detection and document metadata. Document Intelligence v4.0 is GA as `2024-11-30` and needs no migration. In Azure AI Search the Document Layout skill stays supported, but new skillsets should use the Content Understanding skill [[r12]]." },
+    { "t": "dials", "id": "w13-t09-pick", "title": "Pick a document reader", "prompt": "Flip the constraints and see which reader leads.", "dials": [
+      { "id": "shape", "label": "Document shape", "values": [{ "id": "std", "label": "Standard form" }, { "id": "var", "label": "Unstructured or varied" }] },
+      { "id": "evid", "label": "Evidence", "values": [{ "id": "conf", "label": "Confidence and grounding needed" }, { "id": "ans", "label": "Answer only" }] },
+      { "id": "run", "label": "Where it runs", "values": [{ "id": "cloud", "label": "Cloud allowed" }, { "id": "air", "label": "Air-gapped" }] }
+    ], "options": [
+      { "id": "lay", "name": "Read or layout service", "summary": "Text and structure only." },
+      { "id": "di", "name": "Document Intelligence", "summary": "Prebuilt and custom form models." },
+      { "id": "cu", "name": "Content Understanding analyzer", "summary": "Documents plus other modalities, fields." },
+      { "id": "llm", "name": "Vision LLM direct", "summary": "Your prompt, your validation." }
+    ], "scores": {
+      "lay": { "shape": { "std": { "s": -1, "why": "Misses typed fields a form model returns." }, "var": { "s": 1, "why": "Text and structure feed an index well." } }, "evid": { "conf": { "s": 1, "why": "Returns positions for text." }, "ans": { "s": 0, "why": "Needs a model on top to answer." } }, "run": { "cloud": { "s": 0, "why": "Low cost per page." }, "air": { "s": -2, "why": "Only Document Intelligence containers run on premises." } } },
+      "di": { "shape": { "std": { "s": 2, "why": "Prebuilt models for invoice, receipt, ID, tax, mortgage." }, "var": { "s": -1, "why": "Changing layouts need labels or another fit." } }, "evid": { "conf": { "s": 2, "why": "Field extraction with confidence." }, "ans": { "s": 0, "why": "Overkill when only an answer is needed." } }, "run": { "cloud": { "s": 0, "why": "No pull either way." }, "air": { "s": 2, "why": "Containers are the only on-premises option." } } },
+      "cu": { "shape": { "std": { "s": 0, "why": "Works, but a prebuilt form model is a closer fit." }, "var": { "s": 2, "why": "`prebuilt-contract` and zero-shot analyzers suit unstructured text." } }, "evid": { "conf": { "s": 1, "why": "Grounding and structure, via the CU skill in Search." }, "ans": { "s": 0, "why": "Fields you may not need." } }, "run": { "cloud": { "s": 1, "why": "Mixed modalities, GA `2025-11-01`." }, "air": { "s": -2, "why": "Cloud service, no containers." } } },
+      "llm": { "shape": { "std": { "s": -1, "why": "You rebuild what a prebuilt model gives." }, "var": { "s": 1, "why": "Handles odd layouts and inference at low volume." } }, "evid": { "conf": { "s": -2, "why": "You build confidence and grounding yourself." }, "ans": { "s": 1, "why": "Direct answers with your prompt." } }, "run": { "cloud": { "s": 0, "why": "Simple call." }, "air": { "s": -1, "why": "Needs a local model you must run." } } }
+    }, "takeaway": "Standard forms and on-premises needs point to Document Intelligence. Unstructured content points to Content Understanding." },
+    { "t": "table", "caption": "Quality checks per reader", "head": ["Check", "What it tells you"], "rows": [
+      ["Field accuracy on a labelled, stratified sample", "Which document types fail (practice)"],
+      ["Confidence versus correctness", "Where to set the human-review threshold (practice)"],
+      ["Cross-page tables", "Whether rows are lost at page breaks"],
+      ["Cost and latency per page", "Whether the cheaper reader is good enough"]
+    ] }
+  ],
+  "whereToUse": [
+    "Invoice, receipt and ID intake with field-level confidence",
+    "Contract analysis where fields are inferred from clauses",
+    "Search ingestion of reports with layout and tables",
+    "Air-gapped sites processing stable internal forms",
+    "Low-volume, odd documents where a direct vision call is quick to build"
+  ],
+  "whenToUse": {
+    "use": [
+      "A prebuilt form model when documents match a standard type",
+      "A Content Understanding analyzer for unstructured text or mixed modalities",
+      "A direct vision call for low volume or odd layouts"
+    ],
+    "avoid": [
+      "A vision LLM alone when you need confidence, bounding regions or audit trails",
+      "Cloud-only analyzers when a no-cloud rule exists",
+      "Preview API versions in production"
+    ],
+    "flips": [
+      "A no-cloud requirement appears: move to Document Intelligence containers",
+      "Volume grows from dozens to millions: replace direct LLM calls with a service",
+      "Fields must be inferred, not read: move from form models to an analyzer"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Read or layout only", "Search ingestion, text plus structure", "Typed fields with confidence are needed", "Lower cost, less structure for fields"],
+      ["Document Intelligence prebuilt or custom", "Stable forms, volume, on-premises", "Contracts or changing layouts", "Labelling effort for custom models"],
+      ["Content Understanding analyzer", "Unstructured text, mixed modalities", "Air-gapped sites", "Preview versions carry no SLA"],
+      ["Vision LLM direct", "Odd layouts at low volume", "Audit trail, confidence, volume", "You build chunking, confidence, grounding"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A table loses rows at page breaks", "cause": "Pages were parsed one by one", "fix": "Use the Content Understanding skill in AI Search, which handles cross-page tables, or merge tables after extraction." },
+    { "symptom": "A no-cloud requirement appears late", "cause": "The design used cloud-only analyzers", "fix": "Ask about on-premises needs first. Document Intelligence containers are the only on-premises option among these." },
+    { "symptom": "Output shape changes after a service update", "cause": "Production calls `2026-06-01-preview`", "fix": "Pin GA `2025-11-01` and test previews elsewhere." }
+  ],
+  "scenarios": [
+    {
+      "id": "w13-t09-s1",
+      "title": "Contracts with implied dates",
+      "situation": "A legal team extracts renewal terms, notice periods and parties from thousands of supplier contracts. Layouts vary and some terms are implied by clauses.",
+      "constraints": ["Unstructured text", "Fields need grounding", "Cloud allowed"],
+      "unknowns": ["How many contracts per month?", "Is on-premises required?"],
+      "question": "Which reader?",
+      "options": [
+        { "name": "Content Understanding `prebuilt-contract` or a zero-shot analyzer, on GA `2025-11-01`", "verdict": "best", "why": "The tool guide points contracts and unstructured text to these [[r10]].", "tradeoff": "Cloud only, and you must test field accuracy." },
+        { "name": "Document Intelligence custom model", "verdict": "good", "why": "Works if layouts are consistent and you can label samples.", "tradeoff": "Brittle when layouts change and fields are inferred." },
+        { "name": "Layout service alone", "verdict": "poor", "why": "Returns text and structure but no typed fields.", "tradeoff": "Right when the goal is only to index contract text." }
+      ],
+      "flips": [
+        { "if": "Contracts must be processed on premises", "then": "Document Intelligence containers with a custom model." },
+        { "if": "Only 30 contracts a month", "then": "A direct vision call with human review may be enough." }
+      ],
+      "takeaway": "Unstructured and inferred fields suit an analyzer."
+    },
+    {
+      "id": "w13-t09-s2",
+      "title": "Stable inspection forms in a plant",
+      "situation": "A plant with no internet scans its own inspection form, a fixed layout that is not a standard type. Hundreds of labelled examples exist.",
+      "constraints": ["Air-gapped", "Fixed custom form", "Field-level confidence needed"],
+      "unknowns": ["What accuracy target applies?", "Who reviews low-confidence fields?"],
+      "question": "What do you deploy?",
+      "options": [
+        { "name": "Document Intelligence custom model in a container", "verdict": "best", "why": "Containers are the only on-premises option, and custom models can start from as few as 5 labelled samples [[r10]].", "tradeoff": "You run and update containers and keep labelling." },
+        { "name": "Content Understanding analyzer", "verdict": "poor", "why": "It is a cloud service and cannot run air-gapped.", "tradeoff": "Right for unstructured documents when the cloud is allowed." },
+        { "name": "Vision LLM called directly", "verdict": "good", "why": "Flexible if you can host a model locally.", "tradeoff": "No native confidence or grounding, so you build validation yourself." }
+      ],
+      "flips": [
+        { "if": "The plant gets a secured cloud link", "then": "Re-evaluate the managed analyzer for new document types." },
+        { "if": "The form is a standard invoice", "then": "Use a prebuilt model." }
+      ],
+      "takeaway": "A no-cloud rule decides the tool before accuracy does."
+    }
+  ],
+  "quiz": [
+    { "id": "w13-t09-q1", "type": "single", "tag": "flip", "q": "A stable internal form must be read in an air-gapped plant with field confidence. Which tool fits?", "options": ["Content Understanding analyzer", "Vision LLM through a cloud API", "Document Intelligence in a container", "A layout service in the cloud"], "answer": 2, "explain": "Document Intelligence containers are the only on-premises option among these. The others are cloud services or need a cloud call." },
+    { "id": "w13-t09-q2", "type": "match", "tag": "concept", "q": "Match each need with the tool the Microsoft guide names.", "pairs": [
+      { "l": "OCR or layout only", "r": "Content Understanding `prebuilt-read` or `prebuilt-layout`" },
+      { "l": "Standard invoice or receipt", "r": "Document Intelligence prebuilt model" },
+      { "l": "Contracts and unstructured text", "r": "Content Understanding `prebuilt-contract`" },
+      { "l": "Labelled custom extraction on forms", "r": "Document Intelligence custom model" }
+    ], "explain": "These pairings follow the tool-choice guide checked on 2026-10-13." }
+  ],
+  "flashcards": [
+    { "front": "Which tool is the only on-premises option for document reading in Microsoft's guide?", "back": "Document Intelligence containers. Content Understanding and direct cloud vision calls need the cloud." },
+    { "front": "How many labelled samples can a Document Intelligence custom model start from?", "back": "As few as 5 labelled samples (neural model), per Microsoft's tool-choice guide." },
+    { "front": "Which Content Understanding API version is for production?", "back": "GA `2025-11-01`. `2026-06-01-preview` has no SLA. Document Intelligence v4.0 GA is `2024-11-30` and needs no migration." }
+  ],
+  "related": ["w13-t03", "w13-t08", "w13-t12", "w13-l2", "w03-t03", "w03-t04"],
+  "refs": ["r10", "r12", "r1"]
+}

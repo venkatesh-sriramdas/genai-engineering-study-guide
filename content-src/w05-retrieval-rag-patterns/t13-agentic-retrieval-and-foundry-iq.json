@@ -1,0 +1,117 @@
+{
+  "id": "w05-t13",
+  "order": 13,
+  "group": "Advanced patterns",
+  "title": "Agentic retrieval and Foundry IQ",
+  "minutes": 10,
+  "difficulty": "advanced",
+  "summary": "Agentic retrieval in Azure AI Search plans focused subqueries with an LLM, runs them in parallel across knowledge sources and merges the reranked results. Foundry IQ packages knowledge bases for agents.",
+  "useIf": "Questions are multi-part or depend on chat history, you can accept preview features and an extra planning call, and you want an activity log and references.",
+  "avoidIf": "You need GA-only features beyond minimal extractive retrieval, questions are single-fact lookups, or latency leaves no room for planning.",
+  "explain": [
+    { "t": "p", "md": "In classic RAG your code builds the query. In **agentic retrieval** the app calls a **knowledge base** with the `retrieve` action and passes the query plus chat history. At `low` and `medium` effort an LLM plans focused subqueries and picks **knowledge sources**. All subqueries run in parallel (keyword, vector or hybrid), each is semantically reranked and the results are merged. Merged content is always returned. Source references and an execution `activity` log are optional (`includeActivity: true`). You need one knowledge base and at least one knowledge source [[r4]] [[r6]]." },
+    { "t": "diagram", "id": "w05-t13-d1", "title": "Agentic retrieval request path", "alt": "The app sends a query and chat history to a knowledge base, a planner model writes subqueries, sources are searched in parallel and reranked, and merged content with references and activity returns.", "src": "sequenceDiagram\n  participant A as App or agent\n  participant K as Knowledge base\n  participant P as Planner LLM\n  participant S as Knowledge sources\n  A->>K: retrieve query and history\n  K->>P: Plan subqueries\n  P-->>K: Subqueries and sources\n  K->>S: Parallel searches and rerank\n  S-->>K: Ranked results\n  K-->>A: Merged content, references, activity" },
+    { "t": "table", "caption": "Reasoning effort (preview, checked 2026-10-13)", "head": ["Effort", "What happens", "Notes"], "rows": [
+      ["`minimal`", "No LLM planning, searches every source in the knowledge base", "`outputMode` must be `extractiveData`, no answer synthesis or web source, up to 10 sources. The only effort in stable `2026-04-01`"],
+      ["`low` (default if unset)", "One planning pass", "5,000 answer tokens, 50 docs to semantic ranking (10 with L3 classification)"],
+      ["`medium`", "Adds a semantic classifier and one retry with a revised plan", "10,000 answer tokens, 20 docs with L3, select regions only (15 listed)"],
+      ["`auto`", "Light first pass, escalates up to medium", "Needs `2026-08-01-preview` and a model on the knowledge base"]
+    ], "highlightCol": 1 },
+    { "t": "p", "md": "Set effort on the knowledge base and override per request with `retrievalReasoningEffort.kind` [[r5]]. In the stable API only `intents` input, `minimal` effort and extractive output exist. Planning, answer synthesis, `messages` input, `auto` and SSE streaming need `2026-08-01-preview` [[r4]]. `maxRuntimeInSeconds` runs 10 to 600, default 90 [[r38]]. Search bills retrieval tokens, and Azure OpenAI bills planning and answer-synthesis tokens separately. Planner models include the `gpt-5` family, and the page updated 2026-09-17 marks GPT-4o and GPT-4.1 families deprecated [[r39]]." },
+    { "t": "p", "md": "**Foundry IQ** is the managed knowledge layer: one knowledge base can serve many agents (Foundry Agent Service, Microsoft Agent Framework, custom apps through the Search REST API). Sources include Blob, SharePoint, OneLake and the public web, with chunking, embeddings and metadata extraction automated for indexed sources [[r7]]. **Azure OpenAI On Your Data retires on 2026-10-14**, and Microsoft recommends Foundry Agent Service with Foundry IQ [[r33]]." },
+    { "t": "callout", "kind": "warn", "title": "Identity fails open", "md": "For indexed sources, ACLs must be ingested (`ingestionPermissionOptions`) and the user token passed in `x-ms-query-source-authorization`. Omit the identity and indexed sources return unfiltered results. If `ingestionPermissionOptions` was not set at creation, results are unfiltered whatever the header says [[r6]]." }
+  ],
+  "whereToUse": [
+    "Assistants that field multi-part questions across SharePoint, Blob and web sources",
+    "Agents that share one managed knowledge base instead of each owning an index",
+    "Systems that need references and an activity log for audit and debugging",
+    "Teams migrating off Azure OpenAI On Your Data before its retirement"
+  ],
+  "whenToUse": {
+    "use": ["Questions have several parts or rely on earlier turns", "Several knowledge sources must be searched and merged", "Preview status is acceptable and pinned versions are managed", "You want the planning and reranking inside the service"],
+    "avoid": ["Your policy allows GA features only, which limits you to `minimal` extractive retrieval", "Questions are simple lookups that one hybrid query answers", "You cannot pass the user's identity to the retrieve call"],
+    "flips": ["GA-only requirement: use classic hybrid plus semantic ranker, or `minimal` effort", "Latency is tight: stay at `low` or below, and set `maxRuntimeInSeconds` deliberately", "Planner model on the deprecated list: move to a `gpt-5` family model before relying on filters or hints"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Classic hybrid plus semantic ranker (GA)", "Single-shot questions, GA-only rules", "Multi-part questions", "You write query logic yourself"],
+      ["Agentic retrieval at `minimal`", "Stable API, several sources, no planning", "You need planning or answer synthesis", "Extractive only"],
+      ["Agentic retrieval at `low` or `medium`", "Complex questions with history", "Strict latency, GA-only", "Planning tokens, preview"],
+      ["Your own agent loop with a search tool", "Custom logic and full control", "You want managed reranking and logs", "You build, test and secure the loop"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A caller sees documents they should not", "cause": "The retrieve call omitted the user token header, or ACLs were not ingested", "fix": "Set `ingestionPermissionOptions` at creation and always send `x-ms-query-source-authorization` [[r6]]" },
+    { "symptom": "Code that worked on a preview version breaks", "cause": "Preview contracts changed: knowledge agents became knowledge bases, and docs show both `maxOutputSize` and `maxOutputSizeInTokens`", "fix": "Pin the API version, read the migration page and check the SDK spelling [[r34]]" }
+  ],
+  "scenarios": [
+    {
+      "id": "w05-t13-s1",
+      "title": "GA-only governance",
+      "situation": "A regulated team may only use generally available features. Users ask multi-part questions, and the current system is a single hybrid query.",
+      "constraints": ["GA features only", "Multi-part questions", "Azure AI Search in place"],
+      "unknowns": ["Can the team build its own decomposition step?"],
+      "question": "What do you do?",
+      "options": [
+        { "name": "Keep classic hybrid plus semantic ranker, add application-side decomposition, and revisit agentic planning when it is GA", "verdict": "best", "why": "In the stable `2026-04-01` API only `minimal` extractive retrieval exists, so planning is preview [[r4]].", "tradeoff": "You own the decomposition code." },
+        { "name": "Enable `low` effort in production", "verdict": "poor", "why": "It needs `2026-08-01-preview`, which policy forbids.", "tradeoff": "Right where preview features are allowed and pinned." },
+        { "name": "Use `minimal` effort with the stable API", "verdict": "good", "why": "Fits policy and covers several sources.", "tradeoff": "No planning or synthesis, so multi-part questions still need your logic." }
+      ],
+      "flips": [
+        { "if": "Preview is allowed in a sandbox first", "then": "Pilot `low` effort there and compare recall on the multi-part slice." },
+        { "if": "Questions are almost all single-part", "then": "Stay on classic hybrid plus semantic ranker, since planning adds latency and cost without a benefit." }
+      ],
+      "takeaway": "Policy decides the effort level."
+    },
+    {
+      "id": "w05-t13-s2",
+      "title": "Multi-source copilot with permissions",
+      "situation": "An assistant must answer from SharePoint and Blob content. Different employees may read different files. Questions often follow earlier turns.",
+      "constraints": ["Per-user permissions", "Preview acceptable", "Chat history matters"],
+      "unknowns": ["Were ACLs ingested at creation?", "Is the user token available at the retrieve call?"],
+      "question": "What must be in place?",
+      "options": [
+        { "name": "Knowledge base with `ingestionPermissionOptions` set at creation, and the user token sent in `x-ms-query-source-authorization` on every retrieve", "verdict": "best", "why": "Without both, indexed sources return unfiltered results [[r6]].", "tradeoff": "Identity plumbing and sync lag for ACL changes." },
+        { "name": "Rely on the app's own check after retrieval", "verdict": "poor", "why": "Content may already be in the prompt, and results shrink unpredictably.", "tradeoff": "Reasonable as defence in depth on top of source filtering." },
+        { "name": "Use an app identity with broad read access", "verdict": "good", "why": "Simple to build.", "tradeoff": "Everything must then be filtered elsewhere, so it breaks least privilege." }
+      ],
+      "flips": [
+        { "if": "Revocation must be instant", "then": "Add a live source check on sensitive hits." },
+        { "if": "All employees may read all the content", "then": "Drop per-user token forwarding and use a single app identity, keeping the knowledge base simpler." }
+      ],
+      "takeaway": "Permissions travel with the token."
+    },
+    {
+      "id": "w05-t13-s3",
+      "title": "Latency-sensitive lookup assistant",
+      "situation": "A support assistant answers short factual questions within a one-second retrieval budget. Some users ask two-part questions.",
+      "constraints": ["Retrieval budget about one second", "Mostly single-fact questions", "High volume"],
+      "unknowns": ["What share of questions are multi-part?", "Can multi-part questions be routed?"],
+      "question": "How do you use agentic retrieval?",
+      "options": [
+        { "name": "Serve single-fact questions with one hybrid query, and route multi-part questions to `low` effort", "verdict": "best", "why": "Planning adds an LLM pass, so reserve it for questions that need it.", "tradeoff": "You need a router and must measure its accuracy." },
+        { "name": "Use `medium` for everything", "verdict": "poor", "why": "It adds a classifier and possible retry to every query.", "tradeoff": "Right for a research assistant with no tight budget." },
+        { "name": "Never use planning", "verdict": "good", "why": "Fastest and cheapest.", "tradeoff": "Multi-part questions stay weak." }
+      ],
+      "flips": [
+        { "if": "The budget grows to several seconds", "then": "Use `low` effort for everything." },
+        { "if": "Two-part questions become the majority of traffic", "then": "Route most traffic to `low` effort, and measure latency against the budget before widening it." }
+      ],
+      "takeaway": "Spend planning only where questions need it."
+    }
+  ],
+  "quiz": [
+    { "id": "w05-t13-q1", "type": "single", "tag": "security", "q": "A retrieve call returns documents the caller must not see, and the request carried no identity header. What is the most likely cause?", "options": ["Indexed sources return unfiltered results when no user identity is passed", "The semantic ranker ignores ACLs", "The planner model is deprecated", "The knowledge base is at `minimal` effort"], "answer": 0, "explain": "Omitting the user token makes indexed sources return unfiltered results. This fails open. The other options do not remove permission trimming [[r6]]." },
+    { "id": "w05-t13-q2", "type": "multi", "tag": "concept", "q": "Select the statements true of Azure agentic retrieval on 2026-10-13.", "options": ["Stable `2026-04-01` supports `minimal` extractive retrieval with `intents` input", "Query planning at `low` needs `2026-08-01-preview`", "SSE streaming needs `2026-08-01-preview`", "All effort levels are GA"], "answers": [0, 1, 2], "explain": "Only `minimal` is in the stable API. Planning, synthesis, `auto` and SSE need the preview version [[r4]]." },
+    { "id": "w05-t13-q3", "type": "match", "tag": "concept", "q": "Match each effort level to its behaviour.", "pairs": [{ "l": "`minimal`", "r": "No LLM planning, searches every source" }, { "l": "`low`", "r": "One planning pass, default if unset" }, { "l": "`medium`", "r": "Adds a semantic classifier and one retry" }, { "l": "`auto`", "r": "Starts light and escalates up to medium" }], "explain": "These are the behaviours documented for each reasoning effort [[r5]]." }
+  ],
+  "flashcards": [
+    { "front": "What does agentic retrieval do at `low` effort?", "back": "One LLM planning pass makes focused subqueries and picks sources. Subqueries run in parallel, are reranked and merged." },
+    { "front": "Which API version holds stable agentic retrieval, and what does it allow?", "back": "`2026-04-01`: `minimal` effort, `intents` input and extractive output. Planning, synthesis and SSE need `2026-08-01-preview`." },
+    { "front": "How are permissions enforced in Foundry IQ indexed sources?", "back": "Ingest ACLs with `ingestionPermissionOptions` and send the user token in `x-ms-query-source-authorization`. Without it results are unfiltered." }
+  ],
+  "related": ["w05-l5", "w05-t10", "w05-t11", "w07-t11", "w10-t01"],
+  "refs": ["r4", "r5", "r6", "r7", "r33", "r34", "r38", "r39"]
+}

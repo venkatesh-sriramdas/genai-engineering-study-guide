@@ -1,0 +1,87 @@
+{
+  "id": "w06-l1",
+  "order": 1,
+  "title": "Place the guards where the damage happens",
+  "kind": "problem",
+  "minutes": 16,
+  "brief": "The model will answer whatever it is given. Checks can stand on the way in, on retrieved content, on tool calls and on the way out. Which do you need, how many can the latency budget carry, and what may reach the user while text streams?",
+  "blocks": [
+    { "t": "h", "text": "Five places a guard can stand", "level": 2 },
+    { "t": "diagram", "id": "w06-l1-path", "title": "Guard points on a RAG request", "alt": "A user input passes an input guard, retrieval returns chunks that pass a retrieval guard, the model proposes a tool call that passes a tool call guard, the tool response passes a tool response guard, and the final answer passes an output guard before reaching the user.", "src": "flowchart LR\n  U[User input] --> IG{Input guard}\n  IG --> RT[Retrieve chunks]\n  RT --> RG{Retrieval guard}\n  RG --> M[Model]\n  M --> TG{Tool call guard}\n  TG --> T[Tool]\n  T --> TR{Tool response guard}\n  TR --> M\n  M --> OG{Output guard}\n  OG --> A[Answer]", "caption": "Foundry names four intervention points (input, tool call, tool response, output). NeMo Guardrails names five rail types (input, retrieval, dialog, execution, output)." },
+    { "t": "table", "caption": "What each placement catches", "head": ["Placement", "Catches", "Typical control", "Cost of skipping it"], "rows": [
+      ["Input", "Jailbreaks, harmful requests, PII in prompts", "Prompt Shields user prompt attacks, harm categories", "Attacks reach the model unchallenged"],
+      ["Retrieval or tool response", "Instructions hidden in documents, off-topic or poisoned chunks", "Prompt Shields document attacks, chunk filters (NeMo retrieval rails)", "Indirect injection rides in as trusted context"],
+      ["Tool call", "Unsafe arguments, premature or misaligned tool use", "Foundry tool call controls (preview), allow lists, task adherence (preview)", "Side effects happen before anyone looks"],
+      ["Output", "Harmful text, ungrounded claims, protected material, PII", "Harm categories, groundedness, protected material, PII filter", "The user sees the failure"],
+      ["Audit after the fact", "Patterns, drift, missed attacks", "Sampled review, logs, evals", "No learning loop"]
+    ], "highlightCol": 3 },
+    { "t": "compare", "title": "How guards run in the request path", "intro": "Where a guard stands is one decision. Whether it blocks the request, races it or trails behind a stream is another. Nothing in the vendor pages checked on 2026-10-13 publishes guard latency, so every option here is measured, not assumed.", "options": [
+      { "name": "Sequential gate before the model", "summary": "Run the input guard, then call the model.", "pros": ["No tokens are spent on blocked requests", "Easiest to reason about"], "cons": ["The guard's latency adds in series"], "bestWhen": "Blocked requests are common or generation is costly.", "avoidWhen": "The latency budget is tight and blocks are rare.", "meta": [{ "k": "Latency added", "v": "the guard's full time" }] },
+      { "name": "Parallel with generation", "summary": "Start the guard and the model together, cancel generation if the guard blocks.", "pros": ["Hides the guard's latency behind the model call", "Independent guards add only the slowest one"], "cons": ["Wasted tokens when the guard blocks", "No tool side effects until the verdict arrives"], "bestWhen": "Blocks are rare and the budget is tight.", "avoidWhen": "Generation triggers tools or other side effects.", "meta": [{ "k": "Latency added", "v": "about the slowest guard, minus overlap" }] },
+      { "name": "Buffered streaming (Azure default)", "tag": "GA", "summary": "Buffer completion text, filter each buffer and return content chunks.", "pros": ["Violating text is stopped before it is sent", "No extra code"], "cons": ["Chunky streaming, not token by token", "The first chunk arrives later"], "bestWhen": "Harm if text leaks is high.", "avoidWhen": "Smooth token streaming is a hard product requirement.", "meta": [{ "k": "User sees", "v": "filtered chunks" }] },
+      { "name": "Asynchronous filter (Azure)", "tag": "GA", "summary": "Stream token by token and deliver annotations in separate messages with offsets.", "pros": ["No filter latency", "Token-by-token streaming"], "cons": ["The stop signal is guaranteed only within about a 1,000-character window, so violating text can reach the user first", "Changing the mode needs permission to modify content filtering policies"], "bestWhen": "Brief exposure is tolerable and you can retract or hide content.", "avoidWhen": "Any shown violation is unacceptable.", "meta": [{ "k": "User sees", "v": "tokens, then a verdict" }] }
+    ] },
+    { "t": "dials", "id": "w06-l1-stack", "title": "Pick a guard stack", "prompt": "Flip the risk tier, the latency budget and how the answer is delivered.",
+      "dials": [
+        { "id": "risk", "label": "Risk tier", "values": [ { "id": "low", "label": "Internal, low harm" }, { "id": "mid", "label": "Customer-facing" }, { "id": "high", "label": "Regulated or safety-relevant" } ] },
+        { "id": "latency", "label": "Latency budget", "values": [ { "id": "tight", "label": "Tight" }, { "id": "relaxed", "label": "Relaxed" } ] },
+        { "id": "delivery", "label": "Delivery", "values": [ { "id": "stream", "label": "Tokens stream to the user" }, { "id": "whole", "label": "Whole answer after checks" } ] }
+      ],
+      "options": [
+        { "id": "det", "name": "Deterministic checks only", "summary": "Schemas, allow lists, regex, size limits." },
+        { "id": "platform", "name": "Platform filters on input and output", "summary": "Harm categories, Prompt Shields, protected material." },
+        { "id": "ground", "name": "Platform plus a groundedness check", "summary": "Adds a claim-level check on the answer." },
+        { "id": "full", "name": "Full path: input, retrieval, tools, output", "summary": "Guards on every placement." },
+        { "id": "judge", "name": "LLM judge on every answer", "summary": "A second model reviews each answer against a policy." }
+      ],
+      "scores": {
+        "det": {
+          "risk": { "low": { "s": 2, "why": "Cheap and enough when harm is low." }, "mid": { "s": 0, "why": "It misses semantic harms and ungrounded claims." }, "high": { "s": -2, "why": "It cannot judge meaning, so it cannot carry a regulated assistant." } },
+          "latency": { "tight": { "s": 2, "why": "Microseconds of work, no model call." }, "relaxed": { "s": 0, "why": "Spare latency goes unused." } },
+          "delivery": { "stream": { "s": 1, "why": "Nothing to buffer for." }, "whole": { "s": 0, "why": "Neutral." } }
+        },
+        "platform": {
+          "risk": { "low": { "s": 1, "why": "Defaults are enough and cost little." }, "mid": { "s": 2, "why": "Covers the common harms and jailbreaks." }, "high": { "s": 0, "why": "Necessary but not sufficient: no claim check and no tool scans by default." } },
+          "latency": { "tight": { "s": 1, "why": "One classifier call, which you should measure, since no vendor figure is published." }, "relaxed": { "s": 1, "why": "Fits within the budget." } },
+          "delivery": { "stream": { "s": 0, "why": "Default mode buffers chunks, asynchronous mode trades exposure for speed." }, "whole": { "s": 1, "why": "Output checks run on the full text." } }
+        },
+        "ground": {
+          "risk": { "low": { "s": -1, "why": "More than the harm warrants." }, "mid": { "s": 1, "why": "Cuts confident wrong answers." }, "high": { "s": 1, "why": "Adds an answer-level check, but still no tool coverage." } },
+          "latency": { "tight": { "s": -1, "why": "Needs the finished answer and a second call." }, "relaxed": { "s": 1, "why": "Affordable." } },
+          "delivery": { "stream": { "s": -2, "why": "It must see the answer before judging it, so it conflicts with streaming." }, "whole": { "s": 2, "why": "Checks run before anything is shown." } }
+        },
+        "full": {
+          "risk": { "low": { "s": -2, "why": "Overbuilt and costly to tune." }, "mid": { "s": 0, "why": "Reasonable if documents or tools are untrusted." }, "high": { "s": 2, "why": "Covers input, retrieved content, tool calls and output." } },
+          "latency": { "tight": { "s": -2, "why": "Many guards, even in parallel, add the slowest of each stage." }, "relaxed": { "s": 1, "why": "The budget can carry it." } },
+          "delivery": { "stream": { "s": -1, "why": "Output checks fight streaming." }, "whole": { "s": 1, "why": "Fits a check-then-show flow." } }
+        },
+        "judge": {
+          "risk": { "low": { "s": -2, "why": "Costs a full model call per answer for little gain." }, "mid": { "s": -1, "why": "Heavy for the benefit." }, "high": { "s": 1, "why": "Flexible for custom policy, but not deterministic." } },
+          "latency": { "tight": { "s": -2, "why": "One extra full LLM call, roughly seconds (author estimate, not a vendor figure)." }, "relaxed": { "s": 0, "why": "Possible if the budget allows." } },
+          "delivery": { "stream": { "s": -2, "why": "Needs the whole answer first." }, "whole": { "s": 1, "why": "Fits." } }
+        }
+      },
+      "takeaway": "Risk tier and delivery mode usually decide before latency does. Streaming and answer-level checks pull in opposite directions." },
+    { "t": "failure", "title": "Guard placement failure modes", "items": [
+      { "symptom": "Policy-violating text flashes on screen and then disappears.", "cause": "Asynchronous filter mode streams first and signals the stop later, within about 1,000 characters.", "fix": "Use buffered streaming for high-risk surfaces, or hold display until the verdict. Detect with annotation offsets in logs." },
+      { "symptom": "p95 latency equals the sum of five guard calls.", "cause": "Independent guards run in series.", "fix": "Run independent guards in parallel so you pay the slowest, and record per-guard timings." },
+      { "symptom": "Tool calls go unscanned even though the model deployment has strict filters.", "cause": "An agent's guardrail fully overrides its model's, and it has no tool call or tool response controls.", "fix": "Add tool call and tool response controls (preview) to the agent's guardrail and test with a tool-bound attack." },
+      { "symptom": "A poisoned PDF steers the model although the user prompt was clean.", "cause": "Only user input was scanned. The attack arrived through retrieved content.", "fix": "Scan retrieved chunks and tool responses for document attacks and treat them as untrusted." },
+      { "symptom": "Guard outage lets everything through.", "cause": "A timeout is treated as a pass, which fails open.", "fix": "Choose fail closed or degrade to abstain per risk tier, and alert on guard timeouts." }
+    ] },
+    { "t": "callout", "kind": "note", "title": "Estimates in this level", "md": "Vendors publish no guard latency numbers on the pages checked 2026-10-13. As a planning estimate only, a classifier call costs tens to a few hundred milliseconds and an LLM judge adds one full model call. Replace both with your own p50 and p95 measurements." }
+  ],
+  "quiz": [
+    { "id": "w06-l1-q1", "type": "match", "tag": "security", "difficulty": 1, "q": "Match each threat to the earliest guard placement that can stop it.", "pairs": [ { "l": "A user types a jailbreak prompt", "r": "Input guard" }, { "l": "Instructions hidden in a retrieved PDF", "r": "Retrieval or tool response guard" }, { "l": "An agent proposes a destructive API call", "r": "Tool call guard" }, { "l": "The model reproduces song lyrics", "r": "Output guard" } ], "explain": "Each threat is only visible at one point. A clean user prompt hides the PDF attack, a tool call exists before any output, and lyrics only appear in the completion. That is why a single guard on input is not a stack." },
+    { "id": "w06-l1-q2", "type": "single", "tag": "tradeoff", "difficulty": 2, "q": "A team switches Azure content filtering to the asynchronous filter mode to cut latency. Which statement is true?", "options": ["Annotations arrive before any text is streamed, so nothing is shown first", "The filter buffers each chunk, so no violating text can ever be shown", "Some violating text can be displayed before the stop signal arrives", "The mode removes the need to configure any guardrail for the deployment"], "answer": 2, "explain": "Asynchronous filter streams token by token and sends annotations in separate messages, so some violating text can be displayed before the stop signal, which is guaranteed only within about a 1,000-character window. The default mode is the one that buffers and filters each chunk. Guardrails still need configuring, and annotations follow the text, they do not precede it." },
+    { "id": "w06-l1-q3", "type": "numeric", "tag": "numeric", "difficulty": 2, "q": "Treat these p95 times as additive. Retrieval 400 ms, model 1,600 ms, input guard 120 ms. Three independent output guards take 80, 150 and 200 ms. Run in parallel, what is the total request latency?", "answer": 2320, "tolerancePct": 1, "unit": "ms", "hint": "Parallel guards add only the slowest one", "explain": "Input guard 120 + retrieval 400 + model 1,600 + the slowest output guard 200 = 2,320 ms. Run in series the output guards add 430 ms and the total is 2,550 ms. Summing p95 values is a planning shortcut, so confirm with a measured end-to-end p95." }
+  ],
+  "defend": null,
+  "refs": ["r1", "r9", "r13", "r3"],
+  "takeaways": [
+    "A guard only sees what passes its placement, so cover input, retrieved content, tools and output",
+    "Independent guards run in parallel add the slowest, not the sum",
+    "Asynchronous filter trades latency for brief exposure, with the stop signal guaranteed only within about 1,000 characters",
+    "An agent's guardrail replaces its model's guardrail, so check tool coverage explicitly"
+  ]
+}

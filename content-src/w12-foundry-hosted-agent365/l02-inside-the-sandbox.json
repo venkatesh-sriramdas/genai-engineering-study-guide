@@ -1,0 +1,49 @@
+{
+  "id": "w12-l2",
+  "order": 2,
+  "title": "Inside the sandbox",
+  "kind": "concept",
+  "minutes": 14,
+  "brief": "A hosted agent's compute follows the session, not the request. Idle timeout, sandbox size and where state lives are dials you set before launch, and each one moves cost, latency or data loss.",
+  "blocks": [
+    { "t": "h", "text": "Compute follows the session", "level": 2 },
+    { "t": "p", "md": "In a hosted agent, compute follows the *session*, not the request [[r2]]. A session is **Active** while it serves traffic, goes **Idle** after the idle timeout and is **Resumed** by the next request. `$HOME` and `/files` are persisted on idle and restored on resume. The idle timeout is set per agent version from 2 to 60 minutes, default 15. A session is deleted permanently after 30 days of inactivity.\n\nScale is per session, with no replica count and no warm pool. Billing follows the CPU and memory consumed across active sessions, so oversizing multiplies cost by concurrency. The concept page gives no numeric rates and links to the Foundry Agent Service pricing page, so model cost from that page, not from this guide." },
+    { "t": "diagram", "id": "w12-l2-d1", "title": "Hosted session lifecycle", "alt": "A session starts Active, becomes Idle after the idle timeout, is Resumed by a new request and returns to Active. After 30 days idle it is deleted.", "src": "stateDiagram-v2\n  [*] --> Active\n  Active --> Idle: idle timeout\n  Idle --> Resumed: new request\n  Resumed --> Active: state restored\n  Idle --> Deleted: 30 days inactive\n  Deleted --> [*]", "caption": "Checked against the hosted agents concept page on 2026-10-13." },
+    { "t": "table", "caption": "Where state can live", "head": ["Store", "Scope", "Survives idle", "Survives a crash", "Ages out"], "rows": [
+      ["`$HOME` and `/files`", "One session", "Yes, persisted on idle and restored on resume", "Not stated on the concept page", "With the session, after 30 days inactive"],
+      ["Durable key-value state store", "Can partition per end user", "Yes", "Yes", "Items age out after a 30 day idle window by default"],
+      ["Your own database or storage", "Whatever you design", "Yes", "Yes", "Your retention policy (inference)"]
+    ], "highlightCol": 3 },
+    { "t": "formula", "title": "Active allocation that drives the bill", "expr": "allocated_GiB = active_sessions x GiB_per_session", "vars": [
+      { "k": "active_sessions", "v": "sessions that are Active at the same time, not Idle" },
+      { "k": "size", "v": "0.5 vCPU with 1 GiB, 1 vCPU with 2 GiB, or 2 vCPU with 4 GiB" },
+      { "k": "disk", "v": "up to 20 GiB at 1 vCPU or larger, about 20 percent reserved, shared with the image and `$HOME`" }
+    ], "example": "200 active sessions at 2 vCPU and 4 GiB hold **400 vCPU and 800 GiB**. The same load at 1 vCPU and 2 GiB holds 200 vCPU and 400 GiB. The docs advise the next size up only when sustained peaks pass about 70 percent of allocation." },
+    { "t": "failure", "title": "Failure modes", "items": [
+      { "symptom": "Uploaded files vanish after about five weeks", "cause": "The session was inactive for 30 days and was deleted, taking `$HOME` with it", "fix": "Write durable artifacts to storage you own. Alert on sessions that approach 30 idle days (inference)." },
+      { "symptom": "Users see each other's saved preferences", "cause": "The key-value state store was not partitioned per end user", "fix": "Partition by end user id and test with two users in one agent." },
+      { "symptom": "The first message after a quiet period is slow", "cause": "The session moved to Idle and state had to be restored on resume (inference)", "fix": "Measure resume latency. A longer idle timeout trades resume latency against more active-session time." },
+      { "symptom": "A deployment stops serving after 2026-08-20", "cause": "Support for the initial-preview hosted agent backend ended and routing moved to a dedicated endpoint per agent", "fix": "Redeploy on the session-sandbox model and replace the old adapter packages with `azure-ai-agentserver-responses` or `azure-ai-agentserver-invocations` [[r11]]." }
+    ] },
+    { "t": "code", "lang": "bash", "title": "Tooling floor for the migration", "code": "pip install \"azure-ai-projects>=2.3.0\"\nazd version\nazd ext install azure.ai.agents", "caption": "Minimum versions from the migration guide: azure-ai-projects 2.3.0 and azd 1.23.0, checked 2026-10-13." },
+    { "t": "accordion", "items": [
+      { "title": "Go deeper: versions are immutable snapshots", "blocks": [
+        { "t": "p", "md": "Each create-version call snapshots the image, resources, environment variables and protocol configuration [[r2]]. An endpoint serves one version and sends 100 percent of traffic to it. Traffic splitting is not supported, so a canary needs a second agent name or a client-side router (inference)." }
+      ] },
+      { "title": "Go deeper: long-running work is preview", "blocks": [
+        { "t": "p", "md": "The 2026-08 Foundry articles on resilience for long-running hosted agents, crash recovery, steering an in-flight turn, stream with reconnect and a human-in-the-loop approval step were all marked preview on 2026-10-13 [[r10]]. **Background mode** keeps work going after the request returns. **Resilient execution** keeps work going after the hosting process stops. They solve different problems, so name which failure you are covering." }
+      ] },
+      { "title": "Go deeper: the model deployment is a separate dial", "blocks": [
+        { "t": "p", "md": "The agent's model has its own deployment type [[r22]]. `GlobalStandard` is the docs' starting point and may process in any region. `DataZoneStandard` stays inside the US, EU or APAC zone. `Standard` stays inside one geography. `GlobalBatch` gives a 50 percent discount with a 24 hour target. Hosted agents were listed in 31 regions on 2026-10-13, and the list is stated to grow." }
+      ] }
+    ] }
+  ],
+  "quiz": [
+    { "id": "w12-l2-q1", "type": "numeric", "tag": "numeric", "q": "A fleet holds 120 active sessions at the 1 vCPU and 2 GiB size. How many GiB of memory are allocated across the active sessions?", "answer": 240, "tolerancePct": 1, "unit": "GiB", "hint": "allocated_GiB = active_sessions x GiB_per_session", "explain": "120 sessions x 2 GiB = 240 GiB. Billing follows CPU and memory consumed across active sessions, so moving to the 2 vCPU and 4 GiB size would double this to 480 GiB at the same concurrency. Idle sessions do not count as active.", "difficulty": 1, "ref": "r2" },
+    { "id": "w12-l2-q2", "type": "single", "tag": "diagnose", "q": "Support reports that a user's uploaded working files are gone. The user last opened the agent five weeks earlier. Which cause fits?", "code": { "lang": "text", "code": "session s-81f2 last active: 35 days ago\nstatus: not found" }, "options": ["The 2 to 60 minute idle timeout expired and `$HOME` was wiped on idle", "The endpoint served a newer version and discarded files from the older one", "The files were stored in `/files`, which is deleted on every resume", "A session is deleted after 30 days of inactivity and takes its state with it"], "answer": 3, "explain": "Idle persists `$HOME` and `/files` and resume restores them, so the idle timeout is not the cause. Versions are immutable snapshots of image, resources and config, not a store that wipes files. `/files` uploads land in `$HOME` and are restored on resume. The 30 day inactivity limit matches 35 days.", "difficulty": 2, "ref": "r2" },
+    { "id": "w12-l2-q3", "type": "order", "tag": "order", "q": "Put the life of one hosted session in order.", "items": ["Requests arrive and the session is Active", "No traffic for the idle timeout, so the session is Idle and state is persisted", "A new request arrives and the session is Resumed with state restored", "No activity for 30 days and the session is permanently deleted"], "explain": "State is persisted when the session goes Idle and restored when it resumes. Permanent deletion is the last step and only follows 30 days of inactivity.", "difficulty": 1, "ref": "r2" }
+  ],
+  "defend": null,
+  "refs": ["r2", "r10", "r11", "r22"],
+  "takeaways": ["Compute follows the session: Active, Idle, Resumed, then deleted after 30 days inactive", "Cost is active sessions times allocation, so right-size only after peaks pass about 70 percent", "An endpoint serves one immutable version, so traffic splitting needs another design", "Durable data belongs in a store you own, with per-user partitioning"]
+}

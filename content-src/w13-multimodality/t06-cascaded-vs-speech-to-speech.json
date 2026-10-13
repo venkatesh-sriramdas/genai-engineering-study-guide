@@ -1,0 +1,119 @@
+{
+  "id": "w13-t06",
+  "order": 6,
+  "group": "Audio and voice",
+  "title": "Cascaded vs speech-to-speech pipelines",
+  "minutes": 8,
+  "difficulty": "advanced",
+  "summary": "A cascaded (chained) pipeline runs speech-to-text, a text agent and text-to-speech as separate stages. A speech-to-speech model does it in one. The choice trades latency against control over the text in between.",
+  "useIf": "You are choosing a voice architecture and must weigh latency, text inspection, tool-heavy backends, cost and platform limits.",
+  "avoidIf": "You have a single fixed requirement that already decides it, such as a rule that no text may be stored, or a hard sub-second target.",
+  "explain": [
+    { "t": "p", "md": "In a **chained pipeline** you manage three stages: speech-to-text, your agent workflow, and text-to-speech. Use it when you need to inspect or transform text between stages, for example to store the transcript, run policy checks before the agent answers, or speak only after an approved answer [[r3]]. In **speech-to-speech** one model hears and speaks. Foundry's voice-based agent docs describe the same split: native speech-to-speech is optimised for low latency, while cascaded gives more model and voice choice and control, but each stage adds latency [[r8]] (preview, checked 2026-10-13)." },
+    { "t": "p", "md": "Two more shapes sit between them. **GPT-Live** is full duplex and delegates reasoning to a separate backend, so a slow tool call does not freeze the conversation [[r3]]. **Azure Voice Live** is a managed pipeline with noise suppression, echo cancellation and end-of-turn detection, available over WebSocket events close to the Realtime API [[r7]]. Whatever you pick, measure audible response time at the median and 95th percentile, task completion and interruption behaviour, and compare changes with the caller, prompt and transport held fixed [[r3]]." },
+    { "t": "diagram", "id": "w13-t06-d1", "title": "Where you can intercept", "alt": "The chained path has a policy check between speech-to-text and the text agent. The speech-to-speech path goes straight from the microphone to one model.", "src": "flowchart LR\n  M1[Mic] --> STT[Speech to text]\n  STT --> P[Policy check]\n  P --> AG[Text agent]\n  AG --> TTS[Text to speech]\n  TTS --> SP1[Speaker]\n  M2[Mic] --> S2S[Speech-to-speech model]\n  S2S --> SP2[Speaker]" },
+    { "t": "dials", "id": "w13-t06-pick", "title": "Pick a voice architecture", "prompt": "Flip the constraints and watch the ranking change.", "dials": [
+      { "id": "text", "label": "Text control", "values": [{ "id": "must", "label": "Must inspect or redact text" }, { "id": "no", "label": "Not required" }] },
+      { "id": "load", "label": "Reasoning load", "values": [{ "id": "light", "label": "Light, fast answers" }, { "id": "heavy", "label": "Slow, tool-heavy backend" }] },
+      { "id": "plat", "label": "Platform", "values": [{ "id": "azure", "label": "Azure speech features and data zones" }, { "id": "any", "label": "No platform constraint" }] }
+    ], "options": [
+      { "id": "chain", "name": "Chained pipeline", "summary": "Three stages you own." },
+      { "id": "s2s", "name": "Realtime speech-to-speech", "summary": "One model per session." },
+      { "id": "live", "name": "GPT-Live with a backend", "summary": "Full duplex voice, delegated reasoning." },
+      { "id": "vl", "name": "Azure Voice Live", "summary": "Managed Azure speech pipeline." }
+    ], "scores": {
+      "chain": { "text": { "must": { "s": 2, "why": "Text is visible and gateable between stages." }, "no": { "s": -1, "why": "Extra stages and latency with no payoff." } }, "load": { "light": { "s": -1, "why": "Three hops for a simple turn." }, "heavy": { "s": 1, "why": "Keeps your tuned text agent and tools." } }, "plat": { "azure": { "s": 1, "why": "Azure Speech plus a model, you host orchestration." }, "any": { "s": 0, "why": "No platform pull either way." } } },
+      "s2s": { "text": { "must": { "s": -2, "why": "No text gate before the model hears audio." }, "no": { "s": 1, "why": "Lowest-latency single hop." } }, "load": { "light": { "s": 2, "why": "Fast turns suit one model." }, "heavy": { "s": -1, "why": "Long tool calls leave silence." } }, "plat": { "azure": { "s": 0, "why": "Available on Azure with a 60-minute session cap." }, "any": { "s": 1, "why": "Simple to adopt." } } },
+      "live": { "text": { "must": { "s": -1, "why": "The live model still hears raw audio." }, "no": { "s": 1, "why": "Strong conversational feel." } }, "load": { "light": { "s": 0, "why": "Delegation adds little for easy turns." }, "heavy": { "s": 2, "why": "Voice stays responsive while the backend works." } }, "plat": { "azure": { "s": -1, "why": "Documented on OpenAI's platform, not Azure's managed speech." }, "any": { "s": 1, "why": "Reuses your text workflow as backend." } } },
+      "vl": { "text": { "must": { "s": -1, "why": "Managed stages, so verify what hooks you get (inference)." }, "no": { "s": 1, "why": "No orchestration to host." } }, "load": { "light": { "s": 1, "why": "Low-latency managed path." }, "heavy": { "s": 0, "why": "Function calling exists, long calls still pause speech." } }, "plat": { "azure": { "s": 2, "why": "Noise suppression, 140+ locales, data zone model variants [[r7]]." }, "any": { "s": 0, "why": "Azure features unused." } } }
+    }, "takeaway": "Text control points to chained, slow backends to delegation, and Azure speech features to Voice Live." }
+  ],
+  "whereToUse": [
+    "Regulated lines where transcripts must be stored or redacted before reasoning",
+    "Consumer assistants where latency and natural overlap matter most",
+    "Concierge agents whose backend calls internal systems and takes seconds",
+    "Azure estates that want Azure Speech features without hosting orchestration"
+  ],
+  "whenToUse": {
+    "use": [
+      "Chained when text must be filtered or logged, or a tuned text agent already exists",
+      "Speech-to-speech when latency is the top priority",
+      "Delegation when a slow backend must not freeze the call"
+    ],
+    "avoid": [
+      "Speech-to-speech where a policy needs text before the model hears the audio",
+      "Chained when every stage adds latency you cannot afford and no text control is needed",
+      "Foundry voice agents in production if your policy forbids preview features"
+    ],
+    "flips": [
+      "A new rule demands transcript redaction: move from speech-to-speech to chained",
+      "Backend calls grow from 1 s to 6 s: add delegation or filler responses",
+      "The estate must be GA only: check the preview status of every voice component"
+    ]
+  },
+  "alternatives": {
+    "title": "Voice architectures compared",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Chained pipeline", "Text inspection, existing text agent", "Lowest latency matters most", "Latency per stage, more moving parts"],
+      ["Realtime speech-to-speech", "New app, latency first", "Text must be gated first", "Audio token cost grows per turn [[r5]]"],
+      ["GPT-Live with a backend", "Slow or tool-heavy reasoning", "You need Azure-managed speech features", "Two prompts to maintain"],
+      ["Azure Voice Live", "Azure features, no orchestration to host", "A GA-only rule covers the whole stack", "Agent surface is preview (checked 2026-10-13)"],
+      ["Foundry voice-based prompt agent", "A prompt agent needs a voice front end", "Production needs GA, or direct SIP", "Preview, no direct SIP, no standard Teams card [[r8]]"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Callers hear long silences in a chained agent", "cause": "Each stage waits for the previous one, and slow tools add up", "fix": "Stream between stages, add a short acknowledgment, and measure time to first audio at p95." },
+    { "symptom": "Compliance cannot show what the model heard", "cause": "A speech-to-speech session was chosen without a transcript or event log plan", "fix": "Log events and transcripts you are allowed to keep, or move to a chained design." },
+    { "symptom": "A 'one moment' filler arrives too late", "cause": "In Foundry voice agents `latency_threshold_ms` for interim responses defaults to 2000", "fix": "Lower it, as the docs advise [[r9]]." }
+  ],
+  "scenarios": [
+    {
+      "id": "w13-t06-s1",
+      "title": "Card-holder line with PII rules",
+      "situation": "A bank voice line must mask account numbers in the transcript before any model sees them, and keep an audit record of every utterance.",
+      "constraints": ["Text must be redacted pre-model", "Audit trail required", "Moderate latency target"],
+      "unknowns": ["Which fields count as PII?", "Is a 1 to 2 second delay acceptable?"],
+      "question": "Which architecture?",
+      "options": [
+        { "name": "Chained pipeline with a redaction step between speech-to-text and the agent", "verdict": "best", "why": "Only a chained design lets you transform text before reasoning, and you store the transcript yourself [[r3]].", "tradeoff": "Added latency per stage and more components." },
+        { "name": "Realtime speech-to-speech with a policy prompt", "verdict": "poor", "why": "The model hears raw audio, so a prompt cannot redact before it listens.", "tradeoff": "Right when no pre-model text control is needed." },
+        { "name": "GPT-Live with a text backend that redacts", "verdict": "good", "why": "The backend sees redacted text and holds the rules.", "tradeoff": "The live model still hears the raw audio, so it only fits if that is allowed." }
+      ],
+      "flips": [
+        { "if": "Policy allows the model to hear raw audio but forbids storing it", "then": "Speech-to-speech with logging off becomes possible." },
+        { "if": "Latency must be under a second", "then": "Re-examine, since redaction forces a text stage." }
+      ],
+      "takeaway": "Pre-model text control needs a text stage."
+    },
+    {
+      "id": "w13-t06-s2",
+      "title": "Concierge with slow lookups",
+      "situation": "A hotel concierge agent calls booking and loyalty systems that take 4 to 8 seconds. Guests talk naturally and interrupt.",
+      "constraints": ["Slow backend", "Natural interruption", "Existing text workflow with tools"],
+      "unknowns": ["Can the backend stream partial results?", "Is the workflow already tested?"],
+      "question": "How do you keep the call alive?",
+      "options": [
+        { "name": "GPT-Live with the existing workflow as the backend", "verdict": "best", "why": "Full duplex lets guests keep talking while the backend runs, and your logic stays in one place [[r3]].", "tradeoff": "Two prompts: speaking behaviour and business rules." },
+        { "name": "Realtime speech-to-speech with tool calls and a filler line", "verdict": "good", "why": "Simplest build.", "tradeoff": "Tool waits still produce awkward pauses." },
+        { "name": "Chained pipeline", "verdict": "poor", "why": "Adds stage latency on top of an already slow backend.", "tradeoff": "Right when text control outweighs responsiveness." }
+      ],
+      "flips": [
+        { "if": "Lookups drop below one second", "then": "Plain speech-to-speech is simpler." },
+        { "if": "Stack is Azure-only", "then": "Compare Voice Live with function calling." }
+      ],
+      "takeaway": "Slow tools call for delegation or filler design."
+    }
+  ],
+  "quiz": [
+    { "id": "w13-t06-q1", "type": "single", "tag": "flip", "q": "Which new requirement most clearly forces a move from speech-to-speech to a chained pipeline?", "options": ["Callers speak several languages", "Account numbers must be redacted before any model sees the text", "The call must feel more natural", "Sessions last 30 minutes"], "answer": 1, "explain": "Only a chained design lets you intercept and transform text between recognition and reasoning. Languages, naturalness and session length do not require a text stage." },
+    { "id": "w13-t06-q2", "type": "multi", "tag": "tradeoff", "q": "Which statements fit the documented trade-off between native speech-to-speech and cascaded voice agents?", "options": ["Native is optimised for low latency", "Cascaded gives more model and voice choice and control", "Cascaded removes all latency from each stage", "Native lets you edit text between stages"], "answers": [0, 1], "explain": "Foundry's docs say native is optimised for low latency and cascaded adds control at the cost of latency per stage. The other two statements are the reverse of that." }
+  ],
+  "flashcards": [
+    { "front": "When do you choose a chained voice pipeline?", "back": "When you must inspect, redact, log or replace text between recognition, the agent and speech, or when a tuned text agent already exists." },
+    { "front": "What problem does GPT-Live delegation solve?", "back": "A slow backend freezing the call. The full-duplex live model keeps talking and listening while a separate backend does the reasoning." },
+    { "front": "How do you compare voice architectures fairly?", "back": "Hold caller, prompt, backend and transport fixed. Measure audible response time at p50 and p95, task completion, interruptions and unwanted silence." }
+  ],
+  "related": ["w13-t05", "w13-t07", "w13-t04", "w13-l4", "w12-t02", "w13-t13"],
+  "refs": ["r3", "r5", "r7", "r8", "r9"]
+}

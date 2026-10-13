@@ -1,0 +1,100 @@
+{
+  "id": "w10-t19",
+  "order": 19,
+  "group": "Context and memory",
+  "title": "Memory types",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "Agent memory has a short-lived working part (the context window) and long-term parts that persist: episodic (what happened), semantic (what is true) and procedural (how to do things). Name the type before you choose a store.",
+  "useIf": "An assistant should remember things across turns or sessions, and you must decide what to store, where and how it is read back.",
+  "avoidIf": "Do not add long-term memory when thread state suffices, or when you cannot meet privacy, deletion or isolation rules for what it stores.",
+  "explain": [
+    { "t": "p", "md": "The CoALA framework splits agent memory into **working memory** and long-term memory, and divides long-term memory into **procedural**, **semantic** and **episodic** [[r28]]. Working memory is what sits in the context window at the current step. Generative Agents keep a memory stream of natural-language experiences, synthesise reflections from them and retrieve dynamically [[tr16]]. MemGPT borrows the operating-system idea of tiers: virtual context management that moves information between memory tiers, using interrupts for control flow [[r29]]." },
+    { "t": "table", "caption": "Memory types, stores and reads", "head": ["Type", "Holds", "Typical store", "Read policy", "Example"], "rows": [
+      ["Working", "The current prompt, scratchpad, plan", "Context window, thread state", "Always present", "Current task notes"],
+      ["Episodic", "What happened in past interactions", "Event log, summaries, vector index", "Retrieve by similarity and recency", "Last week's failed deploy"],
+      ["Semantic", "Facts and preferences that stay true", "Profile store, key-value, vector index", "Load at session start or by relevance", "User prefers metric units"],
+      ["Procedural", "How to do recurring tasks", "Instruction or notes files, prompts, skills", "Load for matching workflows", "Steps for the release checklist"]
+    ] },
+    { "t": "diagram", "id": "w10-t19-d1", "title": "Write path and read path", "alt": "Conversation events pass through extraction and consolidation into long-term stores for episodic, semantic and procedural memory. At run time, relevant items are retrieved into the working memory in the context window.", "src": "flowchart LR\n  E[Events] --> X[Extract]\n  X --> K[Consolidate]\n  K --> L[(Long-term memory store)]\n  L -->|retrieve| W[Working memory: context window]\n  W --> E" },
+    { "t": "p", "md": "Managed services follow this shape. Foundry Agent Service memory (preview, checked 2026-10-13) offers three types enabled by default: user profile, retrieved at conversation start; chat summary, retrieved per turn; and procedural memory, retrieved for recurring workflows. It runs phases of extraction, consolidation and retrieval, and is reached through the memory search tool on a prompt agent or the Memory Store APIs [[r13]]. In LangGraph, checkpointers store thread-scoped state, while stores hold cross-thread memory [[r43]]. Claude's memory tool is client-side: Claude asks for file operations under `/memories` and your application executes them [[r41]]. Mem0 is a vendor library whose paper reports gains on the LOCOMO benchmark; the results are vendor-authored [[r40]]." },
+    { "t": "callout", "kind": "tip", "title": "Memory is more than a vector store", "md": "A vector index suits episodic recall. Semantic facts often fit a profile record you can edit and delete, and procedural memory often fits plain text instructions that people can review." }
+  ],
+  "whereToUse": [
+    "Personal assistants that should recall preferences across sessions",
+    "Support agents that need a short history of the customer's earlier cases",
+    "Coding agents that learn repository conventions and recurring procedures",
+    "Long-running agents that carry notes across context windows",
+    "Multi-agent systems that share facts through a common store"
+  ],
+  "whenToUse": {
+    "use": ["Value comes from recall across sessions", "You can name what type of fact each memory is", "You can scope, expire and delete each memory"],
+    "avoid": ["Thread state or a profile form already covers the need", "You cannot isolate memory per user or tenant", "The deployment needs network isolation your memory service does not support"],
+    "flips": ["Strict network isolation: Foundry memory has no VNet support in preview, so use a store you control [[r13]]", "Memory must be human-reviewable: prefer text notes over opaque vectors", "Recall quality is poor: improve extraction and consolidation before adding more storage"]
+  },
+  "alternatives": {
+    "title": "Memory approaches compared",
+    "head": ["Approach", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Thread state only", "Continuity within one session is enough", "Users expect recall next week", "Cheapest, no persistence"],
+      ["Managed memory service (Foundry memory, preview)", "You want extraction and consolidation as a service", "Isolated networks, strict limits, preview risk", "Limits and no VNet support [[r13]]"],
+      ["Library such as Mem0", "You want a memory layer you host", "You need vendor-neutral evidence", "Vendor-reported results [[r40]]"],
+      ["Client-side memory files", "You need full control and reviewable text", "Large-scale semantic recall", "You build path safety and storage [[r41]]"],
+      ["Bespoke database", "Tight schema, audit and deletion needs", "Speed to first version matters", "You own extraction and retrieval"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "The assistant recalls irrelevant or outdated facts", "cause": "Everything is stored and retrieved by similarity alone", "fix": "Consolidate and deduplicate, add recency and scope, and filter by type at retrieval." },
+    { "symptom": "Memory from one user appears for another", "cause": "A shared store with no scope key on reads", "fix": "Require a scope such as user or tenant on every read and write, and test isolation." },
+    { "symptom": "The agent repeats mistakes it already learned from", "cause": "Lessons were never written as procedural memory", "fix": "Write short, reviewable procedures after failures and load them for matching tasks." }
+  ],
+  "scenarios": [
+    {
+      "id": "w10-t19-s1",
+      "title": "Personalisation under network isolation",
+      "situation": "An assistant should remember each user's preferences and ongoing projects. The deployment runs inside a private network, and the security team requires that memory data never leave it.",
+      "constraints": ["Private network required", "Per-user memory with deletion on request", "Moderate volume"],
+      "unknowns": ["Does the managed memory service support your network setup?", "Who reviews what gets stored?"],
+      "question": "Which memory approach fits?",
+      "options": [
+        { "name": "A store you control inside the network, with scoped profile records and extracted notes", "verdict": "best", "why": "It satisfies isolation and deletion, and a profile record plus notes covers semantic and episodic needs.", "tradeoff": "You build extraction, consolidation and retrieval yourself." },
+        { "name": "Foundry memory in preview", "verdict": "poor", "why": "As of 2026-10-13 it does not support VNet integration, and it is a preview service.", "tradeoff": "A strong fit where network isolation is not required and preview limits are acceptable." },
+        { "name": "No long-term memory, only thread state", "verdict": "good", "why": "Lowest risk and effort.", "tradeoff": "Users must restate preferences each session." }
+      ],
+      "flips": [
+        { "if": "The managed service adds the needed network support and leaves preview", "then": "Reconsider it to avoid building extraction yourself." },
+        { "if": "No regulatory limits apply", "then": "A managed or library-based layer saves build time." }
+      ],
+      "takeaway": "Check isolation support before choosing a managed memory."
+    },
+    {
+      "id": "w10-t19-s2",
+      "title": "Coding agent that should learn",
+      "situation": "A coding agent keeps asking the same questions about build commands and code conventions in each session. Engineers want the lessons stored where they can read and correct them.",
+      "constraints": ["Lessons are procedures and conventions", "Humans must review and edit", "Single repository scope"],
+      "unknowns": ["How large are the notes after a month?", "Which lessons are repository-wide versus personal?"],
+      "question": "What do you store, and where?",
+      "options": [
+        { "name": "Procedural notes as plain text files in the repository that the agent loads at session start and updates after failures", "verdict": "best", "why": "Procedures are small and reviewable, and files live with the code and can be corrected in review.", "tradeoff": "Notes need pruning, and the agent needs rules for what is worth writing." },
+        { "name": "Embed every past chat into a vector index", "verdict": "poor", "why": "Noisy retrieval returns stale or conflicting snippets, and nobody can audit it.", "tradeoff": "Right for recalling specific past episodes by similarity at scale." },
+        { "name": "No memory, a longer system prompt", "verdict": "good", "why": "Simple and reviewable.", "tradeoff": "Prompt grows by hand, and cannot capture lessons from new failures automatically." }
+      ],
+      "flips": [
+        { "if": "Notes become too long to load", "then": "Split by topic and load only matching files." },
+        { "if": "Many repositories share lessons", "then": "Add a shared semantic store with review." }
+      ],
+      "takeaway": "Match the store to the memory type: procedures like text."
+    }
+  ],
+  "quiz": [
+    { "id": "w10-t19-q1", "type": "match", "tag": "concept", "q": "Match each memory type to the best example.", "pairs": [{ "l": "Working memory", "r": "The plan and scratchpad in the current context window" }, { "l": "Episodic memory", "r": "Notes on what happened in last week's failed deployment" }, { "l": "Semantic memory", "r": "A user's preferred units and language" }, { "l": "Procedural memory", "r": "Steps for the team's release checklist" }], "explain": "Working memory is the current context. Episodic memory records past events, semantic memory holds lasting facts and preferences and procedural memory holds how-to knowledge. [[r28]]", "ref": "r28", "difficulty": 1 },
+    { "id": "w10-t19-q2", "type": "single", "tag": "tradeoff", "q": "Which statement about Foundry Agent Service memory is accurate as of 2026-10-13?", "options": ["It is generally available with VNet support", "It is a preview feature with no VNet support and per-store limits", "It stores only chat summaries", "It requires no embedding or chat model deployments"], "answer": 1, "explain": "The docs mark it as preview, list user profile, chat summary and procedural memory, state a VNet limitation and need compatible chat and embedding deployments. [[r13]]", "ref": "r13", "difficulty": 2 }
+  ],
+  "flashcards": [
+    { "front": "CoALA's long-term memory types?", "back": "Procedural, semantic and episodic, alongside working memory [[r28]]." },
+    { "front": "Foundry memory types, status and one limit?", "back": "Preview as of 2026-10-13: user profile, chat summary and procedural. Limits include 100 scopes per store and no VNet support [[r13]]." },
+    { "front": "LangGraph checkpointer versus store?", "back": "A checkpointer saves thread-scoped state. A store holds cross-thread memory [[r43]]." }
+  ],
+  "related": ["w10-l5", "w10-t20", "w10-t17", "w10-t21"],
+  "refs": ["r28", "tr16", "r29", "r13", "r43", "r41", "r40"]
+}

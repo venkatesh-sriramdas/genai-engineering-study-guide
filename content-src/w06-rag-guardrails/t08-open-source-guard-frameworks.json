@@ -1,0 +1,115 @@
+{
+  "id": "w06-t08",
+  "order": 8,
+  "group": "Alternatives and operations",
+  "title": "Open-source guard frameworks",
+  "minutes": 8,
+  "difficulty": "advanced",
+  "summary": "NeMo Guardrails orchestrates rails around an LLM, Guardrails AI runs validators on inputs and outputs, and Llama Guard is a safety classifier model. You self-host them when data location, taxonomy or language rule out the managed service.",
+  "useIf": "Data cannot leave your environment, your policy taxonomy is custom, or you need flow control and validation logic the platform guardrails do not offer.",
+  "avoidIf": "A managed guardrail already meets the need: self-hosting adds GPUs, evaluation work and upgrade churn.",
+  "explain": [
+    { "t": "p", "md": "**NeMo Guardrails** is an open-source Python library, also deployable as a Kubernetes microservice with the same YAML and Colang configuration. It names five rail types: input, retrieval, dialog, execution and output. Built-ins cover content safety, jailbreak detection, topic control, PII handling and fact-checking, with integrations for Llama Guard, NemoGuard models and third-party APIs. Its `self check facts` output rail uses `$relevant_chunks` as evidence and returns a 0.0 to 1.0 score that depends on the LLM following the prompt. If a reasoning model spends its `max_tokens` budget before answering, the rail fails closed (score 0.0, response blocked) [[r13]] [[r14]]. The docs list releases v0.22.0 to v0.24.1 plus a Latest build, so pin a version." },
+    { "t": "p", "md": "**Guardrails AI** is a Python framework that runs Input and Output Guards built from validators in Guardrails Hub, and also produces structured output. The Hub showed 65 validators on 2026-10-13 (for example ban list, toxic language, detect jailbreak and detect PII, which uses Microsoft Presidio), and that count changes often [[r15]] [[r29]] [[r17]]." },
+    { "t": "p", "md": "**Llama Guard** is a safety classifier model. Llama Guard 4 has 12B parameters, is natively multimodal (early fusion), runs on one GPU and is a drop-in for Llama Guard 3 8B and 11B. Llama Guard 3 1B remains useful at the edge. It classifies prompt text and an image together, not an image alone. Llama Guard 3 uses categories S1 Violent Crimes to S14 Code Interpreter Abuse, and the category text in the prompt can be rewritten, which is how you encode a custom taxonomy [[r16]]." },
+    { "t": "stats", "items": [
+      { "label": "NeMo rail types", "value": "5", "note": "Input, retrieval, dialog, execution, output" },
+      { "label": "Guardrails Hub validators", "value": "65", "note": "Count on 2026-10-13, changes often" },
+      { "label": "Llama Guard 4 size", "value": "12B", "note": "Natively multimodal, one GPU" },
+      { "label": "Llama Guard 3 categories", "value": "S1 to S14", "note": "Category text is rewritable" }
+    ] },
+    { "t": "callout", "kind": "tip", "title": "Self-hosting does not remove evaluation", "md": "Whichever framework you pick, you own the labelled test set, the thresholds and the upgrade regression runs." }
+  ],
+  "whereToUse": [
+    "On-premises or sovereign deployments where prompts cannot go to a managed API",
+    "Products with a custom safety taxonomy (for example domain-specific advice rules)",
+    "Dialog systems that need scripted flows and topic control, not only classification",
+    "Python services that need schema validation plus lightweight content checks",
+    "Edge or latency-sensitive paths using a small classifier model"
+  ],
+  "whenToUse": {
+    "use": [
+      "Use Llama Guard when you need a self-hosted classifier with rewritable categories",
+      "Use NeMo Guardrails when you need rails across input, retrieval, dialog, execution and output",
+      "Use Guardrails AI when validators and structured output are the main need",
+      "Combine them with deterministic checks for exact rules"
+    ],
+    "avoid": [
+      "Avoid self-hosting when you cannot run GPUs or maintain an evaluation set",
+      "Avoid unpinned framework versions: behaviour changes between releases",
+      "Avoid relying on an LLM-prompt rail with a reasoning model without testing the `max_tokens` budget"
+    ],
+    "flips": [
+      "Data may go to a managed API and categories are standard: use platform guardrails",
+      "Image-only moderation is needed: Llama Guard 4 classifies text and image together, so add another image classifier",
+      "Policy is mostly exact rules: deterministic checks beat a classifier on cost and clarity"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["NeMo Guardrails", "Flow control, topic control, multiple rail types", "You want a small dependency or only a classifier", "Config learning curve, version churn"],
+      ["Guardrails AI", "Validators and structured output in Python", "You need dialog flow control", "Validator quality varies, count changes often"],
+      ["Llama Guard (self-hosted)", "Custom categories, data stays in house", "No GPU capacity, image-only needs", "GPU cost, calibration"],
+      ["Managed platform guardrails", "Standard harm categories, no operations", "Custom taxonomy or data residency limits", "Language tests are English-centred for several features"],
+      ["Prompted LLM judge", "Fast to prototype, any policy text", "Latency, cost, consistency", "Judge bias and drift"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "The fact-checking rail blocks every answer after a model change", "cause": "A reasoning model used its whole `max_tokens` budget before answering, so the rail failed closed with a 0.0 score", "fix": "Raise the budget or use a non-reasoning model for the rail" },
+    { "symptom": "Behaviour changes after a library upgrade", "cause": "Framework releases change defaults and prompts (NeMo docs list several releases)", "fix": "Pin versions and rerun the evaluation set on every upgrade" },
+    { "symptom": "A rewritten Llama Guard category over-flags or misses", "cause": "Category text changed the classifier's behaviour without recalibration", "fix": "Evaluate the new taxonomy on labelled data before use" },
+    { "symptom": "A Hub validator passes demos but fails on real data", "cause": "Validator quality and coverage vary by language and domain", "fix": "Treat validators as components and test them on your own set" }
+  ],
+  "scenarios": [
+    {
+      "id": "w06-t08-s1",
+      "title": "On-premises assistant with a custom policy",
+      "situation": "A regulated firm runs an assistant on its own infrastructure. Prompts and documents cannot be sent to an external API. Policy forbids personal investment recommendations, which standard harm categories do not cover.",
+      "constraints": ["Data stays on premises", "Custom policy category", "GPU capacity exists", "A labelled policy test set can be built"],
+      "unknowns": ["How many policy categories?", "What latency can the guard add?"],
+      "question": "Which guard approach fits?",
+      "options": [
+        { "name": "Self-hosted Llama Guard with rewritten category text, plus deterministic checks for exact rules", "verdict": "best", "why": "It runs in house and the category text can encode the custom policy.", "tradeoff": "GPU operation and the work to calibrate the new category." },
+        { "name": "NeMo Guardrails with Colang flows calling a local model", "verdict": "good", "why": "Strong flow and topic control without external calls.", "tradeoff": "Heavier configuration and an LLM call per rail." },
+        { "name": "A managed content safety API", "verdict": "poor", "why": "Data leaves the environment and the policy is not a standard category.", "tradeoff": "Right when data may be sent and categories are standard." }
+      ],
+      "flips": [
+        { "if": "Data may go to a compliant managed service", "then": "Use platform guardrails plus a custom classifier for the policy." },
+        { "if": "The policy is a short list of phrases", "then": "Deterministic rules are cheaper." }
+      ],
+      "takeaway": "Data location and custom taxonomy are the usual reasons to self-host."
+    },
+    {
+      "id": "w06-t08-s2",
+      "title": "Python service that must return valid JSON",
+      "situation": "A small team runs a Python service that must return schema-valid JSON and block a ban list of terms plus basic PII. They want results this month with little infrastructure.",
+      "constraints": ["Small team", "Python stack", "Structured output needed", "No GPU capacity"],
+      "unknowns": ["Which languages appear?", "How strict is PII detection?"],
+      "question": "Which framework do you start with?",
+      "options": [
+        { "name": "Guardrails AI with Hub validators for structured output, ban list and PII", "verdict": "best", "why": "It is a Python library built around input and output guards and structured output, with no GPU needed.", "tradeoff": "Validator quality varies, so you test on your data." },
+        { "name": "NeMo Guardrails", "verdict": "good", "why": "Covers more rail types than this job needs and runs in Python.", "tradeoff": "More configuration than this need requires." },
+        { "name": "Train a custom classifier first", "verdict": "poor", "why": "It delays delivery and needs labelled data and GPUs.", "tradeoff": "Right once off-the-shelf validators clearly fail on your data." }
+      ],
+      "flips": [
+        { "if": "The product adds multi-turn flows with strict topics", "then": "Move to NeMo Guardrails for dialog rails." },
+        { "if": "Self-hosted classification becomes necessary", "then": "Add Llama Guard behind a guard." }
+      ],
+      "takeaway": "Start with the lightest tool that meets the requirement."
+    }
+  ],
+  "quiz": [
+    { "id": "w06-t08-q1", "type": "single", "tag": "concept", "q": "Which statement about Llama Guard 4 is correct?", "options": ["It has 12B parameters, is natively multimodal and runs on one GPU", "It classifies an image alone without text", "It only works for English text", "It is a managed Azure service"], "answer": 0, "explain": "Llama Guard 4 is a 12B natively multimodal open-weights model that runs on one GPU. It classifies text and image together, not an image alone, and it is not an Azure service.", "ref": "r16" },
+    { "id": "w06-t08-q2", "type": "multi", "tag": "concept", "q": "Which are NeMo Guardrails rail types?", "options": ["Input", "Retrieval", "Execution", "Compression"], "answers": [0, 1, 2], "explain": "NeMo names input, retrieval, dialog, execution and output rails. Compression is not a rail type.", "ref": "r13" },
+    { "id": "w06-t08-q3", "type": "single", "tag": "diagnose", "q": "Your NeMo `self check facts` rail suddenly blocks all answers after you switch to a reasoning model. Most likely cause?", "options": ["The Colang file was deleted", "Llama Guard was updated", "The model spent its whole `max_tokens` budget thinking, so the rail scored 0.0 and failed closed", "The index is stale"], "answer": 2, "explain": "The documentation notes the rail fails closed with a 0.0 score when a reasoning model uses its `max_tokens` before answering. The other causes do not match the symptom.", "ref": "r14" }
+  ],
+  "flashcards": [
+    { "front": "Five NeMo Guardrails rail types?", "back": "Input, retrieval, dialog, execution and output. Retrieval rails filter chunks, execution rails check tool calls." },
+    { "front": "Guardrails AI in one line?", "back": "A Python framework running Input and Output Guards from Hub validators (65 on 2026-10-13), also producing structured output." },
+    { "front": "How do you encode a custom policy in Llama Guard?", "back": "Rewrite the category text in the prompt, then evaluate on labelled data. It classifies text and image together, not an image alone." }
+  ],
+  "related": ["w06-t07", "w06-t09", "w06-t10", "w06-l4", "w14-t13"],
+  "refs": ["r13", "r14", "r15", "r16", "r17", "r28", "r29"]
+}

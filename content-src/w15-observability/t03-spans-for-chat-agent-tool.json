@@ -1,0 +1,161 @@
+{
+  "id": "w15-t03",
+  "order": 3,
+  "group": "Standards",
+  "title": "Spans for chat, agent and tool calls",
+  "minutes": 7,
+  "difficulty": "core",
+  "summary": "An agent run becomes a tree of spans: invoke_agent at the top, a chat span for each model call and an execute_tool span for each tool call, optionally under an invoke_workflow span. The nesting shows where time and tokens went.",
+  "useIf": "You need to see which model calls, tool calls and sub-agents made up one agent run and how long each took.",
+  "avoidIf": "You only need aggregate rates: metrics are cheaper and unsampled for that.",
+  "explain": [
+    { "t": "p", "md": "The GenAI conventions name spans by operation. An inference span is `{gen_ai.operation.name} {gen_ai.request.model}` (for example `chat my-model`), kind CLIENT, or INTERNAL for in-process models. An agent run is `invoke_agent {gen_ai.agent.name}`, CLIENT for a remote agent service and INTERNAL for an in-process framework. A tool call is `execute_tool {gen_ai.tool.name}`, INTERNAL. A graph or orchestrator that coordinates several agents is `invoke_workflow {gen_ai.workflow.name}`, INTERNAL. There are also `create_agent` (CLIENT) and `plan` (INTERNAL) spans [[r3]] [[r2]]." },
+    { "t": "diagram", "id": "w15-t03-d1", "title": "A traced run: workflow, agent, model and tool spans", "alt": "A workflow span contains an agent span. The agent span contains two chat spans and an execute tool span. The execute tool span contains an MCP tools call span.", "src": "flowchart TD\n  W[invoke_workflow review] --> A[invoke_agent planner]\n  A --> C1[chat model first call]\n  A --> T[execute_tool search_docs]\n  T --> M[tools/call search_docs]\n  A --> C2[chat model second call]" },
+    { "t": "table", "caption": "Names, kinds and what to record [[r3]] [[r6]]", "head": ["Operation", "Span name", "Kind", "Record at least"], "rows": [
+      ["Model call", "`chat {model}`", "CLIENT", "Provider, model, finish reasons, token usage, `error.type`"],
+      ["Agent run", "`invoke_agent {agent}`", "INTERNAL or CLIENT", "Agent name and id, conversation id, run duration"],
+      ["Workflow run", "`invoke_workflow {workflow}`", "INTERNAL", "Workflow name, total duration, error"],
+      ["Tool call", "`execute_tool {tool}`", "INTERNAL", "Tool name, duration, error (arguments and results are opt-in)"],
+      ["MCP request", "`{mcp.method.name} {target}`, for example `tools/call get-weather`", "CLIENT and SERVER", "Method, target, duration"]
+    ] },
+    { "t": "p", "md": "Agent Framework emits `invoke_agent <agent_name>`, `chat <model_name>` and `execute_tool <function_name>` [[r10]]. For workflows it also emits `workflow.build`, `workflow.session` or `workflow.run`, `executor.process {executor_id}`, `edge_group.process` and `message.send` spans. The OTel `invoke_workflow` span is newer than that doc page (dated 2026-05-27), so whether current builds emit it is UNVERIFIED [[r11]]. In .NET the `gen_ai.*` spans appear only after you wrap the client or agent with `UseOpenTelemetry`, and wrapping both layers duplicates content when sensitive data is on [[r10]]." }
+  ],
+  "whereToUse": [
+    "Finding which of several model calls or tools made an agent run slow",
+    "Spotting loops: many `chat` and `execute_tool` spans under one `invoke_agent`",
+    "Seeing which executor or branch of a workflow blocked a superstep",
+    "Checking that a tool or MCP server was called with the expected duration and error",
+    "Building per-agent and per-tool latency and error dashboards from span attributes"
+  ],
+  "whenToUse": {
+    "use": [
+      "Trace agent, model and tool spans for every production agent run",
+      "Add workflow spans when several agents or executors cooperate",
+      "Keep span names low-cardinality: operation plus model, agent or tool name"
+    ],
+    "avoid": [
+      "Do not put user text or ids into span names",
+      "Do not wrap both the chat client and the agent in .NET with content capture on",
+      "Do not trace every token chunk as a span"
+    ],
+    "flips": [
+      "Volume is huge and cost matters: keep span structure and sample traces, use metrics for totals",
+      "You call a remote agent service: record it as a CLIENT `invoke_agent` and propagate context",
+      "A framework already emits these spans: add only business-level spans of your own"
+    ]
+  },
+  "alternatives": {
+    "title": "Granularity of instrumentation",
+    "head": ["Level", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["One span per request", "Cheap overview of latency and errors", "A run makes many model and tool calls", "You cannot tell which step was slow"],
+      ["Model-call spans only (provider SDK instrumentation)", "Cost and latency per call", "You need to group calls by agent or tool", "No run-level structure"],
+      ["Agent, chat and tool spans (this topic)", "Debugging runs and loops", "Volume is extreme", "More spans, so sampling and storage cost"],
+      ["Add workflow and executor spans", "Multi-agent graphs and parallel branches", "Single-agent apps", "Extra spans to maintain and name consistently"]
+    ]
+  },
+  "pitfalls": [
+    {
+      "symptom": "A .NET service emits no `gen_ai.*` spans at all",
+      "cause": "The client or agent was not wrapped with the OpenTelemetry delegating wrapper, or the provider has no matching `AddSource`",
+      "fix": "Wrap the agent or client once with `UseOpenTelemetry` and call `AddSource` with the same source name [[r10]]"
+    },
+    {
+      "symptom": "Prompts appear twice on parent and child spans",
+      "cause": "Both the chat client and the agent were instrumented with sensitive data on",
+      "fix": "Instrument one layer and keep the other uninstrumented [[r10]]"
+    },
+    {
+      "symptom": "A run shows dozens of `chat` spans under one `invoke_agent`",
+      "cause": "A tool loop or retry cycle without a stop condition",
+      "fix": "Alert on calls per run (`gen_ai.invoke_agent.inference_calls`) and set loop and budget limits"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "w15-t03-s1",
+      "title": "A new agent with four tools and one MCP server",
+      "situation": "A team launches an agent that calls four local tools and one MCP server. They want to debug slow or wrong runs from day one. Data is internal and low volume.",
+      "constraints": ["Small team, low volume", "Internal data", "Launch in two weeks"],
+      "unknowns": ["Does the framework emit GenAI spans already?", "Will the MCP calls cross a trace boundary?"],
+      "question": "What do you require before launch?",
+      "options": [
+        { "name": "Framework telemetry for agent, chat and tool spans, an exporter, and context propagation to the MCP server", "verdict": "best", "why": "It gives the full run tree at low effort and shows tool and MCP latency inside the run.", "tradeoff": "You must pick an exporter and a backend and verify the spans arrive." },
+        { "name": "Provider-SDK model spans only", "verdict": "good", "why": "Cheap and shows model latency and tokens.", "tradeoff": "No grouping by agent or tool, so loops and slow tools stay hidden." },
+        { "name": "Log lines around each call", "verdict": "poor", "why": "Logs do not give parent-child timing or cross-service correlation.", "tradeoff": "Fine for a one-off script." }
+      ],
+      "flips": [
+        { "if": "The MCP server is a provider-hosted tool", "then": "Expect a gap in propagation and correlate by call ids." },
+        { "if": "Volume grows by 100 times", "then": "Keep the spans and add sampling." }
+      ],
+      "takeaway": "A nested run tree answers most why-was-it-slow questions."
+    },
+    {
+      "id": "w15-t03-s2",
+      "title": "A workflow where one branch is slow",
+      "situation": "A workflow runs three agents in parallel inside each step and then merges results. Total latency is often twice the average agent time.",
+      "constraints": ["Parallel branches", "Barrier between steps", "Need to find the straggler"],
+      "unknowns": ["Which executor is slowest per step?", "Is the slow branch a model, tool or retry?"],
+      "question": "How do you find the bottleneck?",
+      "options": [
+        { "name": "Workflow and executor spans with nested agent, chat and tool spans", "verdict": "best", "why": "The slowest executor in each step and the span below it are visible in one trace.", "tradeoff": "More spans per run and extra storage." },
+        { "name": "Per-agent average latency metrics", "verdict": "good", "why": "Cheap and unsampled for trends.", "tradeoff": "Averages hide the straggler that blocks each step." },
+        { "name": "HTTP server spans only", "verdict": "poor", "why": "They show total time but not the structure of the run.", "tradeoff": "Fine for classic request paths." }
+      ],
+      "flips": [
+        { "if": "Only one agent exists", "then": "Agent, chat and tool spans are enough." },
+        { "if": "Spans are too costly", "then": "Sample traces and alert on p95 from metrics." }
+      ],
+      "takeaway": "Parallel work needs per-executor spans to find the straggler."
+    }
+  ],
+  "quiz": [
+    {
+      "id": "w15-t03-q1",
+      "type": "order",
+      "tag": "order",
+      "q": "Order these spans from outermost parent to innermost child for a workflow that calls an agent, which calls an MCP-backed tool.",
+      "items": [
+        "`invoke_workflow review`",
+        "`invoke_agent planner`",
+        "`execute_tool search_docs`",
+        "`tools/call search_docs`"
+      ],
+      "explain": "The workflow coordinates agents, the agent runs the tool, and the tool call becomes the MCP request. The MCP client span is a child of the tool span."
+    },
+    {
+      "id": "w15-t03-q2",
+      "type": "match",
+      "tag": "concept",
+      "q": "Match each span name pattern to the work it describes.",
+      "pairs": [
+        { "l": "`chat {model}`", "r": "One model call" },
+        { "l": "`invoke_agent {agent}`", "r": "One agent run" },
+        { "l": "`execute_tool {tool}`", "r": "One tool call" },
+        { "l": "`invoke_workflow {workflow}`", "r": "A graph that coordinates several agents" }
+      ],
+      "explain": "The first token of each name is the operation and the second identifies the model, agent, tool or workflow."
+    },
+    {
+      "id": "w15-t03-q3",
+      "type": "single",
+      "tag": "diagnose",
+      "q": "A .NET agent runs fine but no `gen_ai.*` spans show up in the backend. What should you check first?",
+      "options": [
+        "That the agent or chat client is wrapped with `UseOpenTelemetry` and the tracer provider calls `AddSource` with the same name",
+        "That the model deployment supports tracing",
+        "That sampling is set to 100 percent",
+        "That the Agent Card is signed"
+      ],
+      "answer": 0,
+      "explain": "In .NET the spans appear only after wrapping, and the provider must listen to the same source name. Models do not control tracing, sampling cannot create spans that do not exist and Agent Cards are unrelated."
+    }
+  ],
+  "flashcards": [
+    { "front": "What are the span names for a model call, an agent run and a tool call?", "back": "`chat {model}`, `invoke_agent {agent}` and `execute_tool {tool}`. Workflows use `invoke_workflow {workflow}`." },
+    { "front": "Which span kinds do these operations use?", "back": "Inference is CLIENT (INTERNAL for in-process models), `invoke_agent` is CLIENT for remote services and INTERNAL in-process, `execute_tool` and `invoke_workflow` are INTERNAL." },
+    { "front": "Why can .NET show no `gen_ai.*` spans?", "back": "The agent or client was not wrapped with `UseOpenTelemetry`, or the provider did not `AddSource` the same name. The Harness wraps both layers by default." }
+  ],
+  "related": ["w15-t02", "w15-t05", "w15-t09", "w11-t14", "w11-t26", "w10-t10"],
+  "refs": ["r2", "r3", "r6", "r10", "r11"]
+}

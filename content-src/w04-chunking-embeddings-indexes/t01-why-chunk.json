@@ -1,0 +1,126 @@
+{
+  "id": "w04-t01",
+  "order": 1,
+  "group": "Chunking",
+  "title": "Why chunk and what makes a good chunk",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "A chunk is the piece of a document that the index stores, embeds and returns. Its size and shape decide what the retriever can match and what the model gets to read.",
+  "useIf": "Documents are longer than one idea or longer than the embedding input limit, so you need a retrieval unit smaller than the file.",
+  "avoidIf": "Each record is already one short, self-contained answer (an FAQ entry, a product row). Index it whole instead of splitting it.",
+  "explain": [
+    { "t": "p", "md": "A **chunk** is the unit your index stores and your retriever returns. Two roles hide inside it. The **retrieval unit** is the text that gets embedded and matched against the query. The **generation unit** is the text the model reads when it writes the answer. They do not have to be the same piece (parent-child retrieval separates them), but in a basic pipeline they are." },
+    { "t": "p", "md": "Why not embed whole documents? An embedding model has an input ceiling (8,192 tokens for the OpenAI and Azure OpenAI embedding models, [[tr28]]), and one vector is an average of everything in the text. A chunk that covers four subjects matches none of them sharply. A chunk of one short sentence matches sharply but can be unreadable alone. Size is a trade between **match precision** and **context completeness**." },
+    { "t": "p", "md": "The evidence is mixed on purpose. One multi-dataset study found 64 to 128 token chunks best for short factual answers and 512 to 1,024 better when broader context is needed [[tr26]]. NVIDIA found page-level chunking best on average and 128 or 2,048 tokens generally weaker [[tr25]]. Microsoft suggests starting at 512 tokens with 25% overlap, then testing [[tr1]]. Treat these as starting points, not laws." },
+    { "t": "stats", "items": [
+      { "label": "Short factual answers", "value": "64 to 128 tokens", "note": "Best in one fixed-size study [[tr26]]" },
+      { "label": "Broader context", "value": "512 to 1,024 tokens", "note": "Same study [[tr26]]" },
+      { "label": "Microsoft starting point", "value": "512 tokens, 25% overlap", "note": "Then test [[tr1]]" },
+      { "label": "Embedding input cap", "value": "8,192 tokens", "note": "OpenAI and Azure OpenAI models [[tr28]]" }
+    ] },
+    { "t": "formula", "title": "Prompt context budget", "expr": "context tokens = k x chunk tokens", "vars": [ { "k": "k", "v": "number of chunks passed to the model" }, { "k": "chunk tokens", "v": "average tokens per chunk, including any prepended metadata" } ], "example": "Eight chunks of 512 tokens fill 4,096 tokens. Twenty chunks of 800 tokens fill 16,000. Choose size and k together." },
+    { "t": "h", "text": "What a good chunk looks like", "level": 3 },
+    { "t": "list", "style": "checks", "items": [
+      "**Self-contained:** it names its subject instead of leaning on 'it' or 'the policy'.",
+      "**One idea:** a single subject or step, so its vector points one way.",
+      "**Under the limit:** well below the embedding cap, with room for prepended metadata.",
+      "**Traceable:** carries source, section path, page and a stable id for citations, updates and deletes.",
+      "**Measured:** judged by retrieval results on your questions, not by how it looks."
+    ] },
+    { "t": "p", "md": "Evaluate with metrics that expose boundary damage. Chroma scores chunkers by token-level IoU, precision and recall instead of document hit rate, and shows that popular default settings can produce very short chunks [[tr22]]. Pair that with recall at k on labelled questions and end-to-end answer accuracy." }
+  ],
+  "whereToUse": [
+    "Every RAG pipeline that embeds text, as the first design decision before the embedding model",
+    "Setting the index schema: retrievable text, metadata fields, parent key and stable chunk id",
+    "Building the baseline you compare advanced strategies against",
+    "Writing the evaluation set that guards ingestion changes from regressions"
+  ],
+  "whenToUse": {
+    "use": ["Documents exceed the embedding limit or hold many subjects", "Questions are answered by a passage, not a whole file", "You need citations that point to a section or page"],
+    "avoid": ["Records are short and self-contained, such as FAQ entries or product rows", "The whole corpus fits in the prompt and changes rarely"],
+    "flips": ["Questions shift from factoid lookups to broad analysis: move to larger chunks or parent-child", "Documents gain headings or tables: move from fixed windows to structure-aware splitting", "The prompt budget shrinks: cut k or chunk size, and measure each change"]
+  },
+  "alternatives": {
+    "title": "Chunk size choices compared",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Small chunks (64 to 256 tokens)", "Short factual answers, sharp matching", "Answers need surrounding context", "More vectors, fragmented context"],
+      ["Medium chunks (512 to 1,024 tokens)", "Mixed questions, a safe first default", "Pure fact lookups drown in extra text", "Larger prompt per hit"],
+      ["Page or section chunks", "Structured documents, broad questions", "Pages hold many unrelated facts", "Blurred vectors, uneven sizes"],
+      ["No chunking, whole document in the prompt", "Few, stable, short documents", "Corpus grows or changes often", "Token cost on every query"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "The right document is retrieved but the answer misses the number in a table", "cause": "The chunk boundary separated the row from its header or caption", "fix": "Keep tables whole or repeat the header row in each chunk (see the tables, code and figures topic)" },
+    { "symptom": "Top-k is five near-identical passages", "cause": "Heavy overlap or a tiny stride produced duplicates", "fix": "Lower overlap, dedupe by parent id or ordinal position, and check index inflation" },
+    { "symptom": "A chunk says 'it' and 'the policy' and ranks well for nothing", "cause": "Splitting removed the subject from the text", "fix": "Prepend title and section path, or generate chunk context (see the contextual retrieval topic)" }
+  ],
+  "scenarios": [
+    {
+      "id": "w04-t01-s1",
+      "title": "Short facts, strict prompt budget",
+      "situation": "A support assistant answers one-or-two sentence questions from policy documents. Prompt space is small and retrieval must stay fast.",
+      "constraints": ["Questions are narrow factual lookups", "Prompt budget is small", "Latency budget is tight", "No labelled set yet"],
+      "unknowns": ["Do answers ever span two policy sections?", "How many chunks fit in the prompt?"],
+      "question": "How do you size the chunks?",
+      "options": [
+        { "name": "About 256 tokens, 10 to 15% overlap, section path in metadata", "verdict": "best", "why": "Fits factual questions, keeps the prompt cheap and leaves room for several hits.", "tradeoff": "An answer that straddles two chunks can be missed, so measure and adjust." },
+        { "name": "1,024 token chunks", "verdict": "good", "why": "Reliable coverage and fewer boundary misses.", "tradeoff": "Each hit spends four times the prompt budget on text the question does not need." },
+        { "name": "Single-sentence chunks of about 30 tokens", "verdict": "poor", "why": "A sentence often lacks its subject and qualifiers, so it matches loosely and reads badly.", "tradeoff": "Right when the corpus is already a list of atomic, self-contained facts." }
+      ],
+      "flips": [
+        { "if": "Questions start to need two sections at once", "then": "Move to parent-child so small chunks match and the larger section is returned." },
+        { "if": "The prompt window grows and cost stops mattering", "then": "Larger chunks become safe and boundary misses fall." }
+      ],
+      "takeaway": "Size follows question type and prompt budget together."
+    },
+    {
+      "id": "w04-t01-s2",
+      "title": "Broad questions over long reports",
+      "situation": "Analysts ask for explanations and comparisons across long reports. Answers draw on several paragraphs. The model has a large context window and traffic is moderate.",
+      "constraints": ["Questions are broad and analytic", "Large context window", "Moderate traffic", "Reports have clear sections"],
+      "unknowns": ["How long is a typical section?", "Do answers cross section borders?"],
+      "question": "Which retrieval unit do you start with?",
+      "options": [
+        { "name": "Section-sized chunks of 512 to 1,024 tokens, k of 10 to 20", "verdict": "best", "why": "Keeps arguments intact and the large window can hold the hits.", "tradeoff": "Vectors blur when a section covers several topics, and prompt cost is higher." },
+        { "name": "Small chunks with window expansion", "verdict": "good", "why": "Sharp matching, then neighbours restore the context.", "tradeoff": "Extra lookup logic and duplicated tokens in the prompt." },
+        { "name": "64 to 128 token chunks, no expansion", "verdict": "poor", "why": "Splits arguments into fragments that the model must stitch back together.", "tradeoff": "Right for atomic fact lookup, not for explanation." }
+      ],
+      "flips": [
+        { "if": "Latency or cost forces a small prompt", "then": "Use parent-child so only a few larger parents are sent." },
+        { "if": "Sections are huge and mixed", "then": "Split inside sections and keep the section path as metadata." }
+      ],
+      "takeaway": "Broad questions need the argument kept together, so size up, not down."
+    },
+    {
+      "id": "w04-t01-s3",
+      "title": "The team cannot agree on a size",
+      "situation": "Three engineers each quote a different study for the best chunk size. There is no evaluation data and the corpus is new.",
+      "constraints": ["No labelled questions", "Two weeks to a pilot", "Corpus mixes manuals and tickets"],
+      "unknowns": ["What do real users ask?", "How will success be scored?"],
+      "question": "What do you do first?",
+      "options": [
+        { "name": "Write 50 to 100 real questions with expected passages and compare sizes on recall at k and token-level IoU", "verdict": "best", "why": "Your corpus and questions decide, and the set stays as a regression test.", "tradeoff": "Labelling takes time before any tuning." },
+        { "name": "Start at 512 tokens with 25% overlap and revisit", "verdict": "good", "why": "A documented starting point that unblocks the pilot.", "tradeoff": "You may later tune a default that is off for your questions." },
+        { "name": "Adopt the size from the most cited study", "verdict": "poor", "why": "Studies disagree and use other embedding models and question types.", "tradeoff": "Acceptable as a first guess only when your question type matches the study." }
+      ],
+      "flips": [
+        { "if": "The pilot date is fixed and labelling is impossible", "then": "Ship the documented default and log queries to build the set from real use." },
+        { "if": "Source types differ sharply", "then": "Evaluate each type separately and allow different settings per source." }
+      ],
+      "takeaway": "Measure on your own questions before arguing about size."
+    }
+  ],
+  "quiz": [
+    { "id": "w04-t01-q1", "type": "single", "tag": "concept", "q": "Which statement best separates the retrieval unit from the generation unit?", "options": ["They are always the same text", "The retrieval unit is what is embedded and matched, the generation unit is what the model reads", "The generation unit is the embedding, the retrieval unit is the prompt", "The retrieval unit is the whole document and the generation unit is one sentence"], "answer": 1, "explain": "The retrieval unit is matched to the query. The generation unit goes into the prompt. They can differ, as in parent-child retrieval. The other options reverse or collapse the roles." },
+    { "id": "w04-t01-q2", "type": "numeric", "tag": "numeric", "q": "A pipeline passes the top 20 chunks of 800 tokens each into the prompt. How many context tokens do the chunks use?", "answer": 16000, "tolerancePct": 1, "unit": "tokens", "hint": "k multiplied by chunk size.", "explain": "20 x 800 = 16,000 tokens, before the system prompt and the question. Prepended metadata adds to each chunk." },
+    { "id": "w04-t01-q3", "type": "multi", "tag": "diagnose", "q": "Which symptoms point to chunks that are too large?", "options": ["Retrieved chunks match the topic but bury the answer in unrelated text", "A handful of hits fill the prompt", "Chunks begin with 'it' and have no subject", "Sentences are cut in the middle"], "answers": [0, 1], "explain": "Large chunks blur the vector and use prompt space. A missing subject comes from splitting too finely or losing context. Mid-sentence cuts come from boundary-blind splitting at any size." }
+  ],
+  "flashcards": [
+    { "front": "What is the difference between the retrieval unit and the generation unit?", "back": "The retrieval unit is the text embedded and matched. The generation unit is the text the model reads. Parent-child retrieval makes them different." },
+    { "front": "What starting chunk size and overlap does Microsoft suggest for AI Search?", "back": "512 tokens (about 2,000 characters) with 25% overlap (128 tokens), then test. It is a starting point, not a rule." },
+    { "front": "Why score chunkers with token-level IoU?", "back": "It measures how much of the needed text a chunk set contains and how much noise comes with it, which document hit rate hides." }
+  ],
+  "related": ["w04-t02", "w04-t05", "w04-t06", "w04-t08", "w04-t11", "w03-t05", "w05-t01", "w04-l1", "w04-l5"],
+  "refs": ["tr1", "tr9", "tr22", "tr25", "tr26", "tr28"]
+}

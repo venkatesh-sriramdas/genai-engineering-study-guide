@@ -1,0 +1,120 @@
+{
+  "id": "w13-t03",
+  "order": 3,
+  "group": "Vision",
+  "title": "Vision failure modes",
+  "minutes": 7,
+  "difficulty": "core",
+  "summary": "Vision models read images fluently but wrongly in predictable places: counting, spatial positions, small or rotated text, chart details and metadata. Know the list, route around it and test each failure class.",
+  "useIf": "You rely on a vision model for answers that people will act on, and you need a plan for the known weak spots.",
+  "avoidIf": "The task is coarse description where an occasional miss is harmless. Heavy mitigation would cost more than the error.",
+  "explain": [
+    { "t": "p", "md": "A vision model does not measure an image. It produces a plausible reading, so errors look as confident as correct answers. OpenAI's guide lists the known weak spots (checked 2026-10-13) [[r1]]: specialised medical images such as CT scans are unsuitable; non-Latin text such as Japanese or Korean may degrade; **small text** needs enlarging or `detail: original`; **rotated** or upside-down content is misread; graphs where line style or colour varies are hard; **precise spatial localisation** (a chess position) fails; descriptions can be wrong; panoramic and fisheye shapes struggle; **counts are approximate**; file names and metadata are not processed, and images may be resized even at `original`; CAPTCHAs are blocked." },
+    { "t": "p", "md": "The fix is rarely a better prompt. It is a different representation: crop and enlarge for small text, extract characters with a layout service, ask for a chart's underlying data table and compute in code, count per region and reconcile, and pass metadata as text. Then measure each failure class on its own." },
+    { "t": "table", "caption": "Failure class, symptom and route around it", "head": ["Failure class", "Typical symptom", "Mitigation (documented limit, then practice)"], "rows": [
+      ["Small text", "Wrong digits, dropped units", "Crop and enlarge, use `original`, or run layout extraction [[r1]] [[r10]]"],
+      ["Rotation", "Upside-down text read as noise", "Deskew and rotate before sending (practice)"],
+      ["Counting", "Totals off by a few", "Count per crop, then sum, and allow a tolerance (practice)"],
+      ["Chart reading", "Wrong series or value", "Request the data table, check it, compute in code (practice)"],
+      ["Spatial position", "Wrong board or layout state", "Use a structured detector or a tool, not a description (practice)"],
+      ["Non-Latin script", "Missed or swapped characters", "Use an OCR service with language support, then reason over text (practice)"],
+      ["Metadata", "File name or EXIF ignored", "Pass metadata as separate text fields [[r1]]"]
+    ] },
+    { "t": "diagram", "id": "w13-t03-d1", "title": "Route around a known weak spot", "alt": "An image is preprocessed, routed to OCR, a detector or a data-table step, verified, and sent to human review when confidence is low.", "src": "flowchart LR\n  I[Image] --> P[Crop, deskew, enlarge]\n  P --> R{Failure class}\n  R -->|Characters| O[Layout or OCR]\n  R -->|Counts| C[Count per crop]\n  R -->|Chart| T[Data table]\n  O --> V[Verify]\n  C --> V\n  T --> V\n  V --> H[Human review if low confidence]" },
+    { "t": "callout", "kind": "tip", "title": "Test by stratum", "md": "A golden set that mixes easy and hard images hides these failures. Tag each image by class (small text, rotated, chart, count) and report accuracy per class." }
+  ],
+  "whereToUse": [
+    "Designing intake, inspection and document pipelines that read photos",
+    "Reviewing a vision feature before launch with a failure-class checklist",
+    "Choosing when to add OCR, a detector or a human check next to a vision call",
+    "Writing evaluation sets that expose weak spots"
+  ],
+  "whenToUse": {
+    "use": [
+      "List the failure classes your inputs can hit before choosing the route",
+      "Route to extraction or code when the answer is a number or exact characters",
+      "Keep a human check where an error has real cost"
+    ],
+    "avoid": [
+      "Using a general vision model for medical image interpretation or medical advice",
+      "Trusting an approximate count for stock, billing or safety",
+      "Assuming a larger model removes the weak spot without measuring it"
+    ],
+    "flips": [
+      "Errors are cheap and reversible: accept the raw vision answer",
+      "Characters dominate: switch the primary path to layout extraction",
+      "Volume is tiny and stakes are high: send every case to review"
+    ]
+  },
+  "alternatives": {
+    "title": "Ways to handle a weak spot",
+    "head": ["Route", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Ask the vision model directly", "Coarse description, low stakes", "Exact numbers or positions are needed", "Fluent errors"],
+      ["Crop, enlarge, retry", "Small text in a known region", "You cannot locate the region", "More calls and tokens"],
+      ["OCR or layout service", "Characters and tables", "Visual meaning matters", "Another service and language support to check"],
+      ["Structured detector or tool", "Counts and positions", "Open-ended scenes", "Build and maintain it"],
+      ["Human review", "High stakes, low volume", "High volume", "Slow and costly"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Stock counts drift from reality", "cause": "The model returned approximate counts and nobody reconciled them", "fix": "Count per region, sum, set a tolerance and sample-check against a manual count." },
+    { "symptom": "Chart answers quote the wrong series", "cause": "Varying line styles and colours are hard for the model", "fix": "Ask for the data table first, validate it, and compute the answer in code." },
+    { "symptom": "Quality is fine in tests and poor in production", "cause": "Test images were clean and upright, while real ones were rotated or low resolution", "fix": "Build the golden set from real uploads, tagged by failure class." }
+  ],
+  "scenarios": [
+    {
+      "id": "w13-t03-s1",
+      "title": "Counting items on shelves",
+      "situation": "A retailer wants stock levels from shelf photos. A wrong count triggers a reorder or a missed one. Photos are wide shots taken on phones.",
+      "constraints": ["Numbers drive purchasing", "Counts are approximate in the model", "Photos are wide and uneven"],
+      "unknowns": ["What count error is tolerable?", "Are items visually distinct?", "Is a manual spot check possible?"],
+      "question": "How do you produce the count?",
+      "options": [
+        { "name": "Count per cropped shelf region, sum, and sample-check against manual counts", "verdict": "best", "why": "It works around approximate counting by shrinking each count and measuring error.", "tradeoff": "More calls, and you must define regions." },
+        { "name": "A structured detector for the product classes", "verdict": "good", "why": "Detectors return explicit boxes you can count and audit.", "tradeoff": "You train and maintain it per catalogue." },
+        { "name": "Ask the vision model for the total in one prompt", "verdict": "poor", "why": "The documented limit says counts may be approximate, and the error is invisible.", "tradeoff": "Acceptable for a rough 'about how many' display with no financial consequence." }
+      ],
+      "flips": [
+        { "if": "Shelves are rigid and cameras are fixed", "then": "A detector or fixed-region counting becomes cheap and accurate." },
+        { "if": "Only presence or absence matters", "then": "A direct vision call is enough." }
+      ],
+      "takeaway": "Exact numbers need decomposition and measurement, not a bigger prompt."
+    },
+    {
+      "id": "w13-t03-s2",
+      "title": "Rotated scans in Japanese",
+      "situation": "A back office receives phone scans of paper forms in Japanese. Some are rotated or upside down, and the text is small. Wrong characters flow into a database.",
+      "constraints": ["Non-Latin text", "Rotation and small print", "Errors are costly"],
+      "unknowns": ["Does the OCR service support the languages?", "What share of scans are rotated?"],
+      "question": "What is the pipeline?",
+      "options": [
+        { "name": "Deskew and rotate, run layout extraction with language support, then reason over the text with confidence checks", "verdict": "best", "why": "Targets all three documented weak spots (non-Latin, small text, rotation) with a purpose-built reader [[r1]] [[r10]].", "tradeoff": "More components, and you must verify language support." },
+        { "name": "Vision model at `original` detail on the raw scan", "verdict": "good", "why": "Helps small text and needs one call.", "tradeoff": "Rotation and non-Latin text remain weak spots and there is no confidence score." },
+        { "name": "Vision model at `low` detail", "verdict": "poor", "why": "Discards the small characters you need.", "tradeoff": "Fine only to classify the document type first." }
+      ],
+      "flips": [
+        { "if": "Volume is a few dozen forms a week", "then": "Use `original` and a human check instead of building extraction." },
+        { "if": "Forms are stable and standard", "then": "Use a prebuilt form model in the extraction step." }
+      ],
+      "takeaway": "Stack the right reader under the model when several weak spots overlap."
+    }
+  ],
+  "quiz": [
+    { "id": "w13-t03-q1", "type": "single", "tag": "diagnose", "q": "A model reports 47 items on a shelf and a manual count says 52. Which design change addresses the cause?", "options": ["Raise the temperature", "Count per cropped region and reconcile", "Use `detail: low`", "Ask the same question three times and average"], "answer": 1, "explain": "Approximate counting is a documented limit, so decompose the task and measure. Temperature does not add precision, `low` removes detail, and averaging repeats the same bias." },
+    { "id": "w13-t03-q2", "type": "multi", "tag": "concept", "q": "Which items are documented limitations of OpenAI vision models on 2026-10-13?", "options": ["Small text may be misread unless enlarged", "File names and metadata are not processed", "Images are never resized at `original` detail", "Rotated or upside-down content may be misread"], "answers": [0, 1, 3], "explain": "Small text, metadata and rotation are listed. The guide says images may still be resized at `original`, so option three is false." },
+    { "id": "w13-t03-q3", "type": "match", "tag": "tradeoff", "q": "Match each failure class to the better route.", "pairs": [
+      { "l": "Exact characters", "r": "Layout or OCR extraction" },
+      { "l": "Chart values", "r": "Request a data table, compute in code" },
+      { "l": "Object counts", "r": "Count per crop, then sum" },
+      { "l": "Chess-style positions", "r": "Structured detector or tool" }
+    ], "explain": "Each route replaces a description with a measurable representation." }
+  ],
+  "flashcards": [
+    { "front": "Name four documented weak spots of vision models.", "back": "Small text, rotated content, approximate counts, precise spatial localisation. Also non-Latin text, varied-style graphs, panoramic images and ignored metadata." },
+    { "front": "How do you handle chart questions that need exact numbers?", "back": "Ask for the underlying data table, validate it, and compute the answer in code instead of reading a value off the picture." },
+    { "front": "Why test vision features by stratum?", "back": "A mixed golden set hides class-specific failures. Tag images by small text, rotation, chart or count and report accuracy for each." }
+  ],
+  "related": ["w13-t02", "w13-t09", "w13-t13", "w13-l1", "w13-l2"],
+  "refs": ["r1", "r10"]
+}

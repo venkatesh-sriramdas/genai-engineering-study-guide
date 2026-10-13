@@ -1,0 +1,100 @@
+{
+  "id": "w05-t11",
+  "order": 11,
+  "group": "Query transformation",
+  "title": "Metadata filters and self-query",
+  "minutes": 8,
+  "difficulty": "advanced",
+  "summary": "Self-query lets a model turn a natural-language question into a semantic query plus a structured metadata filter. The filter is model output, so it must be validated and must never replace authorization.",
+  "useIf": "Questions carry implicit constraints such as year, product, region or document type, and your chunks carry those fields as metadata.",
+  "avoidIf": "A filter would decide who may see data, or the metadata is sparse, inconsistent or unknown to the model.",
+  "explain": [
+    { "t": "p", "md": "A question like 'security policies for contractors since 2024' mixes meaning ('security policies') with constraints (audience, date). Embeddings blur constraints. **Self-query** asks a model to emit structured output: the text to search, plus a filter over declared fields such as `audience`, `year` and `doctype`. The search engine applies the filter exactly. OpenAI's retrieval exposes attribute filters on file metadata [[r30]]. Azure agentic retrieval stores `searchIndexParameters.queryHints` on a search index knowledge source: filter hints and boosts that guide the query-planning model [[r29]]." },
+    { "t": "flow", "title": "Validated self-query", "direction": "h", "steps": [
+      { "title": "Extract", "md": "The model returns JSON that matches a declared schema.", "tag": "LLM call" },
+      { "title": "Validate", "md": "Allowlist fields, operators, types and enum values. Reject the rest." },
+      { "title": "Resolve", "md": "Application code turns 'last quarter' into dates." },
+      { "title": "Combine", "md": "AND the filter with the authorization filter built from the caller's identity." },
+      { "title": "Search", "md": "If results are empty, relax the weakest constraint and retry." }
+    ] },
+    { "t": "p", "md": "**Safety rules.** First, the model's filter is **best effort**. Azure's docs say to use document-level access control or a deterministic filter for authorization boundaries, and generated filters combine with `baseFilter` and `filterAddOn` using AND [[r29]]. Put the tenant, group or ACL condition in the deterministic part. Second, treat the generated filter as untrusted input: a prompt-injected user message or retrieved text can steer it, so parse structured output, check fields and values against an allowlist and never concatenate model text into an OData or SQL string. Third, a filter that is too narrow returns zero results. That is a silent recall collapse, so fall back by relaxing it." },
+    { "t": "callout", "kind": "preview", "title": "Azure query hints, status on 2026-10-13", "md": "Query hints are preview (`2026-08-01-preview`). They are not applied at `minimal` effort. At other efforts a GPT-4o or GPT-4.1 family planner returns HTTP 400 if stored hints contain a filter, and the page lists the GPT-5 family as planner models [[r29]] [[r39]]." }
+  ],
+  "whereToUse": [
+    "Catalog and document search with clear facets such as brand, year, language and document type",
+    "Policy assistants where questions name an audience or a version",
+    "Multi-source knowledge bases where the planner should pick sources and constraints",
+    "Support search where product and release fields narrow candidates before ranking"
+  ],
+  "whenToUse": {
+    "use": ["Questions contain explicit facets that exist as indexed fields", "Field values come from a controlled vocabulary the model can see", "You validate every generated filter", "A deterministic authorization filter is applied separately"],
+    "avoid": ["The filter would enforce permissions or tenancy", "Metadata is missing for many chunks, so strict filters hide good answers", "You pass model text into a query string without parsing"],
+    "flips": ["Constraints are security-related: build them from identity in code, not from the question", "Many empty-result queries: relax or drop the weakest constraint and retry", "Date phrases are fuzzy: resolve them in application code with a known calendar"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Self-query with validation", "Natural-language facets over indexed fields", "Sparse or messy metadata", "A model call, filter errors cause silent misses"],
+      ["UI facets chosen by the user", "A search page with filter controls", "Chat interfaces", "Users must know the facets"],
+      ["Deterministic filter from identity", "Authorization, tenancy, ACLs", "Soft preferences from the question", "Needs identity plumbing"],
+      ["Boosting instead of filtering", "Constraints are preferences", "Constraints must hold", "Unwanted items can still appear"],
+      ["No filter, rely on embeddings", "Few facets, small corpus", "Exact constraints such as year", "Mixed-version answers"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Zero results for a query that has an answer", "cause": "The model produced a filter that is too narrow or used a value that does not exist", "fix": "Validate values against the enum list and relax the weakest constraint on empty results" },
+    { "symptom": "A user reads another tenant's documents", "cause": "The tenant filter was model generated or trusted from the question", "fix": "Build authorization filters in code from the caller identity and AND them with generated filters [[r29]]" },
+    { "symptom": "Request fails with an invalid filter error", "cause": "The model emitted a field or operator that the index does not define", "fix": "Constrain output with a schema, reject unknown fields and log rejected filters" }
+  ],
+  "scenarios": [
+    {
+      "id": "w05-t11-s1",
+      "title": "Product documentation by version",
+      "situation": "Questions often name a product version ('in release 5.2, how do I rotate keys'). Chunks carry `product`, `version` and `doctype` fields, and all docs are public.",
+      "constraints": ["Public content, no permission issues", "Three well-defined facets", "Moderate traffic"],
+      "unknowns": ["How complete is the metadata?", "Do users spell versions consistently?"],
+      "question": "How do you use the version?",
+      "options": [
+        { "name": "Self-query into a schema with enum-checked fields, validate, and relax on empty results", "verdict": "best", "why": "Facets are indexed and exact, so a filter beats embeddings, and validation limits damage from model errors.", "tradeoff": "A model call and fallback logic." },
+        { "name": "Leave the version to the embedding", "verdict": "poor", "why": "Embeddings blur version numbers, and answers mix releases.", "tradeoff": "Acceptable when versions rarely matter." },
+        { "name": "Free-form model-written OData filter strings", "verdict": "good", "why": "Flexible.", "tradeoff": "Invalid syntax and injection risk, so a schema is safer." }
+      ],
+      "flips": [
+        { "if": "Many chunks lack version metadata", "then": "Boost instead of filtering, or fix ingestion first." },
+        { "if": "Users rarely mention a version and usually want the latest", "then": "Apply a default latest-version filter in code and let the query override it explicitly." }
+      ],
+      "takeaway": "Exact facets deserve exact filters."
+    },
+    {
+      "id": "w05-t11-s2",
+      "title": "Multi-tenant assistant",
+      "situation": "A SaaS assistant serves many customers from one index. Users type 'show our contracts' and sometimes 'show Acme's contracts'.",
+      "constraints": ["Per-tenant isolation is mandatory", "Adversarial users are possible", "Shared index"],
+      "unknowns": ["How is tenant identity established?", "Can chunks carry a tenant field?"],
+      "question": "Where does the tenant constraint come from?",
+      "options": [
+        { "name": "Build the tenant filter in code from the authenticated identity and AND it with any validated self-query filter", "verdict": "best", "why": "Authorization must be deterministic. The self-query filter only narrows within the allowed set.", "tradeoff": "Needs identity plumbing and a tenant field on every chunk." },
+        { "name": "Let the model infer the tenant from the question", "verdict": "poor", "why": "A user can name another tenant, or inject text that does.", "tradeoff": "Never appropriate for authorization." },
+        { "name": "Post-filter retrieved chunks by tenant before building the prompt", "verdict": "good", "why": "Keeps other tenants' text out of the prompt, and works as defence in depth.", "tradeoff": "Wastes top-k and can leave few or no chunks when most hits belong to other tenants." }
+      ],
+      "flips": [
+        { "if": "Tenants have separate indexes", "then": "Route the query to the tenant's index and use self-query only for facets." },
+        { "if": "Tenant isolation is a convenience feature rather than a mandatory control", "then": "A validated self-query filter plus logging may suffice, but a code-built filter is still cheap and safer." }
+      ],
+      "takeaway": "The model proposes filters, code decides access."
+    }
+  ],
+  "quiz": [
+    { "id": "w05-t11-q1", "type": "single", "tag": "security", "q": "Who should build the filter clause that enforces a user's document permissions?", "options": ["Application code from the caller's authenticated identity", "The model, from the question text", "The user, as a request parameter", "The reranker"], "answer": 0, "explain": "Authorization must be deterministic. Model-generated and user-supplied filters can be steered by injection, and the reranker does not filter. Azure's docs also advise a deterministic filter for authorization [[r29]]." },
+    { "id": "w05-t11-q2", "type": "single", "tag": "diagnose", "q": "A self-query assistant returns nothing for questions that clearly have answers. The logged filter is `year eq 2024 and doctype eq 'policy' and audience eq 'staff'`. What is the first fix?", "options": ["Raise `k`", "Increase temperature", "Relax the weakest constraint and retry when results are empty", "Switch to a larger embedding model"], "answer": 2, "explain": "An over-narrow filter hides relevant chunks. Relaxing on empty results restores recall. `k`, temperature and embedding size do not change what the filter excludes." },
+    { "id": "w05-t11-q3", "type": "multi", "tag": "concept", "q": "Select the facts about Azure query hints on 2026-10-13.", "options": ["They are preview", "They are best effort", "They are applied at `minimal` effort", "Generated filters are combined with `baseFilter` using AND"], "answers": [0, 1, 3], "explain": "Query hints are a preview feature, are best effort and are combined using AND. They are not applied at `minimal` effort [[r29]]." }
+  ],
+  "flashcards": [
+    { "front": "What does self-query output?", "back": "A semantic query plus a structured metadata filter over declared fields, validated before it reaches the search engine." },
+    { "front": "Why must authorization not rely on a model-generated filter?", "back": "The model is steerable and best effort. Build access filters in code from identity and AND them with generated ones." },
+    { "front": "What do you do when a generated filter returns zero results?", "back": "Relax the weakest constraint and retry, and log the rejected or empty filter." }
+  ],
+  "related": ["w04-t18", "w07-t08", "w07-t06", "w05-t07", "w05-t13"],
+  "refs": ["r29", "r30", "r39"]
+}

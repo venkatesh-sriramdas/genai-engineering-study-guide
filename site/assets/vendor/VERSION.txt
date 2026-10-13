@@ -1,0 +1,16 @@
+Mermaid (vendored for offline use)
+
+Package:      mermaid
+Version:      12.2.0
+Source:       npm pack mermaid@12.2.0, file package/dist/mermaid.min.js (IIFE build, sets window.mermaid)
+Fetched:      2026-10-13
+SHA-256:      a8a6a6f805b074a8261a2825c86f99c8054acb3b35f50bb7e24a4f9f2c3c3b9f  mermaid.min.js
+Licence:      MIT, see mermaid-LICENSE.txt. The bundle also carries the notices of its bundled
+              dependencies as comments at the end of the file (DOMPurify 3.4.12, Apache 2.0 or MPL 2.0;
+              lodash-es, MIT; cytoscape and its helpers, MIT). Other bundled packages (for example d3 and dagre)
+              are permissively licensed and listed in the mermaid package metadata.
+Loaded by:    assets/js/diagrams.js, lazily, on the first diagram of a page. No network access is needed.
+
+To update: run `npm pack mermaid@<version>` in an empty folder, extract the archive, copy
+package/dist/mermaid.min.js and package/LICENSE here, then update this file and test
+every diagram (node tools/check-render.mjs) from file://.

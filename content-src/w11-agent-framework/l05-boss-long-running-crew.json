@@ -1,0 +1,86 @@
+{
+  "id": "w11-l5",
+  "order": 5,
+  "title": "Boss: architect the long-running, approval-gated crew",
+  "kind": "boss",
+  "minutes": 25,
+  "brief": "An interviewer wants a multi-agent process that drafts a change, waits up to two days for a human approval, then writes to a system of record, built on Microsoft Agent Framework. The dials are not given. Clarify them, compare the options, choose, and say what would flip your answer.",
+  "blocks": [
+    { "t": "h", "text": "The prompt and the five steps", "level": 2 },
+    { "t": "scenario", "title": "What you know and what to ask", "known": ["Several specialist agents draft a change and a reviewer agent critiques it", "A human approver may take up to two days", "Only an approved change may be written to the system of record", "Auditors and engineers both need to look at runs afterwards"], "ask": ["Is the path fixed (draft, review, approve, write), or may the agents add steps?", "How long can the approval wait, and may the host be replaced while it waits?", "What does a duplicate or unapproved write cost?", "Which language and hosting are allowed, and how much Beta or preview risk is acceptable?", "May prompts and outputs leave the tenant, and who may read them?"], "tension": "A fixed order and a human gate argue for a graph. Open-ended drafting argues for an agent. A two-day wait argues for state that outlives the host and for hosting that waits without paying for idle compute." },
+    { "t": "table", "caption": "Dial-and-Defend applied to this question", "head": ["Step", "What you say"], "rows": [
+      ["1 Clarify the dials", "Path shape, wait length, cost of a wrong write, language and hosting, maturity tolerance, data policy"],
+      ["2 List the options", "Harness Agent with tool approval, graph workflow with agent executors on shared checkpoints, the same graph on the Durable Extension, the graph wrapped as a Foundry hosted agent"],
+      ["3 Pick and name the flips", "Graph workflow with agents only on draft and review, a human request step, shared checkpoint storage. Flip to Durable Extension for days of idle waiting, to a Harness Agent if the path opens up, to in-process if waits are seconds"],
+      ["4 Failure modes and detection", "Unstable executor ids, pickle trust boundary, uncapped review loop, approval on a new session, duplicate writes, Beta package churn"],
+      ["5 Metrics and rollout", "Golden set and `evaluate_workflow`, traces without content by default (chapter w15), shadow run, pinned versions"]
+    ], "highlightCol": 1 },
+    { "t": "callout", "kind": "interview", "title": "The sentence that earns points", "md": "Say what the framework does not do for you. A checkpoint lets a run resume. It does not make a side effect exactly-once, so the writer needs an idempotency key. And a version number of 1.x does not make the hosting packages stable: the Foundry hosting service is GA while the Python hosting package is Beta (checked 2026-10-13)." }
+  ],
+  "quiz": [
+    { "id": "w11-l5-q1", "type": "single", "tag": "flip", "difficulty": 2, "q": "In a variant of the process, approvals arrive within seconds from a chat app and a whole run lasts under a minute. What is the right simplification?", "options": ["Replace the workflow with Magentic, because a short run suits a planning manager that re-plans after every step", "Remove the approval gate, because the wait is short and the risk is small", "Keep the graph and the human request step, and drop the Durable Extension in favour of in-process hosting", "Keep the Durable Extension anyway, because any human step requires it"], "answer": 2, "explain": "The approval gate exists because of the write's risk, not because of the wait, so it stays. Short waits remove the reason for durable, idle-free hosting, and in-process hosting with in-memory or file checkpoints can be enough. Magentic plans for open-ended work, which this is not, and durable hosting is a choice driven by wait length, not a requirement of human steps.", "ref": "r9" },
+    { "id": "w11-l5-q2", "type": "single", "tag": "tradeoff", "difficulty": 2, "q": "Which statement about hosting should shape the plan, as of 2026-10-13?", "options": ["Every hosting package shares the stable 1.x version, so maturity is not a risk", "The Foundry hosted agent service is GA, but `agent-framework-foundry-hosting` is Beta and the .NET hosting packages are preview, so pin versions and keep an exit path", "Self-hosting ships a general-purpose durable session store, so nothing needs building", "DevUI is the intended production host for workflows"], "answer": 1, "explain": "The hosting service and the framework packages that target it have different maturity. Self-hosting has no general-purpose durable `AgentSessionStore`, so you supply session persistence. DevUI is described as a sample app, not for production. One version number does not cover Beta and preview packages.", "ref": "r10" },
+    { "id": "w11-l5-q3", "type": "multi", "tag": "bug", "difficulty": 3, "q": "Select every change that can stop a resumed run from continuing correctly.", "options": ["The rebuilt workflow has a different edge topology", "In .NET the agents get new random ids on each start instead of a stable `ChatClientAgentOptions.Id`", "The approval answer arrives on a new `AgentSession` while a Harness tool approval is pending", "The workflow is rebuilt with fresh executor and agent instances", "The same storage class is used again after the process restarts"], "answers": [0, 1, 2], "explain": "A resume needs the same topology and executor identities, and the default Harness tool-approval middleware needs the same session across the round trip. Building fresh instances per workflow is the recommended practice, and reusing the same storage class after a restart is exactly what resume expects.", "ref": "r7" },
+    { "id": "w11-l5-q4", "type": "order", "tag": "order", "difficulty": 2, "q": "Put the life of one change request in order.", "items": ["Drafting agents run and the review group chat converges", "The approval executor calls `request_info` and the superstep checkpoints", "The host restarts while the request is pending", "`workflow.run` restores the checkpoint and re-emits the request with the human's response", "The writer executor performs the write once, using an idempotency key"], "explain": "The request is stored in the checkpoint at the superstep end, survives the restart, and is re-emitted on restore together with the response. The write comes last, behind the approval, and carries an idempotency key because a checkpoint does not make side effects exactly-once.", "ref": "r8" }
+  ],
+  "defend": {
+    "prompt": "Our contract-change process has several specialist agents draft a change and a reviewer agent critique it. A lawyer may take up to two days to approve, and only then do we write to the contract system. Architect this on Microsoft Agent Framework. Where does each piece run, where does state live, and how do you keep it safe and debuggable?",
+    "timebox": "5 min",
+    "clarify": [
+      "Is the path fixed (draft, review, approve, write), or can the agents add steps?",
+      "How long can the approval wait, and may the host be replaced while it waits?",
+      "What does a duplicate or an unapproved write cost?",
+      "Which language and hosting are allowed, and how much Beta or preview risk is acceptable?",
+      "What must an auditor and an engineer see afterwards, and may prompts leave the tenant?"
+    ],
+    "options": [
+      { "name": "Harness Agent with tool approval and a session store", "when": "The path is open, one owner runs it, and approvals are short and inline.", "tradeoff": "Approval needs the same `AgentSession` across the round trip. There is no enforced order, fan-out or graph checkpoint, and looping and background agents are experimental." },
+      { "name": "Graph workflow with agent executors, a human request step and shared checkpoint storage", "when": "The order is fixed, waits can last days and you own hosting.", "tradeoff": "You build session persistence, carry the pickle trust boundary and must keep topology and executor ids stable across releases." },
+      { "name": "The same workflow on the Durable Extension", "when": "Waits last hours or days and idle compute should cost nothing, with scale to zero.", "tradeoff": "Beta in Python and preview in .NET, a new hosting model, and calls made inside orchestrations must use the replay-safe agent accessors." },
+      { "name": "The workflow wrapped with `as_agent()` as a Foundry hosted agent", "when": "You want a managed container host, the Responses protocol and an Entra identity per agent.", "tradeoff": "The framework hosting package is Beta or preview even though the service is GA, and the inner agents still need stable ids." }
+    ],
+    "modelAnswer": [
+      { "t": "p", "md": "**1. Clarify the dials.** I would ask five things first. Is the path fixed? How long can the approval wait, and may the host be replaced meanwhile? What does a duplicate or unapproved write cost? Which language, hosting and maturity risk are acceptable? What must auditors and engineers see, and may content leave the tenant?" },
+      { "t": "table", "head": ["Option", "Pick when", "Loses when"], "rows": [
+        ["Harness Agent plus session store", "Open path, one owner, short inline approvals", "Order must be enforced or waits span restarts"],
+        ["Graph workflow on shared checkpoints", "Fixed order, multi-day waits, you own hosting", "Idle compute matters or you cannot carry the storage work"],
+        ["Same graph on the Durable Extension", "Days of waiting, scale to zero", "Beta or preview risk is unacceptable"],
+        ["Graph as a Foundry hosted agent", "Managed host and Responses protocol wanted", "You need hosting packages that are already stable"]
+      ] },
+      { "t": "p", "md": "**3. Pick and name the flips.** I would build a graph workflow. The order is fixed, so edges own it. Agents sit only on draft and review, as a maker and a reviewer in a group chat with a `termination_condition` and a `max_rounds` cap. Legal approval is a human request step (`ctx.request_info` in Python, a `RequestPort` in .NET), so the pending request lives in the checkpoint. The writer is a plain function executor behind the approval, with an idempotency key." },
+      { "t": "diagram", "id": "w11-d4", "title": "The shape I would defend", "alt": "A requester reaches a hosted workflow. Drafting agents and a review group chat run first, then a legal approval request, then a writer executor. The workflow saves state to a checkpoint store.", "src": "flowchart LR\n  U[Requester] --> H[Host]\n  H --> W[Workflow]\n  W --> D[Drafting agents]\n  D --> R[Review group chat]\n  R --> A{Legal approval request}\n  A --> X[Writer executor]\n  W --> C[Checkpoint store]", "caption": "Agents only where language understanding is needed. The gate and the write are ordinary executors." },
+      { "t": "p", "md": "Flips: if waits are seconds, host in-process and drop durable. If waits are days and idle compute matters, move the same graph to the Durable Extension and accept Beta or preview. If the drafting path opens up, swap the drafting node for a Harness Agent inside the node. If strict data rules forbid pickle, use a custom `CheckpointStorage`. The framework facts I rely on are checked as of 2026-10-13 [[r7]] [[r8]] [[r9]]." },
+      { "t": "p", "md": "**4. Failure modes and detection.** Unstable executor ids make a rebuilt workflow fail to resume, so I test a restore in CI. The restricted unpickler rejects unlisted types, so I list them with `allowed_checkpoint_types` and never load untrusted checkpoints. An uncapped review loop burns tokens, so I cap rounds and alert on rounds per run. An approval sent on a new session loses the Harness approval state. A checkpoint does not make the write exactly-once, so the idempotency key is mine to add (a design rule, not a framework feature). Self-hosting ships no general-purpose durable session store, so I own that [[r27]]." },
+      { "t": "p", "md": "**5. Metrics and rollout.** Evaluate on a golden set with the framework's evaluation hooks (`evaluate_workflow` in Python) [[r29]]. Trace with the built-in OpenTelemetry spans, content off by default, with prompts kept out of spans unless policy allows (chapter w15) [[r12]]. Shadow the process beside the manual one, then enable writes for a small tenant. Pin package versions and read the dated breaking-changes list before each upgrade, for example the orchestration output change in Python 1.2.2 (2026-04-29) [[r11]]." }
+    ],
+    "rubric": [
+      { "pt": "Asks about wait length, fixed versus open path and the cost of a wrong or duplicate write before choosing", "w": 3 },
+      { "pt": "Chooses a graph workflow for the fixed order and puts agents only where language understanding is needed", "w": 3 },
+      { "pt": "Models the approval as a human request stored in a checkpoint, and describes resuming with the checkpoint id and the response", "w": 3 },
+      { "pt": "Picks storage and hosting by recovery need and threat model (shared store, no pickle if strict, Durable Extension for idle-free waits) and names Beta or preview maturity", "w": 2 },
+      { "pt": "Gives the write an idempotency key, keeps it behind the approval and states that a checkpoint is not exactly-once", "w": 2 },
+      { "pt": "Names concrete failure modes with detection: unstable ids, restricted unpickler, uncapped loops, approval on a new session", "w": 2 },
+      { "pt": "Names evaluation, tracing without content by default, shadow rollout and pinned versions", "w": 2 },
+      { "pt": "States the flip conditions: seconds-long waits, an opening path, strict data rules", "w": 1 }
+    ],
+    "followUps": [
+      { "q": "A partner team's agent and a web app both need to call this process. How do you expose it?", "a": "Wrap the workflow with `as_agent()` (Python) or `AsAIAgent` (.NET) and host it. A2A serves a peer agent with an Agent Card, AG-UI serves a web app, and OpenAI-compatible endpoints serve chat clients. The hosting packages are Beta or preview, so pin them. Chapter w15 covers trace context across the A2A hop." },
+      { "q": "A Semantic Kernel prototype and an AutoGen team both exist. How do you migrate?", "a": "Semantic Kernel agent classes collapse into `ChatClientAgent`, namespaces move to `Microsoft.Agents.AI`, and a `KernelFunction` can remain a tool. In AutoGen `AssistantAgent` is single-turn unless `max_tool_iterations` is raised, `Team` and GraphFlow map to a graph `Workflow` and `FunctionTool` maps to `@tool`. Migrate one agent at a time and compare outputs on a golden set [[r26]]." },
+      { "q": "The Harness Agent already has todos and approvals. Why not use it for the whole process?", "a": "It adds planning state and approvals to an agent that chooses its own steps. It does not enforce an order, fan out, or give a graph checkpoint to resume from. Put it inside a node if the drafting step needs long autonomy [[r2]]." }
+    ],
+    "redFlags": [
+      "Reaches for Magentic or a crew first, with no simpler baseline.",
+      "Treats a checkpoint as making the write exactly-once.",
+      "Loads checkpoints from a shared writable location without a trust discussion.",
+      "Assumes one 1.x version number means every hosting package is stable.",
+      "Puts a two-day human wait on background responses or background agents."
+    ]
+  },
+  "refs": ["r2", "r7", "r8", "r9", "r10", "r11", "r12", "r26", "r27", "r29"],
+  "takeaways": [
+    "A fixed order with a human gate points to a graph workflow, with agents only where language understanding is needed.",
+    "Waits of days decide hosting: shared checkpoint storage or the Durable Extension, and the Durable packages are Beta or preview (checked 2026-10-13).",
+    "A checkpoint resumes a run. It does not make a side effect exactly-once, so the writer needs an idempotency key.",
+    "Name the maturity out loud: the Foundry hosting service is GA while the framework hosting packages are Beta or preview."
+  ]
+}

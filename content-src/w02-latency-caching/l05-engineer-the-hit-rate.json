@@ -1,0 +1,49 @@
+{
+  "id": "w02-l5",
+  "order": 5,
+  "title": "Engineer the hit rate",
+  "kind": "lab",
+  "minutes": 20,
+  "brief": "The dashboard says caching is on, yet the bill barely moved. Hit rate depends on prefix stability, request spacing, routing and lifetime, and none of them is fixed. Find what to change first, and how you would notice a silent regression.",
+  "blocks": [
+    { "t": "h", "text": "Hit rate is a product of four conditions", "level": 2 },
+    { "t": "p", "md": "A request hits only when **all four** hold: the prefix is above the minimum size, the prompt is identical up to the cached boundary, the request reaches the machine that holds the entry, and it arrives before the entry expires. Miss any one and you pay the full price, and on GPT-5.6 and later or Anthropic you also pay the write premium for an entry nobody reads [[r1]] [[r3]]. The lab below models these four conditions with illustrative prices and times, not vendor benchmarks." },
+    { "t": "lab", "id": "prompt-cache", "intro": "Start with the 'Many tenants, low traffic' preset: about 0.2 requests per minute per tenant leaves gaps that run into a 5-minute lifetime. Then load 'One hot prefix', where 120 requests per minute on one key exceed the roughly 15 per minute documented before misses begin, and spread it across keys. Finally break the prefix on 70% of requests and watch caching cost more than no caching." },
+    { "t": "failure", "title": "What silently breaks a prefix cache", "items": [
+      { "symptom": "Hit ratio is near zero on every request", "cause": "A timestamp, request id or user name sits early in the prompt, so the first differing token comes before the cached boundary", "fix": "Put static content first and dynamic content last. Diff the first 1,024 tokens of two consecutive requests" },
+      { "symptom": "Hit ratio fell after a deploy that changed nothing visible", "cause": "Tool definitions were reordered or edited, or `tool_choice`, `parallel_tool_calls`, `text.format`, `reasoning.effort` or `text.verbosity` changed. On Anthropic, tool changes invalidate everything and thinking or effort changes invalidate messages", "fix": "Version and freeze tool lists. Use `tool_choice: \"none\"` or `allowed_tools` instead of removing tools. Alert on the ratio, not on errors" },
+      { "symptom": "Long conversations stop hitting after a summarization step", "cause": "Summarization, compaction and truncation rewrite the prefix, so reuse resets", "fix": "Compact rarely and in large steps, then append. Expect one write after each compaction" },
+      { "symptom": "Misses climb at peak although the prefix is stable", "cause": "One prefix and key above about 15 requests per minute overflows to other machines that do not hold the entry", "fix": "Shard across several stable keys with a stable mapping. A key never pins a machine or guarantees a hit" },
+      { "symptom": "Parallel fan-out requests all write and none read", "cause": "On Anthropic an entry exists only after the first response begins", "fix": "Send one request, wait for its response to begin, then fan out the rest" },
+      { "symptom": "A hit vanishes after a turn that added many content blocks", "cause": "An Anthropic breakpoint looks back only 20 block positions for an earlier write", "fix": "Add a second breakpoint when a turn adds 20 or more blocks" },
+      { "symptom": "Cost jumps after a regional failover", "cause": "Caches are not shared across regional processing boundaries, so the standby region starts cold", "fix": "Prewarm the standby where the API allows it and budget the cold-start write cost" },
+      { "symptom": "Low hit rate behind a model router", "cause": "Consecutive requests reach different underlying models, and each model keeps its own cache", "fix": "Pin a model subset, use session affinity where offered (preview for Chat Completions, no guarantee), and measure before and after routing" }
+    ] },
+    { "t": "diagram", "id": "w02-l5-debug", "title": "Debug a falling hit ratio", "alt": "Flowchart. Start with a dropped hit ratio. Check the prefix is above the minimum size, then whether the first differing token is early, then whether the per-key rate exceeds 15 requests per minute, then whether gaps exceed the lifetime, and finally check tools, effort and compaction.", "src": "flowchart TB\n  A[Hit ratio dropped] --> B{Prefix above minimum?}\n  B -- no --> B1[Pad or merge to reach it]\n  B -- yes --> C{First difference early?}\n  C -- yes --> C1[Move dynamic text last]\n  C -- no --> D{Over 15 rpm per key?}\n  D -- yes --> D1[Shard across stable keys]\n  D -- no --> E{Gaps longer than lifetime?}\n  E -- yes --> E1[Longer TTL or prewarm]\n  E -- no --> F[Check tools, effort, compaction]", "caption": "Ordered from the cheapest check to the most invasive fix." },
+    { "t": "formula", "title": "Key sharding and the padding threshold", "expr": "keys >= ceil(requests_per_minute / 15)", "vars": [
+      { "k": "requests_per_minute", "v": "traffic for one shared prefix" },
+      { "k": "15", "v": "the roughly documented per-prefix, per-key rate above which requests can overflow to other machines" }
+    ], "example": "1,000 requests per minute on one prefix needs at least **67 keys**. Padding is a related decision: padding a short prefix up to the minimum M tokens pays off when its length exceeds `M x (r + (w - r) / N)`. With M = 1,024, r = 0.1, w = 1.25 and N = 10 total requests, the threshold is 1,024 x 0.215, about **220 tokens**. A 300-token prefix padded to 1,024 and shared by 10 requests costs less than leaving it uncached [[r1]]. The sharding rate and the padding rule come from OpenAI's guide, and Azure documents the same 15 per minute figure [[r2]]." },
+    { "t": "stats", "items": [
+      { "label": "Per-key rate before misses", "value": "about 15 rpm", "note": "Azure: per prefix and key. OpenAI: per key across prefixes (advice for models before GPT-5.6)" },
+      { "label": "Write and read multipliers", "value": "1.25x and 0.1x", "note": "GPT-5.6 and later, Anthropic 5-minute" },
+      { "label": "Anthropic breakpoints", "value": "4, lookback 20", "note": "blocks searched for an earlier write" },
+      { "label": "Minimum prefix", "value": "1,024 tokens", "note": "OpenAI and Azure; Anthropic 512 to 4,096 by model" }
+    ] },
+    { "t": "callout", "kind": "gotcha", "title": "What the key does and does not do", "md": "On GPT-5.6 and later, OpenAI's guide says `prompt_cache_key` is optional. It gives per-customer cache accounting and blocks cache-hit probing, although the Azure page still advises setting one for shared prefixes [[r2]]. Before GPT-5.6, a stable key per shared prefix improves routing. In both cases a key never pins a machine and never guarantees a hit [[r1]]. OpenAI also provides a Prompt Caching Dashboard and a Prompt Cache Diagnostics tool. Use them, and alert on cached tokens divided by prompt tokens, because a regression raises no error." }
+  ],
+  "quiz": [
+    { "id": "w02-l5-q1", "type": "numeric", "tag": "numeric", "q": "One shared prefix receives 1,000 requests per minute. About 15 requests per minute per key is the documented rate before misses. What is the minimum number of keys to shard across?", "answer": 67, "tolerancePct": 2, "unit": "keys", "hint": "ceil(1000 / 15)", "explain": "1,000 / 15 = 66.7, so at least 67 keys. Fewer keys leave some above 15 per minute, where requests can overflow to machines without the entry. The mapping from request to key must be stable, or a request lands on a key whose entry it never wrote.", "difficulty": 1, "ref": "r1" },
+    { "id": "w02-l5-q2", "type": "order", "tag": "order", "q": "Put the life of a cached Anthropic request in order.", "items": ["The prompt prefix is matched against stored entries from the first token", "The longest matching entry is reused, so those tokens skip prefill", "The remaining tokens go through prefill as normal", "Once the response begins, an entry for the new prefix is written", "The entry lifetime is refreshed each time it is read again"], "explain": "Matching starts at the first token, which is why an early difference ruins everything after it. The entry for a new prefix only exists once the first response begins, which is why parallel requests miss. The refresh on each read is why a steady stream keeps a 5-minute entry alive.", "difficulty": 2, "ref": "r3" },
+    { "id": "w02-l5-q3", "type": "multi", "tag": "diagnose", "q": "A team reports a falling hit ratio. Select every change that can reset or break prefix reuse.", "options": ["Appending the next user turn to the end of the history", "Reordering the `tools` array between two deployments", "Summarizing the oldest turns to save tokens", "Changing `reasoning.effort` between requests on a model without `configuration_update`"], "answers": [1, 2, 3], "explain": "Tools, summarization and the effort setting all alter the prefix or the settings tied to it. Appending a new turn at the end is exactly the pattern that caching is designed for, because the earlier prefix stays identical.", "difficulty": 2, "ref": "r1" }
+  ],
+  "defend": null,
+  "refs": ["r1", "r2", "r3"],
+  "takeaways": [
+    "A hit needs four things at once: size, identical prefix, the right machine, and arrival inside the lifetime",
+    "Dynamic text early, reordered tools, changed effort and summarization are the usual silent breakers",
+    "Above about 15 requests per minute per key, shard across stable keys. A key never guarantees a hit",
+    "On Anthropic wait for the first response to begin before fanning out, and add a breakpoint every 20 blocks",
+    "Alert on cached tokens over prompt tokens. A regression raises no error"
+  ]
+}

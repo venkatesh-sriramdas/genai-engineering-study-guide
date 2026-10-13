@@ -1,0 +1,117 @@
+{
+  "id": "w02-t04",
+  "order": 4,
+  "group": "KV cache and serving",
+  "title": "The KV cache and how big it gets",
+  "minutes": 10,
+  "difficulty": "core",
+  "summary": "The KV cache stores the keys and values of every token already read so decode never recomputes them. It grows with context length and concurrency and, at long context, caps how many users fit on a GPU.",
+  "useIf": "You host a model and must size concurrency, or you must explain why long context makes serving expensive.",
+  "avoidIf": "You only call a hosted API. The provider manages the KV cache, and your levers are prompt size, output size and prompt caching.",
+  "explain": [
+    { "t": "p", "md": "In each attention layer every token produces a key vector and a value vector. Decode needs those of all earlier tokens at every step, so engines keep them in GPU memory instead of recomputing. That store is the **KV cache**. Its size per token depends on the model's shape, and the total scales with the number of tokens in flight [[r24]]." },
+    { "t": "formula", "title": "KV cache size", "expr": "bytes per token = 2 x n_layers x n_kv_heads x head_dim x bytes_per_element", "vars": [
+      { "k": "2", "v": "one key and one value per head" },
+      { "k": "n_kv_heads", "v": "KV heads, not query heads. GQA models have fewer" },
+      { "k": "total", "v": "bytes per token x tokens per sequence x concurrent sequences" }
+    ], "example": "Llama 3 8B (32 layers, 8 KV heads, head_dim 128, bf16): 2 x 32 x 8 x 128 x 2 = 131,072 bytes, which is 128 KiB per token and 1 GiB at 8,192 tokens [[tr12]]." },
+    { "t": "table", "caption": "Derived from public model configs, bf16", "head": ["Model shape", "KV per token", "At 8,192 tokens", "Source"], "rows": [
+      ["Llama 3 8B (32 layers, 8 KV heads)", "128 KiB", "1 GiB", "[[tr12]]"],
+      ["Llama 3 70B (80 layers, 8 KV heads)", "320 KiB", "2.5 GiB", "[[r27]]"],
+      ["Same 8B body with 32 KV heads (MHA, hypothetical)", "512 KiB", "4 GiB", "Derived"]
+    ] },
+    { "t": "lab", "id": "kv-cache", "intro": "Start with the MHA preset and read KV per sequence. Switch to the GQA preset and compare. Lower KV precision, then stretch the context and watch how many sequences fit. Check the three paging rows: contiguous reservation, paged blocks and paged blocks with a shared prefix. Shapes are illustrative, not vendor models." },
+    { "t": "p", "md": "**Concurrency limit.** Memory left for KV is GPU memory minus weights and overhead. Illustrative arithmetic: an 80 GiB GPU holding 8B weights in bf16 (about 15 GiB) with some headroom leaves roughly 56 GiB, which is 56 sequences at 8,192 tokens or 14 at 32,768. At long context the KV cache, not the weights, caps concurrency." },
+    { "t": "callout", "kind": "gotcha", "title": "What spills when KV runs out", "md": "vLLM preempts requests to free KV space and recomputes them later. In V1 the default preemption mode is `RECOMPUTE`, which costs latency. The documented fixes are a higher `gpu_memory_utilization`, lower `max_num_seqs` or `max_num_batched_tokens`, or more `tensor_parallel_size` or `pipeline_parallel_size` [[tr6]]." }
+  ],
+  "whereToUse": [
+    "Capacity planning for a self-hosted model: sequences per GPU at a target context",
+    "Comparing candidate models: KV heads and layers matter as much as parameter count",
+    "Explaining why a 128K context window is costly to serve, not only to bill",
+    "Deciding whether KV quantization, paging or a GQA model is the right fix for a memory cap",
+    "Reading a preemption or out-of-memory event on a serving engine"
+  ],
+  "whenToUse": {
+    "use": [
+      "You run the model and context is long or concurrency is high",
+      "You compare architectures and need KV bytes per token",
+      "Latency spikes line up with preemption counts"
+    ],
+    "avoid": [
+      "Hosted API only: tune prompt size and caching instead",
+      "Short contexts with few users, where weights dominate memory",
+      "Planning from average context: size for the long tail or you will preempt"
+    ],
+    "flips": [
+      "Context grows from 8K to 64K: per-sequence KV grows 8x, so concurrency drops 8x unless you shrink KV",
+      "Weights shrink through quantization: more memory is left for KV, so concurrency rises",
+      "Traffic shares a long prefix: paged sharing or prefix caching saves KV for every tenant that shares it"
+    ]
+  },
+  "alternatives": {
+    "title": "Ways to fit more sequences",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["GQA or MLA model", "You choose the model", "The model is fixed", "Chosen at selection time, not tunable later"],
+      ["KV quantization (FP8, lower)", "Memory-bound at long context", "Quality is sensitive at long context", "Needs an eval gate"],
+      ["Paged allocation and prefix sharing", "Variable lengths, shared prompts", "Unique prompts", "Per-tenant isolation needed"],
+      ["More GPUs or tensor parallelism", "Budget exists", "Synchronization overhead dominates", "Cost and complexity"],
+      ["Shorter context or compaction", "Answers need less history", "Tasks need the full document", "May drop needed evidence"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Out-of-memory or preemption at long context although weights fit comfortably", "cause": "KV per sequence was budgeted at the average, not the maximum, context", "fix": "Size for the p95 context and set `max_num_seqs` to match [[tr6]]" },
+    { "symptom": "KV estimate is four times too high for a GQA model", "cause": "Query heads were used in the formula instead of KV heads", "fix": "Read `num_key_value_heads` from the model config" },
+    { "symptom": "Latency spikes under load with no error", "cause": "Preempted requests are being recomputed", "fix": "Watch the preemption metric and add KV headroom or lower concurrency [[tr6]]" }
+  ],
+  "scenarios": [
+    {
+      "id": "w02-t04-s1",
+      "title": "Concurrency short on a 70B deployment",
+      "situation": "A team serves a 70B GQA model (80 layers, 8 KV heads, head_dim 128) on four 80 GiB GPUs. Typical context is 16,384 tokens and 40 users are active at peak. After weights and overhead about 150 GiB remains for KV.",
+      "constraints": ["320 KiB of KV per token in bf16", "40 concurrent sequences needed", "Budget allows a quality check, not new hardware this quarter"],
+      "unknowns": ["Is there a long-context quality eval?", "Can the engine store KV in FP8 on this hardware?"],
+      "question": "What do you do?",
+      "options": [
+        { "name": "Add GPUs", "verdict": "good", "why": "More memory raises the limit without changing numerics.", "tradeoff": "Costs money, adds parallelism overhead, and is not available this quarter." },
+        { "name": "Raise memory utilization to the maximum", "verdict": "poor", "why": "It frees a few GiB, which is one or two sequences, and risks out-of-memory failures.", "tradeoff": "Right when the reserved headroom is much larger than needed." },
+        { "name": "Store KV in FP8 and gate it with a long-context eval", "verdict": "best", "why": "Each sequence needs 5 GiB in bf16, so 150 GiB fits 30. FP8 halves that to 2.5 GiB and fits 60, covering the 40 needed.", "tradeoff": "Quality can degrade at long context, so the eval gate is mandatory." }
+      ],
+      "flips": [
+        { "if": "The eval shows an unacceptable drop at 16K tokens", "then": "Add capacity or shorten context through compaction instead." },
+        { "if": "Most sessions share a long system prompt", "then": "Prefix sharing cuts KV per user before you quantize anything." }
+      ],
+      "takeaway": "Do the sequence arithmetic first, then pick the cheapest lever that closes the gap."
+    },
+    {
+      "id": "w02-t04-s2",
+      "title": "Two candidate models, equal quality",
+      "situation": "A team picks an open model for a long-document service. Candidate A has 32 KV heads (MHA). Candidate B has 8 KV heads (GQA). Same layers and head size. Evals on the team's tasks are tied.",
+      "constraints": ["Self-hosted", "Context is long and concurrency is the cost driver", "Tied quality on the team's own eval"],
+      "unknowns": ["Does the eval cover long-context retrieval?", "Is the license the same?"],
+      "question": "Which model do you pick?",
+      "options": [
+        { "name": "Candidate A with FP8 KV", "verdict": "good", "why": "It halves KV, closing part of the gap.", "tradeoff": "It is still twice the size of B's KV and adds a quantization risk." },
+        { "name": "Candidate A because more KV heads means better recall", "verdict": "poor", "why": "The head count is a design choice, not a quality guarantee, and the evals are tied.", "tradeoff": "Right if an eval of long-context retrieval showed A is better." },
+        { "name": "Candidate B (GQA)", "verdict": "best", "why": "It needs a quarter of the KV bytes per token, so the same GPU serves about four times the sequences.", "tradeoff": "Confirm no loss on long-context tasks before committing." }
+      ],
+      "flips": [
+        { "if": "A long-context eval favours A by a margin that matters", "then": "Pay the memory cost or quantize KV and re-test." },
+        { "if": "Context is short and traffic is small", "then": "Pick on quality and licence, since KV is not the limit." }
+      ],
+      "takeaway": "KV heads are a capacity decision made at model selection."
+    }
+  ],
+  "quiz": [
+    { "id": "w02-t04-q1", "type": "numeric", "tag": "numeric", "q": "A model has 40 layers, 8 KV heads, head_dim 128 and stores KV in fp16 (2 bytes). How many KiB of KV does one token need?", "answer": 160, "tolerancePct": 2, "unit": "KiB", "hint": "2 x layers x kv heads x head_dim x bytes", "explain": "2 x 40 x 8 x 128 x 2 = 163,840 bytes, which is 160 KiB per token. At 8,192 tokens that is 1.25 GiB per sequence.", "difficulty": 2, "ref": "tr12" },
+    { "id": "w02-t04-q2", "type": "single", "tag": "bug", "q": "A model config shows 64 attention heads and 8 key-value heads. Which number goes into the KV size formula?", "options": ["64, the number of attention heads", "8, the number of KV heads", "72, the sum of both", "Neither, KV size does not depend on heads"], "answer": 1, "explain": "Only KV heads are stored. Using 64 would overstate memory by eight times. The cache does depend on head count through KV heads, and the sum has no meaning.", "difficulty": 1, "ref": "r27" },
+    { "id": "w02-t04-q3", "type": "multi", "tag": "tradeoff", "q": "Which choices reduce KV memory per sequence?", "options": ["Choosing a GQA model over an MHA model", "Storing KV in FP8 instead of bf16", "Quantizing weights to INT4", "Halving the context length"], "answers": [0, 1, 3], "explain": "GQA lowers KV heads, FP8 halves bytes per element and a shorter context stores fewer tokens. INT4 weights free memory for KV overall but do not shrink the per-sequence KV size.", "difficulty": 2, "ref": "r24" }
+  ],
+  "flashcards": [
+    { "front": "Write the KV cache bytes per token formula.", "back": "2 x n_layers x n_kv_heads x head_dim x bytes_per_element. Multiply by tokens and by concurrent sequences for the total." },
+    { "front": "How much KV does one token need on Llama 3 8B in bf16?", "back": "128 KiB per token, which is 1 GiB at 8,192 tokens (32 layers, 8 KV heads, head_dim 128)." },
+    { "front": "What happens when a serving engine runs out of KV space?", "back": "It preempts requests and recomputes them later. In vLLM V1 the default mode is recompute, which costs latency." }
+  ],
+  "related": ["w02-t05", "w02-t06", "w02-t10", "w02-l3"],
+  "refs": ["r24", "r27", "tr6", "tr12", "r6"]
+}

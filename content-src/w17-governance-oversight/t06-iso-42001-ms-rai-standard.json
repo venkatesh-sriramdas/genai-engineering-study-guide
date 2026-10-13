@@ -1,0 +1,100 @@
+{
+  "id": "w17-t06",
+  "order": 6,
+  "group": "Regulation and standards",
+  "title": "ISO/IEC 42001 and the Microsoft Responsible AI Standard",
+  "minutes": 7,
+  "difficulty": "core",
+  "summary": "ISO/IEC 42001 is a certifiable management system standard for how an organization governs AI. Microsoft's Responsible AI Standard is an internal rulebook that Microsoft released externally. Neither certifies one chatbot.",
+  "useIf": "A customer asks for a certificate, or you are designing an internal AI governance rulebook.",
+  "avoidIf": "You want to certify a single application's behaviour or prove EU AI Act compliance with a certificate alone.",
+  "explain": [
+    { "t": "p", "md": "**ISO/IEC 42001:2023** is a management system standard for artificial intelligence, an **AIMS**, published in December 2023. It follows Plan-Do-Check-Act and governs an organization's AI practice, not one application's behaviour. It is certifiable: an external audit assesses whether your management system meets the standard [[r12]]. As with other ISO management system standards, expect elements such as a policy, defined roles, risk assessment, operational controls, monitoring, internal audit, management review and improvement (general pattern, not clause by clause)." },
+    { "t": "p", "md": "The **Microsoft Responsible AI Standard v2** (June 2022) is an internal standard that Microsoft released externally. It has six goal groups: Accountability, Transparency, Fairness, Reliability and Safety, Privacy and Security, and Inclusiveness. Accountability includes goal A5, human oversight and control, and a **Sensitive Uses review** that is repeated at least annually (A2.3) [[r13]]. It is a rulebook for one company's engineering teams, not a certification you can obtain." },
+    { "t": "callout", "kind": "why", "title": "How the two fit together", "md": "Use ISO/IEC 42001 as the outer assurance wrapper that an auditor can inspect, and a rulebook like the Responsible AI Standard as a model for the inner checkpoints that product teams pass before launch and at each review. One answers 'can you show a working system of management', the other answers 'what must this team do before it ships'." },
+    { "t": "diagram", "id": "w17-t06-d1", "title": "The Plan-Do-Check-Act loop of an AIMS", "alt": "Plan covers scope, policy and risk assessment, Do covers controls and operation, Check covers monitoring and audit, Act covers corrective action, and the loop returns to Plan.", "src": "flowchart LR\n  P[Plan scope policy risk] --> D[Do controls and operation]\n  D --> C[Check monitor and audit]\n  C --> A[Act correct and improve]\n  A --> P" },
+    { "t": "table", "caption": "Four kinds of document, often confused", "head": ["Document", "Kind", "What it gives you", "What it does not"], "rows": [
+      ["EU AI Act", "Law", "Legal duties and market access", "A management system or a vocabulary"],
+      ["NIST AI RMF and 600-1", "Voluntary guidance", "Shared risk vocabulary and GenAI risk list", "A certificate or legal evidence"],
+      ["ISO/IEC 42001", "Certifiable standard", "Third-party assurance of your AIMS", "Proof that one system is safe or legal"],
+      ["Microsoft Responsible AI Standard", "Internal rulebook", "A worked example of goals and reviews", "A certification you can obtain"]
+    ] }
+  ],
+  "whereToUse": [
+    "Enterprise sales, where customers ask for an AI management certificate",
+    "Building an internal AI policy with goals, reviews and owners",
+    "Setting an annual Sensitive Uses review for high-impact features",
+    "Aligning supplier due diligence across AI vendors",
+    "Structuring an internal audit of AI practices"
+  ],
+  "whenToUse": {
+    "use": ["A buyer or regulator values third-party assurance: pursue ISO/IEC 42001", "No external driver yet: adopt an internal rulebook like the RAI Standard's goals and borrow NIST vocabulary", "You run many AI systems and need a consistent management process"],
+    "avoid": ["Advertising a chatbot as certified because the organization is", "Treating a certificate as proof of EU AI Act compliance", "Copying a large company's rulebook without scaling it to your size"],
+    "flips": ["A major customer demands certification: start the AIMS and reuse existing evidence", "Only one product uses AI: a lighter internal rulebook may be enough while that holds", "Your risk is regulated high-risk use: add the Act's system-level duties on top"]
+  },
+  "alternatives": {
+    "title": "Which to adopt first",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["ISO/IEC 42001 certification", "Buyers want a certificate", "No driver, tiny team", "Audit cost and ongoing surveillance"],
+      ["Internal rulebook (RAI-style)", "First programme, no external driver", "A buyer demands independent assurance", "Self-assessed, uneven rigour"],
+      ["NIST AI RMF alignment", "Shared vocabulary and risk list", "A certificate is required", "Voluntary, under revision"],
+      ["EU AI Act compliance work", "EU market, high-risk systems", "No EU exposure", "Binding duties and dates"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Marketing says the chatbot is ISO 42001 certified", "cause": "Certification of the organization's management system was read as product certification", "fix": "Say 'our AI management system is certified' and state the scope; never imply a model or app is certified" },
+    { "symptom": "A certificate exists but nobody follows the process", "cause": "The AIMS is a paper exercise without operating evidence", "fix": "Run internal audits, track corrective actions and keep records for each control" },
+    { "symptom": "A rulebook is ignored by product teams", "cause": "Goals were not translated into reviews and release gates", "fix": "Turn goals into checkpoints, for example a Sensitive Uses review before launch and annually after" }
+  ],
+  "scenarios": [
+    {
+      "id": "w17-t06-s1",
+      "title": "An RFP requires an AI management certificate",
+      "situation": "A large buyer's RFP requires evidence of an AI management system, ideally a certificate. The supplier has solid engineering practices but no formal system.",
+      "constraints": ["A multi-year contract depends on it", "Practices exist but are undocumented", "A year of lead time"],
+      "unknowns": ["What scope should the AIMS cover?", "Which processes already produce evidence?"],
+      "question": "What do you do?",
+      "options": [
+        { "name": "Scope an AIMS under ISO/IEC 42001, close gaps, run internal audits and seek certification", "verdict": "best", "why": "The buyer wants third-party assurance, and a certifiable standard is built for that.", "tradeoff": "Audit cost, process overhead and ongoing surveillance." },
+        { "name": "Send the internal rulebook and a NIST mapping", "verdict": "good", "why": "Fast, shows intent.", "tradeoff": "Self-assessed, so it may not satisfy a certificate requirement." },
+        { "name": "Claim the product is certified once the organization is", "verdict": "poor", "why": "The certificate covers the management system, not the product's behaviour.", "tradeoff": "Never appropriate." }
+      ],
+      "flips": [
+        { "if": "The buyer accepts a self-attestation", "then": "A NIST mapping plus evidence pack may do." },
+        { "if": "The scope is a single product line", "then": "Define the AIMS scope narrowly and say so." }
+      ],
+      "takeaway": "Certificates assure the system of management, not the chatbot."
+    },
+    {
+      "id": "w17-t06-s2",
+      "title": "First internal governance programme",
+      "situation": "A mid-size company with several AI features wants consistent rules but has no external certification driver.",
+      "constraints": ["Several product teams", "No regulator demand yet", "Leadership wants a visible programme"],
+      "unknowns": ["Which products have sensitive uses?", "Who owns the rulebook?"],
+      "question": "What do you set up first?",
+      "options": [
+        { "name": "An internal rulebook with goals like accountability and human oversight, plus a Sensitive Uses review at launch and annually", "verdict": "best", "why": "It creates enforceable checkpoints without audit cost, and follows a published model.", "tradeoff": "Self-assessed, so credibility with buyers is limited." },
+        { "name": "Pursue ISO certification immediately", "verdict": "good", "why": "Builds toward assurance.", "tradeoff": "Heavy before the processes exist." },
+        { "name": "Leave each team to decide", "verdict": "poor", "why": "Inconsistent controls and no accountable owner.", "tradeoff": "Fine only for prototypes." }
+      ],
+      "flips": [
+        { "if": "A buyer requires a certificate", "then": "Convert the rulebook into an AIMS." },
+        { "if": "A feature is classified high-risk", "then": "Add the Act's system-level duties." }
+      ],
+      "takeaway": "Start with enforceable checkpoints. Add assurance when it pays."
+    }
+  ],
+  "quiz": [
+    { "id": "w17-t06-q1", "type": "single", "tag": "concept", "q": "What does an ISO/IEC 42001 certificate attest?", "options": ["A specific chatbot is safe and legal", "The organization's AI management system meets the standard", "The organization complies with the EU AI Act"], "answer": 1, "explain": "42001 is a management system standard. It governs the organization's AI practice, not one application's behaviour, and it is not an EU AI Act compliance certificate [[r12]].", "difficulty": 1 },
+    { "id": "w17-t06-q2", "type": "numeric", "tag": "numeric", "q": "How many goal groups does the Microsoft Responsible AI Standard v2 define?", "answer": 6, "tolerancePct": 0, "unit": "groups", "explain": "Accountability, Transparency, Fairness, Reliability and Safety, Privacy and Security, and Inclusiveness [[r13]].", "difficulty": 1 },
+    { "id": "w17-t06-q3", "type": "single", "tag": "flip", "q": "No customer or regulator requires certification. Which first step fits best?", "options": ["An ISO audit within a month", "No process until an incident", "An internal rulebook with launch and annual reviews"], "answer": 2, "explain": "A rulebook creates checkpoints cheaply. An immediate audit is heavy without existing processes, and waiting for an incident is reactive.", "difficulty": 2 }
+  ],
+  "flashcards": [
+    { "front": "What is ISO/IEC 42001?", "back": "A certifiable AI management system standard (AIMS), published December 2023, run as Plan-Do-Check-Act. It governs organizational practice, not one application's behaviour." },
+    { "front": "What are the six goal groups of Microsoft's RAI Standard v2?", "back": "Accountability, Transparency, Fairness, Reliability and Safety, Privacy and Security, Inclusiveness. Includes A5 human oversight and an annual Sensitive Uses review." },
+    { "front": "Law, guidance, standard, rulebook?", "back": "EU AI Act is law. NIST is voluntary guidance. ISO 42001 is a certifiable standard. The RAI Standard is an internal rulebook." }
+  ],
+  "related": ["w17-t04", "w17-t05", "w17-t07", "w17-l3", "w12-t17"],
+  "refs": ["r12", "r13", "r26"]
+}

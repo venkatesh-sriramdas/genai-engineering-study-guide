@@ -1,0 +1,115 @@
+{
+  "id": "w03-t06",
+  "order": 6,
+  "group": "Keeping it fresh",
+  "title": "Incremental ingestion and change detection",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "Incremental ingestion processes only what changed since the last run, using a timestamp, a change log or a content hash, and falls back to a full rebuild when the pipeline itself changes.",
+  "useIf": "The corpus is large, changes slowly relative to its size and you want cost and run time to follow the changes, not the corpus.",
+  "avoidIf": "The corpus is small or the source gives no reliable change signal: a scheduled full reload is simpler and safer.",
+  "explain": [
+    { "t": "p", "md": "A change signal answers one question: what is different since my last run? **Timestamps** are the cheapest. The Blob indexer uses `LastModified` [[tr4]], and the Cosmos DB indexer uses a high-water mark on `_ts` [[tr6]]. Azure SQL offers **integrated change tracking** (tables only, detects deleted rows, recommended) or a **high-water mark** on a `rowversion` or last-updated column, which also works for views [[tr5]]. A **content hash** compares what you stored with what you have read now, so an item that was touched but not edited costs no embedding call." },
+    { "t": "p", "md": "Signals have blind spots. Deletes are not tracked by default for Blob, and both Blob and Cosmos DB need a soft-delete policy from the first run [[tr4]] [[tr6]]. A restored blob is not re-indexed unless its `LastModified` changes, and renaming an ADLS Gen2 directory does not update blob timestamps [[tr4]]. The fix for any source with blind spots is a periodic **reconciliation**: list source ids, list index keys, and repair the difference." },
+    { "t": "p", "md": "Incremental runs are not enough when the pipeline changes. A new parser, chunker or embedding model changes every chunk, so you need a full rebuild into a new index (see the blue-green topic). For targeted replays, Reset Indexer is the GA full reset, while Reset Documents, Reset Skills and Resync are preview APIs in `2026-08-01-preview` [[tr9]]." },
+    { "t": "flow", "title": "One incremental run", "direction": "h", "steps": [
+      { "title": "Find changes", "md": "Ask the source for items newer than the checkpoint, or read the change log.", "tag": "signal" },
+      { "title": "Hash gate", "md": "Skip items whose normalised content hash is unchanged.", "tag": "cheap" },
+      { "title": "Process", "md": "Parse, chunk and embed only the changed items.", "tag": "cost" },
+      { "title": "Upsert", "md": "Write with a stable key so a replay is safe.", "tag": "safe" },
+      { "title": "Reconcile and advance", "md": "Repair missing or extra ids, then move the checkpoint.", "tag": "truth" }
+    ] }
+  ],
+  "whereToUse": [
+    "Large document stores where a small percentage changes each day",
+    "Database-backed catalogues with a rowversion, last-updated column or change tracking",
+    "Content that is touched by tools (migrations, virus scans) without real edits, where a hash gate saves embedding cost",
+    "Nightly reconciliation jobs that compare source ids with index keys",
+    "Pipelines that run both incremental updates and rare planned full rebuilds"
+  ],
+  "whenToUse": {
+    "use": [
+      "Use built-in indexer change detection when the source is a supported GA store",
+      "Use SQL integrated change tracking on tables when deletes matter",
+      "Use a content hash when timestamps are noisy or edits are cosmetic",
+      "Use periodic reconciliation whenever the source can hard-delete or move items"
+    ],
+    "avoid": [
+      "Avoid timestamp-only detection when files are restored, renamed in bulk or touched by other tools",
+      "Avoid incremental runs after a parser, chunker or model change: rebuild instead",
+      "Avoid enabling soft-delete handling after the first run and expecting history to be corrected"
+    ],
+    "flips": [
+      "Corpus is small and cheap to re-embed: a nightly full reload removes whole classes of bugs",
+      "Source offers a true change log (SQL change tracking or an all-versions change feed): prefer it to timestamps",
+      "Pipeline code changed: schedule a full rebuild into a new index"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Signal or approach", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Timestamp or high-water mark", "Reliable last-modified field", "Items are restored, bulk-moved or touched", "Misses deletes and silent moves"],
+      ["SQL integrated change tracking", "Source is a table and deletes matter", "Source is a view", "Must be enabled on the database"],
+      ["Content hash gate", "Noisy timestamps, cosmetic edits", "Reading the item is expensive", "Needs a hash store and normalisation rules"],
+      ["Reconciliation by id comparison", "Hard deletes or moves possible", "Billions of ids per run", "Extra listing cost, periodic not instant"],
+      ["Full rebuild", "Small corpus or pipeline change", "Large corpus with few changes", "Embedding cost and run time scale with the corpus"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A restored file never reappears in search", "cause": "Restoring a soft-deleted blob does not change `LastModified`, so the indexer sees nothing new", "fix": "Touch the blob or reset the document, and document the restore procedure" },
+    { "symptom": "Reorganised ADLS folders are missing from answers", "cause": "Renaming a directory does not update the timestamps of the blobs inside it", "fix": "Reset the indexer or reprocess the moved folder after bulk moves" },
+    { "symptom": "Deleted source items stay in the index", "cause": "No soft-delete policy existed on the first indexer run, or the source hard-deletes", "fix": "Add the policy and flag-then-delete, or reconcile ids on a schedule" },
+    { "symptom": "Embedding bills spike after a storage migration", "cause": "A migration tool rewrote timestamps so every file looks changed", "fix": "Gate on a content hash before parse and embed" }
+  ],
+  "scenarios": [
+    {
+      "id": "w03-t06-s1",
+      "title": "Two million files, 0.1 percent daily churn",
+      "situation": "A knowledge base holds two million files and about 0.1 percent change each day. Embedding spend must follow the change rate, not the corpus size.",
+      "constraints": ["Large corpus, low churn", "Cost must scale with changes", "Files live in Blob Storage", "Daily freshness is fine"],
+      "unknowns": ["Do files get restored or renamed in bulk?", "Do deletes need to propagate?"],
+      "question": "How do you keep the index current?",
+      "options": [
+        { "name": "Indexer change detection with a soft-delete policy, plus a weekly id reconciliation", "verdict": "best", "why": "Timestamps keep daily cost proportional to changes and reconciliation catches moves and hard deletes.", "tradeoff": "You maintain the soft-delete convention and the reconciliation job." },
+        { "name": "Nightly full rebuild", "verdict": "poor", "why": "It re-embeds 2 million files to pick up about 2,000 changes.", "tradeoff": "Right for a small corpus or after a pipeline change." },
+        { "name": "Timestamps only, no deletes handling", "verdict": "good", "why": "Cheapest to run and covers edits.", "tradeoff": "Deleted, restored and moved files drift out of sync." }
+      ],
+      "flips": [
+        { "if": "Corpus shrinks to a few thousand files", "then": "Full reload is simpler." },
+        { "if": "A migration rewrites timestamps", "then": "Add a content hash gate before embedding." }
+      ],
+      "takeaway": "Let cost follow churn, then add a safety net for what timestamps cannot see."
+    },
+    {
+      "id": "w03-t06-s2",
+      "title": "Noisy timestamps after a migration",
+      "situation": "A storage migration touched half a million files without editing them. The next incremental run would re-embed all of them. Budget is limited and the content is unchanged.",
+      "constraints": ["Timestamps are unreliable", "Content did not change", "Limited embedding budget", "Index must stay online"],
+      "unknowns": ["Is a hash of each file already stored?", "How expensive is reading a file compared with embedding it?"],
+      "question": "What do you do before the run?",
+      "options": [
+        { "name": "Compare content hashes and skip files whose hash matches the stored one", "verdict": "best", "why": "Reading and hashing is far cheaper than parsing and embedding, and unchanged files are skipped.", "tradeoff": "You need stored hashes and stable normalisation." },
+        { "name": "Let the indexer re-process everything", "verdict": "good", "why": "No new code and a clean result.", "tradeoff": "Pays full embedding cost for no new information." },
+        { "name": "Disable change detection and rebuild monthly", "verdict": "poor", "why": "It trades one cost for a month of staleness and loses delete handling.", "tradeoff": "Acceptable for a static archive." }
+      ],
+      "flips": [
+        { "if": "No hashes were ever stored", "then": "Compute them once during this run, then use them from now on." },
+        { "if": "Embedding is nearly free", "then": "Re-processing is acceptable." }
+      ],
+      "takeaway": "A hash gate turns noisy signals into correct decisions."
+    }
+  ],
+  "quiz": [
+    { "id": "w03-t06-q1", "type": "single", "tag": "tradeoff", "q": "Which Azure SQL change detection option is recommended for tables and also detects deleted rows?", "options": ["A high-water-mark column", "`SqlIntegratedChangeTrackingPolicy`", "A nightly full reload", "A `LastModified` metadata field"], "answer": 1, "explain": "Integrated change tracking works on tables and sees deletes. A high-water mark works for views but needs a soft-delete column. Full reload and `LastModified` are not SQL indexer policies.", "ref": "tr5" },
+    { "id": "w03-t06-q2", "type": "numeric", "tag": "numeric", "q": "A corpus has 2,000,000 files, 0.1 percent change per day and about 12 chunks per file. How many chunks are embedded per day with perfect incremental ingestion?", "answer": 24000, "tolerancePct": 0, "unit": "chunks", "explain": "0.1 percent of 2,000,000 is 2,000 files. Multiplied by 12 chunks gives 24,000 chunks per day, compared with 24,000,000 for a full rebuild.", "ref": "tr4" },
+    { "id": "w03-t06-q3", "type": "multi", "tag": "diagnose", "q": "Which situations leave the Blob indexer unaware of a change?", "options": ["A soft-deleted blob is restored", "An ADLS Gen2 directory is renamed", "A blob body is edited and `LastModified` updates", "A blob is hard-deleted with no soft-delete policy"], "answers": [0, 1, 3], "explain": "Restores and directory renames do not change `LastModified`, and hard deletes are invisible without a policy. A normal edit updates `LastModified` and is detected.", "ref": "tr4" }
+  ],
+  "flashcards": [
+    { "front": "Why is a content hash a useful gate in incremental ingestion?", "back": "It skips items that were touched but not changed, so parse and embedding cost follow real edits, not timestamps." },
+    { "front": "SQL indexer: integrated change tracking versus high-water mark?", "back": "Change tracking: tables only, sees deletes, recommended. High-water mark: rowversion or last-updated column, works for views, needs a soft-delete column for deletes." },
+    { "front": "Which indexer reset is GA, and which are preview?", "back": "Reset Indexer is GA. Reset Documents, Reset Skills and Resync are preview APIs in `2026-08-01-preview`." }
+  ],
+  "related": ["w03-t02", "w03-t07", "w03-t08", "w03-t09", "w03-t10"],
+  "refs": ["tr4", "tr5", "tr6", "tr9", "tr11"]
+}

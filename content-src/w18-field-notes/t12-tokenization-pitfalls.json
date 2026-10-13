@@ -1,0 +1,131 @@
+{
+  "id": "w18-t12",
+  "order": 12,
+  "group": "Pitfalls",
+  "title": "Tokenization pitfalls",
+  "minutes": 7,
+  "difficulty": "core",
+  "summary": "Models read tokens, not characters or words. Token counts differ by language, by how numbers are split, by formatting and by tokenizer, and that changes cost, latency, effective context and some answers.",
+  "useIf": "You budget cost or context, serve several languages, handle numbers, or are surprised by a bill or a truncation.",
+  "avoidIf": "You estimate tokens as characters divided by four and never measure. That rule hides the big differences.",
+  "explain": [
+    { "t": "p", "md": "A tokenizer splits text into subword **tokens**. Price, rate limits, latency and the context window are all measured in tokens, so anything that changes the count changes your bill and your headroom. Three effects matter most." },
+    { "t": "table", "caption": "Where tokenization surprises you", "head": ["Area", "What happens", "Evidence and control"], "rows": [
+      ["Languages", "The same text can need up to 15x more tokens in some languages with 2023 tokenizers. Byte-level models still show over 4x differences. Cost, latency and effective context all scale with it", "Measure tokens per language on real prompts and compare tokenizers when choosing a model. Newer tokenizers may differ [[r41]]"],
+      ["Numbers", "GPT-3.5 and GPT-4 split digits into chunks of 1 to 3, left to right. Forcing right-to-left grouping with commas improved arithmetic, and the gap shrank with model scale", "Format numbers consistently and send arithmetic to code or a calculator tool [[r42]]"],
+      ["Formatting and whitespace", "Indentation, repeated whitespace, pretty-printed JSON, long IDs and URLs usually cost more tokens than their visible size suggests. Exact counts vary by tokenizer", "Count tokens for your real payloads in CI. Prefer compact formats where accuracy holds"],
+      ["Hidden tokens", "System prompts and tool schemas are input tokens on every call. Reasoning tokens are billed as output", "Log input, output and reasoning tokens per request [[r1]]"]
+    ] },
+    { "t": "formula", "title": "Token ratios drive cost and capacity", "expr": "cost_B / cost_A = tokens_B / tokens_A    and    texts_that_fit = window / tokens_per_text", "vars": [{ "k": "tokens_A, tokens_B", "v": "token counts for the same content in two languages or two formats" }], "example": "If a 1,000-token English prompt takes **4,000** tokens in another language at the same price per token, it costs 4x as much and a 128,000-token window holds **32** of them instead of 128. The ratio is illustrative, so measure your own text." },
+    { "t": "p", "md": "**Numbers** need special care. A long figure is split into pieces, so adding, comparing or copying it is not guaranteed to be exact. Larger models narrow the gap but do not remove it, so compute money and measurements in code. **Formatting** matters because whitespace, indentation, punctuation and long identifiers are tokens too. Count the tokens of the payloads you actually send, not a sample you typed." },
+    { "t": "p", "md": "Tokenizers also differ across model families, so a count from one provider is not a count for another, and a model swap can move cost and truncation without any prompt change. Models do not see letters, so character-level tasks such as counting letters or reversing a string are unreliable. Use code for those too." }
+  ],
+  "whereToUse": [
+    "Cost forecasting and budgets for multilingual products",
+    "Context budgeting where the window is shared by prompt, retrieved text and the answer",
+    "Invoice, finance and data-extraction flows with long numbers and totals",
+    "Prompt and payload reviews: schemas, JSON, logs and pasted tables",
+    "Model selection, where tokenizer efficiency changes the effective price per task"
+  ],
+  "whenToUse": {
+    "use": [
+      "Count tokens with the provider's tokenizer on real data before you price or size anything",
+      "Route arithmetic and character-level work to code",
+      "Track tokens per language, per route and per request type"
+    ],
+    "avoid": [
+      "Budgeting from an English sample when users write in other languages",
+      "Trusting a characters-per-token rule of thumb for planning",
+      "Expecting the model to add or compare long numbers reliably in text"
+    ],
+    "flips": [
+      "A new language is added: re-measure and re-budget before launch",
+      "You switch models or providers: re-count, since tokenizers differ",
+      "Numbers feed decisions: add a calculator tool or code path regardless of model size"
+    ]
+  },
+  "alternatives": {
+    "title": "Ways to handle the effect",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Measure and budget per language", "Multilingual traffic", "Single-language, small scale", "Needs a measuring step in CI"],
+      ["Pick a more token-efficient model or tokenizer", "Cost or window is dominated by one language", "Quality differs more than cost", "Eval needed per language"],
+      ["Translate to English first", "Quality is better in English and volume is modest", "Translation cost or loss of nuance", "Extra call and latency, possible errors"],
+      ["Tool or code for arithmetic", "Numbers must be exact", "Casual estimates are fine", "Tool plumbing, still safe"],
+      ["Reformat numbers (commas, right-to-left grouping)", "Prompts must stay text-only", "Model is large and gap is small", "Gains shrink with scale"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Arithmetic or digit-heavy answers are wrong in small ways", "cause": "Digits are split into chunks, and scale narrows but does not close the gap", "fix": "Send arithmetic to code or a calculator tool and format numbers consistently." },
+    { "symptom": "Costs and truncation are far worse for some languages", "cause": "The same content needs many more tokens in those languages", "fix": "Measure tokens per language, budget context per language and compare tokenizers when choosing a model." },
+    { "symptom": "A harmless-looking reformat doubles input cost", "cause": "Indentation, pretty-printed JSON or long identifiers added many tokens", "fix": "Add token-count checks for key payloads to CI and use compact encodings where accuracy holds." }
+  ],
+  "scenarios": [
+    {
+      "id": "w18-t12-s1",
+      "title": "Launching a second language",
+      "situation": "A support assistant is priced from English traffic. Marketing wants to launch a language whose text may take several times as many tokens. The context window is already tight.",
+      "constraints": ["Budget fixed from English", "Tight context window", "Launch date set"],
+      "unknowns": ["What is the measured token ratio on real tickets?", "Does another model tokenize that language more efficiently?"],
+      "question": "How do you prepare the launch?",
+      "options": [
+        { "name": "Keep the English budget and window plan", "verdict": "poor", "why": "Token counts can differ by up to 15x across languages with 2023 tokenizers, so cost and truncation can blow up.", "tradeoff": "Safe only when you have measured parity for that language." },
+        { "name": "Measure tokens per language on real tickets, re-budget context and compare tokenizers across candidate models", "verdict": "best", "why": "It turns an unknown ratio into a number and may find a cheaper model for that language.", "tradeoff": "Measurement and eval effort before launch." },
+        { "name": "Translate everything to English first", "verdict": "good", "why": "Avoids the token penalty in the main call.", "tradeoff": "Adds a call, latency and translation errors." }
+      ],
+      "flips": [
+        { "if": "Measured ratio is close to 1", "then": "Keep the plan and monitor." },
+        { "if": "The ratio is large and quality is fine in English", "then": "Translation may be cheaper overall." }
+      ],
+      "takeaway": "Do not extrapolate cost from one language."
+    },
+    {
+      "id": "w18-t12-s2",
+      "title": "Invoice totals that are slightly wrong",
+      "situation": "An extraction agent reads invoices and reports totals. Totals are occasionally off by small amounts. Errors are expensive because totals feed accounting.",
+      "constraints": ["Exact numbers required", "High volume", "Audit needed"],
+      "unknowns": ["Are errors in reading or in summing?", "Is a calculator tool allowed?"],
+      "question": "How do you fix it?",
+      "options": [
+        { "name": "Extract line items as structured fields and compute totals in code", "verdict": "best", "why": "Digit chunking makes in-text arithmetic unreliable, and code is exact and auditable.", "tradeoff": "Schema work and validation for the extraction step." },
+        { "name": "Add 'be careful with digits' to the prompt", "verdict": "poor", "why": "It does not change how digits are tokenized and gives no guarantee.", "tradeoff": "Harmless as an extra hint on top of a code-computed total." },
+        { "name": "Reformat numbers with comma grouping before sending", "verdict": "good", "why": "Right-to-left grouping with commas improved arithmetic in the study.", "tradeoff": "Gains shrink with model scale and give no guarantee, so still verify." }
+      ],
+      "flips": [
+        { "if": "Totals are only informational", "then": "A prompt hint and spot checks may be enough." },
+        { "if": "The model is much larger", "then": "The gap shrinks, but keep a code check for money." }
+      ],
+      "takeaway": "Exact numbers belong in code, not in token prediction."
+    },
+    {
+      "id": "w18-t12-s3",
+      "title": "Cost jump after a refactor",
+      "situation": "A team reformats prompts and tool payloads for readability: indented JSON, verbose field names and full URLs. Input cost rises noticeably and some requests start truncating.",
+      "constraints": ["Same logic, new format", "Cost and truncation changed", "No token monitoring on payloads"],
+      "unknowns": ["Which payloads grew the most?", "Is the extra detail needed by the model?"],
+      "question": "What is the best fix?",
+      "options": [
+        { "name": "Compact the payloads and add token-count checks to CI", "verdict": "good", "why": "Cuts tokens and prevents regressions.", "tradeoff": "Compact formats can hurt readability, so evaluate accuracy after the change." },
+        { "name": "Assume four characters per token and raise limits", "verdict": "poor", "why": "The rule hides real differences, so you size limits wrongly and pay more.", "tradeoff": "Fine for rough orders of magnitude, not for budgets." },
+        { "name": "Measure token counts per payload part, trim what the model does not need and gate changes on a token budget", "verdict": "best", "why": "It targets the actual cause and prevents repeats.", "tradeoff": "Needs a token measuring step and an eval to confirm no quality loss." }
+      ],
+      "flips": [
+        { "if": "Readability for humans is the priority", "then": "Keep pretty formats in logs, and send compact ones to the model." },
+        { "if": "Caching applies", "then": "Keep the stable prefix unchanged to preserve hits." }
+      ],
+      "takeaway": "Measure tokens on real payloads, not characters."
+    }
+  ],
+  "quiz": [
+    { "id": "w18-t12-q1", "type": "numeric", "tag": "numeric", "q": "A 1,000-token English prompt takes 4,000 tokens in another language. How many such prompts fit in a 128,000-token window?", "answer": 32, "tolerancePct": 2, "unit": "prompts", "hint": "Window divided by tokens per prompt.", "explain": "128,000 / 4,000 = 32. In English the same window holds 128, so the ratio cuts capacity to a quarter. The 4x ratio is illustrative.", "ref": "r41" },
+    { "id": "w18-t12-q2", "type": "single", "tag": "concept", "q": "What did the study find about number grouping for GPT-3.5 and GPT-4?", "options": ["Digits are always one token each, whatever the tokenizer", "Grouping has no effect on any model", "Left-to-right grouping is always best", "Right-to-left grouping with commas improved arithmetic"], "answer": 3, "explain": "The models split digits into chunks of 1 to 3 left to right. Forcing right-to-left grouping with commas helped, and the gap shrank with model scale.", "ref": "r42" },
+    { "id": "w18-t12-q3", "type": "multi", "tag": "tradeoff", "q": "Which practices reduce tokenization-driven cost surprises?", "options": ["Measure tokens per language on real prompts", "Compare tokenizers when choosing a model", "Budget from characters divided by four", "Send arithmetic to code"], "answers": [0, 1, 3], "explain": "Measuring, comparing tokenizers and routing arithmetic to code address the real effects. The characters-per-four rule hides large language and format differences.", "ref": "r41" }
+  ],
+  "flashcards": [
+    { "front": "How much can token counts differ across languages for the same text?", "back": "Up to 15x with 2023 tokenizers, and byte-level models still showed over 4x differences. Measure your own text." },
+    { "front": "How do GPT-3.5 and GPT-4 split numbers?", "back": "Into chunks of 1 to 3 digits, left to right. Right-to-left grouping with commas improved arithmetic, and the gap shrank with model scale." },
+    { "front": "Why can a model swap change cost with no prompt change?", "back": "Tokenizers differ across model families, so the same prompt yields different token counts, prices and truncation points." }
+  ],
+  "related": ["w18-l6", "w01-t01", "w13-t02", "w16-t01", "w04-t15", "w18-t13"],
+  "refs": ["r1", "r41", "r42"]
+}

@@ -1,0 +1,95 @@
+{
+  "id": "w10-l1",
+  "order": 1,
+  "title": "Turn the autonomy dial",
+  "kind": "problem",
+  "minutes": 18,
+  "brief": "A request needs more than one model call, but the steps, the risk and the latency budget are not fixed yet. Decide how much control the model gets before you choose any framework.",
+  "blocks": [
+    { "t": "h", "text": "Workflows, agents and the complexity ladder", "level": 2 },
+    { "t": "p", "md": "Anthropic separates two kinds of **agentic system**. In a **workflow** the LLMs and tools follow code paths you wrote in advance. In an **agent** the LLM dynamically directs its own process and tool use [[r1]]. Its advice is to find the simplest solution that works, because agentic systems trade latency and cost for task performance. The post is dated 2024-12-19 and a later banner warns that the tooling landscape has changed, so reuse the vocabulary, not the tool list.\n\nMicrosoft's architecture guidance draws the same line as a ladder of three levels: a direct model call, a single agent with tools, and multiagent orchestration. Its rule is to use the lowest level of complexity that reliably meets your requirements, and it calls a single agent with tools often the right default for enterprise use cases [[r9]]." },
+    { "t": "diagram", "id": "w10-d1", "title": "The autonomy ladder", "alt": "Four rungs from a direct call to a workflow, a single agent and multi-agent, each adding model control and cost.", "src": "flowchart LR\n  A[1 Direct call plus retrieval] --> B[2 Workflow: code owns the path]\n  B --> C[3 Single agent: model owns the loop]\n  C --> D[4 Multi-agent: models own the split]", "caption": "Climb one rung only when a named dial forces it. Each rung adds tokens, latency and failure surface." },
+    { "t": "compare", "title": "The five workflow patterns", "intro": "All five sit on an augmented LLM (a model with retrieval, tools and memory). They differ in who decides the path [[r1]].", "options": [
+      { "name": "Prompt chaining", "summary": "Split the task into fixed subtasks. Each call consumes the previous output, with an optional programmatic gate between steps.", "pros": ["Each call does one easier job", "A gate stops a bad step before it propagates", "Every step can be tested alone"], "cons": ["Latency is the sum of the steps", "The path is fixed, so it cannot add steps"], "bestWhen": "The task decomposes cleanly into known subtasks and you accept more latency for accuracy.", "avoidWhen": "What earlier steps find decides what later steps must do.", "meta": [{ "k": "Latency", "v": "sum of steps" }, { "k": "Control", "v": "code" }] },
+      { "name": "Routing", "summary": "Classify the input, then send it to a specialised prompt, tool set or model.", "pros": ["Specialised prompts stay short", "Easy queries can go to a small model and hard ones to a larger one"], "cons": ["A misroute is silent", "You need labelled traffic to measure the classifier"], "bestWhen": "Distinct request classes need different handling and you can classify them accurately.", "avoidWhen": "One class dominates, or the classes overlap and the classifier is guessing.", "meta": [{ "k": "Latency", "v": "one extra cheap call" }, { "k": "Control", "v": "code plus classifier" }] },
+      { "name": "Parallelization", "summary": "Run work at once, either as sectioning (independent subtasks) or voting (the same task several times), then aggregate.", "pros": ["Wall-clock time falls to the slowest branch", "Voting raises confidence on judgement calls"], "cons": ["More tokens for the same answer", "Needs an aggregation or agreement rule"], "bestWhen": "Subtasks are independent, or you need several views of one decision.", "avoidWhen": "Branches depend on each other or share one write target.", "meta": [{ "k": "Latency", "v": "slowest branch" }, { "k": "Cost", "v": "n times the tokens" }] },
+      { "name": "Orchestrator-workers", "summary": "A central LLM breaks the task down at run time, delegates to workers and synthesises their results.", "pros": ["Handles subtasks you could not list in advance", "Workers get focused instructions"], "cons": ["Plan, fan out and synthesise add several calls", "The lead becomes a bottleneck and a single point of failure"], "bestWhen": "The subtasks depend on the input and cannot be enumerated at design time.", "avoidWhen": "You already know the steps, so planning only adds cost.", "meta": [{ "k": "Latency", "v": "high" }, { "k": "Control", "v": "model plans, code runs" }] },
+      { "name": "Evaluator-optimizer", "summary": "One call generates, another evaluates against criteria, and the loop revises until the check passes.", "pros": ["Quality rises when criteria are clear", "The critic can be a different model or a test suite"], "cons": ["Every revision is a full round trip", "Without clear criteria the loop never converges"], "bestWhen": "There is a clear pass or fail check and revision measurably helps.", "avoidWhen": "Quality is subjective and there is no external signal to loop on.", "meta": [{ "k": "Latency", "v": "per revision" }, { "k": "Needs", "v": "clear criteria" }] }
+    ] },
+    { "t": "dials", "id": "w10-l1-pick", "title": "Pick a pattern by task structure and risk", "prompt": "Flip the constraints. The ranking and the reasons update. The boring option is on the board on purpose.",
+      "dials": [
+        { "id": "steps", "label": "Subtask structure", "values": [ { "id": "fixed", "label": "Steps known in advance" }, { "id": "open", "label": "Subtasks found at run time" } ] },
+        { "id": "check", "label": "Quality check", "values": [ { "id": "clear", "label": "Clear pass or fail" }, { "id": "vague", "label": "No clear check" } ] },
+        { "id": "variety", "label": "Request variety", "values": [ { "id": "one", "label": "One kind of request" }, { "id": "many", "label": "Several kinds, different handling" } ] },
+        { "id": "time", "label": "Latency budget", "values": [ { "id": "fast", "label": "Interactive, seconds" }, { "id": "slow", "label": "Background, minutes or more" } ] }
+      ],
+      "options": [
+        { "id": "single", "name": "Single call with retrieval", "summary": "One prompt, optional retrieval and tools." },
+        { "id": "chain", "name": "Prompt chain", "summary": "Fixed steps with a gate after each." },
+        { "id": "route", "name": "Router", "summary": "Classify, then pick a specialised path or model." },
+        { "id": "par", "name": "Parallelization", "summary": "Independent branches or votes at once, then aggregate." },
+        { "id": "orch", "name": "Orchestrator-workers", "summary": "A lead plans subtasks at run time and delegates." },
+        { "id": "evalopt", "name": "Evaluator-optimizer", "summary": "Generate, critique against a check, revise." }
+      ],
+      "scores": {
+        "single": {
+          "steps": { "fixed": { "s": 0, "why": "Works if the steps fit one prompt. Otherwise split into a chain." }, "open": { "s": -2, "why": "It cannot decide new subtasks at run time." } },
+          "check": { "clear": { "s": 0, "why": "A single pass has no loop to use the check." }, "vague": { "s": 1, "why": "With nothing to loop on, one pass is the honest choice." } },
+          "variety": { "one": { "s": 1, "why": "One kind of request needs no routing." }, "many": { "s": -1, "why": "One prompt must cover every case and grows long." } },
+          "time": { "fast": { "s": 2, "why": "Lowest latency and cost." }, "slow": { "s": 0, "why": "Fine, but it leaves quality headroom unused." } }
+        },
+        "chain": {
+          "steps": { "fixed": { "s": 2, "why": "Known steps map straight onto a chain." }, "open": { "s": -2, "why": "A fixed chain cannot add steps it did not foresee." } },
+          "check": { "clear": { "s": 1, "why": "Gates can test each step programmatically." }, "vague": { "s": 0, "why": "Gates are weak without a check." } },
+          "variety": { "one": { "s": 1, "why": "A single path is enough." }, "many": { "s": -1, "why": "Branches multiply. Put a router in front." } },
+          "time": { "fast": { "s": 0, "why": "Short chains of small steps add little latency." }, "slow": { "s": 1, "why": "Extra steps are cheap when no one waits." } }
+        },
+        "route": {
+          "steps": { "fixed": { "s": 0, "why": "Routing chooses a path, it does not order steps." }, "open": { "s": -1, "why": "Predefined paths miss open-ended work." } },
+          "check": { "clear": { "s": 0, "why": "Neutral: the check applies inside each path." }, "vague": { "s": 0, "why": "Neutral." } },
+          "variety": { "one": { "s": -2, "why": "Routing one kind of request adds a hop and a misroute risk for nothing." }, "many": { "s": 2, "why": "Specialised prompts, tools or cheaper models per class beat one catch-all." } },
+          "time": { "fast": { "s": 1, "why": "One cheap classification can avoid a large model call." }, "slow": { "s": 0, "why": "Savings matter less when no one waits." } }
+        },
+        "par": {
+          "steps": { "fixed": { "s": 0, "why": "Helps only where some steps are independent." }, "open": { "s": 0, "why": "Voting still works on any step, sectioning needs known parts." } },
+          "check": { "clear": { "s": 1, "why": "Votes can be compared against a rule." }, "vague": { "s": 0, "why": "Votes need an agreement rule you do not have." } },
+          "variety": { "one": { "s": 0, "why": "Neutral." }, "many": { "s": 0, "why": "Neutral." } },
+          "time": { "fast": { "s": 1, "why": "Wall-clock time falls to the slowest branch, at more tokens." }, "slow": { "s": 0, "why": "Speed is not needed, you only pay more tokens." } }
+        },
+        "orch": {
+          "steps": { "fixed": { "s": -1, "why": "Planning overhead for steps you already know." }, "open": { "s": 2, "why": "The lead decides subtasks as the input reveals them." } },
+          "check": { "clear": { "s": 0, "why": "Neutral: a check can gate the synthesis." }, "vague": { "s": -1, "why": "Hard to tell whether worker results combine into a good answer." } },
+          "variety": { "one": { "s": 0, "why": "Neutral." }, "many": { "s": 1, "why": "Workers can specialise per subtask." } },
+          "time": { "fast": { "s": -2, "why": "Plan, fan out and synthesise add several model calls." }, "slow": { "s": 2, "why": "Breadth-first work tolerates the wait." } }
+        },
+        "evalopt": {
+          "steps": { "fixed": { "s": 0, "why": "Adds a loop after the fixed steps." }, "open": { "s": 0, "why": "Neutral." } },
+          "check": { "clear": { "s": 2, "why": "A clear check gives the loop a stopping rule and a signal." }, "vague": { "s": -2, "why": "Without criteria the critic drifts and never converges." } },
+          "variety": { "one": { "s": 0, "why": "Neutral." }, "many": { "s": 0, "why": "Neutral." } },
+          "time": { "fast": { "s": -2, "why": "Each revision is a full round trip." }, "slow": { "s": 1, "why": "The quality gain is worth the extra passes." } }
+        }
+      },
+      "takeaway": "Read the winner, then read its losing dial. Every pattern has a setting where it is the wrong tool." },
+    { "t": "failure", "title": "Failure modes when you pick the wrong rung", "items": [
+      { "symptom": "Cost and latency per task are several times the plan, and runs differ each time", "cause": "An agent loop was used for steps that were known in advance", "fix": "Replace the loop with a chain. Track tokens per task and steps per task, and alert when the median doubles." },
+      { "symptom": "A wrong early answer flows through to a confident wrong final answer", "cause": "A chain without gates lets errors compound", "fix": "Add a programmatic check between steps and stop the chain on failure. Log which gate rejected." },
+      { "symptom": "Users get generic policy text for account-specific questions", "cause": "The router sends ambiguous requests to the wrong path with no confidence threshold", "fix": "Measure a confusion matrix on labelled traffic, add a fallback path for low confidence and route ties to the more capable path." },
+      { "symptom": "Revision loop runs to its cap and the output barely changes", "cause": "Evaluator-optimizer without a clear criterion or external signal", "fix": "Define the pass check (tests, schema, rubric), cap iterations and stop when the score stops improving." }
+    ] },
+    { "t": "callout", "kind": "interview", "title": "What interviewers listen for", "md": "Ask whether the steps are known **before** you say the word agent. Name the rung you chose, the dial that put you there and the dial that would move you up one rung." }
+  ],
+  "quiz": [
+    { "id": "w10-l1-q1", "type": "single", "tag": "concept", "difficulty": 1, "q": "Which statement matches the way Anthropic separates a workflow from an agent?", "options": ["Workflows never call any tools, while agents always call tools and keep looping until the goal is met", "Workflows use one model call and agents use several", "In a workflow code fixes the path, while in an agent the LLM directs its own process and tool use", "Workflows run synchronously and agents run in the background"], "answer": 2, "explain": "The line is who owns the control flow. Workflows can use tools and many calls, and agents can run synchronously, so the other three describe features that do not separate the two kinds.", "ref": "r1" },
+    { "id": "w10-l1-q2", "type": "match", "tag": "concept", "difficulty": 2, "q": "Match each pattern to the situation where it fits best.", "pairs": [ { "l": "Prompt chaining", "r": "Known subtasks where a gate can check each step" }, { "l": "Routing", "r": "Distinct request classes that need different prompts or models" }, { "l": "Orchestrator-workers", "r": "Subtasks that depend on the input and cannot be listed in advance" }, { "l": "Evaluator-optimizer", "r": "A clear pass or fail check that makes revision measurable" } ], "explain": "Each pattern buys flexibility with latency or tokens: chains fix the path, routers add a classifier, orchestrators add planning calls and evaluator loops need a criterion to stop.", "ref": "r1" },
+    { "id": "w10-l1-q3", "type": "single", "tag": "flip", "difficulty": 2, "q": "A fixed three-step pipeline with automated validation is accurate and fast enough. Which change in the situation would justify moving to orchestrator-workers?", "options": ["The team wants the design to look more modern and match what other companies are shipping", "The subtasks depend on what the input contains and cannot be listed up front", "The validation step has become cheaper to run", "The users ask for shorter answers"], "answer": 1, "explain": "Orchestrator-workers pays for planning calls, so it only wins when the subtasks are decided at run time. Fashion, cheaper validation and shorter answers do not change whether the steps are knowable.", "ref": "r9" },
+    { "id": "w10-l1-q4", "type": "single", "tag": "diagnose", "difficulty": 2, "q": "Users complain that refund questions get generic policy text. What is the most likely cause and the best first fix?", "code": { "lang": "text", "code": "route=faq  confidence=0.51  query=\"where is my refund for order 1182\"\nroute=faq  confidence=0.48  query=\"refund status\"\nroute=billing confidence=0.93 query=\"update card on file\"" }, "options": ["The FAQ model is too small, so upgrade it", "Retrieval is returning stale chunks, so re-embed", "The router accepts low-confidence labels, so add a threshold with a fallback path", "The chain has too many steps, so remove the gate between the classifier and the retrieval step"], "answer": 2, "explain": "Low-confidence routes are being accepted and sent to the FAQ path. A threshold with a fallback and a confusion matrix on labelled traffic addresses that. A larger FAQ model, re-embedding and removing a gate do not change the route taken.", "ref": "r1" }
+  ],
+  "defend": null,
+  "refs": ["r1", "r9"],
+  "takeaways": [
+    "Workflows keep control flow in your code, agents hand it to the model. Both are agentic systems.",
+    "Use the lowest rung that reliably works, and name the dial that would move you up.",
+    "Five patterns cover most workflows: chain, route, parallelize, orchestrate, evaluate and optimize.",
+    "Every pattern has a losing dial: chains need known steps, routers need classifiable traffic, evaluator loops need a clear check."
+  ]
+}

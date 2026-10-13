@@ -1,0 +1,100 @@
+{
+  "id": "w08-l02",
+  "order": 2,
+  "title": "Tools worth calling",
+  "kind": "problem",
+  "minutes": 18,
+  "brief": "Agents you do not control pick your tools from names and descriptions alone. The tool count, the result sizes and whether prompt caching is on are not fixed. Design the definition, the result and the catalog so the model succeeds and the bill stays sane.",
+  "blocks": [
+    { "t": "h", "text": "Anatomy of a tool call", "level": 2 },
+    { "t": "tabs", "tabs": [
+      { "label": "Definition", "blocks": [
+        { "t": "code", "lang": "json", "title": "tools/list entry (2026-07-28)", "code": "{\n  \"name\": \"orders_search\",\n  \"title\": \"Search orders\",\n  \"description\": \"Find orders by customer, status or date range. Returns at most `limit` matches. Use orders_get for a single order id.\",\n  \"inputSchema\": {\n    \"type\": \"object\",\n    \"properties\": {\n      \"customer\": { \"type\": \"string\", \"description\": \"Customer name or email\" },\n      \"status\": { \"enum\": [\"open\", \"shipped\", \"cancelled\"] },\n      \"limit\": { \"type\": \"integer\", \"minimum\": 1, \"maximum\": 50, \"default\": 10 },\n      \"response_format\": { \"enum\": [\"concise\", \"detailed\"], \"default\": \"concise\" }\n    },\n    \"additionalProperties\": false\n  },\n  \"outputSchema\": {\n    \"type\": \"object\",\n    \"properties\": { \"orders\": { \"type\": \"array\" } },\n    \"required\": [\"orders\"]\n  },\n  \"annotations\": { \"readOnlyHint\": true, \"openWorldHint\": false }\n}", "caption": "Fields: `name`, `title`, `description`, `icons`, `inputSchema`, `outputSchema`, `annotations`. Schemas default to JSON Schema 2020-12 [[r6]]." }
+      ] },
+      { "label": "Success", "blocks": [
+        { "t": "code", "lang": "json", "title": "tools/call result", "code": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 7,\n  \"result\": {\n    \"resultType\": \"complete\",\n    \"content\": [\n      { \"type\": \"text\", \"text\": \"{\\\"orders\\\":[{\\\"id\\\":\\\"A-1001\\\",\\\"status\\\":\\\"open\\\"}]}\" }\n    ],\n    \"structuredContent\": { \"orders\": [ { \"id\": \"A-1001\", \"status\": \"open\" } ] }\n  }\n}", "caption": "`structuredContent` may be any JSON value that conforms to `outputSchema`. A tool that returns it SHOULD also return the serialized JSON in a text block. It is unrelated to LLM structured outputs [[r6]]." }
+      ] },
+      { "label": "Execution error", "blocks": [
+        { "t": "code", "lang": "json", "title": "Model-readable failure", "code": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 8,\n  \"result\": {\n    \"resultType\": \"complete\",\n    \"content\": [\n      { \"type\": \"text\", \"text\": \"limit must be between 1 and 50, got 500. Retry with a smaller limit.\" }\n    ],\n    \"isError\": true\n  }\n}", "caption": "API failures, input validation errors and business rule errors belong here. Clients SHOULD pass them to the model so it can self-correct [[r6]]." }
+      ] },
+      { "label": "Protocol error", "blocks": [
+        { "t": "code", "lang": "json", "title": "JSON-RPC error", "code": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 9,\n  \"error\": { \"code\": -32602, \"message\": \"Unknown tool: orders_serch\" }\n}", "caption": "Unknown tools, malformed requests and server faults. Models are less likely to recover from these [[r6]]." }
+      ] }
+    ] },
+    { "t": "table", "caption": "Tool annotations are hints with pessimistic defaults [[r37]]", "head": ["Hint", "Default", "Meaning", "Trap"], "rows": [
+      ["`readOnlyHint`", "false", "The tool does not modify its environment", "A server can claim true and still write. Hosts must not skip approval on this alone"],
+      ["`destructiveHint`", "true", "An update may destroy data. Meaningful only when the tool is not read-only", "No annotation means assume destructive"],
+      ["`idempotentHint`", "false", "Repeating the call with the same arguments has no extra effect. Meaningful only when the tool is not read-only", "Auto-retry is unsafe unless this is true and honest"],
+      ["`openWorldHint`", "true", "The tool reaches an open set of outside entities, such as the web", "Open world means results may carry untrusted text"]
+    ], "highlightCol": 1 },
+    { "t": "h", "text": "Spend the model's budget on purpose", "level": 2 },
+    { "t": "formula", "title": "When tool definitions cross the threshold", "expr": "threshold_tools = (threshold_pct x context_window) / tokens_per_definition", "vars": [ { "k": "threshold_pct", "v": "share of the window you allow for definitions. MCP guidance suggests 1% to 5%" }, { "k": "context_window", "v": "model context size in tokens" }, { "k": "tokens_per_definition", "v": "average size of one serialized tool definition. Measure it" } ], "example": "With a 200,000 token window, a 5% threshold and 400 tokens per definition (illustrative), the host crosses the line at **25 tools**. At a 1% threshold it crosses at **5**. Past the threshold, switch to progressive discovery [[r8]]." },
+    { "t": "dials", "id": "w08-l02-surface", "title": "Pick a tool surface strategy", "prompt": "Flip catalog size, caching, sandbox availability and chaining. The ranking and the reasons update.",
+      "dials": [
+        { "id": "count", "label": "Tool count the agent can reach", "values": [ { "id": "few", "label": "Under about 20" }, { "id": "many", "label": "Dozens" }, { "id": "huge", "label": "Hundreds across servers" } ] },
+        { "id": "cache", "label": "Prompt caching", "values": [ { "id": "on", "label": "On, prefix matters" }, { "id": "off", "label": "Off" } ] },
+        { "id": "sandbox", "label": "Code sandbox", "values": [ { "id": "yes", "label": "Available" }, { "id": "no", "label": "Not available" } ] },
+        { "id": "chain", "label": "Call pattern", "values": [ { "id": "single", "label": "Mostly single calls" }, { "id": "long", "label": "Long chains with bulky intermediates" } ] }
+      ],
+      "options": [
+        { "id": "direct", "name": "Load every tool", "summary": "Pass all definitions to the model each turn." },
+        { "id": "curated", "name": "Curated namespaces", "summary": "Per-agent allow lists with prefixed names." },
+        { "id": "search", "name": "Tool search", "summary": "Defer definitions and load them on demand." },
+        { "id": "code", "name": "Code mode", "summary": "The model writes code against a typed API inside a sandbox." }
+      ],
+      "scores": {
+        "direct": {
+          "count": { "few": { "s": 2, "why": "A handful of definitions is cheap and keeps the cached prefix stable." }, "many": { "s": -1, "why": "Definitions start to crowd the context and selection accuracy drops." }, "huge": { "s": -2, "why": "Definitions can take most of the window before the user message." } },
+          "cache": { "on": { "s": 1, "why": "A fixed tools array is the most cache-friendly shape." }, "off": { "s": 0, "why": "No prefix to protect, so no extra benefit." } },
+          "sandbox": { "yes": { "s": 0, "why": "Irrelevant to this option." }, "no": { "s": 0, "why": "Irrelevant to this option." } },
+          "chain": { "single": { "s": 0, "why": "Direct calls suit single calls." }, "long": { "s": -1, "why": "Every intermediate result passes through the model." } }
+        },
+        "curated": {
+          "count": { "few": { "s": 0, "why": "Little to curate." }, "many": { "s": 2, "why": "Allow lists and prefixes cut overlap and tokens for each agent." }, "huge": { "s": 0, "why": "Curation helps but cannot cover hundreds of tools across teams." } },
+          "cache": { "on": { "s": 1, "why": "A stable per-agent list keeps the prefix stable." }, "off": { "s": 0, "why": "Neutral." } },
+          "sandbox": { "yes": { "s": 0, "why": "Irrelevant to this option." }, "no": { "s": 0, "why": "Irrelevant to this option." } },
+          "chain": { "single": { "s": 0, "why": "Neutral." }, "long": { "s": -1, "why": "Intermediates still pass through the model." } }
+        },
+        "search": {
+          "count": { "few": { "s": -1, "why": "Search adds a round trip for a catalog that already fits." }, "many": { "s": 1, "why": "Defers most definitions and focuses selection." }, "huge": { "s": 2, "why": "Anthropic reports accuracy degrades past about 30 to 50 tools, which search avoids." } },
+          "cache": { "on": { "s": -1, "why": "A custom search that rewrites the tools array each turn busts the cache. Append after the breakpoint or use provider-hosted search." }, "off": { "s": 1, "why": "No prefix to protect." } },
+          "sandbox": { "yes": { "s": 0, "why": "Irrelevant to this option." }, "no": { "s": 0, "why": "Works without a sandbox." } },
+          "chain": { "single": { "s": 0, "why": "Neutral." }, "long": { "s": 0, "why": "Search does not shorten chains." } }
+        },
+        "code": {
+          "count": { "few": { "s": -2, "why": "A generated API and sandbox is overbuilt for a few tools." }, "many": { "s": 0, "why": "Useful, but the cost of the sandbox is not yet justified by count alone." }, "huge": { "s": 1, "why": "Typed stubs can be discovered on demand, keeping definitions out of context." } },
+          "cache": { "on": { "s": 0, "why": "Neutral." }, "off": { "s": 0, "why": "Neutral." } },
+          "sandbox": { "yes": { "s": 2, "why": "Code mode executes model-written code, so it needs a sandbox." }, "no": { "s": -2, "why": "Do not run model-written code without isolation. Choose another strategy." } },
+          "chain": { "single": { "s": -1, "why": "Overhead for a single call." }, "long": { "s": 2, "why": "Intermediate results stay in the sandbox and only the final result returns to the model." } }
+        }
+      },
+      "takeaway": "Count and caching push you toward search. Chaining and a sandbox push you toward code mode. Few tools and a stable prefix favor the boring option. Hosted tool search exists in the Anthropic API and in the OpenAI Responses API (`tool_search` with `defer_loading: true`, on `gpt-5.4` and later) [[r19]] [[r20]]." },
+    { "t": "failure", "title": "Failure modes and how to detect them", "items": [
+      { "symptom": "Prompt cache hit rate drops to near zero after a server deploy", "cause": "`tools/list` order changed, or the host re-sorted the tools array. The tools array is part of the cached prefix", "fix": "Return tools in a deterministic order (a SHOULD in 2026-07-28), sort host-side, append discovered tools after the cache breakpoint. Detect it by comparing cache read and cache write tokens per deploy" },
+      { "symptom": "The model picks the wrong tool among near duplicates", "cause": "Overlapping tools with vague descriptions and no prefix", "fix": "Consolidate into task-oriented tools, prefix names by service, and run an evaluation with real tasks. Detect it with a tool selection confusion matrix" },
+      { "symptom": "Duplicate side effects after a timeout and retry", "cause": "The host retried a tool whose `idempotentHint` is false by default", "fix": "Add an idempotency key parameter, set the hint honestly, never auto-retry non-idempotent tools. Detect it with duplicate write audits" },
+      { "symptom": "The agent loops on bad arguments", "cause": "Validation failures returned as JSON-RPC protocol errors or opaque codes", "fix": "Return input problems as tool execution errors with `isError: true` and a message that says how to fix the call" },
+      { "symptom": "One call returns 90,000 tokens and the turn stalls", "cause": "No pagination, filtering or truncation defaults", "fix": "Add `limit`, `response_format` and truncation hints. Claude Code caps tool responses at 25,000 tokens by default [[r14]]" }
+    ] },
+    { "t": "stats", "items": [
+      { "label": "Definitions for a five-server setup", "value": "about 55k tokens", "note": "Anthropic estimate before any work starts [[r19]]" },
+      { "label": "Saved by tool search", "value": "over 85%", "note": "Anthropic, typical [[r19]]" },
+      { "label": "Selection accuracy cliff", "value": "30 to 50 tools", "note": "Anthropic statement, not a benchmark [[r19]]" },
+      { "label": "Concise versus detailed reply", "value": "72 vs 206 tokens", "note": "A Slack example from Anthropic's tool guide [[r14]]" }
+    ] }
+  ],
+  "quiz": [
+    { "id": "w08-l02-q1", "type": "numeric", "tag": "numeric", "q": "A host has a 200,000 token context window and switches to progressive discovery when tool definitions reach 2% of it. Each definition costs about 500 tokens. At how many tools does it cross the threshold?", "answer": 8, "tolerancePct": 5, "unit": "tools", "hint": "threshold_tools = (threshold_pct x context_window) / tokens_per_definition", "explain": "2% of 200,000 is 4,000 tokens. 4,000 divided by 500 is 8 tools. The 1% to 5% range is MCP client guidance, so tune it with your own measurements.", "difficulty": 1, "ref": "r8" },
+    { "id": "w08-l02-q2", "type": "single", "tag": "security", "q": "A third-party server marks its `delete_customer` tool with `readOnlyHint: true`. The host wants to skip the approval prompt for read-only tools. What is the right call?", "options": ["Skip approval, because the annotation is part of the signed tool contract and the server operator is accountable for it", "Skip approval only when the tool name starts with get or list", "Apply the host's own approval policy, since clients MUST treat annotations as untrusted unless the server is trusted", "Drop the annotation and rely on the description text to judge risk"], "answer": 2, "explain": "Annotations are hints, and the spec says clients MUST consider them untrusted unless they come from trusted servers. A name prefix is equally unverifiable. The description is server-controlled text too, so trusting it in place of the annotation moves the same problem.", "difficulty": 2, "ref": "r6" },
+    { "id": "w08-l02-q3", "type": "single", "tag": "diagnose", "q": "Cache read tokens fell from about 90% of input to 0% right after a server release. The diff of two `tools/list` responses is shown. Which cause fits best?", "code": { "lang": "text", "code": "before: [orders_search, orders_get, orders_cancel]\nafter:  [orders_cancel, orders_search, orders_get]" }, "options": ["The model provider shortened the cache lifetime for all customers", "The tools array is part of the cached prefix and its order changed, so each request misses", "The `inputSchema` default dialect changed from 2019-09 to 2020-12 in the release, which invalidated cached tool schemas", "The session id changed, so the server dropped its own response cache"], "answer": 1, "explain": "Providers cache the prompt prefix including the tools array. The same tools in a new order produce a different prefix. A provider TTL change would not line up with one deploy. Schema dialect defaults are unrelated to caching, and 2026-07-28 has no session id.", "difficulty": 2, "ref": "r8" },
+    { "id": "w08-l02-q4", "type": "single", "tag": "flip", "q": "An agent can reach 400 tools across 12 servers. Prompt caching is on, there is no code sandbox, and most tasks need one or two calls. Which strategy fits best?", "options": ["Load every tool so the prefix stays fixed and the cache always hits, and accept the token cost on every turn", "Code mode with a typed API generated from every server's schemas", "Curate a fresh list of the 80 most relevant tools on every turn", "Tool search with a stable base array and discoveries appended after the cache breakpoint"], "answer": 3, "explain": "At hundreds of tools, loading everything is costly and hurts selection. Code mode needs a sandbox and pays off for long chains, which this agent does not have. A per-turn list still carries many tokens and rewrites the array, which can bust the cache. Search with append-after-breakpoint fits all four dials.", "difficulty": 3, "ref": "r8" }
+  ],
+  "defend": null,
+  "refs": ["r6", "r8", "r14", "r19", "r20", "r37"],
+  "takeaways": [
+    "Annotations are hints with pessimistic defaults. Clients must treat them as untrusted unless the server is trusted.",
+    "Input validation problems belong in tool execution errors so the model can self-correct.",
+    "Budget the catalog: switch to progressive discovery when definitions pass roughly 1% to 5% of the window, and keep `tools/list` order deterministic.",
+    "Search, code mode, curation and loading everything each win on different dials. Name the dial that decided it."
+  ]
+}

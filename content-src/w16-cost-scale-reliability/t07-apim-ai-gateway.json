@@ -1,0 +1,112 @@
+{
+  "id": "w16-t07",
+  "order": 7,
+  "group": "Gateway and resilience",
+  "title": "API Management AI gateway",
+  "minutes": 8,
+  "difficulty": "advanced",
+  "summary": "An AI gateway in API Management puts token limits, token metrics, semantic caching, content safety, load balancing and a circuit breaker in front of your model deployments, so every team gets one governed endpoint.",
+  "useIf": "Several apps or teams share model capacity and you need per-consumer limits, cost attribution and failover in one place.",
+  "avoidIf": "One app calls one deployment and the gateway would be a new single point of failure with no policy to enforce.",
+  "explain": [
+    { "t": "p", "md": "The gateway covers token limits, token metrics, semantic caching, content safety, load balancing and a circuit breaker [[r1]]. **`llm-token-limit`** limits by a `counter-key` using `tokens-per-minute`, a `token-quota` over a `token-quota-period` (`Hourly`, `Daily`, `Weekly`, `Monthly`, `Yearly`), or both. A rate breach returns 429 and a quota breach returns 403. `estimate-prompt-tokens` is required, streaming always estimates, images count up to 1,200 tokens each when estimating, and concurrent requests can briefly exceed the limit. Counters are per gateway, not aggregated across regions. V2 tiers use a token bucket and classic tiers a sliding window [[r2]]." },
+    { "t": "p", "md": "**`llm-emit-token-metric`** sends token counts to Application Insights with up to 5 custom dimensions per policy, 100 unique values per dimension and 1,000 active time series per namespace, beyond which data is silently dropped. Streaming needs `include_usage: true` on some OpenAI models for accurate counts, and cached, reasoning and thinking categories are preview [[r3]]. The **semantic cache** uses a paired `llm-semantic-cache-lookup` and `llm-semantic-cache-store`, with `score-threshold`, `embeddings-backend-id`, `ignore-system-messages` and a `vary-by` child; Microsoft advises starting near 0.05, warns above 0.2 may mismatch, and recommends a rate limit after lookup plus content safety with Prompt Shields [[tr1]]. **Backends** carry one `circuitBreaker` rule (`failureCondition`, `tripDuration`, `acceptRetryAfter`); a tripped breaker returns 503. Pools hold up to 30 backends with round-robin, weighted or priority balancing [[r4]]." },
+    { "t": "diagram", "id": "w16-t07-d1", "title": "A request path through the AI gateway", "alt": "A client request passes semantic cache lookup, token limit and content safety, then a backend pool with a circuit breaker routes to primary or secondary. Outbound, token metrics are emitted and the answer is stored in the cache.", "src": "flowchart LR\n  C[Client] --> SC[Cache lookup]\n  SC --> TL[Token limit]\n  TL --> CS[Content safety]\n  CS --> P[Pool with breaker]\n  P --> A[Primary backend]\n  P --> B[Secondary backend]\n  A --> M[Emit token metric]\n  B --> M\n  M --> ST[Cache store]" }
+  ],
+  "whereToUse": [
+    "A shared platform where several teams call the same model deployments",
+    "Per-team token limits and monthly quotas for chargeback",
+    "Two or more regional deployments behind one URL with priority routing",
+    "Central token metrics in Application Insights for cost dashboards",
+    "A public FAQ where a semantic cache is acceptable"
+  ],
+  "whenToUse": {
+    "use": ["Many consumers share capacity and need fair shares", "You want failover and load balancing without changing every client", "Cost attribution by team or product is required", "Content safety checks must be uniform"],
+    "avoid": ["A single small app, where the gateway adds a hop and an outage surface", "Long streaming flows that the gateway cannot pass through unbuffered", "Semantic caching on permissioned or high-risk answers"],
+    "flips": ["Stateful APIs such as Responses need session affinity, so enable it or route statefully", "Multi-region traffic: counters are per gateway, so split limits per region or accept overshoot", "The Foundry unified model API and AI gateway are preview: use the stable APIM policies for production"]
+  },
+  "alternatives": {
+    "title": "Where to put the controls",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["APIM AI gateway", "Many consumers, central policy, failover", "A single app, tiny scale", "Extra hop, single point of failure, limits are approximate [[r1]]"],
+      ["SDK and client code", "One app, fast iteration", "Many clients, inconsistent behaviour", "Every team re-implements limits and retries"],
+      ["Direct provider quota", "Simple, one consumer", "Fair shares and failover are needed", "No per-consumer control"],
+      ["Open-source LLM proxy", "You already run one and need provider breadth", "You want managed policy and identity integration", "You operate and secure it"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Dashboards miss some teams or models", "cause": "Metric dimensions exceeded 100 values or 1,000 time series and data was dropped silently [[r3]]", "fix": "Use low-cardinality dimensions such as team and model, never user id" },
+    { "symptom": "Limits are exceeded briefly or overcounted", "cause": "Token counting is estimated, streaming always estimates and concurrent requests overshoot; images count up to 1,200 tokens each [[r2]]", "fix": "Leave headroom, validate against provider usage and do not treat the limit as exact billing" },
+    { "symptom": "A tripped breaker looks like a model outage", "cause": "The gateway returns 503 when the circuit is open", "fix": "Tag gateway-originated errors in logs and traces and alert on open time" },
+    { "symptom": "A cache hit returns another team's answer", "cause": "`vary-by` and the cache key ignored tenant, model or prompt version", "fix": "Partition by those fields or turn the cache off for that API" }
+  ],
+  "scenarios": [
+    {
+      "id": "w16-t07-s1",
+      "title": "Five teams, one deployment",
+      "situation": "Five product teams share Azure OpenAI deployments. Finance wants cost by team, and a noisy job keeps starving others.",
+      "constraints": ["One shared quota", "Chargeback by team required", "Latency overhead must stay small"],
+      "unknowns": ["Do all teams use streaming?", "Are limits needed per region?", "What dimensions are needed on metrics?"],
+      "question": "What do you put in front of the deployments?",
+      "options": [
+        { "name": "APIM with `llm-token-limit` per team and `llm-emit-token-metric` by team and model", "verdict": "best", "why": "Per-consumer rate and quota limits plus attributed metrics solve both problems in one place.", "tradeoff": "Estimated counts and brief overshoot; one more hop to operate." },
+        { "name": "A deployment per team", "verdict": "good", "why": "Strong isolation.", "tradeoff": "Fragments quota and still needs central cost reporting." },
+        { "name": "Ask the noisy team to add client-side limits", "verdict": "poor", "why": "It depends on goodwill and gives no central view.", "tradeoff": "Fine for a single app with no sharing." }
+      ],
+      "flips": [
+        { "if": "Only one team remains", "then": "Drop the gateway and use direct quota." },
+        { "if": "Teams run in multiple regions", "then": "Set per-region limits, since counters are not aggregated." }
+      ],
+      "takeaway": "A shared model needs per-consumer limits and metrics at one gate."
+    },
+    {
+      "id": "w16-t07-s2",
+      "title": "Two regions behind one URL",
+      "situation": "A production assistant uses two Azure OpenAI resources in two regions. The primary sometimes returns 429 with a very long Retry-After.",
+      "constraints": ["Clients cannot change", "Failover must be automatic", "Data may stay in either region"],
+      "unknowns": ["Is the API stateful and needing affinity?", "Is the gateway tier Consumption, which lacks circuit breakers?"],
+      "question": "How do you configure it?",
+      "options": [
+        { "name": "Priority pool with a circuit breaker that accepts Retry-After", "verdict": "best", "why": "The breaker trips on failures, honours a long Retry-After and sends traffic to the secondary, which is used only while the primary is tripped.", "tradeoff": "Breaker rules are approximate across gateway instances, and the secondary starts with a cold prompt cache." },
+        { "name": "Round-robin across both regions", "verdict": "good", "why": "Spreads load.", "tradeoff": "Sends traffic to a failing region and splits the prompt cache all the time." },
+        { "name": "Retry the primary at the gateway until it answers", "verdict": "poor", "why": "A long Retry-After means minutes or hours of wasted attempts and added load.", "tradeoff": "Right for brief transient blips." }
+      ],
+      "flips": [
+        { "if": "The API is stateful", "then": "Add session affinity so a conversation sticks to one backend." },
+        { "if": "The tier is Consumption", "then": "Circuit breakers are unavailable, so use another tier or client-side failover." }
+      ],
+      "takeaway": "Priority pools plus a breaker give automatic regional failover."
+    },
+    {
+      "id": "w16-t07-s3",
+      "title": "A semantic cache on an HR assistant",
+      "situation": "A team proposes the gateway semantic cache for an HR assistant that answers from permissioned policy documents and employee records.",
+      "constraints": ["Answers depend on who is asking", "Wrong answers carry legal risk", "Repeat rate is high"],
+      "unknowns": ["Can the cache key carry entitlement scope?", "How fast do policies change?"],
+      "question": "Do you enable it?",
+      "options": [
+        { "name": "No semantic cache; use prompt caching and token limits", "verdict": "best", "why": "Microsoft warns cached results can be incorrect, outdated or unsafe, and permissioned answers cannot be shared across users.", "tradeoff": "Gives up whole-call savings on repeated questions." },
+        { "name": "Enable it with a strict threshold and `vary-by` on user id", "verdict": "good", "why": "Scoping by user removes cross-user leakage.", "tradeoff": "Hit rate collapses, so the embedding cost per miss may exceed the savings." },
+        { "name": "Enable it with a loose threshold for the best hit rate", "verdict": "poor", "why": "Loose matches return wrong answers and may cross users.", "tradeoff": "Acceptable only for public, low-risk content." }
+      ],
+      "flips": [
+        { "if": "The corpus is a public FAQ", "then": "A strict-threshold semantic cache becomes the best option." },
+        { "if": "Answers are identical for a whole entitlement group", "then": "Partition by group and reconsider." }
+      ],
+      "takeaway": "Semantic caching is for shared, low-risk answers."
+    }
+  ],
+  "quiz": [
+    { "id": "w16-t07-q1", "type": "single", "tag": "diagnose", "q": "Clients see 503 from the gateway while the model deployment is healthy. What is the most likely cause?", "options": ["The backend circuit breaker is tripped", "The token quota was exceeded", "The semantic cache missed"], "answer": 0, "explain": "A tripped backend breaker returns 503 [[r4]]. A rate breach returns 429, a quota breach returns 403 [[r2]], and a cache miss falls through to the model.", "difficulty": 2 },
+    { "id": "w16-t07-q2", "type": "match", "tag": "concept", "q": "Match each status or limit to its source.", "pairs": [ { "l": "429 from `llm-token-limit`", "r": "Rate limit exceeded" }, { "l": "403 from `llm-token-limit`", "r": "Token quota exceeded" }, { "l": "503 from a backend", "r": "Circuit breaker tripped" }, { "l": "1,000 active time series", "r": "Token metric namespace limit before silent drops" } ], "explain": "The three codes come from three different mechanisms, which is why gateway errors should be labelled in traces [[r2]] [[r4]] [[r3]].", "difficulty": 2 },
+    { "id": "w16-t07-q3", "type": "multi", "tag": "security", "q": "Which practices reduce the risk of a semantic cache returning the wrong user's answer?", "options": ["Partition with `vary-by` on tenant or entitlement scope", "Include model and prompt-template version in the key", "Raise the `score-threshold` to be looser", "Skip the cache for permissioned content"], "answers": [0, 1, 3], "explain": "Partitioning, versioned keys and skipping permissioned content reduce leakage. A looser threshold (higher in APIM) produces more wrong matches [[tr1]].", "difficulty": 2 }
+  ],
+  "flashcards": [
+    { "front": "What do `llm-token-limit` return on breach?", "back": "429 for the tokens-per-minute rate, 403 for the token quota. Counters are per gateway, not aggregated across regions." },
+    { "front": "What happens when a backend breaker trips?", "back": "The gateway returns 503. Rules are approximate across instances and unavailable in the Consumption tier. Use `acceptRetryAfter` for long Retry-After values." },
+    { "front": "What APIM metric limits exist?", "back": "5 custom dimensions per policy, 100 unique values per dimension, 1,000 active time series per namespace. Beyond that data is dropped silently." }
+  ],
+  "related": ["w16-t04", "w16-t09", "w16-t11", "w16-l2", "w15-t04"],
+  "refs": ["r1", "r2", "r3", "r4", "tr1"]
+}

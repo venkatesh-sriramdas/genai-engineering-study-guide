@@ -1,0 +1,170 @@
+{
+  "id": "w15-t10",
+  "order": 10,
+  "group": "Operating",
+  "title": "Dashboards, SLIs, SLOs and alerts",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "Turn telemetry into targets: pick a few SLIs that reflect what users feel (availability, time to first output, tool reliability, runaway runs, cost, quality), set SLOs from your own baseline and page on error-budget burn rate instead of raw thresholds.",
+  "useIf": "You must define what healthy means for an LLM or agent service, and when to wake someone up.",
+  "avoidIf": "You copy someone else's numbers or alert on every dip in a noisy quality score.",
+  "explain": [
+    { "t": "p", "md": "An **SLI** is a measured ratio of good events to all events. An **SLO** is the target for it over a window. Google's SRE Workbook gives the method: choose SLIs from user experience, set the SLO from your own baseline and use the **error budget** (1 minus the SLO) to decide when to alert [[r21]]. The suggestions below are design ideas, not vendor numbers." },
+    { "t": "table", "caption": "SLIs for an agent run (design suggestions)", "head": ["SLI", "How to measure", "Signal"], "rows": [
+      ["Availability of runs", "Share of `invoke_agent` spans without `error.type`", "`gen_ai.invoke_agent.duration` with `error.type`"],
+      ["End-to-end latency", "p95 run duration, excluding time paused for human approval", "`gen_ai.invoke_agent.duration`"],
+      ["Time to first output", "p95 first-chunk time for streaming", "`gen_ai.client.inference.time_to_first_chunk`"],
+      ["Tool reliability", "Error ratio and p95 duration per tool", "`gen_ai.execute_tool.duration`"],
+      ["Runaway detection", "p99 of model calls and tool calls per run", "`gen_ai.invoke_agent.inference_calls`, `.tool_calls`"],
+      ["Cost", "Tokens per successful task, cached share", "`gen_ai.client.inference.usage.*` counters"],
+      ["Quality", "Online evaluation pass rate on sampled traffic", "Evaluation results (see online quality monitoring)"]
+    ] },
+    { "t": "formula", "title": "Burn rate", "expr": "burn rate = observed error rate / (1 - SLO)", "vars": [
+      { "k": "SLO", "v": "Target ratio of good events, for example 0.999 over 30 days" },
+      { "k": "Error budget", "v": "1 - SLO, for example 0.1 percent of events" }
+    ], "example": "With a 99.9 percent SLO over 30 days, a constant 0.1 percent error rate is a burn rate of 1 and spends exactly the budget. An error rate of 1.44 percent sustained for one hour is a burn rate of 14.4 and spends 2 percent of the 30-day budget (14.4 x 1 h / 720 h)." },
+    { "t": "table", "caption": "Starting alert policy from the SRE Workbook [[tr1]]", "head": ["Window", "Budget consumed", "Burn rate", "Action"], "rows": [
+      ["1 hour", "2 percent", "14.4", "Page"],
+      ["6 hours", "5 percent", "6", "Page"],
+      ["3 days", "10 percent", "1", "Ticket"]
+    ] },
+    { "t": "p", "md": "The Workbook recommends 2 percent in one hour and 5 percent in six hours as reasonable starting numbers for paging, and 10 percent in three days for tickets, and says the right values depend on the service. Use a short window of one twelfth of the long window to cut false alerts and speed recovery, and suppress duplicate pages when several rules fire together [[tr1]]. Alert on **metrics**, which are not sampled, and use traces to explain the alert [[r15]]." }
+  ],
+  "whereToUse": [
+    "A customer-facing assistant with availability, first-token latency and quality targets",
+    "An agent platform where tool reliability and runaway runs drive incidents",
+    "A batch agent pipeline with a deadline-based completion SLI",
+    "Weekly reviews of error-budget spend and cost per successful task",
+    "On-call design: which signals page and which open tickets"
+  ],
+  "whenToUse": {
+    "use": [
+      "Define SLIs from user-visible outcomes and measure them from unsampled metrics",
+      "Use multi-window burn-rate alerts for paging and a slow-burn ticket alert",
+      "Exclude human approval waits from latency SLIs so slow people do not burn budget"
+    ],
+    "avoid": [
+      "Do not page on raw token counts or single slow requests",
+      "Do not set SLOs without a measured baseline",
+      "Do not treat an LLM-judge score from a tiny sample as a paging signal"
+    ],
+    "flips": [
+      "Traffic is low: widen windows or use ticket-level alerts, since a few failures can swing ratios",
+      "Quality is the product: promote a validated quality SLI, but keep it ticket-level until agreement with human review is established",
+      "Runs wait on humans: measure compute time and approval time as separate SLIs"
+    ]
+  },
+  "alternatives": {
+    "title": "Alerting approaches",
+    "head": ["Approach", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Burn-rate alerts on SLOs", "You have a clear SLO and enough traffic", "Traffic is tiny or SLIs are undefined", "More windows and thresholds to manage [[tr1]]"],
+      ["Static thresholds (for example p95 over 5 s)", "Quick start, simple systems", "Load or mix changes often", "Noisy or late alerts"],
+      ["Anomaly detection on metrics", "No stable baseline yet", "You need explainable pages", "Opaque behavior and tuning"],
+      ["Quality-score alerts from online evals", "Silent failures are the main risk", "The judge is untested or the sample is small", "Cost and false alarms from noisy judges"]
+    ]
+  },
+  "pitfalls": [
+    {
+      "symptom": "Pages fire constantly during busy hours and nobody trusts them",
+      "cause": "Static latency thresholds ignore load and prompt mix",
+      "fix": "Move to SLO burn-rate alerts with a short and a long window [[tr1]]"
+    },
+    {
+      "symptom": "Latency SLO burns every time a human approval is pending",
+      "cause": "Approval waits are counted as service latency",
+      "fix": "Exclude paused time from the latency SLI and track approval time separately"
+    },
+    {
+      "symptom": "A quality alert flaps between pass and fail",
+      "cause": "The score comes from a small sample or an uncalibrated LLM judge",
+      "fix": "Increase sample size, calibrate against human labels and alert on a rolling pass rate"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "w15-t10-s1",
+      "title": "A customer-facing streaming assistant",
+      "situation": "A chat assistant streams answers to customers all day. Users complain when the first words take too long or when answers are wrong, not when a request takes 20 seconds in total.",
+      "constraints": ["High traffic", "User-perceived latency", "Quality matters"],
+      "unknowns": ["What does the baseline p95 first-chunk time look like?", "How is answer quality sampled and judged?"],
+      "question": "Which SLIs and alerts do you set?",
+      "options": [
+        { "name": "SLIs on availability and p95 time to first chunk with burn-rate paging, plus a sampled quality pass rate as a ticket alert", "verdict": "best", "why": "It measures what users feel, pages on fast budget burn and keeps the noisy quality signal at ticket level.", "tradeoff": "You maintain several SLOs and an online evaluation pipeline." },
+        { "name": "A single p95 total-duration threshold", "verdict": "poor", "why": "Total duration scales with answer length and ignores first-token delay and quality.", "tradeoff": "Fine for a non-streaming batch endpoint." },
+        { "name": "Page on every quality score drop", "verdict": "good", "why": "Quality failures get attention.", "tradeoff": "Noisy and may wake people for judge variance." }
+      ],
+      "flips": [
+        { "if": "Answers are not streamed", "then": "Use inference duration percentiles." },
+        { "if": "The judge is validated against human labels", "then": "Promote the quality SLI to a paging signal." }
+      ],
+      "takeaway": "Measure what users feel and page on budget burn."
+    },
+    {
+      "id": "w15-t10-s2",
+      "title": "A nightly agent pipeline with a deadline",
+      "situation": "A batch of 5,000 agent tasks must finish by 06:00. Individual task latency is irrelevant. Failures should be retried automatically.",
+      "constraints": ["Batch deadline", "Few large runs", "Automatic retries"],
+      "unknowns": ["How many failures can retries absorb?", "How early must an on-call know?"],
+      "question": "How do you define health and alerts?",
+      "options": [
+        { "name": "SLI: share of tasks completed by the deadline, ticket alert on projected shortfall, page when the projection crosses a hard limit", "verdict": "best", "why": "It tracks the outcome the business cares about and gives time to react before the deadline.", "tradeoff": "Needs a projection of progress, not only counts." },
+        { "name": "Per-task p95 latency alerts", "verdict": "poor", "why": "Latency of single tasks does not predict whether the batch meets its deadline.", "tradeoff": "Useful as a diagnostic after the deadline slips." },
+        { "name": "Alert only when the batch fails", "verdict": "good", "why": "Simple.", "tradeoff": "Learns of a missed deadline too late." }
+      ],
+      "flips": [
+        { "if": "Tasks are retried and failures cluster", "then": "Add per-tool error SLIs to find the cause." },
+        { "if": "The deadline moves to hourly", "then": "Use burn-rate windows." }
+      ],
+      "takeaway": "Pick the SLI that matches the promise you made."
+    }
+  ],
+  "quiz": [
+    {
+      "id": "w15-t10-q1",
+      "type": "numeric",
+      "tag": "numeric",
+      "q": "An SLO of 99.5 percent over 30 days is in force. In the last hour the error rate was 7.2 percent. What is the burn rate?",
+      "answer": 14.4,
+      "tolerancePct": 1,
+      "unit": "x",
+      "hint": "Error budget is 1 minus the SLO.",
+      "explain": "The error budget is 0.5 percent. Burn rate is observed error rate over budget: 7.2 / 0.5 = 14.4, the page-level rate for a one-hour window."
+    },
+    {
+      "id": "w15-t10-q2",
+      "type": "single",
+      "tag": "tradeoff",
+      "q": "Why should a latency SLI for an approval-gated agent exclude time paused for human approval?",
+      "options": [
+        "Approvals are never traced",
+        "Approval time is always under one second",
+        "Approval waits reflect human response time, not service quality, and would burn the budget unfairly",
+        "SLIs must not include p95 values"
+      ],
+      "answer": 2,
+      "explain": "Human delays are not service latency. Approvals can be traced, they are often long and p95 is a normal SLI statistic."
+    },
+    {
+      "id": "w15-t10-q3",
+      "type": "order",
+      "tag": "order",
+      "q": "Put the steps of setting an SLO-based alert in order.",
+      "items": [
+        "Choose an SLI that reflects user experience",
+        "Measure a baseline from unsampled metrics",
+        "Set the SLO and compute the error budget",
+        "Create multi-window burn-rate alerts",
+        "Review budget spend and tune"
+      ],
+      "explain": "The SLI comes first, the baseline grounds the SLO, the budget defines burn-rate thresholds and review closes the loop."
+    }
+  ],
+  "flashcards": [
+    { "front": "What is burn rate?", "back": "Observed error rate divided by the error budget (1 minus the SLO). A burn rate of 1 spends exactly the budget over the window." },
+    { "front": "What starting alert numbers does the SRE Workbook suggest?", "back": "Page at 2 percent budget in 1 hour (burn rate 14.4) and 5 percent in 6 hours (burn rate 6). Ticket at 10 percent in 3 days (burn rate 1)." },
+    { "front": "Why alert on metrics and not traces?", "back": "Metrics are not sampled, so rates are accurate. Traces explain an alert after it fires." }
+  ],
+  "related": ["w15-t04", "w15-t07", "w15-t11", "w16-t01", "w14-t02"],
+  "refs": ["r15", "r21", "tr1"]
+}

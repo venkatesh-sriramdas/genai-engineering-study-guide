@@ -1,0 +1,104 @@
+{
+  "id": "w14-t03",
+  "order": 3,
+  "group": "Foundations",
+  "title": "Component vs end-to-end evaluation",
+  "minutes": 7,
+  "difficulty": "core",
+  "summary": "Component evals score one stage with the other stages held fixed, so a fault points at a layer. End-to-end evals score the whole system on the user's task, so they say whether users are affected. Use many cheap component checks and fewer expensive end-to-end ones.",
+  "useIf": "A pipeline has several stages (retrieve, rerank, generate, call tools) and you need to know which one broke.",
+  "avoidIf": "The system is a single model call with no retrieval or tools, where one end-to-end score is the component.",
+  "explain": [
+    { "t": "p", "md": "**End-to-end** evaluation treats the system as a black box: a question goes in, an answer comes out, and you grade the answer against the user's task. It is what users feel, but a low score does not say where the fault is. **Component** evaluation fixes the inputs to one stage and scores only that stage: retrieval with rank metrics, generation given a fixed context, tool selection given a fixed plan, a router or a guardrail as a classifier." },
+    { "t": "p", "md": "Think of a test pyramid. Hamel Husain describes three levels: fast assertions run on every code change, model and human evaluation on a set cadence, and A/B tests after significant product changes, with cost rising at each level [[tr6]]. Foundry's suggested combinations follow the same idea: RAG is Retrieval, Groundedness, Relevance and Content Safety; agents are Output Quality, Tool Use Quality, Rubric and Content Safety [[r2]]. For agents, Foundry separates system-level evaluators from process-level ones that point at a step [[r3]]." },
+    { "t": "diagram", "id": "w14-t03-d1", "title": "Where each score attaches", "alt": "A query passes through retrieval, generation and tool use to an answer. Rank metrics score retrieval, groundedness scores generation, tool accuracy scores tool use, and a correctness score judges the final answer.", "src": "flowchart LR\n  Q[Query] --> R[Retrieve]\n  R --> G[Generate]\n  G --> T[Tools]\n  T --> A[Answer]\n  R -.-> M1[Rank metrics]\n  G -.-> M2[Groundedness]\n  T -.-> M3[Tool accuracy]\n  A -.-> M4[End-to-end score]" },
+    { "t": "table", "caption": "Isolating the fault (practitioner heuristic)", "head": ["Symptom", "Likely layer", "Component check to run first"], "rows": [
+      ["Answer misses a fact that exists in the corpus", "Retrieval", "Recall@k with k set to the chunks you send"],
+      ["Right context, answer contradicts it", "Generation", "Groundedness with the context fixed"],
+      ["Right tool, wrong arguments", "Tool use", "Tool input accuracy on the call"],
+      ["Wrong tool for the intent", "Planning or routing", "Tool selection against labelled intents"]
+    ] },
+    { "t": "callout", "kind": "tip", "title": "Freeze the upstream", "md": "To test generation alone, feed it gold or recorded contexts. To test retrieval alone, score the ranked list and stop. Both isolate a fault without waiting for a full run." }
+  ],
+  "whereToUse": [
+    "RAG systems, where retrieval and generation fail for different reasons",
+    "Agents with several tools, where a single bad call can ruin the outcome",
+    "Pipelines with a router, reranker or guardrail that has its own error rate",
+    "CI, where cheap component checks gate every change and end-to-end runs nightly"
+  ],
+  "whenToUse": {
+    "use": ["More than one stage can cause the same bad answer", "You change one stage at a time (new retriever, new prompt)", "You need a fast check on every commit"],
+    "avoid": ["Treating component scores as proof users are happy", "Building a metric for every stage when one stage has never failed", "Skipping an end-to-end check because every component score looks healthy"],
+    "flips": ["Interaction effects dominate (context order, truncation): raise the share of end-to-end checks", "Few labels exist: lean on end-to-end rubric judges and add component labels as failures appear", "A stage is a managed black box you cannot isolate: test it end to end with fixed inputs"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Component evals only", "You change one stage and need quick fault location", "Stages interact (ordering, truncation)", "Green parts, bad whole"],
+      ["End-to-end evals only", "You need the user-visible verdict", "You must find which stage failed", "Slow, costly, no localisation"],
+      ["Layered (both)", "The system has stages and real stakes", "A tiny prototype with one call", "Upkeep of two sets of labels"],
+      ["Manual trace review", "Discovering new failure types", "Many releases per week", "Reviewer time"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Every component score is green but the answers are poor", "cause": "Interaction between stages, such as context order or prompt truncation, which no isolated test exercises", "fix": "Keep an end-to-end set and compare its trend with component trends" },
+    { "symptom": "The team chases ten dashboards and false alarms", "cause": "Too many component metrics, so some move by chance", "fix": "Choose one primary metric per layer and gate on those" },
+    { "symptom": "A generation fix appears to fail", "cause": "Retrieval was also changing, so the test was not isolated", "fix": "Freeze retrieved contexts when testing generation" }
+  ],
+  "scenarios": [
+    {
+      "id": "w14-t03-s1",
+      "title": "Quality dropped after a retriever swap",
+      "situation": "A RAG assistant's end-to-end pass rate fell from 82% to 74% the day the team replaced its retriever. Nothing else shipped. Both versions are in a staging environment.",
+      "constraints": ["Only one component changed", "A labelled query set with relevant document ids exists", "Fix needed this week"],
+      "unknowns": ["Did recall at the sent k drop, or ranking?", "Did context length change?", "Are the failures concentrated in some query types?"],
+      "question": "What do you run first?",
+      "options": [
+        { "name": "Retrieval metrics on the labelled queries for old and new retriever", "verdict": "best", "why": "Only retrieval changed, so a recall and ranking comparison at the real k localises the fault in minutes and at low cost.", "tradeoff": "It shows retrieval quality, not whether a different prompt could compensate." },
+        { "name": "Rerun the full end-to-end suite with more judges", "verdict": "poor", "why": "It repeats the symptom and costs more without naming the layer.", "tradeoff": "More judges help when the question is whether the final answer is acceptable, not where it broke." },
+        { "name": "Tune the generation prompt to recover the score", "verdict": "good", "why": "A prompt can mask weaker context.", "tradeoff": "It hides a retrieval regression and may fail on queries the new retriever misses entirely." }
+      ],
+      "flips": [
+        { "if": "Retrieval metrics are unchanged", "then": "Look at generation with contexts frozen, then at context formatting and truncation." },
+        { "if": "No relevance labels exist", "then": "Use judged context metrics while you label a small query set." }
+      ],
+      "takeaway": "Change one stage, check that stage first."
+    },
+    {
+      "id": "w14-t03-s2",
+      "title": "Tool-using agent in CI",
+      "situation": "An agent with six tools runs in CI on every pull request. A full multi-turn evaluation takes 40 minutes and costs real judge tokens. Engineers merge 30 times a day.",
+      "constraints": ["Tight CI time budget", "Judge spend is capped", "Tool calls have stable, checkable arguments"],
+      "unknowns": ["Which tools carry risk?", "Is there an outcome check available in a sandbox?", "How flaky is the full run?"],
+      "question": "How do you split checks between pull requests and nightly runs?",
+      "options": [
+        { "name": "Code-based tool and argument checks on a small set per PR, full end-to-end nightly", "verdict": "best", "why": "Cheap deterministic checks give fast feedback on the most common breakage, and the expensive run stays off the critical path.", "tradeoff": "Some interaction failures appear a day late." },
+        { "name": "Full end-to-end on every PR", "verdict": "poor", "why": "It blocks 30 merges a day for 40 minutes and burns budget.", "tradeoff": "Fine for a weekly release branch with few merges." },
+        { "name": "Only manual review of a few traces each week", "verdict": "good", "why": "Finds new failure types.", "tradeoff": "No regression gate, and it does not scale with merges." }
+      ],
+      "flips": [
+        { "if": "Merges drop to a few a week", "then": "Run the end-to-end suite on every PR." },
+        { "if": "A tool can change real data", "then": "Add an outcome check in an isolated environment before merge." }
+      ],
+      "takeaway": "Run cheap component checks often and end-to-end checks on a slower cadence."
+    }
+  ],
+  "quiz": [
+    { "id": "w14-t03-q1", "type": "single", "tag": "diagnose", "q": "Recall@5 is high and groundedness is high, yet users report wrong answers. What is the most plausible gap?", "options": ["Retrieval returns nothing relevant", "The judge ignores the context", "Tokenization of the query failed", "The retrieved documents may be wrong or outdated, so a faithful answer can still be incorrect"], "answer": 3, "explain": "Groundedness checks consistency with the retrieved context, not truth. If the context is wrong or stale, the answer is faithful and wrong. High recall rules out option one, and the others are not implied." },
+    { "id": "w14-t03-q2", "type": "single", "tag": "tradeoff", "q": "You can afford one new check this sprint. Retrieval and generation both look fine in spot checks, but the agent sometimes calls the wrong tool. Which check?", "options": ["A larger end-to-end LLM-judge suite", "Tool selection accuracy on labelled intents", "More retrieval metrics", "A longer system prompt"], "answer": 1, "explain": "The suspected fault is tool selection, so a component check on it localises the problem cheaply. A bigger end-to-end suite repeats the symptom, and retrieval is not suspected." },
+    { "id": "w14-t03-q3", "type": "match", "tag": "concept", "q": "Match each stage to a component-level check.", "pairs": [
+      { "l": "Retriever", "r": "Recall@k on labelled queries" },
+      { "l": "Generator with fixed context", "r": "Groundedness" },
+      { "l": "Tool call", "r": "Argument and tool selection accuracy" },
+      { "l": "Safety guardrail", "r": "Attack success rate on a probe set" }
+    ], "explain": "Each component check holds the other stages fixed so a drop is attributable to that stage." }
+  ],
+  "flashcards": [
+    { "front": "Why keep both component and end-to-end evals?", "back": "Component scores localise a fault. End-to-end scores say whether users are affected. Only the second catches interaction effects such as context order or truncation." },
+    { "front": "How do you test generation in isolation?", "back": "Freeze the retrieved context (gold or recorded) and score only the answer, for example with groundedness and completeness." },
+    { "front": "What are Hamel Husain's three eval levels?", "back": "Fast assertions on every change, model and human evaluation on a cadence, and A/B tests after significant product changes. Cost rises at each level." }
+  ],
+  "related": ["w14-t01", "w14-t06", "w14-t11", "w05-t17", "w14-l1"],
+  "refs": ["tr6", "r2", "r3", "r4"]
+}

@@ -1,0 +1,86 @@
+{
+  "id": "w15-l5",
+  "order": 5,
+  "title": "Boss: make the crew debuggable without leaking data",
+  "kind": "boss",
+  "minutes": 25,
+  "brief": "An interviewer describes a multi-agent system that nobody can debug, with a compliance rule against customer text in logs. The dials are not given. Clarify them, compare the options, choose, and say what would flip your answer.",
+  "blocks": [
+    { "t": "h", "text": "The prompt and the five steps", "level": 2 },
+    { "t": "scenario", "title": "What you know and what to ask", "known": ["A gateway, an orchestrator agent, specialist agents, MCP tools and one A2A peer take part in each request", "When an answer is wrong nobody can say which hop or which step caused it", "Compliance says customer text must not sit in logs", "Finance wants cost per team and on-call wants alerts they can trust"], "ask": ["Which data classes pass through prompts and tool results, and what do rules and contracts say about retention and access?", "Who must read content when debugging: on-call, support, or only a cleared group?", "Which hops are yours, which are hosted tools, and which belong to another team?", "What volume and budget are we talking about: traces per second, retention, ingestion cap?", "What does wrong mean to the business, and how quickly must on-call respond?"], "tension": "Debugging wants content on every trace. Compliance wants none of it. Cost wants fewer traces, and fewer traces mean the one you need is missing." },
+    { "t": "table", "caption": "Dial-and-Defend applied to this question", "head": ["Step", "What you say"], "rows": [
+      ["1 Clarify the dials", "Data classes, who may read content, which hops are hosted or external, volume and budget, the definition of wrong"],
+      ["2 List the options", "Metadata only with replay, content on spans in a restricted workspace, external content store with references, redaction before export"],
+      ["3 Pick and name the flips", "Metadata and references on spans, content in a governed store, trace context tested on every hop. Flip on sensitivity, access rules and platform capacity"],
+      ["4 Failure modes and detection", "Content bypasses, duplicated content, broken hops, sampled totals, renamed metrics, cardinality drops. Detect with canaries, completeness checks and a name inventory"],
+      ["5 Metrics and rollout", "SLIs on metrics, tail sampling for errors, pre-production first, a pinned conventions commit"]
+    ], "highlightCol": 1 },
+    { "t": "callout", "kind": "interview", "title": "The sentence that earns points", "md": "Say that sampling is a cost control and not a privacy control, and that you would prove privacy with a canary and not by reading flags. Then say the standard is in Development status and moved repositories on 2026-05-05, so you pin it and check which names your build emits." }
+  ],
+  "quiz": [
+    { "id": "w15-l5-q1", "type": "single", "tag": "tradeoff", "difficulty": 2, "q": "Compliance says no customer text in logs, yet engineers must debug wrong answers. Which design fits best?", "options": ["Capture content on spans in production but sample only 1 percent of traces, on the theory that fewer spans mean less exposure and an easier audit", "Capture content on spans and mask it in the dashboard layer so viewers do not see it", "Turn telemetry off for requests that contain personal data and rely on user complaints", "Metadata and references on spans by default, with content in an access-controlled store that has its own retention and audit"], "answer": 3, "explain": "The spec recommends external storage with references for production, so debuggers can follow a reference with the right permission while traces stay clean. Sampling limits volume but each retained span still holds customer text, masking in the viewer leaves the stored data unchanged, and turning telemetry off removes the evidence you need.", "ref": "r4" },
+    { "id": "w15-l5-q2", "type": "multi", "tag": "diagnose", "difficulty": 3, "q": "You need one trace that crosses the gateway, the orchestrator, an MCP tool and an A2A peer. Select every step that helps.", "options": ["Use client-opened MCP transports for the tools you need traced end to end", "Test each hop with a known `traceparent` and look for its trace id in the next service's spans", "Log `gen_ai.conversation.id`, task ids and correlation ids so a broken hop can still be joined", "Assume the A2A protocol carries trace fields of its own", "Rely on head sampling to keep every error trace"], "answers": [0, 1, 2], "explain": "Hosted MCP tools are invoked by the provider and get no injected context, so a client-opened transport restores the chain. A known `traceparent` proves each hop, and logged ids join what propagation cannot. The A2A spec defines no tracing fields, and head sampling cannot guarantee error traces.", "ref": "r9" },
+    { "id": "w15-l5-q3", "type": "single", "tag": "bug", "difficulty": 2, "q": "After enabling sensitive data, .NET traces show every prompt twice and span storage doubled. What is the likely cause?", "options": ["Head sampling is retaining each trace twice, because the ratio is applied separately by the client and the agent layers", "Both the chat client and the agent are wrapped with OpenTelemetry, so content is recorded on both spans", "The OTLP exporter retries failed batches and writes duplicates", "The `@trace_function` decorator copies content onto the parent span"], "answer": 1, "explain": "The Agent Framework docs warn that instrumenting both layers duplicates prompts and responses on both spans when sensitive data is on, so pick one layer. Sampling does not duplicate traces, exporter retries do not create two spans with different parents, and the decorator records a function's own parameters and return value.", "ref": "r10" },
+    { "id": "w15-l5-q4", "type": "order", "tag": "order", "difficulty": 2, "q": "Put the rollout in a defensible order.", "items": ["Switch on metadata-only tracing with an exporter and confirm spans arrive", "Test propagation across every hop with a known `traceparent`", "Alert on metrics: error ratio, runaway calls per run, time to first chunk", "Add the external content store with access control, retention and a canary leak test", "Score a sampled share of live runs and watch the pass rate"], "explain": "Start safe: metadata only. Then prove connectivity, because alerts and debugging need whole traces. Alerts on unsampled metrics come next, because they need no content. The governed content store follows, once the base is trusted and a canary can prove it does not leak. Quality scoring comes last, because it needs both traces and content access.", "ref": "r4" }
+  ],
+  "defend": {
+    "prompt": "We run a multi-agent system: a gateway, an orchestrator agent, specialist agents, MCP tools and one A2A peer. When an answer is wrong, nobody can say why, and compliance says no customer text may sit in our logs. Make it debuggable without leaking data.",
+    "timebox": "5 min",
+    "clarify": [
+      "Which data classes pass through prompts and tool results, and what do rules and contracts say about retention and access?",
+      "Who must read content when debugging: on-call, support, or only a cleared group?",
+      "Which hops are ours, which are hosted tools, and which belong to another team?",
+      "What are the volume and the budget: traces per second, retention, an ingestion cap?",
+      "What does wrong mean to the business, and how quickly must on-call respond?"
+    ],
+    "options": [
+      { "name": "Metadata-only traces plus replay of reproducible cases", "when": "Debugging is rare and privacy is strict.", "tradeoff": "You cannot read the failing prompt, and replay may not reproduce a nondeterministic failure." },
+      { "name": "Content on spans in a restricted workspace", "when": "Data is sandboxed and the same people may see traces and user data.", "tradeoff": "Content reaches every trace consumer and retention tier, and operators read user data." },
+      { "name": "Metadata on spans, content in an external store with references", "when": "Production data is regulated and debugging is frequent.", "tradeoff": "You design the reference convention, the store and the access flow, because the spec still lists external references as TODO." },
+      { "name": "Redaction before export, content on spans", "when": "Prompts must stay readable and no platform team can run a store.", "tradeoff": "A missed pattern leaks into every consumer, and processing adds cost on every span." }
+    ],
+    "modelAnswer": [
+      { "t": "p", "md": "**1. Clarify the dials.** First I would ask about data classes and the rules on retention and access, who must read content when debugging, which hops are ours or hosted or external, volume and budget, and what wrong means to the business." },
+      { "t": "table", "head": ["Option", "Pick when", "Loses when"], "rows": [
+        ["Metadata only, replay", "Rare debugging, strict privacy", "You must read the failing prompt"],
+        ["Content on spans, restricted workspace", "Sandboxed data, same audience", "Operators must not see user data"],
+        ["External store with references", "Regulated data, frequent debugging, a platform to build on", "A small team cannot run the store"],
+        ["Redaction then spans", "Readable prompts, no platform team", "A detector miss is unacceptable"]
+      ] },
+      { "t": "p", "md": "**3. Pick and name the flips.** I would record metadata on every span, keep `ENABLE_SENSITIVE_DATA` false in production and put content in a separate store, referenced from spans, with its own access control, retention and audit. The spec recommends this for production [[r4]]. I would wrap one layer per runtime, use client-opened MCP transports where I need the chain [[r10]], and test the A2A hop with a known `traceparent` because the A2A spec has no tracing fields [[r9]]. For volume I would use tail sampling in a collector to keep errors and slow runs, and alert from metrics, which are not sampled [[r15]]." },
+      { "t": "diagram", "id": "w15-d3", "title": "The shape I would defend", "alt": "Agent services send spans through a collector with tail sampling to a trace backend, send metrics to a metrics and alerts backend, and write content to a separate content store with access control and expiry. Traces refer to the content store.", "src": "flowchart LR\n  A[Agent services] --> C[Collector with tail sampling]\n  C --> T[Trace backend]\n  A --> K[Metrics and alerts]\n  A --> V[Content store with RBAC and TTL]\n  T -.-> V", "caption": "Spans carry references. Only the content store holds text, and only a cleared group opens it." },
+      { "t": "p", "md": "Flips: low sensitivity moves me to content on spans. If operators may see user data, a restricted workspace with content on spans is simpler. If no platform team exists, I would capture full content only in pre-production with synthetic data and reproduce production failures there, or accept redaction with its miss rate." },
+      { "t": "p", "md": "**4. Failure modes and detection.** Content can bypass the flags through `@trace_function` and hand-written attributes, so I run a canary and search the backend [[r13]]. Wrapping both .NET layers duplicates content. Hosted MCP tools break the chain. Sums over sampled spans come out low unless weighted by `itemCount`. The conventions are in Development and moved repositories on 2026-05-05, so metric names can change [[r1]] [[r5]]. Per-user metric dimensions are dropped silently past the limits [[r16]]. I detect these with a trace completeness check (the share of traces with spans from every service), a retained-percentage query and a CI inventory of emitted metric names." },
+      { "t": "p", "md": "**5. Metrics and rollout.** SLIs are run availability, p95 run duration without human pauses, p95 first-chunk time, tool error ratio, p99 calls per run, tokens per successful task and an online quality pass rate, with targets taken from a baseline. Rollout: metadata-only tracing, propagation tests, alerts, the content store with a canary leak test, then quality scoring. I would pin the conventions by commit and review it before every upgrade." }
+    ],
+    "rubric": [
+      { "pt": "Clarifies data classes, who may read content, which hops are hosted or external, volume and the definition of wrong before choosing", "w": 3 },
+      { "pt": "Separates metadata from content and picks an external store with references for production, with access control, retention and audit", "w": 3 },
+      { "pt": "Names which flag controls which layer and the bypasses (`@trace_function`, custom attributes, duplicate wrapping), and proves privacy with a canary", "w": 3 },
+      { "pt": "Explains propagation over HTTP, MCP `params._meta` and A2A, including the hosted MCP gap and testing the A2A hop", "w": 2 },
+      { "pt": "Chooses sampling deliberately: head versus tail, metrics unsampled for alerts, `itemCount` weighting for sums", "w": 2 },
+      { "pt": "Names failure modes with detection and gives SLIs with targets taken from a baseline", "w": 2 },
+      { "pt": "States the Development status of the conventions, pins them and checks the emitted names; picks a backend by constraint", "w": 2 },
+      { "pt": "States flip conditions: sensitivity, who may see data, platform capacity", "w": 1 }
+    ],
+    "followUps": [
+      { "q": "Compliance asks you to prove that no customer text reached the backend.", "a": "Run a canary: a unique marker in test prompts, tool arguments and tool results on every path, then search the backend and the content store for it. Check the flag of every layer (`ENABLE_SENSITIVE_DATA`, `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT`) and review every `@trace_function`. Repeat after each dependency upgrade [[r10]] [[r13]]." },
+      { "q": "A load test shows about half the traces you expect.", "a": "The Microsoft OpenTelemetry Distro default is rate-limited sampling at five traces per second, so bursts are dropped. Use a fixed ratio or a higher rate for tests, check the retained percentage with the `itemCount` query, and count requests from metrics, which are not sampled [[r15]]." },
+      { "q": "A metric name changes next quarter. How do you protect the dashboards?", "a": "The conventions are in Development and have already changed repositories and metric names. Pin the conventions by commit, keep an inventory of emitted metric names that CI compares with dashboard queries, and alert on metrics you control [[r1]] [[r5]]." }
+    ],
+    "redFlags": [
+      "Turns on content capture everywhere to make debugging easy.",
+      "Treats sampling as a privacy control.",
+      "Assumes trace context crosses hosted MCP tools or an A2A hop without testing it.",
+      "Computes cost by summing sampled spans or by adding cached tokens to input tokens.",
+      "Builds dashboards on metric names without pinning the conventions version."
+    ]
+  },
+  "refs": ["r1", "r4", "r5", "r9", "r10", "r13", "r15", "r16"],
+  "takeaways": [
+    "Debuggable and private means metadata on every span, content in a governed store behind references, and trace context tested on every hop.",
+    "Sampling is a cost control, not a privacy control. Prove privacy with a canary, and check the flag of every layer plus the bypasses.",
+    "Alert on metrics because they are not sampled, keep errors with tail sampling, and weight sampled sums by `itemCount`.",
+    "The conventions are in Development status. Pin them, check which names your build emits, and say so in the interview."
+  ]
+}

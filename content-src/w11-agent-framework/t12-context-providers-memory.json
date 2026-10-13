@@ -1,0 +1,113 @@
+{
+  "id": "w11-t12",
+  "order": 12,
+  "group": "State and memory",
+  "title": "Context providers and memory",
+  "minutes": 9,
+  "difficulty": "core",
+  "summary": "A context provider runs before and after every agent run to inject instructions, messages, tools or middleware and to learn from the exchange. Memory, retrieval and dynamic instructions are all context providers.",
+  "useIf": "The agent needs knowledge it was not told in the prompt: user preferences, retrieved documents, long-term memory, per-tenant instructions or per-request tools.",
+  "avoidIf": "You need to block or rewrite a call (that is middleware), or only store the transcript (that is a history provider).",
+  "explain": [
+    { "t": "p", "md": "`ContextProvider` (Python) and `AIContextProvider` (.NET) have two hooks: `before_run` adds to the request and `after_run` can write what it learned. Inside `before_run` a Python provider can call `context.extend_instructions(source_id, text)`, `context.extend_tools(source_id, tools)` and `context.extend_middleware(source_id, ...)`. **One provider instance serves every session**, so keep per-session data in `session.state` keyed by `source_id`, never in instance fields [[tr12]]." },
+    { "t": "p", "md": "**Memory options.** Integrations listed in the docs: Azure AI Search (RAG), Azure Content Understanding (pre-processing, Python only), Azure Cosmos DB (history and memory), Hyperlight and Monty (CodeAct), Mem0 (memory, Python only), Microsoft Foundry (RAG and memory), Neo4j (RAG and memory), Redis (RAG, history, memory) and Valkey (history, .NET only) [[tr48]]. Several Python extras are Beta. **`FileMemoryProvider`** lets the model store and recall through `file_memory_*` tools. In Python an omitted `scope` derives the folder from the session id, so sessions do not share files; pass a stable scope such as a user id to share memory across sessions. Treat the scope as an opaque key, not a path, and authorise externally supplied scopes [[tr12]]." },
+    { "t": "table", "caption": "Memory scope decides who can read what", "head": ["Scope", "Lifetime", "Risk"], "rows": [
+      ["Session (default `FileMemoryProvider`)", "One conversation", "Low leakage, no cross-session recall"],
+      ["User (`scope=f'user-{id}'`)", "Across that user's sessions", "Wrong or guessable scope leaks between users"],
+      ["Tenant or team", "Shared by a group", "One user's note steers everyone: poisoning surface"],
+      ["Global", "Everyone", "Highest poisoning and privacy risk: avoid for model-written memory"]
+    ] },
+    { "t": "tabs", "tabs": [
+      { "label": "C#", "blocks": [ { "t": "code", "lang": "csharp", "code": "AIAgent agent = chatClient.AsAIAgent(new ChatClientAgentOptions\n{\n    ChatOptions = new() { Instructions = \"You are a helpful assistant.\" },\n    AIContextProviders = [ new MyCustomMemoryProvider() ],\n});\n\n// Harness: built-ins first (todo, mode, file memory, skills), yours after\nHarnessAgent h = chatClient.AsHarnessAgent(new HarnessAgentOptions\n{\n    AIContextProviders = [ new MyCustomMemoryProvider() ],\n    DisableAgentSkillsProvider = true,\n});" } ] },
+      { "label": "Python", "blocks": [ { "t": "code", "lang": "python", "code": "class UserPreferenceProvider(ContextProvider):\n    def __init__(self):\n        super().__init__('user-preferences')\n\n    async def before_run(self, *, agent, session, context, state):\n        if fav := state.get('favorite_food'):\n            context.extend_instructions(self.source_id, f'Favourite food: {fav}.')\n\n    async def after_run(self, *, agent, session, context, state):\n        for m in context.input_messages:\n            if 'favorite food is' in (m.text or '').lower():\n                state['favorite_food'] = m.text.lower().split('favorite food is', 1)[1].strip(' .')\n\nmemory = FileMemoryProvider(store, scope=f'user-{user_id}')   # stable per-user scope\nagent = Agent(client=client, context_providers=[UserPreferenceProvider(), memory])" } ] }
+    ] }
+  ],
+  "whereToUse": [
+    "Retrieval-augmented answers: a provider queries Azure AI Search or another store in `before_run`",
+    "User profile and preference memory across sessions with Mem0, Foundry memory, Cosmos DB or Redis",
+    "Dynamic instructions: tenant policy or the current mode injected per run",
+    "Per-request tool lists: expose only the tools a user's role allows with `extend_tools`",
+    "Model-written notes in files via `FileMemoryProvider`, scoped per user"
+  ],
+  "whenToUse": {
+    "use": [
+      "The knowledge changes per user, tenant, session or request",
+      "You want the same memory logic for every agent through one provider",
+      "The model should decide what to remember and recall through tools"
+    ],
+    "avoid": [
+      "You need to stop a run: use middleware",
+      "Memory is shared across users and written by the model without review: poisoning and privacy risk",
+      "Information is static and short: put it in the instructions"
+    ],
+    "flips": [
+      "Recall must work across sessions: use a stable scope (user id) or a memory service, not session-derived folders",
+      "Writes to shared memory need review: queue proposed memories for approval instead of writing directly"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Context provider with retrieval (RAG)", "Large changing knowledge, citations", "Facts must be exact and always present", "Retrieval misses, prompt cost"],
+      ["Memory service (Mem0, Foundry memory)", "Cross-session personalisation", "Strict data residency without a matching service", "External dependency, Beta extras, deletion duties"],
+      ["File memory", "The model curates notes as files", "Many concurrent writers or shared scopes", "Scope mistakes leak; model-written content can be poisoned"],
+      ["Compaction (summaries)", "Keeping one long chat inside the window", "Recall across sessions", "Lossy, local history only"],
+      ["Static instructions", "Small stable rules", "Per-user knowledge", "No personalisation"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "One user's preference shows up for another user", "cause": "The provider stored data on the instance (shared by all sessions) or the file scope was shared", "fix": "Use `session.state` keyed by `source_id`, and a per-user `scope` with an authorisation check" },
+    { "symptom": "Memory contains attacker text and steers later runs", "cause": "The model wrote untrusted content into a shared scope", "fix": "Write to per-user scope, filter or review writes, never place untrusted text in system-level instructions" },
+    { "symptom": "Provider ordering surprises", "cause": "The Harness orders history first, then compaction, then todo, mode and file memory; your providers come last", "fix": "Check the documented order and set `source_id` values that do not clash" }
+  ],
+  "scenarios": [
+    {
+      "id": "w11-t12-s1",
+      "title": "Personal assistant that remembers users",
+      "situation": "A consumer assistant should remember allergies and travel preferences across conversations. 100,000 users. Privacy law allows deletion on request.",
+      "constraints": ["Per-user memory", "Deletion on request", "Scale to 100,000 users"],
+      "unknowns": ["Can the model write memory freely?", "Which store is approved?", "How long is memory kept?"],
+      "question": "How do you build memory?",
+      "options": [
+        { "name": "A memory-service provider (Foundry memory, Mem0, Cosmos DB or Redis) keyed by user id, with a delete path", "verdict": "best", "why": "Per-user scoping, search at scale and an API to delete a user's memories.", "tradeoff": "An external dependency; several Python extras are Beta, and you must check residency." },
+        { "name": "`FileMemoryProvider` with a per-user scope on a shared file store", "verdict": "good", "why": "Simple and inspectable.", "tradeoff": "Scope authorisation is on you, file search is weak at 100,000 users." },
+        { "name": "One global memory scope", "verdict": "poor", "why": "Users would read each other's allergies, and one poisoned note affects all.", "tradeoff": "Fine for public, reviewed knowledge such as product FAQs." }
+      ],
+      "flips": [
+        { "if": "Memory may contain regulated data", "then": "Choose a store inside your compliance boundary and encrypt per user." },
+        { "if": "Memory is only needed within one conversation", "then": "Use the default session-scoped file memory." }
+      ],
+      "takeaway": "Memory scope is an access-control decision before it is a feature."
+    },
+    {
+      "id": "w11-t12-s2",
+      "title": "Role-aware tools per request",
+      "situation": "One agent serves support staff and managers. Managers may call refund tools; staff may not. The role comes from the signed-in token on each request.",
+      "constraints": ["Role known per request", "Same agent definition", "Must not rely on the prompt"],
+      "unknowns": ["How many roles exist?", "Can tool lists be cached per role?"],
+      "question": "How do you expose tools?",
+      "options": [
+        { "name": "A context provider that calls `extend_tools` based on the caller's role, plus function middleware as a backstop", "verdict": "best", "why": "The model never sees tools it may not call, and middleware catches mistakes.", "tradeoff": "Tool list changes per request, which can reduce prompt-cache hits." },
+        { "name": "Register all tools and tell the model who may use them", "verdict": "poor", "why": "A prompt is not enforcement.", "tradeoff": "Only fine when every tool is safe for everyone." },
+        { "name": "Two separate agents, one per role", "verdict": "good", "why": "Clear separation.", "tradeoff": "Duplicated instructions and more deployments as roles grow." }
+      ],
+      "flips": [
+        { "if": "There are only two roles forever", "then": "Two agents are simpler to reason about." },
+        { "if": "Prompt-cache hit rate matters most", "then": "Group roles into a few stable tool sets." }
+      ],
+      "takeaway": "Context providers can shape the tool surface per request."
+    }
+  ],
+  "quiz": [
+    { "id": "w11-t12-q1", "type": "single", "tag": "security", "q": "You use `FileMemoryProvider` without a `scope` in Python. What is the default isolation?", "options": ["All sessions share one folder", "Memory is not persisted", "The folder derives from the user's name", "The folder derives from the session id, so sessions do not share files"], "answer": 3, "explain": "An omitted scope derives the working folder from the session id. Pass a stable scope such as a user id to share across sessions, and authorise it.", "ref": "tr12" },
+    { "id": "w11-t12-q2", "type": "match", "tag": "concept", "q": "Match each component to what it does.", "pairs": [ { "l": "Middleware", "r": "Can stop or rewrite a run, model call or tool call" }, { "l": "Context provider", "r": "Adds instructions, messages, tools around a run" }, { "l": "History provider", "r": "Loads and stores the transcript" } ], "explain": "They differ by purpose: control, enrichment and transcript storage. State for providers lives in the session keyed by `source_id`.", "ref": "tr12" }
+  ],
+  "flashcards": [
+    { "front": "What can a Python context provider add in `before_run`?", "back": "Instructions (`extend_instructions`), messages, tools (`extend_tools`) and per-run middleware (`extend_middleware`)." },
+    { "front": "Why must providers not hold per-session data on the instance?", "back": "One provider instance serves every session. Per-session data belongs in `session.state` keyed by `source_id`." },
+    { "front": "Which memory integrations are Python-only or .NET-only?", "back": "Mem0 and Azure Content Understanding are Python only; Valkey history is .NET only." }
+  ],
+  "related": ["w11-t10", "w11-t11", "w11-t13", "w10-t19", "w10-t20", "w12-t12"],
+  "refs": ["tr12", "tr48"]
+}

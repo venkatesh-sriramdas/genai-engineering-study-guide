@@ -1,0 +1,107 @@
+{
+  "id": "w13-t08",
+  "order": 8,
+  "group": "Video and documents",
+  "title": "Video understanding",
+  "minutes": 7,
+  "difficulty": "core",
+  "summary": "Video is frames plus audio plus time. Managed analyzers sample about one frame per second at low resolution and transcribe speech, so fast events and fine on-screen text need your own sampling.",
+  "useIf": "You need searchable scenes, summaries or fields from recorded video, and speech plus coarse visuals carry most of the meaning.",
+  "avoidIf": "The answer depends on fast motion or tiny on-screen text, unless you control the frame sampling yourself.",
+  "explain": [
+    { "t": "p", "md": "A vision model reads images, so video understanding is a sampling problem: which frames, at what resolution, plus the soundtrack. Azure Content Understanding's video analyzer takes about **1 frame per second**, resizes frames to **512 x 512 px**, and transcribes **speech only**, not music or ambient sound. It offers key frames, shot detection (`cameraShotTimesMs`) and custom segmentation (`enableSegment`), and segmentation spends generative model tokens even when no fields are defined [[r11]]." },
+    { "t": "p", "md": "Versions matter. The GA API `2025-11-01` is the production choice. `2026-06-01-preview` adds agentic mode, in-page segmentation, signature detection and document metadata, and carries no SLA [[r10]] (checked 2026-10-13). If you sample frames yourself, cost is arithmetic: frames x tokens per frame, where tokens per frame follow the image rules in [[r1]]." },
+    { "t": "diagram", "id": "w13-t08-d1", "title": "From clip to answer", "alt": "A video splits into key frames and a speech transcript, which combine into timed segments and then fields or an index.", "src": "flowchart LR\n  V[Video] --> F[Sample frames]\n  V --> A[Speech transcript]\n  F --> S[Shots and segments]\n  A --> S\n  S --> O[Fields and search index]" },
+    { "t": "formula", "title": "Self-sampled frame cost", "expr": "tokens = seconds x fps x tokens_per_frame", "vars": [{ "k": "tokens_per_frame", "v": "gpt-4.1 `low` 85, `high` 255 at 512 x 512, patch model 308 (256 patches x 1.2, rounded up)" }], "example": "A 10-minute clip at 1 fps is 600 frames: **51,000** tokens at `low` on gpt-4.1, **153,000** at `high`, and **184,800** on a patch model with multiplier 1.2. These are derived from [[r1]], not printed there." },
+    { "t": "callout", "kind": "gotcha", "title": "512 x 512 loses fine text", "md": "At the analyzer's frame size, small interface text and slide fine print are unreadable. Extract higher-resolution frames yourself and send them at `original` detail where supported (inference from the documented limits)." }
+  ],
+  "whereToUse": [
+    "Media libraries that need scene segments, tags and descriptions",
+    "Training and meeting recordings with speech as the main carrier",
+    "Compliance review of recorded customer sessions",
+    "Short clips where every second matters and you sample frames yourself"
+  ],
+  "whenToUse": {
+    "use": [
+      "The managed analyzer when speech and coarse scenes carry the meaning and you want key frames and shots",
+      "Your own sampling when you need higher resolution, a different rate or event-driven frames",
+      "Transcript only when the video is talking heads"
+    ],
+    "avoid": [
+      "1 fps sampling for fast events such as impacts or quick gestures",
+      "Preview API versions in production, since they have no SLA",
+      "Segmentation turned on everywhere without a use for the segments"
+    ],
+    "flips": [
+      "Slides or screen recordings: add self-extracted frames at slide changes",
+      "Fast events: sample faster around triggers rather than for the whole clip",
+      "Cost spikes after enabling segmentation: restrict `enableSegment` to where it is used"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Content Understanding video analyzer", "Speech plus scenes, managed shots and segments", "Fine text or fast events", "About 1 fps at 512 x 512, speech only, token cost for segmentation"],
+      ["Own frame sampling plus a vision model", "You control rate, resolution and triggers", "You lack engineering time", "Frames x tokens, plus the pipeline you maintain"],
+      ["Transcript only", "Talking heads, cheapest path", "Visuals carry meaning", "Loses everything not spoken"],
+      ["Sparse key frames plus captions", "Browsing and thumbnails", "Exact answers about what happened", "Captions can be wrong (see vision failure modes)"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Questions about on-screen numbers return nonsense", "cause": "Frames were resized to 512 x 512 and small text became unreadable", "fix": "Extract higher-resolution frames at slide changes and read them at `original` detail." },
+    { "symptom": "A quick event is never found", "cause": "Sampling at about 1 frame per second skips it", "fix": "Raise the rate around the event window or use a trigger-based sampler." },
+    { "symptom": "Output shape changes after a service update", "cause": "Production calls `2026-06-01-preview`, which has no SLA", "fix": "Pin the GA version `2025-11-01` and test previews elsewhere." },
+    { "symptom": "Cost jumps after enabling segmentation", "cause": "Segmentation spends generative model tokens even with no fields", "fix": "Enable `enableSegment` only where the segments are consumed." }
+  ],
+  "scenarios": [
+    {
+      "id": "w13-t08-s1",
+      "title": "Lectures with slides",
+      "situation": "A university indexes 3,000 hours of lectures. Slides carry formulas and small labels, and students ask what a slide said at minute 40.",
+      "constraints": ["Speech plus slides", "Small on-slide text", "Search must point to a time"],
+      "unknowns": ["How often do slides change?", "Are slide decks available separately?"],
+      "question": "How do you index it?",
+      "options": [
+        { "name": "Transcript for all, plus higher-resolution frames extracted at slide changes and read at `original` detail", "verdict": "best", "why": "Speech gives timestamps cheaply, and your own frames avoid the 512 x 512 limit [[r11]].", "tradeoff": "You build slide-change detection and own the frame pipeline." },
+        { "name": "Managed analyzer with default sampling", "verdict": "good", "why": "Gives key frames, shots and a transcript in one managed call.", "tradeoff": "Small slide text is lost at 512 x 512." },
+        { "name": "Caption a frame every second", "verdict": "poor", "why": "Thousands of mostly redundant captions per lecture, with fine text still unreadable.", "tradeoff": "Reasonable for short, fast-changing clips." }
+      ],
+      "flips": [
+        { "if": "Slide decks exist as files", "then": "Index the decks directly and align them to the transcript." },
+        { "if": "Lecturers rarely use slides", "then": "Transcript only." }
+      ],
+      "takeaway": "Index speech first and spend pixels on the slides."
+    },
+    {
+      "id": "w13-t08-s2",
+      "title": "Fast events on a factory line",
+      "situation": "Short clips of a packing line must flag the moment an item drops. Drops last a fraction of a second. Volume is modest.",
+      "constraints": ["Events shorter than a second", "Modest volume", "Precise timestamps needed"],
+      "unknowns": ["Can a trigger (motion sensor) mark the window?", "What frame rate do cameras record?"],
+      "question": "How do you sample?",
+      "options": [
+        { "name": "Sample densely around trigger windows with your own pipeline and a vision model", "verdict": "best", "why": "About 1 fps cannot see sub-second events, so rate must follow the event.", "tradeoff": "Token cost rises in the dense windows and you need a trigger." },
+        { "name": "Managed analyzer at default sampling", "verdict": "poor", "why": "It samples about one frame per second and can step over the event.", "tradeoff": "Good for scene-level summaries of the same line." },
+        { "name": "Dense sampling of every clip at full rate", "verdict": "good", "why": "Misses nothing.", "tradeoff": "At 30 fps a 10-minute clip is 18,000 frames, which is expensive." }
+      ],
+      "flips": [
+        { "if": "No trigger exists", "then": "Run a cheap motion filter first to select windows." },
+        { "if": "Only an end-of-shift summary is needed", "then": "The managed analyzer is enough." }
+      ],
+      "takeaway": "Sampling rate must match event duration."
+    }
+  ],
+  "quiz": [
+    { "id": "w13-t08-q1", "type": "numeric", "tag": "numeric", "q": "You sample a 5-minute clip at 1 fps with 512 x 512 frames on a patch model with multiplier 1.2 (32 px patches). How many image tokens in total?", "answer": 92400, "tolerancePct": 1, "unit": "tokens", "hint": "512 x 512 is 16 x 16 patches.", "explain": "300 frames. Each frame is 256 patches x 1.2 = 307.2, rounded up to 308. 300 x 308 = 92,400." },
+    { "id": "w13-t08-q2", "type": "multi", "tag": "concept", "q": "Which statements match the documented behaviour of the Content Understanding video analyzer?", "options": ["Samples about 1 frame per second", "Resizes frames to 512 x 512 px", "Transcribes music and ambient sound", "Segmentation can spend generative model tokens even with no fields"], "answers": [0, 1, 3], "explain": "The analyzer transcribes speech only, so the third statement is false. The other three are documented." },
+    { "id": "w13-t08-q3", "type": "single", "tag": "flip", "q": "Which change most justifies building your own frame sampler?", "options": ["You need scene-level tags", "On-screen text is small and must be read", "The video is a talking head", "You want a transcript"], "answer": 1, "explain": "Small text is lost at the analyzer's 512 x 512 frames. Scene tags, talking heads and transcripts are what the managed analyzer already handles." }
+  ],
+  "flashcards": [
+    { "front": "What does the Content Understanding video analyzer sample and transcribe?", "back": "About 1 frame per second, resized to 512 x 512 px, and speech only (no music or ambient sound). It adds key frames, shot detection and optional segmentation." },
+    { "front": "Which Content Understanding API version should production use?", "back": "GA `2025-11-01`. `2026-06-01-preview` has no SLA and adds agentic mode, in-page segmentation and signature detection." },
+    { "front": "How do you estimate self-sampled video cost?", "back": "Seconds x fps x tokens per frame, with tokens per frame from the model's image rules, for example 308 for a 512 x 512 frame on a 1.2 multiplier patch model." }
+  ],
+  "related": ["w13-t01", "w13-t02", "w13-t09", "w13-l2"],
+  "refs": ["r11", "r10", "r1"]
+}

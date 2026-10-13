@@ -1,0 +1,101 @@
+{
+  "id": "w04-t16",
+  "order": 16,
+  "group": "Indexes",
+  "title": "ANN index families: flat, HNSW, IVF, DiskANN",
+  "minutes": 9,
+  "difficulty": "core",
+  "summary": "Exact search compares the query with every vector. Approximate indexes (HNSW, IVF, DiskANN) skip most of them, trading a little recall for speed, and differ in memory, build cost and scale.",
+  "useIf": "You are choosing an index type or diagnosing recall, latency or memory in a vector store.",
+  "avoidIf": "The set to search is small after filtering. An exact scan is simpler and always right.",
+  "explain": [
+    { "t": "p", "md": "Finding the nearest vectors exactly means comparing the query with every stored vector, which costs more as the index grows. **Approximate nearest neighbour (ANN)** indexes organise vectors so a query touches only a small part of them. Four families cover most production choices." },
+    { "t": "table", "caption": "The four index families", "head": ["Family", "How it works", "Memory and scale", "Watch for"], "rows": [
+      ["Flat or exhaustive KNN", "Compare against every vector. Exact.", "Linear in vector count, no build step", "Slow at scale, but ideal for small or heavily filtered sets and as recall ground truth. AI Search `exhaustiveKnn`; Cosmos DB `flat` up to 505 dimensions"],
+      ["HNSW", "A layered proximity graph, searched greedily from an entry point", "Graph held in memory, 1 to 20% overhead over float32 vectors, on-disk about 3 times in-memory size in AI Search [[tr32]]", "Memory cost, build time, deletions (FAISS HNSW cannot remove vectors [[tr34]])"],
+      ["IVF", "Cluster vectors, scan only the nearest clusters (probes)", "Compact, pairs with product quantization and re-ranking when memory is tight [[tr34]]", "Probes trade recall for speed. pgvector IVFFlat `probes` defaults to 1 [[tr12]]. Rebuild after big data shifts"],
+      ["DiskANN", "A graph designed to live on SSD with compressed data in RAM", "A billion points on one workstation with 64 GB RAM and an SSD [[tr21]]", "Needs the store's DiskANN support. Cosmos DB `diskANN` up to 4,096 dimensions and at least 1,000 vectors [[tr11]]"]
+    ] },
+    { "t": "p", "md": "The practical difference is where the cost lands. Flat pays at query time and scales linearly. HNSW pays in memory. IVF pays in tuning and rebuilds. DiskANN pays in SSD latency. Pick the cost you can afford at your vector count and filter pattern." },
+    { "t": "diagram", "id": "w04-t16-d1", "title": "Choosing an index family", "alt": "If few vectors remain after filtering, use exact flat search. If many and the graph fits in memory, use HNSW. If it does not fit and an SSD is available, use DiskANN. If memory must be compressed hard, use IVF with product quantization and rescoring.", "src": "flowchart TD\n  A{\"Vectors to search after filters\"} -->|\"few\"| F[\"Flat exact search\"]\n  A -->|\"many\"| B{\"Graph fits in RAM?\"}\n  B -->|\"yes\"| H[\"HNSW\"]\n  B -->|\"no, SSD available\"| D[\"DiskANN\"]\n  B -->|\"no, compress hard\"| I[\"IVF with PQ and rescoring\"]" },
+    { "t": "p", "md": "Some concrete numbers. The AI Search vector quota is a **memory quota**: HNSW graphs are held in memory, and exhaustive KNN fields are loaded in chunks [[tr32]]. In Cosmos DB for NoSQL, `flat` is exact up to 505 dimensions, `quantizedFlat` is compressed brute force up to 4,096 and `diskANN` is approximate up to 4,096. `quantizedFlat` and `diskANN` need at least 1,000 vectors or a full scan runs [[tr11]]. For pgvector IVFFlat, start `lists` at rows / 1,000 up to 1 million rows and at the square root of rows beyond [[tr12]]. Azure Database for PostgreSQL offers `pg_diskann` with defaults `max_neighbors` 32 and `l_value_ib` 100 [[tr33]]." },
+    { "t": "callout", "kind": "tip", "title": "Use exact search as your ruler", "md": "Run the exhaustive index on a sample of queries to get true nearest neighbours, then measure the recall of the ANN index against it. Without this ground truth you cannot tell whether a latency gain cost you answers." }
+  ],
+  "whereToUse": [
+    "Choosing the algorithm when creating a vector field or vector index",
+    "Explaining why recall fell or memory rose after an index change",
+    "Sizing a tier or cluster for a given vector count and memory budget",
+    "Deciding whether a small, filtered corpus needs an ANN index at all"
+  ],
+  "whenToUse": {
+    "use": ["Flat for small sets, highly selective filters and ground-truth checks", "HNSW when the graph fits in RAM and you want high recall at low latency", "DiskANN or IVF with compression when memory or cost forbids an in-memory graph"],
+    "avoid": ["HNSW for a corpus whose graph cannot fit in RAM", "ANN indexes on a few thousand vectors where a scan is cheap and exact", "IVF without a plan to retrain or rebuild after the data distribution shifts"],
+    "flips": ["Vector count grows past the memory budget: move from HNSW to DiskANN or compress with quantization", "Filters leave a small candidate set: exact search over the subset beats the approximate graph", "Updates and deletes dominate: check how the engine handles removal in graph indexes"]
+  },
+  "alternatives": {
+    "title": "Index families compared",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Flat or exhaustive", "Small or filtered sets, exact results needed", "Millions of vectors per query", "Latency grows linearly"],
+      ["HNSW", "RAM available, high recall and low latency", "Memory-bound corpora", "Memory, build time, delete handling"],
+      ["IVF (with PQ)", "Memory tight, tolerate tuning", "You want the highest recall with no tuning", "Probes and lists tuning, retraining"],
+      ["DiskANN", "Very large indexes on SSD", "Store does not support it or SSD latency is too high", "Newer in some stores, replica result variance in Cosmos DB"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A Cosmos DB index with a few hundred vectors is slow and costly", "cause": "`quantizedFlat` and `diskANN` run a full scan until at least 1,000 vectors exist", "fix": "Use `flat` for small sets within its 505 dimension limit, or accept the scan until the set grows" },
+    { "symptom": "Memory use is far above the raw vector size", "cause": "HNSW adds graph overhead (1 to 20% over float32 vectors) and AI Search holds it in memory", "fix": "Size with the overhead, quantize or truncate vectors, and watch the quota" },
+    { "symptom": "Recall is lower with IVF than HNSW on the same data", "cause": "Too few `probes` scan too few clusters", "fix": "Raise probes, tune `lists` and measure recall against exact search" },
+    { "symptom": "The same query returns slightly different results on repeat", "cause": "Cosmos DB documents that results can vary across replicas for DiskANN", "fix": "Do not rely on bit-for-bit repeatability, and test recall statistically" }
+  ],
+  "scenarios": [
+    {
+      "id": "w04-t16-s1",
+      "title": "Small corpus, selective filters, exact recall",
+      "situation": "A compliance search covers 300,000 chunks. Every query carries a filter that leaves a few thousand candidates. Missing a relevant chunk is a reportable failure.",
+      "constraints": ["300,000 vectors", "Highly selective filters", "Exact recall wanted", "Moderate latency budget"],
+      "unknowns": ["How selective are filters in practice?", "What latency is acceptable per query?"],
+      "question": "Which index do you use?",
+      "options": [
+        { "name": "Exhaustive (flat) search over the filtered subset", "verdict": "best", "why": "A few thousand candidates are cheap to scan and the result is exact.", "tradeoff": "Latency rises if filters later become broad." },
+        { "name": "HNSW with pre-filtering", "verdict": "good", "why": "Fast, and high recall with the right filter mode.", "tradeoff": "Approximate, with memory overhead and tuning for a case that does not need it." },
+        { "name": "DiskANN", "verdict": "poor", "why": "Designed for indexes too big for RAM, so it adds complexity for a small corpus.", "tradeoff": "Right at hundreds of millions of vectors with a memory limit." }
+      ],
+      "flips": [
+        { "if": "Filters become broad and the corpus grows to tens of millions", "then": "Move to HNSW with pre-filtering." },
+        { "if": "Latency budget tightens", "then": "Test HNSW and measure recall against the exact baseline." }
+      ],
+      "takeaway": "When the searched set is small, exact is both simplest and best."
+    },
+    {
+      "id": "w04-t16-s2",
+      "title": "A billion vectors, limited RAM",
+      "situation": "A platform stores 1 billion 1,536-dimension vectors. RAM is limited and SSD is plentiful. Queries tolerate a few tens of milliseconds more latency than in-memory graphs.",
+      "constraints": ["1 billion vectors", "RAM is the scarce resource", "SSD available", "Some latency headroom"],
+      "unknowns": ["What recall target applies?", "Is the store a managed service with DiskANN?"],
+      "question": "Which index fits?",
+      "options": [
+        { "name": "DiskANN with compressed vectors in RAM and the graph on SSD", "verdict": "best", "why": "It was built to serve a billion points from a single machine with 64 GB RAM and an SSD.", "tradeoff": "SSD latency and fewer tuning options than in-memory graphs." },
+        { "name": "IVF with product quantization and re-ranking", "verdict": "good", "why": "Compact and well understood at very large scale.", "tradeoff": "Probes and lists tuning, and rebuilds when data shifts." },
+        { "name": "In-memory HNSW over float32 vectors", "verdict": "poor", "why": "Raw vectors alone need about 6 TB, plus graph overhead, far above a limited RAM budget.", "tradeoff": "Right when the corpus is tens of millions and RAM is available." }
+      ],
+      "flips": [
+        { "if": "The RAM budget is generous", "then": "In-memory HNSW gives the lowest latency." },
+        { "if": "The store lacks DiskANN", "then": "IVF with PQ and rescoring is the fallback." }
+      ],
+      "takeaway": "Index family follows memory budget at your vector count."
+    }
+  ],
+  "quiz": [
+    { "id": "w04-t16-q1", "type": "numeric", "tag": "numeric", "q": "A pgvector table has 4 million rows. Using the guidance for IVFFlat beyond 1 million rows, what is the starting value of `lists`?", "answer": 2000, "tolerancePct": 1, "unit": "lists", "hint": "Use the square root of the row count.", "explain": "Up to 1 million rows the starting point is rows / 1,000. Beyond that it is sqrt(rows). sqrt(4,000,000) = 2,000." },
+    { "id": "w04-t16-q2", "type": "single", "tag": "diagnose", "q": "A Cosmos DB container with 400 vectors uses a `diskANN` index and queries are slow. Why?", "options": ["DiskANN needs at least 1,000 vectors or a full scan runs", "DiskANN only works below 100 dimensions", "The distance function is unsupported", "Replicas always disable the index"], "answer": 0, "explain": "`quantizedFlat` and `diskANN` need at least 1,000 vectors or a full scan runs. The other options are not documented limits." },
+    { "id": "w04-t16-q3", "type": "match", "tag": "concept", "q": "Match each index family to its defining idea.", "pairs": [ { "l": "Flat", "r": "Compare the query with every vector for exact results" }, { "l": "HNSW", "r": "Layered proximity graph held in memory" }, { "l": "IVF", "r": "Cluster the vectors and scan only the nearest clusters" }, { "l": "DiskANN", "r": "Graph on SSD with compressed data in RAM" } ], "explain": "Each pairing follows the data structure. HNSW and DiskANN are graphs but differ in where the data lives, and IVF is cluster-based." }
+  ],
+  "flashcards": [
+    { "front": "Why is the AI Search vector quota called a memory quota?", "back": "HNSW graphs are held in memory and exhaustive KNN fields are loaded in chunks, so vector size is limited by memory." },
+    { "front": "What do Cosmos DB `flat`, `quantizedFlat` and `diskANN` support?", "back": "`flat` is exact up to 505 dimensions. `quantizedFlat` and `diskANN` support up to 4,096, and need at least 1,000 vectors or a full scan runs." },
+    { "front": "When do you use exact search instead of ANN?", "back": "When the set is small or filters leave few candidates, and as ground truth to measure the recall of an ANN index." }
+  ],
+  "related": ["w04-t17", "w04-t18", "w04-t19", "w04-t14", "w05-t03", "w04-l4"],
+  "refs": ["tr11", "tr12", "tr21", "tr32", "tr33", "tr34"]
+}

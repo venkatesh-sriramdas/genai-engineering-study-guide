@@ -1,0 +1,74 @@
+{
+  "id": "w08-l01",
+  "order": 1,
+  "title": "Give the model hands",
+  "kind": "concept",
+  "minutes": 14,
+  "brief": "A model can reason but cannot act, and many teams own the systems it must reach. The number of hosts, the number of servers and who decides what runs are all still open. Pick the right primitive for each capability.",
+  "blocks": [
+    { "t": "h", "text": "Why a protocol and not another SDK", "level": 2 },
+    { "t": "p", "md": "Without a shared protocol, every host application needs custom code for every tool owner. That is M hosts times N systems. With MCP, a host implements a client once and a tool owner implements a server once, so the work scales as M plus N.\n\nMCP is not a replacement for function calling. **Function calling** is a model feature: the model emits a structured call. **MCP** is the wire protocol between the host and the server that owns the capability. The host reads tool definitions over MCP and hands them to the model in whatever function-calling format that model expects [[r23]].\n\nThe data layer is JSON-RPC 2.0. The transport layer is stdio for local servers or Streamable HTTP for remote ones. A local stdio server typically serves one client, while a remote server typically serves many [[r23]]." },
+    { "t": "diagram", "id": "w08-l01-d1", "title": "Host, clients and servers", "alt": "A user talks to a host application that holds a model and two MCP clients. Client A reaches a local server over stdio. Client B reaches a remote server over Streamable HTTP.", "src": "flowchart LR\n  U[User] --> H[Host app]\n  H --> M[Model]\n  H --> C1[Client A]\n  H --> C2[Client B]\n  C1 -->|stdio| S1[Local server]\n  C2 -->|Streamable HTTP| S2[Remote server]", "caption": "The host creates one client per server. Each client keeps a dedicated connection [[r23]]." },
+    { "t": "h", "text": "Three primitives, three controllers", "level": 2 },
+    { "t": "table", "caption": "Server primitives and who decides to use them [[r28]]", "head": ["Primitive", "Controlled by", "What it is", "Methods", "Typical use"], "rows": [
+      ["Prompts", "The user", "Templates with arguments that a user picks", "`prompts/list`, `prompts/get`", "Slash commands, menu options"],
+      ["Resources", "The application", "Context data addressed by URI. Resource templates use RFC 6570 URI templates", "`resources/list`, `resources/templates/list`, `resources/read`", "File contents, schemas, git history"],
+      ["Tools", "The model", "Functions with an `inputSchema` that the model calls to act or fetch", "`tools/list`, `tools/call`", "Create a ticket, run a query, write a file"]
+    ], "highlightCol": 1 },
+    { "t": "dials", "id": "w08-l01-primitive", "title": "Tool, resource, prompt or resource link?", "prompt": "Flip who should trigger the capability, whether it changes state and how big the payload is. The ranking and the reasons update.",
+      "dials": [
+        { "id": "who", "label": "Who should decide to use it", "values": [ { "id": "model", "label": "The model, mid-task" }, { "id": "app", "label": "The host application" }, { "id": "user", "label": "The user, on purpose" } ] },
+        { "id": "effects", "label": "Side effects", "values": [ { "id": "none", "label": "Read only" }, { "id": "writes", "label": "Changes state" } ] },
+        { "id": "size", "label": "Payload size", "values": [ { "id": "small", "label": "Small, fits in a reply" }, { "id": "large", "label": "Large documents or listings" } ] }
+      ],
+      "options": [
+        { "id": "tool", "name": "Tool", "summary": "A function the model calls through `tools/call`." },
+        { "id": "res", "name": "Resource or template", "summary": "Context the host reads by URI through `resources/read`." },
+        { "id": "prompt", "name": "Prompt", "summary": "A parameterized instruction the user invokes." },
+        { "id": "link", "name": "Resource link in a tool result", "summary": "A tool returns a URI so bulky content stays out of context until needed." }
+      ],
+      "scores": {
+        "tool": {
+          "who": { "model": { "s": 2, "why": "Tools are model-controlled. The model decides when to call them." }, "app": { "s": 0, "why": "The host can call a tool, but nothing about tools is application-driven." }, "user": { "s": -1, "why": "Users rarely pick tools by name, so a menu entry is a poor fit." } },
+          "effects": { "none": { "s": 0, "why": "Works for reads, but a resource or link is cheaper to attach." }, "writes": { "s": 2, "why": "Only tools carry side effects, with annotations and approval prompts." } },
+          "size": { "small": { "s": 1, "why": "Small structured results fit in the reply." }, "large": { "s": -1, "why": "A large result flows through the context window on every call." } }
+        },
+        "res": {
+          "who": { "model": { "s": -1, "why": "The model cannot call a resource. The host must attach it or a tool must point to it." }, "app": { "s": 2, "why": "Resources are application-controlled. The host decides what to attach." }, "user": { "s": 0, "why": "A host may let users pick resources, but the spec does not define them as user-controlled." } },
+          "effects": { "none": { "s": 2, "why": "Read-only context by design." }, "writes": { "s": -2, "why": "Reading a resource must not change state." } },
+          "size": { "small": { "s": 0, "why": "Works, but a tool call returns the same value without a separate read." }, "large": { "s": 2, "why": "Large or long-lived content is read on demand, with templates and caching hints." } }
+        },
+        "prompt": {
+          "who": { "model": { "s": -2, "why": "The model never invokes a prompt." }, "app": { "s": 0, "why": "A host may list prompts, but their intent is user choice." }, "user": { "s": 2, "why": "Prompts are user-controlled: slash commands and menu options." } },
+          "effects": { "none": { "s": 1, "why": "Prompts return messages. They do not act." }, "writes": { "s": -2, "why": "A prompt cannot perform an action by itself." } },
+          "size": { "small": { "s": 1, "why": "Templates are short instructions with arguments." }, "large": { "s": -1, "why": "Embedding bulk data in a prompt wastes context. Reference a resource instead." } }
+        },
+        "link": {
+          "who": { "model": { "s": 1, "why": "The model sees the link in a tool result and can follow it." }, "app": { "s": 0, "why": "Neutral. The host decides whether to resolve the link." }, "user": { "s": -1, "why": "A link inside a tool result is not something a user selects." } },
+          "effects": { "none": { "s": 1, "why": "Good for pointing at read-only context." }, "writes": { "s": 0, "why": "The tool did the write. The link only points at the output." } },
+          "size": { "small": { "s": -1, "why": "Overhead for a small value. Return it directly." }, "large": { "s": 2, "why": "Keeps the bytes out of the model context until they are needed." } }
+        }
+      },
+      "takeaway": "Pick the primitive by who should trigger it, then check side effects and size. Most designs mix all three." },
+    { "t": "failure", "title": "Failure modes of picking the wrong primitive", "items": [
+      { "symptom": "The agent never reads the policy documents the team published", "cause": "They were exposed only as resources. Resources are application-controlled, so nothing attaches them for the model", "fix": "Have the host attach them, add a search tool, or return resource links from a tool. Detect it with traces that show zero reads of those URIs" },
+      { "symptom": "Latency and token cost jump after adding a `get_report` tool", "cause": "Every call pushes a large payload through the context window", "fix": "Return a summary plus a resource link, or paginate. Detect it by logging tokens per tool result" },
+      { "symptom": "Users never run the review workflow the team built", "cause": "It was built as a tool the model rarely selects, or as a prompt in a host that shows no prompt menu", "fix": "Match the primitive to the actor who triggers it, and confirm the host surfaces that primitive" }
+    ] },
+    { "t": "callout", "kind": "interview", "title": "The first question to expect", "md": "\"Is MCP the same thing as function calling?\" No. Function calling is how a model asks for a call. MCP defines how a host discovers and invokes capabilities on a separate server, with its own versions, auth and transports. Governance moved to the Agentic AI Foundation under the Linux Foundation on 2025-12-09, while the maintainers kept the SEP process [[r12]]." }
+  ],
+  "quiz": [
+    { "id": "w08-l01-q1", "type": "single", "tag": "concept", "q": "Which statement about control in the MCP server primitives is correct?", "options": ["Tools are application-controlled and resources are model-controlled", "Prompts are user-controlled, resources are application-controlled and tools are model-controlled", "All three primitives are model-controlled, and the only difference between them is the transport that carries the messages", "Resources are user-controlled because users click on files"], "answer": 1, "explain": "The server features overview defines prompts as user-controlled, resources as application-controlled and tools as model-controlled. The first option swaps two roles. The third ignores the control hierarchy. The fourth confuses a host UI choice with the protocol's definition.", "difficulty": 1, "ref": "r28" },
+    { "id": "w08-l01-q2", "type": "multi", "tag": "concept", "q": "Select every true statement about MCP participants.", "options": ["A host creates one client for each server it connects to", "A client keeps a dedicated connection to one server", "An MCP server is always a remote HTTP service", "MCP replaces the model's own function-calling feature"], "answers": [0, 1], "explain": "The host creates one client per server and each client keeps a dedicated connection. A server is any program that provides context, and a local stdio subprocess is a server too. MCP does not replace function calling. The host translates between the two.", "difficulty": 1, "ref": "r23" },
+    { "id": "w08-l01-q3", "type": "match", "tag": "tradeoff", "q": "Match each capability to the primitive that fits best.", "pairs": [ { "l": "A slash command the user picks from a menu", "r": "Prompt" }, { "l": "A schema file the host attaches as background context", "r": "Resource" }, { "l": "Creating a ticket in a tracker", "r": "Tool" }, { "l": "A 2 MB report the model may read later, announced after a search", "r": "Resource link in a tool result" } ], "explain": "Prompts are chosen by the user, resources are attached by the application, and tools carry side effects and are chosen by the model. A resource link keeps a large payload out of the context window until the model asks for it.", "difficulty": 2, "ref": "r28" },
+    { "id": "w08-l01-q4", "type": "single", "tag": "diagnose", "q": "A team published 300 policy documents as MCP resources. The agent answers policy questions from memory and never opens them. What is the most likely cause?", "options": ["The model temperature is too high", "Resources are application-controlled, so the host never attached them and the model has no tool to read them", "Resources require the HTTP+SSE transport", "The server needs a bigger `inputSchema`"], "answer": 1, "explain": "Nothing in the protocol makes the model read resources by itself. The host must attach them, or the server must offer a search or read tool, or return resource links. Temperature does not control what gets attached. Resources work over any transport, and resources have no `inputSchema`.", "difficulty": 2, "ref": "r28" }
+  ],
+  "defend": null,
+  "refs": ["r23", "r28", "r12", "r29", "r30"],
+  "takeaways": [
+    "MCP is the wire protocol between a host and the server that owns a capability. Function calling is how the model asks for a call.",
+    "Tools are model-controlled, resources are application-controlled, prompts are user-controlled.",
+    "Choose the primitive by who triggers it, then check side effects and payload size.",
+    "A resource nobody attaches is invisible to the model. A tool that returns a large payload taxes every turn."
+  ]
+}

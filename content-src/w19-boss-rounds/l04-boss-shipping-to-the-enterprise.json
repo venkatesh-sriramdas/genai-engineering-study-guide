@@ -1,0 +1,142 @@
+{
+  "id": "w19-l4",
+  "order": 4,
+  "title": "Shipping to the enterprise: Foundry hosted agents, identity, Agent 365 and governance",
+  "kind": "boss",
+  "minutes": 25,
+  "brief": "An interviewer hands you a framework-built crew, some Copilot Studio agents and a partner agent, and asks for one governed path to production. Every dial is open: ask, compare, choose, name the failures and say how you will prove it is safe to widen.",
+  "blocks": [
+    { "t": "h", "text": "The setup: a fleet, a deadline and a kill switch", "level": 2 },
+    { "t": "scenario", "title": "The interviewer's setup", "known": [
+      "A crew built on Microsoft Agent Framework runs a long, approval-gated process",
+      "Some Copilot Studio agents and one partner-built agent already exist",
+      "Leadership wants them in Teams and Microsoft 365 Copilot, each with a named owner, an audit trail and a way to switch it off within the hour"
+    ], "ask": [
+      "Does each agent act for a signed-in user, on a schedule, or as a coworker in group chats?",
+      "How reversible and how external are the actions, and who may approve them?",
+      "Can an approval wait for days, and must the wait survive a restart?",
+      "Must any code stay off Azure, and who owns the partner agent's code?",
+      "Which previews does the compliance bar allow, and which EU AI Act dates apply to us?"
+    ], "tension": "Speed pulls toward one broad identity and a hosted agent for everything. Accountability pulls toward narrow identities, tiered approvals and a kill switch that somebody has rehearsed." },
+    { "t": "h", "text": "From framework code to a governed fleet", "level": 2 },
+    { "t": "diagram", "id": "w19-l4-fleet-path", "title": "The path every agent walks", "src": "flowchart LR\n  A[Agent Framework crew] --> B[Hosted or self-hosted runtime]\n  B --> C[Blueprint, agent identity, sponsor]\n  C --> D[Toolbox and Foundry IQ]\n  D --> E[Publish to Teams and Copilot]\n  E --> F[Agent 365 registry]\n  F --> G[Traces, Purview audit, Defender]\n  G --> H[Review, kill switch, retire]", "alt": "A left to right flow: Agent Framework crew, runtime, identity with sponsor, tools and knowledge, publishing, registry, telemetry and audit, then review and retirement.", "caption": "Chapters 11, 12 and 17 meet on this path. Skipping a step leaves a gap that shows up as an unowned or unobserved agent." },
+    { "t": "h", "text": "Flip the dials across three chapters", "level": 2 },
+    { "t": "dials", "id": "w19-l4-runtime-and-brake", "title": "Pick the runtime for the dials you were given", "prompt": "Flip code needs, action risk and the status bar. The ranking and the reasons update.", "dials": [
+      { "id": "code", "label": "Code and state needs", "values": [
+        { "id": "config", "label": "Configuration is enough" },
+        { "id": "custom", "label": "Custom orchestration, files, long approvals" },
+        { "id": "offsite", "label": "Code must stay off Azure" }
+      ] },
+      { "id": "risk", "label": "Action risk", "values": [
+        { "id": "read", "label": "Read-only answers" },
+        { "id": "write", "label": "Reversible internal writes" },
+        { "id": "ext", "label": "External or irreversible actions" }
+      ] },
+      { "id": "bar", "label": "Status bar", "values": [
+        { "id": "ga", "label": "GA features only" },
+        { "id": "preview", "label": "Named previews allowed" }
+      ] }
+    ], "options": [
+      { "id": "prompt", "name": "Prompt agent with toolbox", "summary": "Configuration only. Foundry runs it, tools sit behind one managed endpoint." },
+      { "id": "hosted", "name": "Hosted agent on Agent Framework", "summary": "Your code in per-session sandboxes, workflows with checkpoints and approvals." },
+      { "id": "self", "name": "Self-hosted and registered", "summary": "AKS or Container Apps, joined to governance by SDK or registry sync." },
+      { "id": "studio", "name": "Copilot Studio agent", "summary": "Low-code studio with channel reach, listed in the Agent 365 registry." }
+    ], "scores": {
+      "prompt": {
+        "code": { "config": { "s": 2, "why": "Nothing to build or run, and tracing is GA for prompt agents." }, "custom": { "s": -2, "why": "No custom code path for per-session files or checkpointed workflows." }, "offsite": { "s": -2, "why": "It runs inside Foundry, so code and data cannot stay elsewhere." } },
+        "risk": { "read": { "s": 1, "why": "Read-only answers need little beyond guardrails and traces." }, "write": { "s": 0, "why": "Write gates rest on tool-level controls, so tiering stays coarse." }, "ext": { "s": -1, "why": "No custom approval logic or checkpointed wait for a reviewer." } },
+        "bar": { "ga": { "s": 1, "why": "The core agent surface is GA, the closest fit to a GA-only bar." }, "preview": { "s": 0, "why": "Previews such as tool search add little here." } }
+      },
+      "hosted": {
+        "code": { "config": { "s": -1, "why": "Overbuilt: you maintain code and pay per active session for what configuration covers." }, "custom": { "s": 2, "why": "Your orchestration, `$HOME` state and per-session sandboxes." }, "offsite": { "s": -2, "why": "Code runs in Foundry sandboxes, so it cannot meet a must-stay-elsewhere rule." } },
+        "risk": { "read": { "s": 0, "why": "It works, but session cost exceeds the need." }, "write": { "s": 1, "why": "Tool approval and middleware live in code you own." }, "ext": { "s": 2, "why": "A workflow parks a human request in a checkpoint and binds the approval to it." } },
+        "bar": { "ga": { "s": -1, "why": "The GA table had no hosted agent row on 2026-10-13 and the Agent Framework hosting package is Beta." }, "preview": { "s": 1, "why": "Acceptable with a dated waiver and a redeploy plan after the 2026-08-20 backend change." } }
+      },
+      "self": {
+        "code": { "config": { "s": -2, "why": "You would run scaling, identity wiring and patching for no gain." }, "custom": { "s": 1, "why": "Full control, but you supply session persistence and isolation." }, "offsite": { "s": 2, "why": "Code and data stay where the rules demand, then you register the agent." } },
+        "risk": { "read": { "s": -1, "why": "Heavy for read-only answers." }, "write": { "s": 1, "why": "Your middleware and approvals, registered for governance." }, "ext": { "s": 1, "why": "Same approval design as hosted, plus your own audit store." } },
+        "bar": { "ga": { "s": 1, "why": "You choose GA components and join Agent 365 by SDK or registry sync." }, "preview": { "s": 0, "why": "No preview is needed, and none adds value here." } }
+      },
+      "studio": {
+        "code": { "config": { "s": 2, "why": "Low-code authoring and channel reach with no code to host." }, "custom": { "s": -1, "why": "Low-code limits custom orchestration and per-session files." }, "offsite": { "s": -1, "why": "A managed studio is no home for code that must stay elsewhere." } },
+        "risk": { "read": { "s": 1, "why": "Fine for read-only help with broad channel reach." }, "write": { "s": 0, "why": "Connectors and approvals are configured, not coded." }, "ext": { "s": -1, "why": "Less room for custom, checkpointed review steps." } },
+        "bar": { "ga": { "s": 0, "why": "Check each feature's status, as the app creation experience was preview on 2026-10-13." }, "preview": { "s": 1, "why": "Preview studio features are usable with a waiver after checking each one." } }
+      }
+    }, "takeaway": "Pick the smallest runtime that meets the code and risk dials, then let the status bar overrule an elegant choice. Governance joins every runtime, so it is never the reason to pick one." },
+    { "t": "callout", "kind": "interview", "title": "What interviewers listen for", "md": "Someone accountable for every agent, a kill switch you have timed, and approvals that are bound, tiered and fail closed. Date-stamp the previews (Agentic-User needs the Frontier program, discovery of local and shadow agents was announced as preview on 2026-05-01) and name the retirements (Workflows 2026-12-01, classic agents 2027-03-31)." }
+  ],
+  "quiz": [
+    { "id": "w19-l4-q1", "type": "single", "tag": "diagnose", "q": "An agent calls a storage service through a toolbox and gets 403, although its RBAC role is correct. The decoded token is below. What is the most likely cause?", "code": { "lang": "json", "code": "{\n  \"aud\": \"https://mcp.example.com\",\n  \"sub\": \"3f2c0e1a-user\",\n  \"scp\": \"user_impersonation\",\n  \"azp\": \"agent-identity-client-id\",\n  \"ver\": \"2.0\"\n}" }, "options": ["On-behalf-of tokens cannot reach storage, so the agent must switch to the Agentic-User mode", "The agent identity has no sponsor, so Entra strips the delegated scopes from every token it issues", "The audience is the MCP server URL, not the downstream resource id, so storage rejects the token", "The blueprint holds the credentials, so an agent identity cannot obtain tokens for other services"], "answer": 2, "explain": "The `aud` claim names the MCP server. A downstream service accepts a token only when the audience is its own resource id, for example `https://storage.azure.com`, so it returns 403 even when RBAC is correct. Decode the token and compare `aud` first. OBO is the right mode for acting as the user, and the subject is the user as expected. A missing sponsor affects lifecycle control, not token contents. Blueprints hold credentials by design, and agent identities still get tokens through them.", "difficulty": 3 },
+    { "id": "w19-l4-q2", "type": "multi", "tag": "security", "q": "Which controls keep an approval gate from being bypassed? Choose all that apply.", "options": ["Keep the default binding, so an approval response is accepted only for a pending request in the same session", "Tier by action class and arguments, so a second tool with the same effect lands in the same tier", "Set `disable_tool_auto_approval=True` so every call in the process needs approval", "Fail closed, so an unanswered request means the action does not run", "Attach approval to one named tool and rely on its description to keep the model on that path"], "answers": [0, 1, 3], "explain": "Binding stops fabricated or replayed approvals, tiering by class and arguments closes alternative paths, and failing closed removes the timeout loophole. `disable_tool_auto_approval=True` removes the Harness approval middleware and does not remove the requirement from a tool marked always_require, so it does not make every call need approval. Gating one named tool leaves another tool free to cause the same effect.", "difficulty": 2 },
+    { "id": "w19-l4-q3", "type": "order", "tag": "order", "q": "Put the governance lifecycle of an agent in order.", "items": ["Register the agent in the inventory before it deploys", "Give it its own identity and a named sponsor", "Grant least privilege and add Conditional Access", "Review purpose, access and behavior on a schedule", "Retire it: remove identity, credentials, memory, data and the registry entry"], "explain": "An unlisted agent is an ungoverned agent, so inventory comes first. Identity and a sponsor must exist before permissions go to something accountable. Review repeats on a schedule, and retirement removes every trace so no orphaned credential or memory remains.", "difficulty": 1 },
+    { "id": "w19-l4-q4", "type": "single", "tag": "tradeoff", "q": "An approval-gated workflow on self-hosted Agent Framework may wait several days for a reviewer. Which design keeps the wait cheap and restart-safe?", "options": ["Raise a human request from the workflow, persist checkpoints to storage and resume with the response", "Run the wait as a background agent, which the framework restarts automatically if the host process dies", "Keep the agent loop open and poll the reviewer queue every few seconds until someone answers it", "Apply compaction so the pending request stays small and never has to leave the in-memory history"], "answer": 0, "explain": "Workflow checkpoints store pending requests and re-emit them on restore, so a restart loses nothing and the wait holds no compute. Background agents are experimental and in-flight work does not survive a restart. Polling holds a process and a loop for days. Compaction trims in-memory history and adds no durability. The Durable Extension can pause for input at no compute or token cost, but its Python packages are Beta and its .NET packages are preview as of 2026-10-13.", "difficulty": 2 },
+    { "id": "w19-l4-q5", "type": "numeric", "tag": "numeric", "q": "A hosted agent has sustained peaks of 0.6 vCPU and 1.6 GiB of memory. Docs advise moving to the next size when sustained peaks pass about 70 percent of allocation. Sizes are 0.5 vCPU with 1 GiB, 1 vCPU with 2 GiB and 2 vCPU with 4 GiB. What is the smallest size, in vCPU, that keeps both peaks at or under 70 percent?", "answer": 2, "tolerancePct": 0, "unit": "vCPU", "hint": "Check CPU and memory against each size.", "explain": "At 0.5 vCPU the CPU peak is 120 percent. At 1 vCPU with 2 GiB the CPU peak is 60 percent but memory is 80 percent, so memory forces the next size. At 2 vCPU with 4 GiB the peaks are 30 and 40 percent. Billing follows CPU plus memory across active sessions, so right-size the next version rather than over-provisioning.", "difficulty": 2 },
+    { "id": "w19-l4-q6", "type": "single", "tag": "flip", "q": "The agent must react to event triggers with no signed-in user, post in group chats and act as itself in Microsoft 365. Which identity setup fits, given the 2026-10-13 status?", "options": ["OBO with the token of whoever created the chat, so every action still follows a real person's permissions", "S2S with application permissions, because app-only tokens are allowed to perform Microsoft 365 actions", "A shared service account with a long-lived secret held in Key Vault and reused by every agent", "Agentic-User: an agent user account beside the agent identity, which needs the Frontier preview"], "answer": 3, "explain": "Without an agent user, Microsoft 365 actions happen only on behalf of a signed-in user. A group chat has no single user whose permissions should apply, so OBO misattributes actions and can expose content to members who cannot see it. App-only S2S cannot perform Microsoft 365 actions. A shared secret widens the blast radius and gives up per-agent accountability. The cost is that Agentic-User is Frontier preview, so record it as a dated exception.", "difficulty": 3 }
+  ],
+  "defend": {
+    "prompt": "We have a crew built on Microsoft Agent Framework, a few Copilot Studio agents and one partner-built agent. Leadership wants all of them in Teams and Microsoft 365 Copilot this quarter, each with a named owner, an audit trail and a way to switch any one off within an hour. Design the path from framework code to a governed fleet.",
+    "timebox": "5 min",
+    "clarify": [
+      "Does each agent act for a signed-in user, on a schedule or as a coworker in group chats?",
+      "How reversible and how external are the actions, and who is allowed to approve them?",
+      "Can an approval wait for days, and must the wait survive a restart or a redeploy?",
+      "Must any code or data stay off Azure, and who owns the partner agent's code?",
+      "Which previews does the compliance bar allow, and is any use case high-risk under the EU AI Act?",
+      "Who is accountable per agent, and what does within the hour mean in an incident?"
+    ],
+    "options": [
+      { "name": "Managed path: prompt agents where configuration is enough, hosted agent for the crew, one registry", "when": "Most agents are configuration or code that can live in Foundry, and the GA bar tolerates a dated waiver for hosting.", "tradeoff": "Cost follows active sessions, hosted agents had no GA row on 2026-10-13 and you own checkpoint storage for long waits." },
+      { "name": "Self-host the crew on AKS or Container Apps and register it", "when": "Code or data must stay off Azure, or the platform team already runs the cluster.", "tradeoff": "You run isolation, scaling, identity wiring and session persistence, and governance reaches the code only through the SDK or registry sync." },
+      { "name": "Rebuild everything in Copilot Studio", "when": "Makers rather than engineers own the agents and low-code reach is enough.", "tradeoff": "Less room for custom orchestration and checkpointed approvals, and some studio features were preview on 2026-10-13." }
+    ],
+    "modelAnswer": [
+      { "t": "p", "md": "**Clarify.** I would ask who each agent acts for, how reversible and external its actions are, whether approvals wait for days, where code must run, which previews are allowed and who is accountable. Those answers set runtime, identity mode and approval tiers before I name a product." },
+      { "t": "p", "md": "**Options.** The managed path uses prompt agents where configuration is enough and a hosted agent for the crew. Self-hosting on AKS or Container Apps is for code that must stay elsewhere. Copilot Studio fits maker-owned agents. All three join one governance layer, the Agent 365 registry, so governance does not choose the runtime." },
+      { "t": "p", "md": "**Pick and flip.** The crew goes on a hosted agent exposing Responses, so Teams and Microsoft 365 Copilot publishing works, with a dated waiver for hosting status. The approval-gated process is a workflow: it raises a human request, checkpoints to storage I control and resumes with the response, so a multi-day wait costs nothing and survives restarts. Hosted recovery alone is not enough, because it re-enters the handler from the beginning and is not deterministic replay. Actions are tiered: reads run free, reversible internal writes are sampled, external or irreversible actions need one approval, regulated ones two reviewers, all failing closed with binding on. Identity is OBO for assistive agents, S2S under a separate blueprint for scheduled jobs and Agentic-User only if the Frontier preview is acceptable. Every identity has a sponsor, Conditional Access replaces MFA, and the partner agent is registered as external with the narrowest scopes it needs." },
+      { "t": "list", "style": "ul", "items": [
+        "Flip to self-hosting when code or data must stay off Azure. Then I supply session persistence and register through the SDK or registry sync.",
+        "Flip to Copilot Studio when makers own the agent and low-code reach is enough.",
+        "Flip to sampled review when actions are reversible and internal, and to two reviewers when the system is high-risk under the EU AI Act.",
+        "Flip to the Durable Extension when waits must use no compute, once Beta and preview status is acceptable."
+      ] },
+      { "t": "table", "head": ["Failure mode", "How I detect it"], "rows": [
+        ["Approvals become rubber stamps", "Catch rate on seeded bad requests, median review time, approval rate near 100 percent"],
+        ["A fabricated or replayed approval runs a privileged call", "Alert on approvals with no matching pending request, and keep response binding on"],
+        ["A restart loses a long wait", "Kill a worker mid-wait in a drill and confirm the request returns from checkpoints"],
+        ["Agents missing from the registry", "Registry summary of agents without owners and unmanaged agents, against the deployment inventory"],
+        ["The kill switch fails in a real incident", "Quarterly drill: the sponsor disables an agent identity and we time how long calls keep working"],
+        ["A preview dependency is retired", "Dated register: Workflows 2026-12-01, classic agents 2027-03-31"]
+      ] },
+      { "t": "p", "md": "**Metrics and rollout.** I would track registry coverage, agents without a sponsor (target zero), time to disable in drills, approval catch rate and review time, task success on a golden set, 403 rate and cost per active session. Rollout starts with an Individual-scope pilot, then Organization scope after admin approval. A canary is a second agent, because a hosted endpoint serves one version. On regulation, Article 50 transparency rules apply from 2026-08-02, so the agent discloses that it is AI, and the Omnibus moved Annex III high-risk rules to 2027-12-02, which sets the logging and review depth for any high-risk use case." }
+    ],
+    "rubric": [
+      { "pt": "Asks about user presence, action risk, code location, preview tolerance and accountability before naming a product", "w": 3 },
+      { "pt": "Compares at least two runtimes and says where each loses", "w": 2 },
+      { "pt": "Chooses an identity mode per agent type and explains the token subject, sponsor and owner roles", "w": 3 },
+      { "pt": "Designs tiered approval gates that are bound to the request and fail closed", "w": 3 },
+      { "pt": "Handles a multi-day wait with checkpoints and does not trust restart recovery alone", "w": 2 },
+      { "pt": "Governs the whole fleet: registry, partner agent, kill switch drill, retirement", "w": 2 },
+      { "pt": "Date-stamps previews, retirements and regulation", "w": 2 },
+      { "pt": "Names detection signals for each failure mode, metrics and a staged rollout with a second-agent canary", "w": 2 }
+    ],
+    "followUps": [
+      { "q": "The partner agent runs on another cloud and you cannot instrument it. What do you do?", "a": "Register it as an external agent, give it the narrowest identity and scopes you control, and treat its outputs as untrusted input. Put a gateway in front of what it can call so you can log and block there." },
+      { "q": "Approval rate is 99.8 percent and median review time is four seconds. What is wrong?", "a": "That pattern is rubber-stamping. Show reviewers the arguments and sources, seed known-bad requests and measure the catch rate, and tier actions so low-risk calls never reach the queue." },
+      { "q": "The sponsor of an agent leaves the company. How do you avoid an orphan?", "a": "Every identity and blueprint needs at least one sponsor, so reassign before offboarding. The registry summary shows agents without owners, which makes the gap a weekly check." }
+    ],
+    "redFlags": [
+      "One blueprint or one shared secret for every agent",
+      "Approval attached to a single tool, with no tiering and no fail-closed default",
+      "Treats a GA product announcement as proof that every mode, including hosted and Agentic-User, is GA",
+      "No named sponsor, so nobody can answer for an agent",
+      "Has a kill switch on a slide but never times it"
+    ]
+  },
+  "refs": ["r49", "r50", "r51", "r53", "r54", "r55", "r59", "r79", "r80", "r81", "r82", "r83", "r84"],
+  "takeaways": [
+    "Ask who the agent acts for, how reversible its actions are and where code must run before naming a runtime",
+    "Tier approvals by action class, bind them to the request and fail closed",
+    "Long waits belong in checkpoints you control, not in a process or a restart-recovery promise",
+    "Every agent needs a sponsor, its own identity and a kill switch you have timed, and every preview you rely on needs a date"
+  ]
+}

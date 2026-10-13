@@ -1,0 +1,81 @@
+{
+  "id": "w09-l01",
+  "order": 1,
+  "title": "The work belongs to someone else",
+  "kind": "problem",
+  "minutes": 16,
+  "brief": "A job needs an agent that another team, vendor or framework owns. You cannot inspect its prompts, tools or memory. Whether you call it as a function, as an MCP tool or as a peer depends on ownership, task shape and how much of its internals you control.",
+  "blocks": [
+    { "t": "h", "text": "Three boundaries, three protocols", "level": 2 },
+    { "t": "p", "md": "**A2A** is an open protocol for communication between independent, often opaque agent systems. Its design goals include opaque execution, support for long-running and human-in-the-loop work, and several interaction modes: request and response, streaming and push notifications [[r1]]. Google created it in April 2025 and the Linux Foundation launched the A2A project on 2025-06-23, citing more than 100 supporting companies [[r9]]. Version 1.0.0 was released on 2026-03-12 and the patch 1.0.1 on 2026-05-28 [[r4]].\n\nThe official comparison draws the line by direction. **MCP is vertical**: it deepens one agent with tools and resources. **A2A is horizontal**: it connects agents across a boundary, such as another team, department or organization. Inside each agent you keep using MCP, and between agents you use A2A [[r3]]." },
+    { "t": "diagram", "id": "w09-l01-d1", "title": "MCP inside an agent, A2A between agents", "alt": "Agent A uses MCP to reach its own tools and uses A2A to talk to Agent B, which belongs to another team. Agent B uses MCP to reach its own tools.", "src": "flowchart LR\n  UA[User] --> A[Agent A]\n  A -->|MCP| T1[Tools of A]\n  A -->|A2A| B[Agent B]\n  B -->|MCP| T2[Tools of B]", "caption": "Agent B stays opaque. Agent A sees skills and results, not B's tools, prompts or memory [[r3]]." },
+    { "t": "compare", "title": "Three ways to use another agent", "intro": "Wrap it as an in-process tool, put it behind MCP, or call it as an A2A peer.", "options": [
+      { "name": "Agent as an in-process tool", "tag": "Same team", "summary": "Wrap the other agent as a function tool inside one process.", "pros": ["Simplest to build and debug", "No network hop and shared tracing"], "cons": ["Couples release cycles, language and runtime", "No protocol-level task lifecycle. You build your own"], "bestWhen": "Both agents live in one process and one team maintains them [[r13]].", "avoidWhen": "Separate release cycles, owners or languages.", "meta": [{ "k": "Latency", "v": "in-process" }, { "k": "Trust", "v": "shared" }] },
+      { "name": "Agent behind an MCP tool", "tag": "Tool-shaped", "summary": "Expose the agent as an MCP tool so any MCP host can call it.", "pros": ["Reuses MCP hosts, auth profile and gateways", "Fits a stateless, well-defined request and result"], "cons": ["A tool call has no task lifecycle unless both sides support the Tasks extension [[r20]]", "Multi-turn state needs explicit handles"], "bestWhen": "The agent behaves like a function with a fixed input and output.", "avoidWhen": "Work is multi-turn, long-running or produces artifacts that need tracking.", "meta": [{ "k": "Latency", "v": "network" }, { "k": "Trust", "v": "OAuth profile" }] },
+      { "name": "A2A peer", "tag": "v1.0 GA", "summary": "Discover the agent through its card and exchange messages and tasks.", "pros": ["Cards for discovery, a task lifecycle, input-required, artifacts", "Streaming, push, versioning and signing are in the spec", "The remote agent stays opaque"], "cons": ["Network latency, retries, timeouts and version management", "Platform support varies. Foundry incoming A2A is JSON-RPC, text only, with no streaming [[r17]]"], "bestWhen": "You cross a service, team or organization boundary [[r12]].", "avoidWhen": "A shared process and team make a function call enough.", "meta": [{ "k": "Latency", "v": "network" }, { "k": "Trust", "v": "per-request auth" }] }
+    ] },
+    { "t": "dials", "id": "w09-l01-boundary", "title": "Pick the boundary", "prompt": "Flip who owns the other agent, the shape of the work and how much of its internals you control.",
+      "dials": [
+        { "id": "boundary", "label": "Who owns the other agent", "values": [ { "id": "same", "label": "Same team and process" }, { "id": "org", "label": "Another team in your company" }, { "id": "other", "label": "Another organization" } ] },
+        { "id": "shape", "label": "Shape of the work", "values": [ { "id": "quick", "label": "One quick answer" }, { "id": "long", "label": "Long-running, input needed, artifacts" } ] },
+        { "id": "internals", "label": "Control over its internals", "values": [ { "id": "own", "label": "You can inspect and change it" }, { "id": "opaque", "label": "Opaque, owned by others" } ] }
+      ],
+      "options": [
+        { "id": "inproc", "name": "In-process tool", "summary": "A function wrapper inside one process." },
+        { "id": "mcp", "name": "MCP tool", "summary": "The agent exposed as a tool." },
+        { "id": "a2a", "name": "A2A peer", "summary": "Card, tasks, messages and artifacts." },
+        { "id": "api", "name": "Plain API", "summary": "A deterministic service call with no agent." }
+      ],
+      "scores": {
+        "inproc": {
+          "boundary": { "same": { "s": 2, "why": "Simplest, with no network hop." }, "org": { "s": -1, "why": "Another team's release cycle becomes your release cycle." }, "other": { "s": -2, "why": "You cannot embed code you do not own." } },
+          "shape": { "quick": { "s": 1, "why": "A function call fits a quick answer." }, "long": { "s": -1, "why": "You must build your own task lifecycle." } },
+          "internals": { "own": { "s": 1, "why": "You can wrap and test it directly." }, "opaque": { "s": -2, "why": "Opaque agents cannot be embedded." } }
+        },
+        "mcp": {
+          "boundary": { "same": { "s": 0, "why": "Works, but adds a protocol hop with no gain." }, "org": { "s": 1, "why": "A shared tool contract across teams." }, "other": { "s": 1, "why": "Works across organizations with OAuth." } },
+          "shape": { "quick": { "s": 1, "why": "A tool call fits one request and one result." }, "long": { "s": -1, "why": "No task lifecycle unless both sides support the Tasks extension." } },
+          "internals": { "own": { "s": 0, "why": "Neutral." }, "opaque": { "s": 1, "why": "A tool already hides its internals." } }
+        },
+        "a2a": {
+          "boundary": { "same": { "s": -1, "why": "Network latency and operations with no boundary to justify them." }, "org": { "s": 2, "why": "Built for crossing team boundaries with discovery and tasks." }, "other": { "s": 2, "why": "Framework-agnostic across organizations." } },
+          "shape": { "quick": { "s": -1, "why": "Card, auth and version handling for one quick answer." }, "long": { "s": 2, "why": "Tasks, input-required, streaming, push and artifacts are built in." } },
+          "internals": { "own": { "s": -1, "why": "If you own it, embedding is simpler." }, "opaque": { "s": 2, "why": "Opaque execution is the design center." } }
+        },
+        "api": {
+          "boundary": { "same": { "s": 0, "why": "Neutral." }, "org": { "s": 1, "why": "A versioned API is easy to govern." }, "other": { "s": 1, "why": "A stable contract works across organizations." } },
+          "shape": { "quick": { "s": 2, "why": "A deterministic call needs no agent." }, "long": { "s": -2, "why": "No conversation, input-required or artifacts." } },
+          "internals": { "own": { "s": 0, "why": "Neutral." }, "opaque": { "s": 1, "why": "An API hides internals too." } }
+        }
+      },
+      "takeaway": "Cross a boundary only when you must. Ownership and work shape decide between a function, a tool and a peer." },
+    { "t": "failure", "title": "Failure modes and how to detect them", "items": [
+      { "symptom": "The calling agent times out on a 20-minute job", "cause": "A peer was treated like a function and called synchronously through a tool wrapper", "fix": "Use tasks: return a handle, then poll, stream or use push. Detect it with a timeout rate per remote skill" },
+      { "symptom": "Every user request pays an extra network round trip to a helper agent that lives in the same repo", "cause": "A network boundary was introduced where none existed", "fix": "Collapse same-team agents into in-process tools and keep A2A for real boundaries" },
+      { "symptom": "A wrapped MCP tool loses the result when the client disconnects", "cause": "No task lifecycle, so the work is tied to one connection", "fix": "Use the Tasks extension on both sides, or call the agent through A2A tasks" },
+      { "symptom": "A trace shows a gap where the remote agent ran", "cause": "Opaque execution hides internals, and trace context was not propagated", "fix": "Propagate W3C trace context in HTTP headers and log `taskId` and correlation ids on both sides [[r8]]" },
+      { "symptom": "An agent call returns inconsistent totals", "cause": "A deterministic lookup was given to an LLM agent", "fix": "Use a plain API when the work is deterministic" }
+    ] },
+    { "t": "stats", "items": [
+      { "label": "A2A v1.0.0 released", "value": "2026-03-12", "note": "Patch 1.0.1 on 2026-05-28 [[r4]]" },
+      { "label": "Linux Foundation launch", "value": "2025-06-23", "note": "More than 100 supporting companies at launch [[r9]]" },
+      { "label": "Protocol bindings", "value": "3", "note": "JSON-RPC, gRPC and HTTP+JSON [[r1]]" },
+      { "label": "Task states", "value": "9", "note": "Four terminal and two interrupted [[r1]]" }
+    ] },
+    { "t": "callout", "kind": "interview", "title": "A2A does not replace MCP", "md": "If asked \"A2A or MCP?\", answer with the boundary. Tools and resources for one agent use MCP. Independent agents that own their own reasoning and state use A2A. A2A's own comparison notes that well-defined, stateless skills can also be surfaced through MCP-style descriptions, but that gives up the task lifecycle [[r3]]." }
+  ],
+  "quiz": [
+    { "id": "w09-l01-q1", "type": "single", "tag": "concept", "q": "What does **opaque execution** mean in A2A?", "options": ["Agents encrypt every message end to end so that network monitoring tools, gateways and auditors cannot read any traffic between them at all", "Agents collaborate through declared capabilities and exchanged messages without sharing internal reasoning, memory or tool implementations", "Agent Cards must not describe skills", "Every task is executed on the caller's infrastructure"], "answer": 1, "explain": "Opacity is about internals: callers see skills, messages and artifacts, not prompts, plans or tools. It does not mean hiding traffic from monitoring, and cards still describe skills. The remote agent runs on its own infrastructure.", "difficulty": 1, "ref": "r1" },
+    { "id": "w09-l01-q2", "type": "multi", "tag": "flip", "q": "Select every situation where an A2A peer is a better boundary than an in-process agent-as-tool.", "options": ["The other agent has its own release cycle and a different owning team", "A partner organization's agent was built in another framework and language", "Two agents share a process and are maintained by one team", "The remote work takes minutes, may ask the caller questions and returns files", "The call is a deterministic lookup with a fixed schema"], "answers": [0, 1, 3], "explain": "Separate owners, cross-organization interoperability and a long-running, interactive, artifact-producing job all justify A2A. A shared process and team favors agent-as-tool, and a deterministic lookup is best served by a plain API.", "difficulty": 2, "ref": "r12" },
+    { "id": "w09-l01-q3", "type": "single", "tag": "tradeoff", "q": "Another team's agent runs 15-minute analyses, may ask clarifying questions and returns reports. You can reach it only over HTTPS. Which boundary fits best?", "options": ["A2A peer with tasks, `input-required` handling and artifacts", "An in-process function wrapper that blocks until the report is ready", "An MCP tool call that returns when the report is finished, with no task support", "A plain API call to its web UI"], "answer": 0, "explain": "The dials say another team, long-running, interactive and opaque, which is the A2A sweet spot. A blocking wrapper or a no-task MCP call ties the result to one connection and cannot ask questions. A web UI is not a contract.", "difficulty": 2, "ref": "r3" },
+    { "id": "w09-l01-q4", "type": "match", "tag": "concept", "q": "Match each need to the boundary that fits best.", "pairs": [ { "l": "Give one agent a database query capability", "r": "MCP server" }, { "l": "Let a partner's agent take a task and return artifacts", "r": "A2A peer" }, { "l": "Call a helper agent in the same process and team", "r": "Agent as a tool" }, { "l": "Fetch a price with a fixed schema", "r": "Plain API" } ], "explain": "MCP deepens one agent with tools and data. A2A connects independent agents with tasks and artifacts. Agent-as-tool is the simplest in one process. A deterministic call needs no agent at all.", "difficulty": 1, "ref": "r3" }
+  ],
+  "defend": null,
+  "refs": ["r1", "r3", "r4", "r8", "r9", "r10", "r11", "r12", "r13", "r17", "r20"],
+  "takeaways": [
+    "MCP is vertical and gives one agent tools. A2A is horizontal and connects independent, opaque agents.",
+    "Use an in-process tool when one team owns both agents. Use A2A when you cross a service, team or organization boundary.",
+    "A tool call has no task lifecycle unless the Tasks extension is supported. A2A has tasks, contexts and artifacts built in.",
+    "A2A v1.0.0 was released on 2026-03-12 and v1.0.1 on 2026-05-28."
+  ]
+}

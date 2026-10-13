@@ -1,0 +1,110 @@
+{
+  "id": "w08-t10",
+  "order": 10,
+  "group": "Transports and spec",
+  "title": "Stateful vs stateless revisions",
+  "minutes": 10,
+  "difficulty": "advanced",
+  "summary": "Through 2025-11-25 an MCP connection was a stateful session opened by `initialize`. The 2026-07-28 revision removes the handshake and session id, sends version and capabilities with every request and makes `server/discover` mandatory.",
+  "useIf": "You build or run servers and clients across both eras, or must choose which revision to target.",
+  "avoidIf": "You assume a 2026-07-28 client can talk to a 2025-11-25-only server. It cannot without fallback logic.",
+  "explain": [
+    { "t": "p", "md": "In **2025-11-25** (the last stateful revision) the client opened with `initialize`, carrying its version and capabilities, the server answered and the client sent `notifications/initialized`. On HTTP the server could assign an `Mcp-Session-Id`, a 404 meant the session ended, and a GET stream carried server messages [[r21]] [[r22]]. In **2026-07-28** all of that is removed. Each request carries `io.modelcontextprotocol/protocolVersion` and `io.modelcontextprotocol/clientCapabilities` in `_meta`, and servers MUST implement `server/discover` [[r1]] [[tr5]]." },
+    { "t": "table", "caption": "What changed", "head": ["Concern", "2025-11-25 (stateful)", "2026-07-28 (stateless)"], "rows": [["Start", "`initialize`, then `notifications/initialized`", "No handshake. `server/discover` returns `supportedVersions`, `capabilities`, `ttlMs`, `cacheScope`"], ["Version and capabilities", "Negotiated once", "In `_meta` on every request. Unsupported version returns `-32022` with `data.supported`"], ["Session", "`Mcp-Session-Id`, 404 means re-initialize", "None. State uses explicit handles"], ["Server asks the client", "Pushed `elicitation/create`, `sampling/createMessage`, `roots/list`", "Multi Round-Trip Requests (`input_required`)"], ["Notifications", "GET stream and `resources/subscribe`", "`subscriptions/listen` POST stream"], ["Resumption", "SSE `Last-Event-ID`", "Removed. A broken stream loses the request"], ["Long work", "Tasks experimental in core", "Tasks extension `io.modelcontextprotocol/tasks`"], ["Caching", "None defined", "`ttlMs` and `cacheScope` on discover, list and read results [[tr6]]"]] },
+    { "t": "p", "md": "**State without sessions.** A creation tool returns an explicit handle and later calls take it as an argument. A handle is a name, not a capability, so check authorization on every call and key state by verified user id. Unauthenticated servers need high-entropy handles with bounded lifetime [[r6]]." },
+    { "t": "p", "md": "**Dual-era.** *Modern* means 2026-07-28 and later, *legacy* means `initialize`-based. A modern client against a legacy server fails, so on stdio a dual-era client probes with `server/discover` and on HTTP it falls back to `initialize` when it gets no recognized modern error. A modern-only server answers legacy GET or DELETE with 405, ignores `Mcp-Session-Id` and `Last-Event-ID`, and SHOULD name its supported versions in the error to `initialize` [[r24]] [[r2]]." },
+    { "t": "callout", "kind": "why", "title": "Removed is not the same as Deprecated", "md": "The handshake, session id, GET stream, `ping`, `logging/setLevel` and SSE resumption were removed by the 2026-07-28 breaking change. Roots, Sampling, Logging, Dynamic Client Registration, HTTP+SSE and two `includeContext` values are Deprecated: they still work, with the earliest removal on or after 2027-07-28 for the first four and nothing Removed yet under the lifecycle policy [[r9]]." }
+  ],
+  "whereToUse": [
+    "Choosing the target revision for a new server behind an autoscaling load balancer",
+    "Planning an upgrade of an existing fleet from 2025-11-25 to 2026-07-28",
+    "Writing a client that must talk to both old and new servers",
+    "Reviewing an SDK or gateway for which eras it supports"
+  ],
+  "whenToUse": {
+    "use": ["Target modern-only when every consumer SDK supports 2026-07-28", "Run dual-era while legacy hosts remain", "Use explicit handles instead of session state for multi-step tools", "Count requests per protocol version to decide when to drop legacy"],
+    "avoid": ["Shipping a modern-only server to legacy hosts without telling them", "Relying on sticky sessions or shared session storage in the modern path", "Treating a deprecated feature as already removed"],
+    "flips": ["Legacy traffic drops to zero for a release cycle: remove the legacy path", "You need server-initiated sampling today: keep the legacy path and plan the migration"]
+  },
+  "alternatives": {
+    "title": "Which era to target",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Modern-only (2026-07-28)", "All consumers are current, serverless or autoscaled fleet", "Legacy hosts must connect", "Legacy clients fail, no fallback"],
+      ["Dual-era", "Mixed hosts and a migration window", "You cannot afford two code paths", "Double testing, state split between handles and sessions"],
+      ["Legacy-only (2025-11-25)", "A fixed set of old hosts, short life", "Modern clients appear", "Sticky routing or shared session store, and migration debt"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Legacy hosts get HTTP 400 after a server upgrade", "cause": "A modern-only server rejects requests that lack the modern `_meta` and headers", "fix": "Run dual-era until a per-version request counter shows no legacy traffic" },
+    { "symptom": "Intermittent 404s on legacy clients after scaling out", "cause": "Legacy sessions live on one instance and the load balancer is not sticky", "fix": "Use sticky routing or shared storage for the legacy path only, and move modern state into handles" },
+    { "symptom": "A user reads another user's job result", "cause": "A handle was treated as authentication", "fix": "Authorize the caller against the handle's owner on every call" }
+  ],
+  "scenarios": [
+    {
+      "id": "w08-t10-s1",
+      "title": "A greenfield remote server on autoscaled instances",
+      "situation": "A team builds a new remote server on serverless instances behind a plain load balancer. Known consumers use recent SDKs that implement 2026-07-28. Multi-step workflows exist.",
+      "constraints": ["Autoscaled, no sticky routing", "Consumers on current SDKs", "Greenfield"],
+      "unknowns": ["Do all consumer hosts actually ship 2026-07-28 support?", "Which workflows need cross-call state?"],
+      "question": "Which revision do you target?",
+      "options": [
+        { "name": "Modern-only 2026-07-28 with explicit handles", "verdict": "best", "why": "No session storage or sticky routing, any instance can serve any request, and MRTR covers mid-call input.", "tradeoff": "Legacy hosts cannot connect." },
+        { "name": "Dual-era from day one", "verdict": "good", "why": "Reaches every host.", "tradeoff": "Two behaviours to build and test for hosts you may not have." },
+        { "name": "Legacy-only 2025-11-25 with a shared session store", "verdict": "poor", "why": "It builds on the handshake and sessions the new revision removed and needs sticky routing or shared state.", "tradeoff": "Right only when every consumer is a fixed legacy host." }
+      ],
+      "flips": [
+        { "if": "A key host supports only 2025-11-25", "then": "Add the legacy path for it and measure its traffic." },
+        { "if": "You need server-initiated sampling today", "then": "Keep a legacy path, since sampling is Deprecated but still works there." }
+      ],
+      "takeaway": "Statelessness pays off most where instances are interchangeable."
+    },
+    {
+      "id": "w08-t10-s2",
+      "title": "An enterprise fleet of mixed hosts",
+      "situation": "A company has dozens of internal servers and hosts. Most hosts run SDKs that implement only `initialize`-based revisions. A few new hosts use 2026-07-28. Upgrades take quarters.",
+      "constraints": ["Mostly legacy hosts", "Some modern hosts", "Slow upgrades"],
+      "unknowns": ["What share of requests is legacy today?", "Can a gateway adapt eras?"],
+      "question": "How should a shared server handle both?",
+      "options": [
+        { "name": "Dual-era server with per-version request counters", "verdict": "best", "why": "Legacy hosts keep working, modern hosts get the stateless path and the counters show when to retire legacy.", "tradeoff": "Two paths and a split state model until retirement." },
+        { "name": "Switch to modern-only now", "verdict": "poor", "why": "Legacy clients fail with no fallback.", "tradeoff": "Right once metrics show no legacy traffic." },
+        { "name": "Stay legacy-only until all hosts upgrade", "verdict": "good", "why": "No change now and every host works.", "tradeoff": "New hosts cannot connect and you carry session infrastructure." }
+      ],
+      "flips": [
+        { "if": "Legacy traffic is under a small, tracked share and the owners agree", "then": "Set a retirement date." },
+        { "if": "No legacy host remains", "then": "Delete the legacy path and the session store." }
+      ],
+      "takeaway": "Measure by protocol version before you cut an era."
+    },
+    {
+      "id": "w08-t10-s3",
+      "title": "A client that launches unknown local servers",
+      "situation": "A host spawns third-party servers over stdio. It does not know whether a given server speaks 2025-11-25 or 2026-07-28.",
+      "constraints": ["stdio transport", "Unknown server era", "Cannot require server upgrades"],
+      "unknowns": ["How should the client cache the detected era?", "What should users see on failure?"],
+      "question": "How does the client connect?",
+      "options": [
+        { "name": "Dual-era client: send `server/discover` first, fall back to `initialize` on non-modern errors", "verdict": "best", "why": "The probe fails deterministically and a recognized modern error means stay modern.", "tradeoff": "An extra round trip and fallback code." },
+        { "name": "Legacy-only client", "verdict": "good", "why": "Works with every server that is not modern-only.", "tradeoff": "Cannot reach modern-only servers and carries migration debt." },
+        { "name": "Modern-only client", "verdict": "poor", "why": "Against a legacy server the request may be rejected, ignored or even handled under legacy semantics.", "tradeoff": "Right once every server you launch is modern." }
+      ],
+      "flips": [
+        { "if": "The server is HTTP rather than stdio", "then": "Try a modern request and inspect a 400 body before falling back." },
+        { "if": "Every server you launch is bundled with the host and known to be modern", "then": "A modern-only client is simpler." }
+      ],
+      "takeaway": "A client that meets unknown servers should support both eras."
+    }
+  ],
+  "quiz": [
+    { "id": "w08-t10-q1", "type": "match", "tag": "concept", "q": "Match each 2025-11-25 mechanism to its 2026-07-28 replacement.", "pairs": [{ "l": "`initialize` handshake", "r": "Per-request `_meta` plus `server/discover`" }, { "l": "`Mcp-Session-Id`", "r": "Explicit state handles" }, { "l": "Pushed `elicitation/create`", "r": "Multi Round-Trip Requests" }, { "l": "GET stream and `resources/subscribe`", "r": "`subscriptions/listen`" }], "explain": "Each mechanism was removed and replaced as listed in the 2026-07-28 changelog. Handles are an authoring pattern, not a protocol feature." },
+    { "id": "w08-t10-q2", "type": "multi", "tag": "diagnose", "q": "A modern-only server receives traffic from an older client. Which behaviours match the spec?", "options": ["Answer GET or DELETE with 405", "Ignore `Mcp-Session-Id`", "Mint and echo a session id for compatibility", "Ignore `Last-Event-ID`", "Name its supported versions in the error to `initialize`"], "answers": [0, 1, 3, 4], "explain": "A modern-only server answers GET and DELETE with 405, ignores the session id and `Last-Event-ID`, and SHOULD name supported versions in its `initialize` error. It does not mint or echo session ids." }
+  ],
+  "flashcards": [
+    { "front": "What replaced the `initialize` handshake?", "back": "Per-request `_meta` with `io.modelcontextprotocol/protocolVersion` and `clientCapabilities`, plus a mandatory `server/discover` on the server." },
+    { "front": "What happens when a modern client meets a legacy-only server?", "back": "It fails. A dual-era client probes with `server/discover` on stdio, or falls back to `initialize` on HTTP when it gets no recognized modern error." },
+    { "front": "Removed versus Deprecated: give examples.", "back": "Removed by the revision: handshake, session id, GET stream. Deprecated but working: Roots, Sampling, Logging, DCR, HTTP+SSE. Nothing is Removed under the lifecycle policy yet." }
+  ],
+  "related": ["w08-t08", "w08-t09", "w08-t07", "w08-l03", "w08-l07"],
+  "refs": ["r1", "r2", "r24", "r21", "r22", "r9", "r6", "tr5", "tr6"]
+}

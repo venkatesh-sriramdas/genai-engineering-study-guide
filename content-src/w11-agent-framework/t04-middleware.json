@@ -1,0 +1,113 @@
+{
+  "id": "w11-t04",
+  "order": 4,
+  "group": "Behaviour",
+  "title": "Middleware: agent, chat and function",
+  "minutes": 9,
+  "difficulty": "core",
+  "summary": "Three interception points: around a whole agent run, around each model call and around each tool call. Each can inspect, change, short-circuit or replace the result.",
+  "useIf": "You need a guardrail, audit log, allow-list, rate limit or result rewrite that must apply no matter what the model decides.",
+  "avoidIf": "The rule belongs in the prompt, in tool code or in a context provider that merely adds information.",
+  "explain": [
+    { "t": "p", "md": "Middleware forms a chain. Each link receives a context and a `next` callback. In Python the callback takes no argument: you mutate the shared context and `await call_next()`. In .NET each kind is a function callback and you call the supplied `next` [[tr4]]. Each kind can be function-based or class-based in Python (`AgentMiddleware`, `FunctionMiddleware`, `ChatMiddleware` with a `process` method), or declared with the `@agent_middleware`, `@function_middleware` and `@chat_middleware` decorators." },
+    { "t": "table", "head": ["Kind", "Context (Python)", "Runs", "Typical use"], "rows": [
+      ["Agent run", "`AgentContext`: agent, messages, session, options, stream, metadata, result", "Once per `run()`", "Input guardrails, auditing, result override"],
+      ["Function calling", "`FunctionInvocationContext`: function, arguments, session, result", "Once per tool call", "Allow-lists, argument validation, timing, ending the tool loop (.NET `Terminate`)"],
+      ["Chat client", "`ChatContext`: client, messages, options, result", "Once per model call", "Redaction, request rewriting, retries"]
+    ] },
+    { "t": "p", "md": "**Order.** Agent-level middleware wraps run-level middleware. With agent middleware [A1, A2] and run middleware [R1, R2] the order is A1, A2, R1, R2, agent, R2, R1, A2, A1 [[tr4]]. **Termination.** In Python set `context.result` and raise `MiddlewareTermination`; in .NET set `FunctionInvocationContext.Terminate` to end the tool loop. Ending the loop can leave history with a function call that has no result, which may make it unusable for the next run [[tr4]]." },
+    { "t": "tabs", "tabs": [
+      { "label": "C#", "blocks": [ { "t": "code", "lang": "csharp", "title": "Run and function middleware", "code": "async Task<AgentResponse> GuardRun(IEnumerable<ChatMessage> messages,\n    AgentSession? session, AgentRunOptions? options,\n    AIAgent inner, CancellationToken ct)\n{\n    Console.WriteLine($\"run: {messages.Count()} messages\");   // inspect or modify input here\n    var response = await inner.RunAsync(messages, session, options, ct);\n    Console.WriteLine($\"reply: {response.Messages.Count} messages\");\n    return response;\n}\n\nasync ValueTask<object?> AllowList(AIAgent agent, FunctionInvocationContext ctx,\n    Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>> next,\n    CancellationToken ct)\n{\n    if (ctx.Function.Name != \"get_weather\") { ctx.Terminate = true; return \"denied\"; }\n    return await next(ctx, ct);\n}\n\nvar guarded = agent.AsBuilder()\n    .Use(runFunc: GuardRun, runStreamingFunc: GuardRunStreaming) // supply both\n    .Use(AllowList)\n    .Build();" } ] },
+      { "label": "Python", "blocks": [ { "t": "code", "lang": "python", "title": "Blocking and function middleware", "code": "from agent_framework import (AgentContext, AgentResponse, Message,\n    MiddlewareTermination, FunctionInvocationContext)\n\nasync def block_words(context: AgentContext, call_next):\n    last = context.messages[-1] if context.messages else None\n    if last and last.text and 'blocked' in last.text.lower():\n        context.result = AgentResponse(\n            messages=[Message(role='assistant', contents=['Blocked.'])])\n        raise MiddlewareTermination(result=context.result)\n    await call_next()\n\nasync def time_tool(context: FunctionInvocationContext, call_next):\n    await call_next()\n    print(context.function.name, 'done')\n\nagent = Agent(client=client, middleware=[block_words, time_tool])\n# run-level, this call only:\nawait agent.run('hi', middleware=[extra_logging])" } ] }
+    ] },
+    { "t": "callout", "kind": "gotcha", "title": "Streaming needs its own handler in .NET", "md": "If you pass only `runFunc`, streaming calls run in non-streaming mode. The `Use(sharedFunc)` overload keeps streaming but cannot override the output [[tr4]]." }
+  ],
+  "whereToUse": [
+    "Input guardrails: block or rewrite a user message before the model sees it",
+    "Tool governance: allow-list tool names, validate arguments, cap spend per tool",
+    "Audit: write who called what with which arguments to a compliance log",
+    "Result shaping: redact fields from the answer, or replace it, for both streaming and non-streaming runs",
+    "Rate limiting and early termination for abusive sessions"
+  ],
+  "whenToUse": {
+    "use": [
+      "The rule must hold whatever the model decides: enforce it in code",
+      "You need to observe or change the call at one specific layer",
+      "You want to reuse one policy across many agents by registering it once"
+    ],
+    "avoid": [
+      "The need is only extra context or memory: a context provider is the right tool",
+      "The check is already inside one tool: validate there instead",
+      "You need a fail-closed control plane with verdicts across all layers: look at Agent Hooks (Python, experimental) [[tr46]]"
+    ],
+    "flips": [
+      "Policy must apply to remote agents too: register at the agent layer, since chat and function layers belong to the local pipeline",
+      "Streaming output must be checked before release: ordinary middleware cannot buffer it; Agent Hooks buffer streaming until output passes (Python, experimental)"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Agent middleware", "One check per run, any agent type", "You need per-model-call detail", "Runs once, so tool-loop content is invisible"],
+      ["Function middleware", "Per-tool policy and timing", "You must change the model request", "Ending the loop can leave inconsistent history"],
+      ["Chat middleware", "Redact and log model requests", "You want once-per-run logic", "Runs per model call"],
+      ["Prompt instruction", "Soft preference, tone", "You need a guarantee", "The model may ignore it"],
+      ["Agent Hooks (experimental, Python)", "Fail-closed verdicts, `enforce` and `evaluate_only` modes", "You use .NET or need stability", "Cooperative, not an isolation boundary; ExperimentalWarning"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A streaming client bypasses the guardrail", "cause": ".NET middleware registered with `runFunc` only, or the result override handles only `AgentResponse`", "fix": "Supply both handlers; in Python branch on `context.stream` and replace the generator for streaming" },
+    { "symptom": "Next run fails after a tool was denied", "cause": "`Terminate` left a function call without a result in history", "fix": "Return a function result for every call or discard that history; test the resume path" },
+    { "symptom": "Order surprises: run middleware fires inside agent middleware", "cause": "Agent-level wraps run-level", "fix": "Draw the A1, A2, R1, R2 order before relying on side effects" }
+  ],
+  "scenarios": [
+    {
+      "id": "w11-t04-s1",
+      "title": "Allow-list tools for a customer-facing bot",
+      "situation": "A public chatbot has 12 tools registered, but only 4 are safe for anonymous users. Tool choice is the model's. A prompt injection could ask for a privileged tool.",
+      "constraints": ["Anonymous traffic", "Privileged tools exist in the same agent", "Latency overhead must be under a few milliseconds"],
+      "unknowns": ["Can the tool list be built per request instead?", "Is the decision based on the user's role?", "What should the model be told when a call is denied?"],
+      "question": "How do you enforce the allow-list?",
+      "options": [
+        { "name": "Do not register the privileged tools for this agent, and add function middleware as a second line of defence", "verdict": "best", "why": "A tool that is not registered cannot be called. The middleware catches mistakes in wiring.", "tradeoff": "Two agents or a per-request tool set to maintain." },
+        { "name": "Function middleware only, denying by name", "verdict": "good", "why": "Cheap and centralised.", "tradeoff": "The model still sees the tool schemas and may keep trying; one wiring bug exposes the tool." },
+        { "name": "A system prompt that says never call admin tools", "verdict": "poor", "why": "Prompt text is not enforcement and injection can override it.", "tradeoff": "Fine as an extra hint, never as the control." }
+      ],
+      "flips": [
+        { "if": "Roles are many and change per request", "then": "Build the tool list per request from a context provider with `extend_tools`, and keep the middleware check." },
+        { "if": "Denials should be audited with the user id", "then": "Log from the middleware using the session." }
+      ],
+      "takeaway": "Remove what must not be called, and enforce the rest in code."
+    },
+    {
+      "id": "w11-t04-s2",
+      "title": "Rewrite answers for a regulated channel",
+      "situation": "Answers must never contain an internal case id. The assistant streams tokens to a web client and also serves a non-streaming batch API.",
+      "constraints": ["Both streaming and non-streaming paths", "Case ids follow a fixed pattern", "Auditors want proof it cannot leak"],
+      "unknowns": ["Can a partial id appear across stream chunks?", "Is blocking acceptable or must the text be edited?"],
+      "question": "What do you build?",
+      "options": [
+        { "name": "Agent middleware that handles both result types (`AgentResponse` and a stream generator), with a buffer for chunk boundaries", "verdict": "best", "why": "It sits at the output boundary and covers both paths.", "tradeoff": "Buffering adds latency to the first streamed tokens." },
+        { "name": "Non-streaming middleware only", "verdict": "poor", "why": "Streaming would bypass it, or in .NET fall back to non-streaming mode.", "tradeoff": "Right when the channel is batch-only." },
+        { "name": "Prompt the model not to print case ids", "verdict": "poor", "why": "No guarantee and no proof for auditors.", "tradeoff": "Works as defence in depth only." }
+      ],
+      "flips": [
+        { "if": "Streaming must be held until a verdict arrives", "then": "Evaluate Agent Hooks (Python, experimental), which buffer streaming until output passes." },
+        { "if": "Only a few fixed phrases must be removed and the channel is batch-only", "then": "Non-streaming middleware with a simple pattern replace is enough." }
+      ],
+      "takeaway": "Test the streaming and non-streaming paths separately, because they are different code paths."
+    }
+  ],
+  "quiz": [
+    { "id": "w11-t04-q1", "type": "numeric", "tag": "numeric", "q": "A Python agent has agent middleware [A1, A2] and run middleware [R1, R2]. In the whole execution, how many middleware steps run before the agent itself starts?", "answer": 4, "tolerancePct": 0, "unit": "steps", "explain": "Order is A1, A2, R1, R2, agent, R2, R1, A2, A1. Four steps come before the agent.", "ref": "tr4" },
+    { "id": "w11-t04-q2", "type": "single", "tag": "bug", "q": "A .NET team registers `.Use(runFunc: Guard)` and finds streaming users skip their check. What is the most likely cause?", "code": { "lang": "csharp", "code": "var guarded = agent.AsBuilder()\n    .Use(runFunc: Guard)\n    .Build();" }, "options": ["No `runStreamingFunc` was supplied, so streaming does not go through the guard as intended", "`Use` can only be called once", "Agent middleware never runs for streaming", "The session was not passed"], "answer": 0, "explain": "The docs say to provide both handlers. With only the non-streaming handler, streaming runs in non-streaming mode to satisfy it, and a shared overload cannot override output.", "ref": "tr4" }
+  ],
+  "flashcards": [
+    { "front": "How do you stop a Python run from middleware?", "back": "Set `context.result`, then raise `MiddlewareTermination(result=...)`. This works for agent, function and chat middleware." },
+    { "front": "What risk does ending the .NET tool loop with `Terminate` carry?", "back": "History can keep a function call with no function result, which can make it unusable for later runs." },
+    { "front": "Which middleware kind sees each tool call?", "back": "Function-calling middleware (`FunctionInvocationContext`). Chat middleware sees each model call, agent middleware each run." }
+  ],
+  "related": ["w11-t03", "w11-t05", "w11-t06", "w11-t26"],
+  "refs": ["tr4", "tr46"]
+}

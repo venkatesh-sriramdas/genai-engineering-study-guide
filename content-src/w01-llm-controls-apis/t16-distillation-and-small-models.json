@@ -1,0 +1,119 @@
+{
+  "id": "w01-t16",
+  "order": 16,
+  "group": "Adapting models",
+  "title": "Distillation and small models",
+  "minutes": 7,
+  "difficulty": "advanced",
+  "summary": "Distillation trains a small student model on a large teacher's outputs. Small models cost far less per token, and they win on narrow, high-volume, latency-bound tasks when evals confirm quality.",
+  "useIf": "Volume, latency or cost per task rules out the largest model and the task is narrow enough for a small one.",
+  "avoidIf": "The task is open-ended, rare and high stakes, or you cannot build an eval set to compare student and teacher.",
+  "explain": [
+    { "t": "p", "md": "**Distillation** trains a small model to imitate a large one. The idea comes from Hinton et al. (2015) and works by training on the teacher's outputs [[r47]]. OpenAI describes the pattern as tuning a prompt on a large model, then fine-tuning a smaller model on its outputs [[r48]] [[r52]]. You then serve the student at a fraction of the price and latency." },
+    { "t": "stats", "items": [
+      { "label": "GPT-6 Astra", "value": "$10 in, $50 out", "note": "USD per 1M tokens [[r1]]" },
+      { "label": "GPT-6.1 Sol and GPT-6 Sol", "value": "$2 in, $10 out", "note": "Same 1,050,000 token window [[r1]]" },
+      { "label": "GPT-6 Luna", "value": "$0.10 in, $0.50 out", "note": "100 times cheaper than Astra on both sides" }
+    ] },
+    { "t": "flow", "title": "A distillation pipeline", "direction": "h", "steps": [
+      { "title": "Define", "md": "Fix the task and an eval set the student must pass." },
+      { "title": "Generate", "md": "The teacher answers many diverse inputs." },
+      { "title": "Filter", "md": "Verify or score outputs and drop bad ones." },
+      { "title": "Train", "md": "Fine-tune the student, for example with SFT or LoRA." },
+      { "title": "Compare", "md": "Test the student against the teacher and the prompt baseline." },
+      { "title": "Serve", "md": "Deploy with a fallback to the teacher for hard cases." }
+    ] },
+    { "t": "p", "md": "A **small model** is often enough without any training. Try it first at low effort and let evals decide. OpenAI says Astra can cost less per task when it uses fewer output tokens, which is a vendor claim, so compare cost per task, not price per token [[r2]]. Check the provider's terms before training on another model's outputs." },
+    { "t": "callout", "kind": "warn", "title": "Check that tuning is available", "md": "OpenAI is winding down self-serve fine-tuning, with no new jobs for active customers after 2027-01-06, while Azure keeps SFT, DPO and RFT on supported models and open-weight models support LoRA [[r11]] [[r17]]. A distilled student is only useful if you can still train and host it." }
+  ],
+  "whereToUse": [
+    "High-volume classification, extraction and routing where a narrow task repeats",
+    "Latency-critical steps, such as the first hop of a voice or chat flow",
+    "Cost caps on features with millions of daily calls",
+    "Private or offline hosting of an open-weight student",
+    "Cascades: a small model handles most traffic and a large one handles escalations"
+  ],
+  "whenToUse": {
+    "use": [
+      "The task is narrow, stable and well covered by an eval set",
+      "Volume makes a 10 to 100 times price gap decisive",
+      "You can generate or collect teacher outputs and verify them"
+    ],
+    "avoid": [
+      "Distilling an open-ended assistant, where the student cannot cover the long tail",
+      "Skipping the baseline: a small model with a good prompt may already pass",
+      "Training on unfiltered teacher mistakes"
+    ],
+    "flips": [
+      "The student misses the bar on hard cases: add a cascade with escalation to the teacher",
+      "Volume falls: the engineering cost may exceed the savings",
+      "The teacher changes: re-run the evals and consider regenerating data"
+    ]
+  },
+  "alternatives": {
+    "title": "Ways to cut cost per task",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Small model plus prompt", "Narrow task, evals pass", "Hard multi-step reasoning", "Cheapest to try"],
+      ["Distilled student", "High volume, narrow task, teacher outputs available", "Low volume, shifting task", "Data pipeline, training, platform limits"],
+      ["Cascade (small, then large)", "Mixed difficulty, a reliable escalation signal", "No signal, or tight latency on escalations", "Evaluate the router itself"],
+      ["Large model with caching and batch", "Quality first, prefixes repeat", "Volume is extreme", "Still the highest price per token"],
+      ["Large model at low effort", "Small models fail, tokens are the cost", "Latency is tight", "Check cost per task"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "The student matches the teacher on average but fails on rare cases", "cause": "Training data lacked the long tail", "fix": "Sample hard and rare inputs, keep a cascade to the teacher" },
+    { "symptom": "Savings vanish after the migration", "cause": "A weaker model needed longer prompts or more retries", "fix": "Measure cost per accepted task, not price per token" },
+    { "symptom": "The distilled model degrades after a teacher update", "cause": "The data was generated by an older teacher version", "fix": "Pin the teacher, version datasets and re-run evals on change" }
+  ],
+  "scenarios": [
+    {
+      "id": "w01-t16-s1",
+      "title": "Extraction at 50 million calls a day",
+      "situation": "A pipeline extracts six fields from short messages, 50 million a day. A large model passes the 97% accuracy bar and a small model with a good prompt reaches 94%. Latency target is 300 ms.",
+      "constraints": ["Narrow, stable task", "100,000 unlabelled messages available", "Fine-tuning is available on the platform", "Volume is very high"],
+      "unknowns": ["Does the 3 point gap come from a few hard cases?", "What does a wrong extraction cost?"],
+      "question": "What do you do?",
+      "options": [
+        { "name": "Move everything to the large model", "verdict": "poor", "why": "It meets accuracy but at about 100 times the token price at this volume, and latency suffers.", "tradeoff": "Right when volume is low and each error is costly." },
+        { "name": "Distill: the large model labels the 100,000 messages, you verify a sample, fine-tune the small model, and compare it with the teacher on a held-out set", "verdict": "best", "why": "The task is narrow and the data is available, and the student can close the gap at small-model price and latency.", "tradeoff": "A data pipeline, training and a fallback for hard cases." },
+        { "name": "Cascade: small model first, escalate low-confidence cases to the large model", "verdict": "good", "why": "Cheap to build and protects accuracy.", "tradeoff": "Needs a reliable confidence signal, and escalations add latency and cost." }
+      ],
+      "flips": [
+        { "if": "Fine-tuning is unavailable on your platform", "then": "Use the cascade, or host an open-weight student." },
+        { "if": "Accuracy of 94% is acceptable", "then": "Ship the small model with the prompt." }
+      ],
+      "takeaway": "At extreme volume, close the quality gap with training, not with a larger model."
+    },
+    {
+      "id": "w01-t16-s2",
+      "title": "A few hundred high-stakes analyses a day",
+      "situation": "Analysts request about 200 deep contract comparisons a day. Errors are costly, answers are reviewed by humans, and cost per request is a minor concern.",
+      "constraints": ["Low volume", "High stakes", "Open-ended reasoning"],
+      "unknowns": ["How much better is the large model on the eval set?", "What latency do analysts accept?"],
+      "question": "Which model strategy do you choose?",
+      "options": [
+        { "name": "A small model, to keep the cost low", "verdict": "poor", "why": "The savings are tiny at 200 requests a day while the quality risk is large.", "tradeoff": "Small models fit narrow, high-volume tasks." },
+        { "name": "A mid-size model at `medium` effort", "verdict": "good", "why": "A balanced cost and quality.", "tradeoff": "May miss subtle issues the large model catches." },
+        { "name": "The large model at high effort, with human review", "verdict": "best", "why": "At this volume the price gap is small, and the quality ceiling matters most.", "tradeoff": "Higher cost per task and slower answers." }
+      ],
+      "flips": [
+        { "if": "Volume grows to millions of requests", "then": "Revisit a cascade or a distilled student." },
+        { "if": "Evals show the mid-size model equals the large one", "then": "Use the mid-size model." }
+      ],
+      "takeaway": "At low volume, buy quality. Optimise cost where volume makes it matter."
+    }
+  ],
+  "quiz": [
+    { "id": "w01-t16-q1", "type": "numeric", "tag": "numeric", "q": "A workload uses 500M input tokens and 100M output tokens a month on GPT-6 Astra ($10 per 1M input, $50 per 1M output). What is the monthly cost in USD?", "answer": 10000, "tolerancePct": 1, "unit": "USD", "explain": "Input: 500 x $10 = $5,000. Output: 100 x $50 = $5,000. Total $10,000. On GPT-6 Luna ($0.10 and $0.50) the same usage costs $100." },
+    { "id": "w01-t16-q2", "type": "single", "tag": "tradeoff", "q": "When does a small model most clearly beat a large one?", "options": ["A narrow, high-volume task that passes your evals", "Rare, open-ended, high-stakes analysis", "Tasks that need the largest possible context", "Any task, because small models are always cheaper per task"], "answer": 0, "explain": "Narrow, high-volume tasks that pass evals are where the price and latency gap pays. Open-ended high-stakes work favours the large model, and cost per task can differ from price per token." },
+    { "id": "w01-t16-q3", "type": "order", "tag": "order", "q": "Order the distillation pipeline.", "items": ["Define the task and eval set", "Teacher generates outputs", "Filter and verify outputs", "Train the student", "Compare with teacher and baseline", "Serve with a fallback"], "explain": "You need an eval before you generate data, filtering before training, and a comparison before you deploy." }
+  ],
+  "flashcards": [
+    { "front": "What is distillation?", "back": "Training a small student model on a large teacher's outputs (Hinton et al., 2015), so the student imitates the teacher at lower cost and latency." },
+    { "front": "How big is the price gap between GPT-6 Astra and GPT-6 Luna?", "back": "About 100 times on both sides: $10 and $50 against $0.10 and $0.50 per 1M input and output tokens." },
+    { "front": "What should you compare, price per token or cost per task?", "back": "Cost per task. A model with fewer output tokens or retries can cost less per accepted task." }
+  ],
+  "related": ["w01-t15", "w01-t17", "w01-t03", "w16-t03", "w01-l3"],
+  "refs": ["r47", "r48", "r52", "r1", "r2", "r11", "r17"]
+}

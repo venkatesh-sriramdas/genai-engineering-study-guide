@@ -1,0 +1,103 @@
+{
+  "id": "w10-t22",
+  "order": 22,
+  "group": "Long-running agents",
+  "title": "Human-in-the-loop patterns and idempotency",
+  "minutes": 9,
+  "difficulty": "advanced",
+  "summary": "Put a person in the loop where an action is costly or irreversible, and make every side effect safe to retry with idempotency keys or compensating steps. Exactly-once is a design goal built from at-least-once delivery plus idempotent handlers.",
+  "useIf": "An agent can spend money, change data, message people or call tools whose effects cannot be undone, and runs can be retried or resumed.",
+  "avoidIf": "Do not gate every harmless read behind approval. Approval fatigue turns the gate into a rubber stamp.",
+  "explain": [
+    { "t": "p", "md": "OWASP's Excessive Agency entry names three root causes: excessive functionality, excessive permissions and excessive autonomy. One concrete weakness is an extension that fails to independently verify and approve high-impact actions, such as a deletion that needs no confirmation from the user [[tr10]]. A human approval gate is the standard control. In Agent Framework, a function wrapped in `ApprovalRequiredAIFunction` makes the agent run complete with a response that says what input is needed, and the caller returns the decision in a new run [[tr13]]. Workflows use a `RequestPort` and `RequestInfoEvent` in C#, or `ctx.request_info()` in Python, and route the response back to the requesting executor [[tr12]]. LangGraph uses `interrupt()` [[r44]], and Magentic offers plan sign-off [[r10]]." },
+    { "t": "diagram", "id": "w10-t22-d1", "title": "Approval gate and idempotent execution", "alt": "The agent proposes an action. The gate asks a human to approve the exact arguments. After approval the tool runs once with an idempotency key, and a retry returns the saved result.", "src": "sequenceDiagram\n  participant A as Agent\n  participant G as Gate\n  participant H as Human\n  participant T as Tool\n  A->>G: Propose action and args\n  G->>H: Ask approval for exact args\n  H-->>G: Approve\n  G->>T: Execute with idempotency key\n  T-->>A: Result\n  A->>T: Retry, same key\n  T-->>A: Saved result, no second effect" },
+    { "t": "p", "md": "Idempotency makes retries safe. Stripe's design: the client generates the key (up to 255 characters), a retry with the same key returns the saved response, and v1 keys can be pruned after at least 24 hours [[r26]]. The Compensating Transaction pattern covers what retries cannot: when a later step of an eventually consistent operation fails, undo the completed steps [[r27]]. Use both for agent tool calls with side effects. The key must be stable across retries, for example derived from run id and step id, not a fresh random value per attempt." },
+    { "t": "table", "caption": "Where to put the human", "head": ["Pattern", "Gate placed", "Best for"], "rows": [
+      ["Approve each call", "Before each risky tool call", "Rare, high-impact actions"],
+      ["Risk-tiered approval", "Only above a risk threshold", "Mixed traffic with many safe actions"],
+      ["Plan approval", "Once, before any step runs", "Multi-step tasks with reviewable plans"],
+      ["Audit and sample review", "After the fact, on a sample", "Reversible, high-volume actions"],
+      ["Escalate when stuck", "When brakes fire or confidence is low", "Unattended runs"]
+    ], "compact": true },
+    { "t": "callout", "kind": "gotcha", "title": "Bind approval to the exact arguments", "md": "If the agent can change the arguments after the human approved, the approval covers nothing. Show the final arguments, approve a hash of them, set an expiry, and reject execution if they differ." }
+  ],
+  "whereToUse": [
+    "Payments, refunds, deletions, deployments and outbound messages",
+    "Long-running workflows that wait hours or days for a reviewer",
+    "Tools that call third-party APIs that support idempotency keys",
+    "Multi-step operations that need compensation if a later step fails",
+    "Regulated flows that need a record of who approved what"
+  ],
+  "whenToUse": {
+    "use": ["Actions are costly, irreversible or externally visible", "Runs can retry, resume or replay", "A reviewer can judge the action from what the gate shows"],
+    "avoid": ["Approving every read-only call, which causes fatigue", "Using approval as a substitute for least-privilege tool permissions", "Random idempotency keys that change on every retry"],
+    "flips": ["Approval volume overwhelms reviewers: tier by risk and batch low-risk approvals", "Actions are reversible and high volume: sample audits and compensations instead of gates", "Reviewers lack context: show intent, arguments, evidence and consequences"]
+  },
+  "alternatives": {
+    "title": "Controls compared",
+    "head": ["Control", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Human approval gate", "High-impact, irreversible actions", "High volume, low risk", "Latency, fatigue [[tr10]]"],
+      ["Idempotency keys", "Retries and resumes may repeat a call", "The target system ignores keys", "Key storage and scope rules [[r26]]"],
+      ["Compensating steps", "Multi-step operation can partly fail", "Effects cannot be undone", "Design of undo logic [[r27]]"],
+      ["Least-privilege tools", "Always", "Never fully replaced by approval", "Design effort up front [[tr10]]"],
+      ["Post-hoc audit", "Reversible, high volume", "Damage is immediate", "Detects, does not prevent"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Reviewers approve everything without reading", "cause": "Too many low-risk prompts cause approval fatigue", "fix": "Gate only above a risk threshold, show a clear summary and measure the rejection rate." },
+    { "symptom": "A retry creates a second charge or message", "cause": "No idempotency key, or a new key was generated for each attempt [[r26]]", "fix": "Derive the key from run and step ids, and have the tool or its API store results by key." },
+    { "symptom": "A partly finished operation leaves inconsistent state", "cause": "A later step failed and nothing undid earlier steps [[r27]]", "fix": "Define a compensating action per step and run them in reverse order on failure." },
+    { "symptom": "The approved action differs from the executed one", "cause": "Arguments changed between approval and execution", "fix": "Approve a hash of the final arguments, set an expiry and verify before execution." }
+  ],
+  "scenarios": [
+    {
+      "id": "w10-t22-s1",
+      "title": "Irreversible payment action",
+      "situation": "An agent can issue refunds through a payment API. A refund cannot be recalled, runs can be retried after crashes, and finance wants to know who approved each one.",
+      "constraints": ["Irreversible side effect", "Retries and resumes possible", "Approver identity must be recorded", "Low volume"],
+      "unknowns": ["Does the payment API support idempotency keys?", "How long may an approval wait?"],
+      "question": "What do you implement?",
+      "options": [
+        { "name": "Approval on the exact arguments plus a stable idempotency key per run and step, stored with the approver identity", "verdict": "best", "why": "The gate stops unwanted refunds, the key stops duplicates on retry and the record meets the audit need.", "tradeoff": "Latency while waiting for a person, and key handling per API." },
+        { "name": "Autonomous refunds with logging only", "verdict": "poor", "why": "Logs cannot undo a refund, and a retry could pay twice.", "tradeoff": "Right for small reversible credits under a hard cap." },
+        { "name": "Approval only, no idempotency key", "verdict": "good", "why": "Blocks unwanted refunds.", "tradeoff": "A crash after approval can lead to a duplicate on resume." }
+      ],
+      "flips": [
+        { "if": "Refunds under a small threshold are routine", "then": "Auto-approve under the threshold, gate above it and audit samples." },
+        { "if": "The API has no idempotency support", "then": "Keep your own ledger of executed step ids and check it before calling." }
+      ],
+      "takeaway": "Gate the decision, and make the execution safe to repeat."
+    },
+    {
+      "id": "w10-t22-s2",
+      "title": "High volume, mostly harmless",
+      "situation": "A workflow agent performs thousands of actions per day: most are reversible tagging and labelling, a few delete records. Reviewers already complain about approval prompts.",
+      "constraints": ["High volume", "Most actions reversible", "A few destructive actions", "Reviewer capacity is limited"],
+      "unknowns": ["What is the cost of a wrong delete?", "Can deletes be soft?"],
+      "question": "How do you place the human?",
+      "options": [
+        { "name": "Risk-tiered gates: approve deletes, auto-approve reversible actions with logging and sample audits, and make deletes soft where possible", "verdict": "best", "why": "It focuses human attention where damage is real and keeps throughput for the rest.", "tradeoff": "Tiering rules need tuning, and sample audits detect rather than prevent." },
+        { "name": "Approve every action", "verdict": "poor", "why": "Fatigue turns approvals into rubber stamps while throughput collapses.", "tradeoff": "Right while the agent is new and volume is low." },
+        { "name": "No approvals, rely on compensating undo", "verdict": "good", "why": "Fast and fits reversible actions.", "tradeoff": "Hard deletes cannot be undone, so they still need a gate or a soft-delete design." }
+      ],
+      "flips": [
+        { "if": "Deletes can be soft with a retention window", "then": "Compensate by restoring and reduce gating." },
+        { "if": "Rejection rate is near zero", "then": "Raise the threshold and sample more." }
+      ],
+      "takeaway": "Spend human attention on irreversibility, not volume."
+    }
+  ],
+  "quiz": [
+    { "id": "w10-t22-q1", "type": "single", "tag": "bug", "q": "A tool wrapper creates a new random idempotency key for every attempt of the same logical charge. What is the result?", "options": ["A retry after a timeout can create a second charge", "Retries are always safe", "Keys are pruned too early", "The first request is rejected"], "answer": 0, "explain": "Idempotency works only when retries reuse the same key, so the service returns the saved response. A fresh key each attempt makes every retry look like a new request. Derive the key from run and step ids. [[r26]]", "ref": "r26", "difficulty": 2 },
+    { "id": "w10-t22-q2", "type": "single", "tag": "tradeoff", "q": "Which statement about exactly-once execution is the most accurate?", "options": ["A checkpoint on its own guarantees exactly-once", "You can get the effect through at-least-once delivery plus idempotent handlers, or compensations", "Approval gates make duplicates impossible", "Exactly-once is automatic in all durable runtimes"], "answer": 1, "explain": "Resuming or retrying can repeat a step, so safety comes from idempotency keys and compensations on top of checkpoints. Approval gates control whether an action runs, not how many times. [[r26]][[r27]]", "ref": "r27", "difficulty": 2 },
+    { "id": "w10-t22-q3", "type": "multi", "tag": "security", "q": "Which are root causes of Excessive Agency in OWASP's description?", "options": ["Excessive functionality", "Excessive permissions", "Excessive autonomy", "Excessive logging"], "answers": [0, 1, 2], "explain": "OWASP lists excessive functionality, permissions and autonomy as the typical root causes. Logging is not among them. Approval gates address autonomy and high-impact actions. [[tr10]]", "ref": "tr10", "difficulty": 1 }
+  ],
+  "flashcards": [
+    { "front": "How does an Agent Framework tool approval work?", "back": "Wrap the function in ApprovalRequiredAIFunction. The run completes with a response saying what input is needed, and the caller returns the decision in a new run [[tr13]]." },
+    { "front": "Stripe idempotency key rules?", "back": "Client-generated, up to 255 characters, a retry returns the saved response, and v1 keys can be pruned after at least 24 hours [[r26]]." },
+    { "front": "What does the Compensating Transaction pattern do?", "back": "When a later step of an eventually consistent operation fails, it undoes the steps already completed [[r27]]." }
+  ],
+  "related": ["w10-l6", "w10-t21", "w10-t20", "w10-t08"],
+  "refs": ["tr10", "tr13", "tr12", "r44", "r10", "r26", "r27"]
+}

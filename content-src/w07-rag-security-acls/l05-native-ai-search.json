@@ -1,0 +1,116 @@
+{
+  "id": "w07-l5",
+  "order": 5,
+  "title": "Four native paths in Azure AI Search",
+  "kind": "problem",
+  "minutes": 25,
+  "brief": "Azure AI Search offers four document-level approaches, and three are preview as of 2026-10-13. Choose by where the content lives, how fast permissions must propagate and whether preview is allowed, then label every choice honestly.",
+  "blocks": [
+    { "t": "h", "text": "Four approaches, one GA", "level": 2 },
+    { "t": "p", "md": "The four approaches are security filters, POSIX-like ACL and RBAC scopes, Microsoft Purview sensitivity labels and SharePoint in Microsoft 365 ACLs. Only security filters are GA and work on any API version. The other three need a preview REST API or preview SDK, carry no SLA and are not recommended for production workloads by the docs [[r11]].\n\nA native ACL query passes two checks. The **calling app** needs Search Index Data Reader (or Contributor) through its Authorization header, and the **user's identity** arrives in `x-ms-query-source-authorization`. The service builds the filter itself and a document passes if **any one** of `userIds`, `groupIds` or `rbacScope` matches. Groups, including nested ones, resolve through Microsoft Graph at query time, and if Graph fails the service returns 5xx, never a partial result [[r12]]." },
+    { "t": "compare", "title": "The four document-level approaches", "intro": "Statuses were checked on 2026-10-13. Freshness always equals the sync path you build.", "options": [
+      { "name": "Security filters", "tag": "GA", "summary": "A filterable `Collection(Edm.String)` field plus a filter your code builds with `search.in`.", "pros": ["Any API version or SDK", "Works with any identity system", "You control group resolution"], "cons": ["A string match with no authentication", "You write and secure group resolution", "ACL updates are yours (`merge` or `mergeOrUpload`)"], "bestWhen": "A custom push index, non-Entra identities, or GA is mandatory.", "avoidWhen": "You do not want to own nested-group logic and preview is acceptable.", "meta": [ { "k": "Status", "v": "GA" }, { "k": "Identity", "v": "you resolve it" } ] },
+      { "name": "POSIX-like ACL and RBAC scopes", "tag": "Preview", "summary": "Permission fields `userIds`, `groupIds` and `rbacScope`, enforced at query time from the user's token.", "pros": ["Graph expands nested groups", "Fails closed", "ADLS Gen2 and Blob indexers read the permissions, push API covers other sources"], "cons": ["No SLA", "Allow lists only, no deny entries", "At most 1,000 values per field, one field per type, five rbacScope values", "ADLS Gen2 allows 32 ACL entries per file"], "bestWhen": "Content in ADLS Gen2 or Blob, or any source whose ACLs you can resolve to Entra object ids, and preview is accepted.", "avoidWhen": "GA only, non-Entra identities, or seconds-level revocation.", "meta": [ { "k": "Status", "v": "Preview" }, { "k": "Groups", "v": "Graph at query time" } ] },
+      { "name": "Purview sensitivity labels", "tag": "Preview", "summary": "Labels extracted from Blob, ADLS Gen2, SharePoint and OneLake gate access by classification.", "pros": ["Policy follows the label", "Works beside ACLs"], "cons": ["System-assigned managed identity only", "Single tenant, RBAC auth, REST and SDK only", "No Autocomplete or Suggest", "Chunked indexes need the label on every chunk row"], "bestWhen": "Classification, not named principals, decides access and labels already exist.", "avoidWhen": "Per-person ACLs, multitenant setups, or you need Suggest.", "meta": [ { "k": "Status", "v": "Preview" }, { "k": "Scope", "v": "single tenant" } ] },
+      { "name": "SharePoint ACLs", "tag": "Preview", "summary": "The SharePoint indexer ingests permissions with the content.", "pros": ["Inheritance, unique item ACLs, Entra groups", "From 2026-05-01-preview: list items, ASPX pages, site groups (`spg:`)"], "cons": ["No Anyone or People in your organization links, no guests", "An Entra group nested in a SharePoint group is not expanded", "Parent scope changes need a resync", "Application permissions and Basic tier or higher"], "bestWhen": "SharePoint is the source and preview is accepted.", "avoidWhen": "Sharing links or guests drive access, or revocation must beat an indexer run.", "meta": [ { "k": "Status", "v": "Preview" }, { "k": "Freshness", "v": "per run plus resync" } ] }
+    ] },
+    { "t": "table", "caption": "API versions that matter, checked 2026-10-13 [[r18]].", "head": ["Version", "Status", "What it adds or changes"], "rows": [
+      ["`2026-04-01`", "Stable (GA)", "Latest stable data plane. Knowledge sources (Blob, OneLake, search index, web) are GA, but `ingestionPermissionOptions` stays preview."],
+      ["`2026-08-01-preview`", "Preview, latest", "The version the current ACL docs target."],
+      ["`2026-05-01-preview`", "Preview", "SharePoint list items, ASPX pages, site groups (`spg:`) and per-run sync of unique item ACLs. Elevated read needs this version or later."],
+      ["`2025-11-01-preview`", "Preview", "ACL filters apply even with an API key or admin role. A missing user token returns only public (`all`) documents."],
+      ["`2025-05-01-preview`, `2025-08-01-preview`", "Preview", "Returned all documents for an API key or admin role with no user token. Re-test if you validated here."]
+    ], "highlightCol": 1 },
+    { "t": "tabs", "tabs": [
+      { "label": "Security filter (GA)", "blocks": [
+        { "t": "code", "lang": "json", "title": "Index field", "code": "{ \"name\": \"group_ids\", \"type\": \"Collection(Edm.String)\", \"filterable\": true, \"retrievable\": false }" },
+        { "t": "code", "lang": "json", "title": "Query body, group ids resolved by your code", "code": "{ \"search\": \"travel policy\",\n  \"filter\": \"group_ids/any(g: search.in(g, 'g-sales, g-all-staff'))\" }" },
+        { "t": "p", "md": "Nothing authenticates the string. Your code derives the ids from a validated token [[r13]]." }
+      ] },
+      { "label": "Native ACL (preview)", "blocks": [
+        { "t": "code", "lang": "json", "title": "Index schema", "code": "{ \"permissionFilterOption\": \"enabled\",\n  \"fields\": [\n    { \"name\": \"DocumentId\", \"type\": \"Edm.String\", \"key\": true },\n    { \"name\": \"UserIds\", \"type\": \"Collection(Edm.String)\", \"permissionFilter\": \"userIds\", \"filterable\": true },\n    { \"name\": \"GroupIds\", \"type\": \"Collection(Edm.String)\", \"permissionFilter\": \"groupIds\", \"filterable\": true },\n    { \"name\": \"RbacScope\", \"type\": \"Edm.String\", \"permissionFilter\": \"rbacScope\", \"filterable\": true }\n  ] }" },
+        { "t": "code", "lang": "http", "title": "Query with the user's token", "code": "POST {endpoint}/indexes/{index}/docs/search?api-version=2026-08-01-preview\nAuthorization: Bearer {app-token}\nx-ms-query-source-authorization: {user-token}\nContent-Type: application/json\n\n{ \"search\": \"travel policy\", \"select\": \"name,GroupIds\" }" },
+        { "t": "p", "md": "Store Entra object ids (GUIDs), not UPNs. The special values are `all` (public) and `none`. Without the user token only public documents return [[r15]]." }
+      ] },
+      { "label": "Elevated read (debug)", "blocks": [
+        { "t": "code", "lang": "http", "title": "Search POST only", "code": "POST {endpoint}/indexes('{index}')/search.post.search?api-version=2026-08-01-preview\nAuthorization: Bearer {admin-token}\nx-ms-query-source-authorization: {user-token}\nx-ms-enable-elevated-read: true" },
+        { "t": "p", "md": "Needs Search Index Data Contributor or a custom role with `Microsoft.Search/searchServices/indexes/contentSecurity/elevatedOperations/read`. It does not work on knowledge base retrieve [[r12]]." }
+      ] }
+    ] },
+    { "t": "h", "text": "Pick the native path by source", "level": 2 },
+    { "t": "dials", "id": "w07-l5-native", "title": "Which Azure path fits?", "prompt": "Set where the content lives, the status you can accept, the revocation target and what decides access.",
+      "dials": [
+        { "id": "source", "label": "Where the content lives", "values": [ { "id": "custom", "label": "Database or custom app, pushed" }, { "id": "lake", "label": "ADLS Gen2 or Blob" }, { "id": "spo", "label": "SharePoint in Microsoft 365" } ] },
+        { "id": "status", "label": "Status you can accept", "values": [ { "id": "ga", "label": "GA only, SLA needed" }, { "id": "prev", "label": "Preview is fine" } ] },
+        { "id": "revoke", "label": "Revocation target", "values": [ { "id": "hours", "label": "Hours" }, { "id": "minutes", "label": "Minutes" }, { "id": "seconds", "label": "Seconds" } ] },
+        { "id": "rule", "label": "What decides access", "values": [ { "id": "principals", "label": "Named users and groups" }, { "id": "label", "label": "Sensitivity labels" } ] }
+      ],
+      "options": [
+        { "id": "secfilter", "name": "Security filters on a push index", "summary": "GA string filter, you resolve groups." },
+        { "id": "nativeacl", "name": "Native ACL and RBAC scopes", "summary": "Preview fields enforced from the user token." },
+        { "id": "spo", "name": "SharePoint indexer with ACLs", "summary": "Preview indexer that ingests SharePoint permissions." },
+        { "id": "purview", "name": "Purview sensitivity labels", "summary": "Preview label-based gating." },
+        { "id": "remote", "name": "Delegate to the source", "summary": "Remote SharePoint knowledge source or Copilot Retrieval API." }
+      ],
+      "scores": {
+        "secfilter": {
+          "source": { "custom": { "s": 2, "why": "Any source works, and you own the ACL field." }, "lake": { "s": 1, "why": "Works, but you build ACL extraction." }, "spo": { "s": 0, "why": "You would write SharePoint ACL extraction." } },
+          "status": { "ga": { "s": 2, "why": "GA on any API version." }, "prev": { "s": 0, "why": "Nothing extra to gain from preview." } },
+          "revoke": { "hours": { "s": 1, "why": "A scheduled push is enough." }, "minutes": { "s": 1, "why": "Merge the ACL field on change events." }, "seconds": { "s": 0, "why": "Needs your own change feed and short caches." } },
+          "rule": { "principals": { "s": 1, "why": "A string match on ids you resolve." }, "label": { "s": -2, "why": "No label semantics in a string field." } }
+        },
+        "nativeacl": {
+          "source": { "custom": { "s": 1, "why": "The push API accepts the permission fields." }, "lake": { "s": 2, "why": "ADLS Gen2 and Blob indexers read ACLs and RBAC scopes." }, "spo": { "s": -1, "why": "Use the SharePoint indexer instead." } },
+          "status": { "ga": { "s": -2, "why": "Preview: no SLA, not advised for production." }, "prev": { "s": 2, "why": "The intended home of this feature." } },
+          "revoke": { "hours": { "s": 1, "why": "An indexer run is enough." }, "minutes": { "s": 0, "why": "Indexer floor is 5 minutes, and ADLS needs a resync." }, "seconds": { "s": -1, "why": "The document ACL copy lags even though groups resolve live." } },
+          "rule": { "principals": { "s": 2, "why": "Built for user, group and role ids." }, "label": { "s": -1, "why": "Labels are a separate feature." } }
+        },
+        "spo": {
+          "source": { "custom": { "s": -2, "why": "Not applicable." }, "lake": { "s": -2, "why": "Not applicable." }, "spo": { "s": 2, "why": "Ingests inheritance, unique item ACLs and Entra groups." } },
+          "status": { "ga": { "s": -2, "why": "Preview only." }, "prev": { "s": 2, "why": "Supported in preview, richer from 2026-05-01-preview." } },
+          "revoke": { "hours": { "s": 1, "why": "Item changes sync each run." }, "minutes": { "s": 0, "why": "Parent scope changes need an explicit resync." }, "seconds": { "s": -2, "why": "Pull indexing cannot reach seconds." } },
+          "rule": { "principals": { "s": 2, "why": "Entra groups and unique item ACLs." }, "label": { "s": 0, "why": "Labels arrive through a separate preview." } }
+        },
+        "purview": {
+          "source": { "custom": { "s": -2, "why": "Labels come only from Blob, ADLS Gen2, SharePoint and OneLake." }, "lake": { "s": 1, "why": "A supported source." }, "spo": { "s": 1, "why": "A supported source." } },
+          "status": { "ga": { "s": -2, "why": "Preview only." }, "prev": { "s": 1, "why": "Preview with caveats: system-assigned identity, single tenant." } },
+          "revoke": { "hours": { "s": 1, "why": "Label changes arrive with ingestion." }, "minutes": { "s": 0, "why": "Bound by indexer runs." }, "seconds": { "s": -1, "why": "Pull indexing lags." } },
+          "rule": { "principals": { "s": -1, "why": "Labels do not replace per-person ACLs." }, "label": { "s": 2, "why": "Classification decides. Project labels onto each chunk row." } }
+        },
+        "remote": {
+          "source": { "custom": { "s": -2, "why": "Nothing in Microsoft 365 to delegate to." }, "lake": { "s": -2, "why": "Not applicable." }, "spo": { "s": 2, "why": "SharePoint answers with the caller's token." } },
+          "status": { "ga": { "s": -1, "why": "Check the exact status. Retrieval API pay-as-you-go is preview." }, "prev": { "s": 1, "why": "Fine once you accept the preview terms." } },
+          "revoke": { "hours": { "s": 0, "why": "Overkill for this speed." }, "minutes": { "s": 1, "why": "No copy to go stale." }, "seconds": { "s": 2, "why": "Permissions are read at query time." } },
+          "rule": { "principals": { "s": 2, "why": "The source applies its own rules." }, "label": { "s": 1, "why": "Purview protections still apply to retrieved content." } }
+        }
+      },
+      "takeaway": "GA means security filters. Native ACLs shine for ADLS Gen2 and Blob, the SharePoint indexer for SharePoint with preview accepted, and delegation when seconds-level revocation matters. Say preview out loud." },
+    { "t": "failure", "title": "Failure modes to recognise", "items": [
+      { "symptom": "Results come back unfiltered although the header is sent.", "cause": "An indexed knowledge source was created without `ingestionPermissionOptions`, so the index has no permission metadata.", "fix": "Set it at creation (still preview in 2026-04-01) and verify with a revoked test user [[r17]]." },
+      { "symptom": "A service-side test with an API key returns only a few documents.", "cause": "Since `2025-11-01-preview` ACL filters apply even with a key or admin role, and a missing token returns public documents only.", "fix": "Send the user token, use elevated read for debugging and re-test anything validated on older previews." },
+      { "symptom": "A folder permission change never reaches the index.", "cause": "Parent scope changes are not picked up per indexer run. ADLS Gen2 needs a resync and push ingestion needs a reingest [[r16]].", "fix": "Call `/resync` with `options: [\"permissions\"]` or `/resetdocs` for SharePoint, resync ADLS, reingest pushed documents and audit drift." },
+      { "symptom": "Some users lose documents shared through an Entra group inside a SharePoint group.", "cause": "That nested relationship is not expanded, so the results are filtered out.", "fix": "Grant through supported group relationships or flatten membership at the source." },
+      { "symptom": "A few heavily shared files seem to ignore part of their ACL.", "cause": "Entries beyond 32 per ADLS Gen2 file or 1,000 per SharePoint file might not be enforced.", "fix": "Shrink ACLs with groups and flag items above the limit during ingestion." }
+    ] }
+  ],
+  "quiz": [
+    { "id": "w07-l5-q1", "type": "single", "tag": "diagnose", "q": "A test that used an API key and no user token returned about a dozen documents on `2026-08-01-preview`. On an older preview it returned every document. What explains the difference?", "code": { "lang": "http", "code": "POST {endpoint}/indexes/hr/docs/search?api-version=2026-08-01-preview\napi-key: {admin-key}\n\n{ \"search\": \"*\", \"count\": true }" }, "options": ["ACL filters apply even with an API key, and a missing user token returns only public documents", "The index lost its permission fields when the API version changed, so the service samples documents", "The admin key lacks the Search Index Data Reader role for the index, so results are truncated", "Graph was unavailable, so the service returned a partially filtered page"], "answer": 0, "explain": "From `2025-11-01-preview` the filters apply regardless of the credential, and with no token only documents marked public (`all`) match. Earlier previews returned everything for a key or admin role. Losing fields would change the schema, a missing role would fail the call, and Graph failures return 5xx rather than a partial page.", "difficulty": 2, "ref": "r12" },
+    { "id": "w07-l5-q2", "type": "multi", "tag": "security", "q": "Select every true statement about native ACL enforcement in Azure AI Search (preview as of 2026-10-13).", "options": ["Group membership is resolved through Microsoft Graph at query time, so nested groups work.", "A document passes only when userIds, groupIds and rbacScope all match.", "If Graph is unavailable the service returns a 5xx instead of a partially filtered result.", "The features are GA in the stable `2026-04-01` API.", "A document passes if any one of userIds, groupIds or rbacScope matches."], "answers": [0, 2, 4], "explain": "Filters are applied independently and any match authorizes the document, Graph expands groups at query time and a Graph failure fails closed. The features are not part of the stable 2026-04-01 API, and an all-must-match rule would contradict the any-match behaviour the docs describe.", "difficulty": 2, "ref": "r12" },
+    { "id": "w07-l5-q3", "type": "match", "tag": "concept", "q": "Match each Azure AI Search approach to a constraint you must plan for.", "pairs": [
+      { "l": "Security filters", "r": "GA on any API version, but nothing authenticates the string" },
+      { "l": "POSIX-like ACL and RBAC scopes", "r": "At most 1,000 values per userIds or groupIds field" },
+      { "l": "SharePoint indexer ACLs", "r": "An Entra group nested in a SharePoint group is not expanded" },
+      { "l": "Purview sensitivity labels", "r": "System-assigned managed identity only" }
+    ], "explain": "Each approach has a distinct limit: security filters are a plain string match you secure yourself, native ACL fields hold 1,000 values, the SharePoint indexer drops the mixed Entra-in-SharePoint-group relationship and Purview label ingestion rejects user-assigned identities.", "difficulty": 2, "ref": "r11" },
+    { "id": "w07-l5-q4", "type": "single", "tag": "flip", "q": "A test user without access still sees a file from an indexed SharePoint knowledge source, even with the user token sent. Which change fixes it?", "options": ["Send a token with broader scopes on every query", "Set `retrievable: false` on the content field", "Use an admin API key so filtering is forced", "Recreate it with `ingestionPermissionOptions`"], "answer": 3, "explain": "Without `ingestionPermissionOptions` at creation the index carries no permission metadata, so the header has nothing to match and results come back unfiltered. Broader scopes and admin keys do not add metadata, and `retrievable: false` only hides a field from responses.", "difficulty": 3, "ref": "r17" }
+  ],
+  "defend": null,
+  "refs": ["r11", "r12", "r13", "r15", "r16", "r17", "r18"],
+  "takeaways": [
+    "Only security filters are GA. Native ACLs, Purview labels and SharePoint ACLs are preview as of 2026-10-13.",
+    "Native ACL queries need two checks: the app's role and the user's token. A missing token returns public documents only.",
+    "Freshness equals your sync path: SharePoint parent changes need a resync, ADLS needs a resync, push needs a reingest.",
+    "Create indexed knowledge sources with `ingestionPermissionOptions` or results come back unfiltered.",
+    "Use elevated read to debug, and keep it off the app's normal identity."
+  ]
+}

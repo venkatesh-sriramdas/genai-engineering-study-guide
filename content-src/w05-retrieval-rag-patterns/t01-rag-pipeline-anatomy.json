@@ -1,0 +1,95 @@
+{
+  "id": "w05-t01",
+  "order": 1,
+  "group": "Baseline",
+  "title": "RAG pipeline anatomy",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "Retrieval-augmented generation fetches evidence at question time and hands it to the model. The pipeline has a fixed set of stages, and each one can lose the answer.",
+  "useIf": "You are building or reviewing a RAG system and need a map of where answer quality is won or lost.",
+  "avoidIf": "The knowledge is small, stable and shared, so a plain long prompt does the job without a retrieval stack (see the RAG vs long context topic).",
+  "explain": [
+    { "t": "p", "md": "A RAG system splits one hard job, answering from private knowledge, into stages that can each be measured. The idea comes from the original RAG paper, which paired a generator with a dense index of Wikipedia [[tr9]]. Today the stages are: **ingest** and **chunk** the sources, **embed** and **index** them, then at question time **transform** the query, **retrieve** candidates, **fuse** the lists, **rerank**, **cut off** weak evidence, **assemble** the context, **generate** and **cite**." },
+    { "t": "diagram", "id": "w05-t01-d1", "title": "Query-time path of an advanced RAG pipeline", "alt": "A question is rewritten, searched by keyword and vector retrievers, fused, reranked, cut off, then passed to the model, which answers with citations.", "src": "flowchart LR\n  Q[Question] --> R[Rewrite]\n  R --> K[Keyword search]\n  R --> V[Vector search]\n  K --> F[Fuse]\n  V --> F\n  F --> RR[Rerank]\n  RR --> C[Cutoff]\n  C --> G[Generate]\n  G --> A[Answer with citations]" },
+    { "t": "p", "md": "**Naive RAG** is one embedding search followed by one prompt. **Advanced RAG** adds query transformation before retrieval and fusion, reranking and filtering after it. **Modular RAG** treats those pieces as swappable parts that a router can skip or loop [[tr8]]." },
+    { "t": "p", "md": "Quality is lost in a predictable order. The generator cannot use evidence that was never retrieved, so **retrieval recall is the ceiling** for answer quality. Anthropic reports a top-20 retrieval failure rate of 5.7% for its baseline. Contextual embeddings cut it to 3.7%, adding contextual BM25 to 2.9%, and adding reranking brought the total reduction to 67% [[r26]]. Those are vendor numbers, but they show the lesson: each retrieval stage you add moves a measurable failure rate." },
+    { "t": "callout", "kind": "tip", "title": "Measure stages, not the final answer", "md": "Log the query, the rewrite, per-retriever ranks, fused and reranked order, the cutoff decision and the final context. Then score retrieval (is the gold chunk in the top k?) separately from generation (given the gold chunk, is the answer right?)." }
+  ],
+  "whereToUse": [
+    "Question answering over private documents that change faster than you can retrain a model",
+    "Support assistants that must cite a policy or manual page",
+    "Internal search copilots where users type identifiers and paraphrases into one box",
+    "Any system where an auditor asks which source produced a given sentence"
+  ],
+  "whenToUse": {
+    "use": ["Knowledge is too big or too fast-changing to place in every prompt", "Answers must be traceable to a source", "Different users may see different documents", "You can label a small set of questions with their gold chunks"],
+    "avoid": ["The whole corpus fits in a cached prompt and rarely changes", "The task needs reasoning over the entire corpus at once, where top-k chunks cannot hold the evidence", "No one will measure retrieval separately, so failures stay invisible"],
+    "flips": ["Corpus under roughly 200,000 tokens and stable: test a long prompt first [[r26]]", "Questions need whole-corpus themes: consider a graph or tree index instead of flat top-k", "Questions are multi-part: add decomposition or agentic retrieval before tuning the reranker"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Naive RAG (embed, top-k, prompt)", "Prototype, single-topic corpus, paraphrase questions", "Identifiers, multi-part questions, noisy corpora", "Cheap, but plausible wrong answers"],
+      ["Advanced RAG (hybrid, rerank, cutoff)", "Mixed query types, mid-size corpora", "Latency budget is under a second", "More stages to tune and monitor"],
+      ["Agentic retrieval", "Multi-part, context-dependent questions", "Single-fact lookups, GA-only rules", "Extra model calls, preview features"],
+      ["Long prompt or cache", "Small stable corpus, shared access", "Large or per-user corpora", "Token cost and accuracy drop with length"],
+      ["Fine-tuning only", "Style and format changes", "Facts that change, need for citations", "Stale knowledge, no provenance"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Fluent, confident answers that are wrong", "cause": "Retrieval missed the evidence and the model filled the gap from memory", "fix": "Add a cutoff with abstention, require citations, and measure recall@k on labelled questions" },
+    { "symptom": "Tuning the prompt for weeks with no gain", "cause": "The fault is upstream in parsing, chunking or retrieval", "fix": "Run the oracle test: give the model the gold chunk. If it still fails, tune generation; if not, fix retrieval" },
+    { "symptom": "Quality drops after a re-index", "cause": "Embedding model, chunk size or analyzer changed without a regression set", "fix": "Keep a golden query set and compare recall@k before and after every pipeline change" }
+  ],
+  "scenarios": [
+    {
+      "id": "w05-t01-s1",
+      "title": "Plausible but wrong, prototype stage",
+      "situation": "A team shipped a naive RAG prototype. Reviewers say about one answer in five is fluent and wrong. The team proposes a bigger model.",
+      "constraints": ["One engineer, two weeks", "A hundred real questions exist but no gold chunks", "No latency target yet"],
+      "unknowns": ["Is the evidence present in the corpus at all?", "Do the wrong answers cluster by query type?"],
+      "question": "What do you do first?",
+      "options": [
+        { "name": "Label gold chunks for the failing questions and measure retrieval recall@k and generation separately", "verdict": "best", "why": "It tells you which stage to fix before you spend on anything. A wrong answer with the gold chunk missing is a retrieval fault.", "tradeoff": "Costs a day of labelling before any visible improvement." },
+        { "name": "Add a reranker and a query rewriter at once", "verdict": "good", "why": "Both often help, and advanced RAG usually needs them.", "tradeoff": "You cannot tell which one helped, and a rewrite can erase identifiers." },
+        { "name": "Switch to a larger generation model", "verdict": "poor", "why": "If the evidence was never retrieved, a better writer only fabricates more fluently.", "tradeoff": "Right only after the oracle test shows the model fails even with the gold chunk in context." }
+      ],
+      "flips": [
+        { "if": "The oracle test shows the model fails with the gold chunk in context", "then": "Tune the prompt, context order and model, not retrieval." },
+        { "if": "The failures are all multi-part questions", "then": "Add decomposition or agentic retrieval for that slice." }
+      ],
+      "takeaway": "Find the failing stage before you buy a fix."
+    },
+    {
+      "id": "w05-t01-s2",
+      "title": "Whole corpus is 90,000 tokens",
+      "situation": "A product team wants a RAG stack for one manual set that changes twice a year. Every employee may read all of it.",
+      "constraints": ["Corpus is about 90,000 tokens", "Shared access", "Moderate query volume"],
+      "unknowns": ["Is prompt caching available on the chosen model?", "Do answers need passage-level citations?"],
+      "question": "Which design do you start with?",
+      "options": [
+        { "name": "Put the manual in a cached prompt and measure", "verdict": "best", "why": "It is under Anthropic's rule of thumb of 200,000 tokens, it is stable and access is shared, so no retrieval stage can lose evidence [[r26]].", "tradeoff": "Per-query token cost and long-context degradation; revisit if the manual grows." },
+        { "name": "Hybrid search with reranker over chunked manuals", "verdict": "good", "why": "Cheaper per query at scale and ready for growth.", "tradeoff": "More moving parts for a corpus that does not need them yet." },
+        { "name": "GraphRAG over the manuals", "verdict": "poor", "why": "Indexing cost and operational weight for a small stable corpus with lookup questions.", "tradeoff": "Fits when the corpus is large and questions ask for themes across it." }
+      ],
+      "flips": [
+        { "if": "The corpus grows past what fits comfortably in the window", "then": "Move to hybrid retrieval with a reranker." },
+        { "if": "Access becomes per user", "then": "A shared cached prompt cannot hide documents, so retrieve with a security filter." }
+      ],
+      "takeaway": "Size and update rate decide whether you need a pipeline at all."
+    }
+  ],
+  "quiz": [
+    { "id": "w05-t01-q1", "type": "single", "tag": "concept", "q": "Which stage sets the ceiling on answer quality in a RAG system?", "options": ["Generation prompt wording", "Citation formatting", "Retrieval recall", "Token streaming"], "answer": 2, "explain": "If the evidence is not retrieved the model cannot use it. Prompt wording and formatting refine what is already present, and streaming affects latency only." },
+    { "id": "w05-t01-q2", "type": "order", "tag": "order", "q": "Put the query-time stages in order.", "items": ["Rewrite the query", "Retrieve candidates", "Fuse the lists", "Rerank", "Cut off weak evidence", "Generate with citations"], "explain": "Transformation comes before retrieval, fusion merges the retriever outputs, reranking reorders the fused shortlist, the cutoff drops weak evidence and generation comes last." },
+    { "id": "w05-t01-q3", "type": "single", "tag": "diagnose", "q": "The model gives a wrong answer even when you paste the gold chunk into the prompt. Where is the fault?", "options": ["Retrieval recall", "Generation or context handling", "Chunk size at ingestion", "The fusion constant"], "answer": 1, "explain": "The oracle test removes retrieval from the picture. A failure with gold evidence in context points to the prompt, context order or the model. The other options sit upstream of what the oracle test bypasses." }
+  ],
+  "flashcards": [
+    { "front": "Name the query-time stages of an advanced RAG pipeline.", "back": "Query transformation, retrieval, fusion, reranking, cutoff, context assembly, generation, citation." },
+    { "front": "What is the oracle test for a bad RAG answer?", "back": "Put the gold chunk in the prompt. Still wrong means a generation fault. Right means retrieval missed it." },
+    { "front": "Naive, advanced and modular RAG: what separates them?", "back": "Naive is one search then one prompt. Advanced adds pre- and post-retrieval steps. Modular makes stages swappable and routable." }
+  ],
+  "related": ["w05-t17", "w05-t04", "w05-t15", "w04-t01", "w05-l1", "w05-l6"],
+  "refs": ["tr8", "tr9", "r26", "r8"]
+}

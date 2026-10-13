@@ -1,0 +1,110 @@
+{
+  "id": "w12-t02",
+  "order": 2,
+  "group": "Foundry Agent Service",
+  "title": "Prompt and voice agents",
+  "minutes": 7,
+  "difficulty": "core",
+  "summary": "A prompt agent is instructions, a model and tools stored as configuration that Foundry runs. A voice-based prompt agent adds a managed spoken conversation through Voice Live. Voice-based agents are preview.",
+  "useIf": "No custom orchestration is needed and you want nothing to build, host or scale, in text or in managed voice.",
+  "avoidIf": "You need your own code path, webhooks, custom streaming or per-session files, or you cannot accept preview limits for voice.",
+  "explain": [
+    { "t": "p", "md": "A **prompt agent** is defined entirely through configuration: instructions, model selection and tools. You can author it in the portal, or define it with the SDK or REST API inside a CI/CD pipeline so it gets version control and review [[r1]]. There is no application code, container or compute to manage, and it gets an Entra agent identity and automatic scaling [[r1]]. The cost model is per-call inference plus tool usage [[r1]]. Function-calling tools run on the client side, so your app executes them [[r3]]." },
+    { "t": "p", "md": "A **voice-based prompt agent** adds spoken conversation. You connect over a real-time WebSocket and Foundry uses Voice Live for recognition, turn taking, model interaction and synthesis [[r1]]. Voice Live is a managed speech-to-speech service with a WebSocket interface close to the Azure OpenAI Realtime events, over 140 speech-to-text locales and noise suppression [[tr6]]. There are two architectures, and the choice is a latency versus control trade-off [[r1]]." },
+    { "t": "diagram", "id": "w12-t02-d1", "title": "Native versus cascaded voice paths", "alt": "Native path sends caller audio to a realtime speech model and back as speech. Cascaded path goes through speech recognition, a text model and speech synthesis.", "src": "flowchart LR\n  A[Caller audio] --> N[Realtime speech model]\n  N --> O1[Spoken reply]\n  A --> S[Speech recognition]\n  S --> T[Text model]\n  T --> Y[Speech synthesis]\n  Y --> O2[Spoken reply]" },
+    { "t": "table", "caption": "Voice architecture trade-offs per the Foundry docs", "head": ["Dial", "Native speech-to-speech", "Cascaded text model"], "rows": [
+      ["Latency", "Optimized for low latency", "Each stage adds latency"],
+      ["Control", "Settings depend on the model", "Explicit control of transcription, phrase lists, turn detection and interim responses"],
+      ["Choice", "Realtime model and its voices", "Broader text model and Azure voice choice"],
+      ["Text between stages", "None to inspect", "Text exists, so you can log or filter it (inference from the stage layout)"]
+    ] },
+    { "t": "callout", "kind": "preview", "title": "Preview limits, checked 2026-10-13", "md": "Voice-based agents are preview with no SLA. Direct SIP is not offered. Phone numbers come from Teams Phone extensibility or Twilio. The standard Teams card is not shown for voice agents. Evaluation supports full conversations only, not single-turn or simulated runs, and the dataset-from-traces action is unavailable. Monitoring cards need Application Insights. `latency_threshold_ms` for interim responses defaults to 2000, and noise reduction accepts `near_field`, `far_field` or `azure_deep_noise_suppression` [[r1]] [[tr5]]." }
+  ],
+  "whereToUse": [
+    "Internal assistants and production agents that need no custom orchestration [[r1]]",
+    "Agents defined in code through the SDK or REST so a pipeline can review and roll them out",
+    "Customer-facing and call-center voice experiences without a self-built voice service [[r1]]",
+    "Quick proofs of concept in the portal playground, then a code-first definition"
+  ],
+  "whenToUse": {
+    "use": [
+      "The behavior fits instructions, a model and tools",
+      "You want no compute line and automatic scaling",
+      "For voice: you want managed turn taking and phone integration through Teams Phone extensibility or Twilio"
+    ],
+    "avoid": [
+      "You need to receive arbitrary webhooks or run code in the agent process",
+      "For voice: you need direct SIP or single-turn and simulated evaluation today",
+      "For voice: your policy forbids preview features in production"
+    ],
+    "flips": [
+      "Latency matters most: native speech-to-speech. Transcript control matters most: cascaded",
+      "Orchestration logic outgrows prompts: move to a hosted agent",
+      "A tool must execute inside your process: keep a prompt agent and use client-side function calling, or move to hosted"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Prompt agent", "Config is enough, least to operate", "Custom code, files or protocols are required", "Few controls beyond config"],
+      ["Voice-based prompt agent", "Managed voice, phone via Teams Phone or Twilio", "Direct SIP, GA-only policy, richer evaluation", "Preview, no SLA [[r1]]"],
+      ["Hosted agent with Invocations WebSocket", "You own turn handling and tools, Pipecat or LiveKit", "You want no code to maintain", "Container compute and your own voice stack [[r2]]"],
+      ["Direct Voice Live integration", "You want Azure Speech features without a Foundry agent", "You want Foundry versioning and identity for the agent", "You build the glue [[tr6]]"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Voice agent does not appear in the Teams or Microsoft 365 Copilot channel card", "cause": "The standard text-agent card is not shown in the voice-based Channels layout", "fix": "Use Teams Phone extensibility or Twilio for telephony and do not treat Teams publishing as the phone path [[r1]]." },
+    { "symptom": "Evaluation run cannot be created for a voice agent", "cause": "Single-turn and simulated-conversation evaluation are not supported for voice agents", "fix": "Evaluate full conversations from existing sessions [[r1]]." },
+    { "symptom": "Callers hear long silence while a tool runs", "cause": "The interim response only starts after `latency_threshold_ms`, which defaults to 2000", "fix": "Lower the threshold, as the best-practice page advises [[tr5]]." }
+  ],
+  "scenarios": [
+    {
+      "id": "w12-t02-s1",
+      "title": "Agent definition must go through review",
+      "situation": "A platform team wants every agent change reviewed and rolled out by a pipeline. The agent needs only instructions and approved tools.",
+      "constraints": ["Change control is mandatory", "No custom runtime code", "Text channel"],
+      "unknowns": ["Who is allowed to edit in the portal?", "Do we need a rollback path?"],
+      "question": "How do you define and run the agent?",
+      "options": [
+        { "name": "Code-first prompt agent defined through the SDK or REST in the pipeline", "verdict": "best", "why": "Version control and review apply to the definition while Foundry runs it.", "tradeoff": "Portal edits can drift unless you restrict them." },
+        { "name": "Portal-built prompt agent edited by hand", "verdict": "poor", "why": "Fast to start, but changes bypass review.", "tradeoff": "Right for a proof of concept or a single owner." },
+        { "name": "Hosted agent with the definition in code", "verdict": "good", "why": "Everything is in the repo.", "tradeoff": "You build, host and pay compute for logic that configuration already covers." }
+      ],
+      "flips": [
+        { "if": "The definition must ship inside the application release", "then": "Consider the direct Responses API call so the definition lives in the app repo." },
+        { "if": "The agent needs a webhook receiver", "then": "Hosted agent with Invocations." }
+      ],
+      "takeaway": "Prompt agents can be code-first, so you get review without hosting."
+    },
+    {
+      "id": "w12-t02-s2",
+      "title": "Regulated phone line",
+      "situation": "A voice assistant must keep a redacted transcript for audit. Preview is allowed with sign-off. Peak call volume is high.",
+      "constraints": ["Transcripts must be inspectable before the model sees them", "Preview allowed", "Phone channel"],
+      "unknowns": ["How much extra latency is acceptable?", "Is the model deployment allowed in the region?"],
+      "question": "Which voice architecture do you select?",
+      "options": [
+        { "name": "Cascaded text model architecture", "verdict": "best", "why": "Recognition produces text you can log and filter, and you control phrase lists and turn detection.", "tradeoff": "Every stage adds latency." },
+        { "name": "Native speech-to-speech", "verdict": "poor", "why": "Lowest latency, but there is no text stage to redact before the model.", "tradeoff": "Right when natural, low-latency conversation matters more than text control." },
+        { "name": "Hosted agent with a custom pipeline", "verdict": "good", "why": "You control every stage, including redaction.", "tradeoff": "More code, compute cost and operations." }
+      ],
+      "flips": [
+        { "if": "Latency is the top requirement and audit needs only a post-call transcript", "then": "Native speech-to-speech." },
+        { "if": "No preview features are allowed", "then": "A hosted agent pipeline, once its status meets your policy." }
+      ],
+      "takeaway": "Pick cascaded when text control beats the last milliseconds."
+    }
+  ],
+  "quiz": [
+    { "id": "w12-t02-q1", "type": "single", "tag": "concept", "q": "Which service do voice-based prompt agents use for recognition, turn taking and synthesis?", "options": ["Azure AI Search", "Voice Live", "A hosted container you write", "Application Insights"], "answer": 1, "explain": "Foundry Agent Service uses Voice Live. Search is retrieval, a hosted container is another agent type, and Application Insights only stores telemetry.", "ref": "r1" },
+    { "id": "w12-t02-q2", "type": "numeric", "tag": "numeric", "q": "What is the default `latency_threshold_ms` for interim responses in a Foundry voice agent?", "answer": 2000, "tolerancePct": 0, "unit": "ms", "hint": "The best-practice page advises lowering it.", "explain": "The default is 2000 ms, so callers can wait two seconds before an interim response unless you lower it.", "ref": "tr5" },
+    { "id": "w12-t02-q3", "type": "single", "tag": "diagnose", "q": "A team cannot reach callers through the standard Teams card for their voice agent. What is the most likely cause?", "options": ["The standard text-agent card is not shown in the voice-based Channels layout", "Voice agents need a hosted container first", "Preview agents cannot use Entra identities", "Voice Live only supports WebRTC"], "answer": 0, "explain": "The docs say the standard card is not shown and telephony uses Teams Phone extensibility or Twilio. Voice agents do get identities, and a container is not required.", "ref": "r1" }
+  ],
+  "flashcards": [
+    { "front": "Two voice architectures in Foundry voice agents?", "back": "Native speech-to-speech (low latency) and cascaded (recognition, text model, synthesis: more choice and control, more latency)." },
+    { "front": "Which phone paths do voice-based prompt agents support?", "back": "Teams Phone extensibility and Twilio. Direct SIP is not offered. All of this is preview as of 2026-10-13." }
+  ],
+  "related": ["w12-t01", "w12-t04", "w12-t19", "w13-t07", "w12-l1"],
+  "refs": ["r1", "r2", "r3", "tr5", "tr6"]
+}

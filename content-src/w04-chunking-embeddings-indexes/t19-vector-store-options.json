@@ -1,0 +1,121 @@
+{
+  "id": "w04-t19",
+  "order": 19,
+  "group": "Indexes",
+  "title": "Vector store options compared",
+  "minutes": 10,
+  "difficulty": "core",
+  "summary": "Azure AI Search, Cosmos DB for NoSQL, PostgreSQL, Redis, Qdrant, Pinecone, Elasticsearch and OpenSearch can all hold vectors. The right one depends on where the data lives, filters and hybrid search, scale and who runs it.",
+  "useIf": "You are picking where vectors live, or checking whether the store you have still fits its scale and filters.",
+  "avoidIf": "You would choose by a vendor benchmark. Compare on your own vectors, filters and operating model.",
+  "explain": [
+    { "t": "p", "md": "Most stores offer the same core idea (an ANN index with filters) and differ in the surrounding system. Decide with these dials: **vector count**, **memory budget**, **write and delete rate**, **filter selectivity**, whether you need **keyword (BM25) and hybrid search in the same engine**, **data gravity** (vectors beside transactional data), **tenancy model** and **who operates it**." },
+    { "t": "diagram", "id": "w04-t19-d1", "title": "Where to start", "alt": "If the data already lives in PostgreSQL use pgvector or pg_diskann. If it lives in Cosmos DB for NoSQL use its vector index. If you need documents, hybrid search, filters and managed ingestion use Azure AI Search. If scale or self-hosting control dominates consider a specialist store.", "src": "flowchart TD\n  A{\"Where does the data live?\"} -->|\"PostgreSQL\"| P[\"pgvector or pg_diskann\"]\n  A -->|\"Cosmos DB for NoSQL\"| C[\"Cosmos DB vector index\"]\n  A -->|\"Files and documents\"| S[\"Azure AI Search\"]\n  A -->|\"Scale or self-hosting first\"| Q[\"Qdrant, Pinecone, Elastic, OpenSearch\"]" },
+    { "t": "table", "caption": "Facts per store (checked 2026-10-13, defaults change, so confirm for your version)", "head": ["Store", "Index types", "Limits and defaults", "Notable"], "rows": [
+      ["Azure AI Search", "`hnsw`, `exhaustiveKnn`", "Dimensions up to 4,096 [[tr45]], HNSW `m` 4, `efConstruction` 400, `efSearch` 500 [[tr10]]", "Scalar and binary quantization, truncation, `preFilter`, integrated vectorization [[tr3]] [[tr6]] [[tr8]]"],
+      ["Cosmos DB for NoSQL", "`flat`, `quantizedFlat`, `diskANN`", "`flat` up to 505 dims, others up to 4,096, approximate needs 1,000+ vectors, policy cannot be edited [[tr11]]", "Vectors sit beside operational data. `searchListSizeMultiplier` trades RU and latency for recall"],
+      ["PostgreSQL: pgvector, Azure `pg_diskann`", "HNSW, IVFFlat, DiskANN", "pgvector: `vector` up to 2,000 dims, `halfvec` 4,000, binary 64,000 [[tr12]]. `pg_diskann`: up to 16,000 dims from 0.6 [[tr33]]", "SQL, joins, transactions. pgvector filters apply after the scan until iterative scans. `pg_diskann` product quantization is preview"],
+      ["Redis", "FLAT, HNSW, SVS-VAMANA", "FLAT for under 1M vectors or exact, HNSW above [[tr38]]", "In-memory speed, tunable `M` and `EF_CONSTRUCTION`"],
+      ["Qdrant", "HNSW", "`m` 16, `ef_construct` 100, `full_scan_threshold` 10,000 KB [[tr35]]", "Create payload indexes before ingest for filtered search"],
+      ["Pinecone", "Managed index", "Namespaces 100 (Starter) to 1,000,000 (Enterprise), `$in` up to 10,000 values [[tr39]]", "Namespace per tenant is the documented multitenancy pattern"],
+      ["Elasticsearch and OpenSearch", "`int8_hnsw`, `bbq_hnsw`, `bbq_disk` (Elastic). `faiss` HNSW (OpenSearch)", "Elastic defaults differ by version and raw floats are kept for rescoring [[tr36]]. OpenSearch modes `in_memory` or `on_disk` with `compression_level` [[tr37]]", "Search engines with vectors, so text and vector search share one estate"]
+    ] },
+    { "t": "p", "md": "**Data gravity** often decides it. If the source of truth is PostgreSQL, pgvector avoids a second system, a sync pipeline and a consistency gap. If documents flow in from storage and users need keyword plus vector search with filters, a search service with indexers and skillsets removes work you would otherwise build. When vector counts reach hundreds of millions, memory-frugal indexes (DiskANN, quantization) and operating cost take over. Whatever you choose, confirm the hard limits first (dimension caps, minimum vector counts, whether the index policy can be changed) because they decide what is possible before performance does." }
+  ],
+  "whereToUse": [
+    "Choosing the store for a new RAG or semantic search feature",
+    "Reviewing the store when vector count, filters or tenancy change",
+    "Deciding whether vectors belong beside transactional data or in a search service",
+    "Comparing managed against self-hosted operation for a stated team size"
+  ],
+  "whenToUse": {
+    "use": ["AI Search for document corpora needing hybrid search, filters and managed ingestion", "pgvector or Cosmos DB when vectors sit beside the operational data", "A specialist or search-engine store when scale, tenancy or self-hosting dominate"],
+    "avoid": ["Adding a second system when the existing database meets recall and latency needs", "Self-hosting a store without capacity to operate it", "Comparing stores on defaults, since parameters are not equivalent"],
+    "flips": ["Vector count grows 100 times: re-check memory, DiskANN and quantization support", "Filters become selective: check how the engine filters (pre, post, iterative)", "Hybrid keyword search becomes essential: prefer an engine that offers it natively"]
+  },
+  "alternatives": {
+    "title": "Store families compared",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Azure AI Search", "Document corpora, hybrid, filters, indexers, quantization", "Data already in an operational database you want to keep as one", "Memory-based quota, preview features around ACLs"],
+      ["Cosmos DB for NoSQL", "Data and vectors in one container, partitioned tenancy", "Vector policy must change often (not editable), tiny sets", "RU cost, 1,000 vector minimum for approximate indexes"],
+      ["PostgreSQL (pgvector, pg_diskann)", "Relational data, joins, transactions, SQL skills", "Hundreds of millions of vectors, selective filters without tuning", "Index tuning, filter strategy, you own scaling"],
+      ["Redis", "Low-latency in-memory search, caching nearby", "Very large sets on a tight memory budget", "Memory cost"],
+      ["Qdrant or Pinecone", "Vector-first workloads, tenancy via payload or namespaces", "You need relational joins or a single platform", "Another system to run or buy, sync pipeline"],
+      ["Elasticsearch or OpenSearch", "Existing search estate, text plus vectors", "Pure vector workload with no search engine need", "Version-dependent defaults, cluster operations"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A Cosmos DB vector policy change is rejected", "cause": "Vector policies cannot be edited in place", "fix": "Design dimensions and index type upfront, or drop and re-add the policy and re-index" },
+    { "symptom": "Behaviour differs from the documentation you read", "cause": "Defaults change by version, for example Elasticsearch index types for floats", "fix": "Check the version you run and pin it" },
+    { "symptom": "The team cannot keep a second vector system in sync with the database", "cause": "A separate store was added without a change pipeline or consistency plan", "fix": "Use the database's own vector support, or build change capture and reconciliation first" }
+  ],
+  "scenarios": [
+    {
+      "id": "w04-t19-s1",
+      "title": "Enterprise documents, small platform team",
+      "situation": "An Azure-based company indexes 20 million chunks from files and wikis. Users need keyword plus vector search with filters and per-group access. The platform team is small.",
+      "constraints": ["20 million chunks", "Hybrid search with filters", "Files as the source", "Small team, managed services preferred"],
+      "unknowns": ["How fast must changes appear?", "How are permissions modelled?"],
+      "question": "Which store do you choose?",
+      "options": [
+        { "name": "Azure AI Search with indexers, skillsets and pre-filtering", "verdict": "best", "why": "It gives keyword and vector search, filters, quantization and managed ingestion in one service, which fits a small team.", "tradeoff": "A memory-based quota and some access-control features still in preview." },
+        { "name": "PostgreSQL with pgvector", "verdict": "good", "why": "Familiar SQL and a single database.", "tradeoff": "You build ingestion, keyword ranking and filter tuning yourself." },
+        { "name": "Self-hosted Qdrant", "verdict": "poor", "why": "A small team would run and patch another system and build ingestion around it.", "tradeoff": "Right when control, on-premises hosting or a vector-first workload justify the operations." }
+      ],
+      "flips": [
+        { "if": "The data already lives in PostgreSQL and joins are essential", "then": "pgvector becomes best." },
+        { "if": "Self-hosting is mandated", "then": "Evaluate Qdrant, OpenSearch or Elasticsearch with an operations plan." }
+      ],
+      "takeaway": "A managed search service removes pipeline work from a small team."
+    },
+    {
+      "id": "w04-t19-s2",
+      "title": "Transactional app already on PostgreSQL",
+      "situation": "A product catalogue of 2 million rows lives in PostgreSQL with row-level security and many joins. The team adds semantic search over descriptions and wants one source of truth.",
+      "constraints": ["2 million rows", "Row-level security and joins", "Team knows PostgreSQL", "One source of truth wanted"],
+      "unknowns": ["How selective are the common filters?", "What query latency is needed?"],
+      "question": "Where do the vectors go?",
+      "options": [
+        { "name": "pgvector in the same database with HNSW and iterative scans", "verdict": "best", "why": "Vectors sit beside the rows, security and joins apply as usual and there is no sync pipeline.", "tradeoff": "You tune filters and own scaling." },
+        { "name": "Sync the rows into AI Search", "verdict": "good", "why": "Strong hybrid search and quantization.", "tradeoff": "A second system, sync lag and permissions that must be mirrored." },
+        { "name": "Move to a dedicated vector database and rebuild joins in application code", "verdict": "poor", "why": "Gives up relational features the app relies on, for scale it does not need.", "tradeoff": "Right if vectors outgrow PostgreSQL by orders of magnitude." }
+      ],
+      "flips": [
+        { "if": "Vectors grow to hundreds of millions", "then": "Evaluate `pg_diskann` or a dedicated store." },
+        { "if": "Hybrid keyword ranking becomes the main need", "then": "A search service becomes attractive." }
+      ],
+      "takeaway": "Keep vectors beside the data when scale allows."
+    },
+    {
+      "id": "w04-t19-s3",
+      "title": "Operational documents in Cosmos DB",
+      "situation": "A multi-tenant application stores JSON documents in Cosmos DB for NoSQL, partitioned by tenant. It adds semantic search and wants vectors with the documents.",
+      "constraints": ["Cosmos DB is the source of truth", "Partition key per tenant", "Several million documents per partition set", "Embedding dimension 1,536"],
+      "unknowns": ["How many vectors per tenant?", "Does the embedding model change soon?"],
+      "question": "How do you add vector search?",
+      "options": [
+        { "name": "Add a vector policy with a `diskANN` index on the container, decided upfront", "verdict": "best", "why": "Vectors stay with the documents, 1,536 dimensions are within the 4,096 limit and tenancy follows the partition key.", "tradeoff": "The policy cannot be edited later and approximate indexes need at least 1,000 vectors." },
+        { "name": "Copy documents into AI Search through an indexer", "verdict": "good", "why": "Rich search features and managed ingestion.", "tradeoff": "A second copy, sync lag and costs for both services." },
+        { "name": "Use a `flat` index", "verdict": "poor", "why": "It supports only up to 505 dimensions, so 1,536-dimension vectors do not fit.", "tradeoff": "Right for small sets of low-dimension vectors where exact search is wanted." }
+      ],
+      "flips": [
+        { "if": "The embedding model or dimensions may change", "then": "Plan for dropping and re-adding the vector policy with a rebuild." },
+        { "if": "Tenants are tiny", "then": "Check the 1,000 vector minimum per approximate index." }
+      ],
+      "takeaway": "Know the store's hard limits before committing to its index type."
+    }
+  ],
+  "quiz": [
+    { "id": "w04-t19-q1", "type": "match", "tag": "concept", "q": "Match each store to a documented fact.", "pairs": [ { "l": "Cosmos DB for NoSQL", "r": "`flat` index supports up to 505 dimensions" }, { "l": "pgvector", "r": "`vector` type indexes up to 2,000 dimensions" }, { "l": "Pinecone", "r": "Namespaces per index range from 100 to 1,000,000 by plan" }, { "l": "Redis", "r": "FLAT for under 1M vectors, HNSW above" } ], "explain": "Each limit comes from the store's documentation. The numbers differ, so a design that fits one store may need change in another." },
+    { "id": "w04-t19-q2", "type": "single", "tag": "tradeoff", "q": "A team with a Postgres source of truth, 2 million rows and row-level security needs semantic search. What is the usual best first move?", "options": ["Migrate to a dedicated vector database", "Add pgvector to the same database", "Build a custom index in application memory", "Switch to a larger embedding model only"], "answer": 1, "explain": "Data gravity and a small corpus favour keeping vectors beside the rows. A dedicated store adds sync and loses relational features, a custom index is unnecessary work, and a larger model does not address where vectors live." }
+  ],
+  "flashcards": [
+    { "front": "What dials decide the vector store?", "back": "Vector count, memory budget, write and delete rate, filter selectivity, hybrid search needs, data gravity, tenancy and who operates it." },
+    { "front": "What are Cosmos DB for NoSQL vector index limits?", "back": "`flat` up to 505 dimensions, `quantizedFlat` and `diskANN` up to 4,096, with at least 1,000 vectors for approximate indexes. Policies cannot be edited in place." },
+    { "front": "What are pgvector dimension limits?", "back": "`vector` up to 2,000, `halfvec` up to 4,000 and binary quantization up to 64,000. `pg_diskann` indexes up to 16,000 from version 0.6." },
+    { "front": "Why can data gravity beat feature lists?", "back": "Vectors beside the source rows avoid a second system, a sync pipeline and permission mirroring." }
+  ],
+  "related": ["w04-t16", "w04-t17", "w04-t18", "w03-t01", "w05-t04", "w07-t01", "w04-l4", "w04-l5"],
+  "refs": ["tr3", "tr6", "tr8", "tr10", "tr11", "tr12", "tr33", "tr35", "tr36", "tr37", "tr38", "tr39", "tr45"]
+}

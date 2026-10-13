@@ -1,0 +1,145 @@
+{
+  "id": "w09-t01",
+  "order": 1,
+  "group": "Concepts",
+  "title": "Why A2A and opaque agents",
+  "minutes": 7,
+  "difficulty": "core",
+  "summary": "A2A is an open protocol that lets independent agents, built on different stacks and owned by different teams, discover each other, exchange tasks and return results without exposing prompts, tools or memory.",
+  "useIf": "Another team, vendor or framework owns the agent you need and you can only observe its inputs and outputs.",
+  "avoidIf": "You own both agents in one process and one team, where an in-process tool call is simpler and faster.",
+  "explain": [
+    { "t": "p", "md": "Without a shared protocol, every pair of agents needs a custom integration. The usual workaround is to wrap the other agent as a tool, the way MCP exposes tools. A2A's own documentation calls that inefficient: agents are built to negotiate, so squeezing them into a function signature limits what they can do. A2A exposes agents **as they are**, with no wrapping [[tr1]]." },
+    { "t": "p", "md": "The central idea is **opaque execution**. The caller sees the callee's Agent Card (skills, interfaces, security) and the messages, tasks and artifacts they exchange. It never sees prompts, plans, tool implementations or memory [[tr2]] [[r1]]. Opacity is a constraint and a benefit: the owner can swap models, tools or internals without breaking callers, but the caller cannot inspect or debug the inside, so contracts (declared skills, test prompts, service levels) carry the weight." },
+    { "t": "diagram", "id": "w09-t01-d1", "title": "What the caller can and cannot see", "alt": "A user talks to a client agent. The client agent talks to a remote agent over A2A. The remote agent's prompts, tools and memory are hidden from the caller.", "src": "flowchart LR\n  U[User] --> C[Client agent]\n  C -->|A2A over HTTP| R[Remote agent]\n  R -.->|hidden from caller| H[Prompts, tools, memory]" },
+    { "t": "p", "md": "A2A was created by Google in April 2025. The Linux Foundation launched the A2A project on 2025-06-23, citing more than 100 supporting companies [[r9]]. Version 1.0.0 was released on 2026-03-12 and the patch 1.0.1 on 2026-05-28 [[r4]]. The specification page header still reads 1.0.0 as the latest released version (checked 2026-10-13) [[r1]]." },
+    { "t": "callout", "kind": "why", "title": "Opacity cuts both ways", "md": "You gain independent release cycles and a clean trust boundary. You lose the ability to read the callee's reasoning, so plan debugging around task ids, context ids and trace context on both sides [[r8]]." }
+  ],
+  "whereToUse": [
+    "A partner or vendor agent you call over HTTPS without access to its code or model",
+    "A platform team's specialist agent (for example a compliance reviewer) consumed by many product teams",
+    "Agents written in different languages or frameworks that release on different schedules",
+    "Specialist work that runs long and needs a task handle, progress and artifacts",
+    "Cross-tenant or cross-cloud agent calls that already sit behind an identity boundary"
+  ],
+  "whenToUse": {
+    "use": [
+      "You cross a service, team or organization boundary",
+      "You need a task lifecycle (long-running, input-required, artifacts) rather than one return value",
+      "The callee must stay free to change its internals without a coordinated release"
+    ],
+    "avoid": [
+      "Both agents live in one process and belong to one team",
+      "The callee is a stateless function with a fixed schema, where a plain tool or API is simpler",
+      "You must see or control the callee's tool choices and reasoning, which opacity prevents"
+    ],
+    "flips": [
+      "The callee must be inspectable: pull it into your process or expose it as an MCP server you control",
+      "The per-hop latency budget is under a second: co-locate the agents and call in process",
+      "Several partners already speak A2A: adopt the standard even for simple skills instead of one more bespoke API"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["A2A peer (this topic)", "Cross-boundary, opaque, long-running or multi-turn work", "Same process and team", "Network hop, versioning, auth and retry work"],
+      ["Agent as in-process tool", "One process and one team", "Independent release cycles or a trust boundary", "Tight coupling, shared deployment"],
+      ["Agent wrapped as an MCP tool", "The host only speaks MCP and calls are short", "Long, multi-turn work with artifacts (no task lifecycle unless the Tasks extension is used)", "Loses context grouping and artifact semantics"],
+      ["Bespoke REST API", "One partner and a fixed schema", "Many partners or many agents", "A custom client and contract per partner"]
+    ]
+  },
+  "pitfalls": [
+    {
+      "symptom": "A wrong answer is traced to the remote agent's front door and the trail ends",
+      "cause": "Opaque execution hides internals by design, and no trace context was shared",
+      "fix": "Log `taskId`, `contextId` and trace context on both sides, agree on test prompts per skill, and ask the owner for traces keyed by `taskId` [[r8]]"
+    },
+    {
+      "symptom": "Some clients fail to parse replies from a newer agent",
+      "cause": "A2A v1.0 changed enum casing, removed the `kind` discriminator and renamed operations, and v0.3 clients still exist [[r2]]",
+      "fix": "Send the `A2A-Version` header, read `protocolVersion` per interface in the card, and plan a dual-version period"
+    },
+    {
+      "symptom": "Latency doubles after two agents in one repo are split into services",
+      "cause": "A2A was adopted where no boundary exists, so every call pays a network hop [[r12]]",
+      "fix": "Call co-owned agents as in-process tools and keep A2A for real boundaries"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "w09-t01-s1",
+      "title": "A supplier's agent across a company boundary",
+      "situation": "A retailer's assistant needs quotes from a supplier's agent. The supplier uses another stack, will not share prompts, and jobs take from 30 seconds to a few hours. Several suppliers will follow.",
+      "constraints": ["Different organization and opaque callee", "Long-running jobs with possible clarifying questions", "More partners expected over time"],
+      "unknowns": ["Do suppliers already publish A2A Agent Cards?", "How does each supplier authenticate callers?", "Do jobs ever need human approval mid-way?"],
+      "question": "How do you integrate the supplier agents?",
+      "options": [
+        { "name": "A2A peer calls", "verdict": "best", "why": "The boundary, opacity and long-running work are what A2A models: Agent Card discovery, tasks, artifacts and input-required turns.", "tradeoff": "You own version negotiation, auth per supplier and distributed-call failure handling." },
+        { "name": "Bespoke REST API per supplier", "verdict": "good", "why": "Works for one partner with a fixed schema and gives full control of the contract.", "tradeoff": "Every new supplier repeats the client, auth and polling design." },
+        { "name": "Wrap each supplier as an MCP tool", "verdict": "good", "why": "Fine if the host only speaks MCP and the Tasks extension covers long jobs.", "tradeoff": "You give up Agent Card discovery, context grouping and A2A's artifact model, and tie partners to MCP." },
+        { "name": "Import the supplier's logic into your process", "verdict": "poor", "why": "The supplier will not share prompts or code, and a copy would drift from their live behaviour.", "tradeoff": "Right only when you own both sides and want to merge them." }
+      ],
+      "flips": [
+        { "if": "Only one supplier, fixed schema, jobs under 2 seconds", "then": "A plain REST call is simpler than A2A." },
+        { "if": "The supplier already publishes an MCP server and jobs are short", "then": "Use the MCP tool and skip A2A." }
+      ],
+      "takeaway": "Cross-organization, opaque and long-running work is the A2A sweet spot."
+    },
+    {
+      "id": "w09-t01-s2",
+      "title": "Two agents in one service with a tight latency budget",
+      "situation": "A planner agent calls a formatter agent maintained by the same team in the same repository. The user-facing budget is 400 ms and both agents deploy together.",
+      "constraints": ["Same team, same process, same release", "Tight latency budget", "Low risk, internal data only"],
+      "unknowns": ["Does the formatter ever need to scale or release independently?", "Is the formatter reused by other teams?"],
+      "question": "How should the planner call the formatter?",
+      "options": [
+        { "name": "In-process agent as a tool", "verdict": "best", "why": "No network hop, no protocol, one deployment, and the framework handles the call.", "tradeoff": "Tight coupling: a change to the formatter ships with the planner." },
+        { "name": "A2A over loopback HTTP", "verdict": "poor", "why": "It adds serialization, a hop and auth work with no boundary to justify them.", "tradeoff": "Right once the formatter moves to another team or service." },
+        { "name": "Merge both into one agent", "verdict": "good", "why": "Removes the hop entirely and simplifies tracing.", "tradeoff": "A larger prompt and tool surface, and a harder-to-test single agent." }
+      ],
+      "flips": [
+        { "if": "Another team starts consuming the formatter", "then": "Expose it over A2A so it can release independently." },
+        { "if": "The formatter needs its own scaling or GPU pool", "then": "Split it into a service and use A2A or a plain API." }
+      ],
+      "takeaway": "Without a boundary, the simplest call wins."
+    }
+  ],
+  "quiz": [
+    {
+      "id": "w09-t01-q1",
+      "type": "single",
+      "tag": "concept",
+      "q": "What does opaque execution mean for an A2A client?",
+      "options": [
+        "The client must reimplement the remote agent's skills locally",
+        "The client sees the remote agent's tool calls but not its final answers",
+        "The client sees the Agent Card and the exchanged messages, tasks and artifacts, but not the remote agent's prompts, tools or memory",
+        "The remote agent encrypts every message so only the model can read it"
+      ],
+      "answer": 2,
+      "explain": "Opaque execution means collaboration through declared capabilities and exchanged content only. Tool calls stay hidden, opacity is about visibility and not encryption, and nothing is reimplemented locally."
+    },
+    {
+      "id": "w09-t01-q2",
+      "type": "multi",
+      "tag": "tradeoff",
+      "q": "Which situations favour A2A over calling the other agent as an in-process tool? Select all that apply.",
+      "options": [
+        "The other agent belongs to a different organization",
+        "The other agent must release on its own schedule",
+        "The work needs a task handle, progress and artifacts",
+        "You want to read the other agent's prompts while debugging"
+      ],
+      "answers": [0, 1, 2],
+      "explain": "Boundary, independent release and a task lifecycle are the reasons to use A2A. Reading the other agent's prompts is the opposite of opacity, so that need points to in-process composition or a system you control."
+    }
+  ],
+  "flashcards": [
+    { "front": "What problem does A2A solve that wrapping an agent as a tool does not?", "back": "It exposes agents as they are, with tasks, context, artifacts and discovery, instead of reducing them to a function signature." },
+    { "front": "What does a caller see of a remote A2A agent?", "back": "The Agent Card plus the messages, tasks and artifacts exchanged. Prompts, tools and memory stay hidden." },
+    { "front": "When was A2A v1.0.0 released, and who governs the project?", "back": "2026-03-12. The Linux Foundation launched the A2A project on 2025-06-23." }
+  ],
+  "related": ["w09-t02", "w09-t03", "w09-l01", "w08-t01", "w11-t25", "w12-t11"],
+  "refs": ["r1", "r2", "r4", "r8", "r9", "r12", "tr1", "tr2"]
+}

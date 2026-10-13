@@ -1,0 +1,118 @@
+{
+  "id": "w17-t09",
+  "order": 9,
+  "group": "Operating governance",
+  "title": "AI incident response",
+  "minutes": 9,
+  "difficulty": "advanced",
+  "summary": "AI incidents are probabilistic, context-dependent and hard to root-cause. Extend classic incident response with AI harm categories, domain-weighted severity, AI-specific telemetry, staged remediation and a reporting plan, and rehearse it before you need it.",
+  "useIf": "An AI system or agent can cause harm, leak data or act wrongly, and you must contain it and, for some systems, report it.",
+  "avoidIf": "You assume your classic security playbook covers it: taxonomy, severity, root cause and telemetry all differ.",
+  "explain": [
+    { "t": "p", "md": "Microsoft's guidance names four reasons AI incidents are different. **Taxonomy gaps**: harms such as dangerous instructions or targeted content do not fit confidentiality, integrity and availability buckets. **Context-dependent severity**: wrong medical advice and wrong trivia are not the same incident. **Ambiguous root cause**: behaviour emerges from training data, fine-tuning, retrieval inputs and user context. **Telemetry gaps**: standard monitoring does not see output anomalies or classifier confidence shifts, and privacy-by-design defaults narrow the forensic record [[r21]]. A gap in a safety classifier can produce thousands of harmful outputs before a reviewer sees the first." },
+    { "t": "p", "md": "The prescribed **staged remediation** has three stages. **Stage 1**, the first hour: contain by blocking known-bad inputs, activating content filters and restricting access. **Stage 2**, the first 24 hours: expand mitigations to related variants using automated pattern analysis. **Stage 3**, days to weeks: fix at source with classifier updates, model adjustments and systemic changes. Allow and block lists are tactical, not durable, and each stage needs a **watch period**, because non-deterministic behaviour cannot be verified by one test pass [[r21]]. For **high-risk systems**, providers report serious incidents within 15 days of awareness, within 2 days for a widespread infringement or an Article 3(49)(b) incident, and within 10 days after a death, and an incomplete initial report is allowed. The provider must not alter the system in a way that affects later evaluation of causes before informing the authorities [[r7]]. Deployers who identify a serious incident inform the provider first, then the importer or distributor and authorities, and suspend use if the system presents a risk [[tr1]]." },
+    { "t": "flow", "title": "Staged remediation", "direction": "h", "steps": [
+      { "title": "Detect", "md": "Output anomalies, classifier shifts, report spikes, Defender alerts [[r15]].", "tag": "signal" },
+      { "title": "Contain", "md": "First hour. Disable the identity or tool, block bad inputs, tighten filters, switch to read-only.", "tag": "1 hour" },
+      { "title": "Expand", "md": "First 24 hours. Cover related variants, roll back the prompt or model.", "tag": "24 hours" },
+      { "title": "Fix at source", "md": "Days to weeks. Classifier, model and design changes. Keep watch periods.", "tag": "days" },
+      { "title": "Learn", "md": "Update taxonomy, tests, runbook and records.", "tag": "after" }
+    ] }
+  ],
+  "whereToUse": [
+    "Runbooks for assistants and agents with external effects",
+    "On-call rotations that include AI quality and safety signals",
+    "Regulated deployments with serious-incident reporting duties",
+    "Tabletop exercises with security, legal, communications and support",
+    "Post-incident reviews that feed evals and guardrails"
+  ],
+  "whenToUse": {
+    "use": ["Any production AI system with user-facing or action-taking behaviour", "Before launch: define roles, kill switches and reporting paths", "After each incident: convert findings into tests and monitors"],
+    "avoid": ["Treating a blocklist entry as the fix", "Declaring done after one successful test", "Altering a high-risk system before the authorities have been informed where Article 73(6) applies"],
+    "flips": ["A death or widespread infringement is involved: the 10-day or 2-day clocks apply", "The incident is an agent action: suspend its identity first, then investigate", "Logs hold no content: rely on ids, versions and decisions, and plan bounded content capture next time"]
+  },
+  "alternatives": {
+    "title": "Incident handling approaches compared",
+    "head": ["Approach", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Extend the security playbook with AI categories and stages", "You have an existing security IR team", "No one owns AI behaviour", "Needs new taxonomy and telemetry"],
+      ["Separate AI safety response team", "Many high-impact systems", "Small organisation", "Coordination overhead"],
+      ["Ad hoc response", "A prototype", "Any production use", "Slow containment, inconsistent severity"],
+      ["Vendor-led response only", "Provider's model is at fault", "The issue is your prompt, data or tools", "Limited visibility and control"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "The system was rebuilt and the root cause cannot be shown", "cause": "The team altered or deleted the system before preserving evidence or informing authorities", "fix": "Snapshot logs, versions and configuration first; follow Article 73(6) for high-risk systems [[r7]]" },
+    { "symptom": "Containment took a day", "cause": "No kill switch or the identity could not be disabled quickly", "fix": "Build per-tool and per-identity disable switches and test them" },
+    { "symptom": "The same harm returns after a fix", "cause": "A blocklist entry was treated as durable and no watch period followed", "fix": "Use allow and block lists as triage, fix at source, and watch after each stage [[r21]]" },
+    { "symptom": "Responders burn out after a safety incident", "cause": "Exposure to harmful content with no rotation or support", "fix": "Plan rotation, breaks and peer support in advance; responders meet harmful content in ways malware analysts do not [[r21]]" }
+  ],
+  "scenarios": [
+    {
+      "id": "w17-t09-s1",
+      "title": "An agent emails the wrong recipients",
+      "situation": "A support agent was steered by a poisoned document and sent account summaries to external addresses. The pattern is spotted after 40 minutes.",
+      "constraints": ["Personal data is involved", "The agent has its own identity", "Logs hold ids and decisions but not content"],
+      "unknowns": ["How many emails left?", "Can the sponsor disable the identity immediately?", "Which other agents read the same document?"],
+      "question": "What do you do in the first hour?",
+      "options": [
+        { "name": "Disable the agent's identity or send tool, quarantine the document, preserve logs and versions, notify the owners", "verdict": "best", "why": "It stops the leak, removes the vector and keeps evidence, then expands to related agents.", "tradeoff": "The agent is offline until review." },
+        { "name": "Patch the prompt and keep the agent running", "verdict": "poor", "why": "A prompt edit is probabilistic and the poisoned document remains.", "tradeoff": "Right for a stage-3 fix, after containment." },
+        { "name": "Wait for the full root cause before acting", "verdict": "poor", "why": "Containment comes before investigation, and the leak continues meanwhile.", "tradeoff": "Waiting is right only when containment would destroy evidence you cannot capture." }
+      ],
+      "flips": [
+        { "if": "Several agents read the same corpus", "then": "In stage 2, quarantine it for all of them." },
+        { "if": "Personal data left the organisation", "then": "Start the notification process with legal and the data protection officer." }
+      ],
+      "takeaway": "Contain first, then investigate."
+    },
+    {
+      "id": "w17-t09-s2",
+      "title": "Harmful outputs after a model update",
+      "situation": "After a provider model update, user reports of harmful replies triple within a day. No code changed on your side.",
+      "constraints": ["Consumer-facing assistant", "Classifier confidence shifted", "Providers may take days to respond"],
+      "unknowns": ["Can you pin or roll back the model version?", "Which prompts trigger it?"],
+      "question": "How do you respond?",
+      "options": [
+        { "name": "Roll back or pin the previous version, tighten filters, then expand to related patterns and watch before closing", "verdict": "best", "why": "Containment is quick and reversible, and the staged plan covers variants and verification.", "tradeoff": "You may lose features of the new model until fixed." },
+        { "name": "Add a blocklist of offending prompts", "verdict": "good", "why": "Fast triage.", "tradeoff": "Tactical only: variants slip through." },
+        { "name": "Wait for the provider to fix it", "verdict": "poor", "why": "Your users are exposed, and the issue may involve your prompt and context.", "tradeoff": "Right only if you cannot influence the model or can switch off the feature." }
+      ],
+      "flips": [
+        { "if": "No pinning is possible", "then": "Switch to a fallback model or disable the feature." },
+        { "if": "Reports spike in one language or group", "then": "Weight severity by affected population." }
+      ],
+      "takeaway": "Roll back to a known-good version, then fix at source."
+    },
+    {
+      "id": "w17-t09-s3",
+      "title": "A suspected serious incident in a high-risk system",
+      "situation": "A deployer of a high-risk system learns that a malfunction may have contributed to a person's death. The provider is reachable.",
+      "constraints": ["EU high-risk system", "Possible death", "Engineers want to restart and patch immediately"],
+      "unknowns": ["When did the provider or deployer become aware?", "Is a causal link suspected?"],
+      "question": "What are the first steps?",
+      "options": [
+        { "name": "Inform the provider immediately, suspend use if a risk exists, preserve the system state, and let the provider report within the 10-day limit", "verdict": "best", "why": "Deployers inform the provider first and suspend use on risk, and a death sets a 10-day reporting limit. Preserving state avoids altering evidence before authorities are informed.", "tradeoff": "Downtime and a slower fix." },
+        { "name": "Patch and restart first, report later", "verdict": "poor", "why": "Altering the system before informing authorities can affect evaluation of causes.", "tradeoff": "Right only when a safety hazard requires an immediate stop and evidence is captured." },
+        { "name": "Wait 15 days for the standard report window", "verdict": "poor", "why": "A death shortens the limit to 10 days, and reports should be immediate once a causal link is suspected.", "tradeoff": "15 days is the general limit for other serious incidents." }
+      ],
+      "flips": [
+        { "if": "The provider cannot be reached", "then": "Article 73 applies to the deployer as if it were the provider." },
+        { "if": "It is a widespread infringement", "then": "The two-day limit applies." }
+      ],
+      "takeaway": "Know the clock before you need it: 15, 2 or 10 days."
+    }
+  ],
+  "quiz": [
+    { "id": "w17-t09-q1", "type": "order", "tag": "order", "q": "Put the staged remediation in order.", "items": ["Immediate containment in the first hour", "Expand and strengthen in the first 24 hours", "Fix at source over days or weeks", "Watch period and closure"], "explain": "Microsoft's guidance prescribes three stages with watch periods after each, because one test pass cannot verify non-deterministic behaviour [[r21]].", "difficulty": 1 },
+    { "id": "w17-t09-q2", "type": "match", "tag": "concept", "q": "Match each Article 73 situation to the reporting limit.", "pairs": [ { "l": "Serious incident, standard", "r": "No later than 15 days" }, { "l": "Widespread infringement", "r": "No later than 2 days" }, { "l": "Death of a person", "r": "No later than 10 days" } ], "explain": "Article 73 sets 15 days after awareness as the general limit, 2 days for a widespread infringement or an Article 3(49)(b) incident, and 10 days for a death. An incomplete initial report is allowed [[r7]].", "difficulty": 2 },
+    { "id": "w17-t09-q3", "type": "single", "tag": "diagnose", "q": "A blocklist stopped the harmful outputs, then similar ones returned a week later. What was missed?", "options": ["A bigger blocklist is always sufficient", "Fixing at source and a watch period after each stage", "Disabling logging"], "answer": 1, "explain": "Allow and block lists are tactical triage. Stage 3 fixes the classifier, model or design, and watch periods verify the fix [[r21]]. A bigger list leaves variants, and removing logs hurts.", "difficulty": 2 }
+  ],
+  "flashcards": [
+    { "front": "Why do AI incidents differ from classic security incidents?", "back": "Taxonomy gaps, context-dependent severity, ambiguous root cause and telemetry gaps. Outputs are probabilistic and one gap can cause thousands of harms." },
+    { "front": "What are the three remediation stages?", "back": "Contain in the first hour, expand in the first 24 hours, fix at source over days or weeks, with a watch period after each." },
+    { "front": "What are the Article 73 reporting limits?", "back": "15 days after awareness, 2 days for widespread infringement or Article 3(49)(b), 10 days after a death. An incomplete initial report is allowed." }
+  ],
+  "related": ["w17-t03", "w17-t04", "w17-t07", "w17-l5", "w16-t10", "w14-t13"],
+  "refs": ["r7", "r15", "r21", "tr1"]
+}

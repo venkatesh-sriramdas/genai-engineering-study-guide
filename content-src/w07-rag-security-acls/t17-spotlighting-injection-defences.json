@@ -1,0 +1,126 @@
+{
+  "id": "w07-t17",
+  "order": 17,
+  "group": "Operations and defences",
+  "title": "Spotlighting and prompt-injection defences",
+  "minutes": 9,
+  "difficulty": "advanced",
+  "summary": "Prompt-injection defences come in two kinds: probabilistic ones (spotlighting, Prompt Shields, hardened prompts) that lower attack success, and architectural ones that remove what an attack could use. You need both, and you need to know each one's limit.",
+  "useIf": "Untrusted text (documents, web pages, tool results) reaches the model and you must pick and layer defences.",
+  "avoidIf": "You expect one guard to solve injection. None does.",
+  "explain": [
+    { "t": "p", "md": "**Spotlighting** marks untrusted text so the model can tell it from instructions. Microsoft's paper names three modes: *delimiting* (randomized delimiters around the text), *datamarking* (a special token woven through it) and *encoding* (for example base64 or ROT13), and the system prompt is changed to say not to follow instructions in the marked content [[tr9]]. In the authors' experiments attack success on GPT-family models fell from above 50% to below 2% with minimal task impact. It remains a probabilistic technique [[r8]]." },
+    { "t": "p", "md": "**Prompt Shields** in Azure AI Content Safety scans for user prompt attacks and document attacks. The standalone API analyzes a `userPrompt` and up to five `documents` and reports `attackDetected`. In Foundry, document attacks are scanned at user input and tool response. Its Spotlighting option is **preview** as of 2026-10-13: off by default, base64-encodes documents, applies only to models used through Chat Completions, and can raise token counts or push a long document past the input limit [[tr8]]. Check supported languages and input limits before relying on it." },
+    { "t": "stats", "items": [
+      { "label": "Spotlighting, attack success", "value": "50%+ to under 2%", "note": "GPT-family models, the authors' tests [[r8]]" },
+      { "label": "CaMeL, tasks solved with provable security", "value": "77%", "note": "Versus 84% undefended on AgentDojo: the cost of design-level safety [[r9]]" },
+      { "label": "Rule of Two", "value": "2 of 3", "note": "Untrusted input, sensitive access, external action. Meta, 2025-10-31 [[r10]]" }
+    ] },
+    { "t": "table", "caption": "Layers and their limits", "head": ["Layer", "What it does", "Limit"], "rows": [
+      ["Hardened prompt", "Tells the model to ignore instructions in data", "Overridable, a hint at most"],
+      ["Spotlighting", "Marks untrusted spans", "Probabilistic, token cost for encoding"],
+      ["Prompt Shields", "Detects document and prompt attacks", "Probabilistic, language and size limits"],
+      ["Capability design (Rule of Two, CaMeL style)", "Removes the leg an attack needs", "Costs features or utility"],
+      ["Deterministic egress and approval", "Blocks outbound paths, gates actions", "Reviewer cost, product trade-off"]
+    ] },
+    { "t": "callout", "kind": "warn", "title": "EchoLeak is the reminder", "md": "A production classifier was one link in a chain that still exfiltrated data [[r6]]. If a session holds untrusted input, private data and an outbound channel (the lethal trifecta [[tr18]]), remove a leg or require approval before adding more detectors." }
+  ],
+  "whereToUse": [
+    "Pipelines that place retrieved documents, web pages or tool results into the prompt",
+    "Agents with tools, where injected text could trigger an action",
+    "Document upload flows where users supply the content",
+    "Defence-in-depth reviews that must explain each layer's failure mode"
+  ],
+  "whenToUse": {
+    "use": ["Untrusted text reaches the prompt", "You can add detection in parallel without breaking latency", "You pair detection with a capability or egress limit"],
+    "avoid": ["Relying on prompt wording alone", "Turning on encoding-style spotlighting for very long documents without checking the token cost", "Treating a detection rate as a guarantee"],
+    "flips": ["The agent gains a send or write tool: add approval and remove a trifecta leg", "Tokens are tight: prefer delimiting or datamarking in your template over encoding", "Content is only from vetted staff: spend less on detection and more on permissions"]
+  },
+  "alternatives": {
+    "title": "Defences compared",
+    "head": ["Defence", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Spotlighting", "Untrusted text sits in clear spans", "Adaptive attackers, long documents with encoding", "Token cost, model mentions encoding"],
+      ["Prompt Shields", "You want managed detection of known patterns", "New phrasing, unsupported languages", "Latency, false positives"],
+      ["Rule of Two or CaMeL-style design", "Impact is high and actions change state", "You need maximum autonomy and utility", "Fewer features, 77% versus 84% in the CaMeL tests"],
+      ["Human approval", "Actions are rare and irreversible", "High volume", "Fatigue and cost"],
+      ["Egress limits", "You know the allowed destinations", "Allowed hosts forward requests", "Maintenance"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Long documents fail or cost more after enabling Spotlighting", "cause": "Base64 encoding raises the token count", "fix": "Check the input limit, chunk before spotlighting or use delimiting and datamarking in your own template" },
+    { "symptom": "Answers mention that content is base64 encoded", "cause": "The model sees the encoding", "fix": "Instruct the model about the encoding or hide the detail in post-processing" },
+    { "symptom": "A detector reports no attacks yet a red team succeeds", "cause": "The detector is probabilistic and the exit path is open", "fix": "Add deterministic egress limits and test with new phrasings and languages" }
+  ],
+  "scenarios": [
+    {
+      "id": "w07-t17-s1",
+      "title": "High-volume Q&A, no tools",
+      "situation": "A RAG assistant handles high volume over a mixed corpus and has no tools and no outbound channel. The token budget is tight and p95 latency is capped. Some documents come from external partners.",
+      "constraints": ["High volume", "No tools or egress", "Tight tokens and latency"],
+      "unknowns": ["Which sources are external?", "What is the cost of a poisoned answer?"],
+      "question": "Which defences do you add?",
+      "options": [
+        { "name": "Azure Spotlighting with base64 on every document", "verdict": "good", "why": "Strong marking of untrusted text.", "tradeoff": "Preview, raises tokens and can break long documents." },
+        { "name": "An LLM judge that reads every chunk before generation", "verdict": "poor", "why": "It multiplies cost and latency at high volume.", "tradeoff": "Reasonable for low-volume, high-risk workflows." },
+        { "name": "Prompt Shields on documents in parallel, plus delimiting or datamarking in the prompt template", "verdict": "best", "why": "Adds detection and marking with limited token cost, and without an outbound channel the impact is bounded [[tr8]].", "tradeoff": "Probabilistic layers and language limits, so test them." }
+      ],
+      "flips": [
+        { "if": "A tool or outbound channel is added", "then": "Add approval and egress limits first." },
+        { "if": "External partners are removed from the corpus", "then": "Reduce detection to sampled checks." }
+      ],
+      "takeaway": "Without tools, layered detection is proportionate."
+    },
+    {
+      "id": "w07-t17-s2",
+      "title": "Agent with a write tool",
+      "situation": "An agent reads customer documents, queries account data and can update records. A wrong or injected update is costly. The budget allows extra latency and cost.",
+      "constraints": ["Untrusted documents", "Private data", "Write tool", "Generous budget"],
+      "unknowns": ["Is the update reversible?", "How often do updates occur?"],
+      "question": "How do you secure it?",
+      "options": [
+        { "name": "Prompt Shields and spotlighting only", "verdict": "poor", "why": "All three trifecta legs remain, and both defences are probabilistic.", "tradeoff": "Suitable as extra layers after a leg is removed." },
+        { "name": "Split roles: a no-tool reader summarises untrusted text into structured fields, and the acting agent sees only those fields, with approval on updates", "verdict": "best", "why": "It removes the path from untrusted text to the write tool, following the Rule of Two [[r10]].", "tradeoff": "More components, a review step and some lost autonomy." },
+        { "name": "Full control and data flow separation in the CaMeL style", "verdict": "good", "why": "Gives provable properties for the flows it covers [[r9]].", "tradeoff": "In the paper it solved 77% of tasks against 84% undefended, and it is heavy to build." }
+      ],
+      "flips": [
+        { "if": "Updates are low impact and simple to reverse", "then": "Sampled audit instead of approval." },
+        { "if": "Documents come only from vetted staff", "then": "Detection layers can be lighter." }
+      ],
+      "takeaway": "When a write tool exists, remove a leg before adding detectors."
+    },
+    {
+      "id": "w07-t17-s3",
+      "title": "Multilingual corpus",
+      "situation": "A support assistant ingests documents in eight languages, several of which are not widely covered by detectors. The team plans to rely on a managed shield.",
+      "constraints": ["Eight languages", "Managed detector", "No outbound channel yet planned"],
+      "unknowns": ["Which languages does the detector cover?", "Does the roadmap add tools?"],
+      "question": "What do you do?",
+      "options": [
+        { "name": "Rely on the managed shield for all languages", "verdict": "poor", "why": "Coverage is limited to the tested languages and a gap silently removes the layer.", "tradeoff": "Fine when all content is in covered languages." },
+        { "name": "Test the detector per language, keep deterministic limits (no egress, least privilege) and red-team in each language", "verdict": "best", "why": "It measures real coverage and does not depend on detection alone.", "tradeoff": "Test and maintenance effort per language." },
+        { "name": "Translate everything to English before scanning", "verdict": "good", "why": "Brings text into covered territory.", "tradeoff": "Adds latency and cost, and translation can alter or remove an attack." }
+      ],
+      "flips": [
+        { "if": "All sources are in covered languages", "then": "Standard layered setup applies." },
+        { "if": "Tools are added", "then": "Apply the Rule of Two review." }
+      ],
+      "takeaway": "Measure coverage before trusting a detector."
+    }
+  ],
+  "quiz": [
+    { "id": "w07-t17-q1", "type": "match", "tag": "concept", "q": "Match each spotlighting mode to what it does.", "pairs": [
+      { "l": "Delimiting", "r": "Adds randomized delimiters around untrusted text" },
+      { "l": "Datamarking", "r": "Weaves a special token through the untrusted text" },
+      { "l": "Encoding", "r": "Transforms the text, for example with base64 or ROT13" }
+    ], "explain": "These are the three modes in Microsoft's description. In each, the system prompt tells the model not to follow instructions in the marked content.", "ref": "tr9" },
+    { "id": "w07-t17-q2", "type": "single", "tag": "diagnose", "q": "An agent reads untrusted web pages, holds private data and can send email. It has Prompt Shields and spotlighting. What is the main residual risk?", "options": ["Spotlighting uses too many tokens", "All three trifecta legs are present, and both layers are probabilistic", "Prompt Shields only works on images", "Email cannot carry data"], "answer": 1, "explain": "Untrusted input, private data and an outbound channel together enable exfiltration, and detection can be bypassed. Remove a leg or require approval. Token use is a cost issue, not the main risk.", "ref": "r10" }
+  ],
+  "flashcards": [
+    { "front": "What are the three spotlighting modes?", "back": "Delimiting (randomized delimiters), datamarking (a token woven through the text) and encoding (base64 or ROT13). It is probabilistic." },
+    { "front": "What is the Azure Spotlighting status as of 2026-10-13?", "back": "Preview inside Prompt Shields. Off by default, base64 encodes documents, Chat Completions only, and can raise token counts." },
+    { "front": "What does the CaMeL result teach?", "back": "Design-level safety has a cost: 77% of AgentDojo tasks with provable security versus 84% undefended." }
+  ],
+  "related": ["w07-t02", "w07-t05", "w07-t18", "w06-t05", "w06-t01"],
+  "refs": ["r6", "r8", "r9", "r10", "tr8", "tr9", "tr18"]
+}

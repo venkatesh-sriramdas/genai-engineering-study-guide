@@ -1,0 +1,107 @@
+{
+  "id": "w14-t10",
+  "order": 10,
+  "group": "Judges",
+  "title": "Judge biases and calibration",
+  "minutes": 9,
+  "difficulty": "advanced",
+  "summary": "LLM judges have measurable habits: they favour the first position, longer text and their own outputs. You defend with order swapping, references, a different judge family and, above all, calibration against labels from one accountable human expert, reported as true positive and true negative rates.",
+  "useIf": "A judge score will gate a release or rank candidates, so its errors must be measured and bounded.",
+  "avoidIf": "You only need a rough trend and the judge's absolute accuracy does not matter.",
+  "explain": [
+    { "t": "p", "md": "Treat a judge as an instrument with known error. The 2023 MT-Bench study measured several habits, and newer judges are likely better, but the mechanisms remain." },
+    { "t": "table", "caption": "Biases, evidence and defences", "head": ["Bias", "Evidence", "Defence", "Cost"], "rows": [
+      ["**Position**", "Consistency after swapping answer order: GPT-4 65.0%, GPT-3.5 46.2%, Claude-v1 23.8% with the default prompt. Reordering let Vicuna-13B beat ChatGPT on 66 of 80 queries [[r21]] [[r31]]", "Judge twice with swapped order and count a win only if it holds both ways, or randomise order", "2x calls"],
+      ["**Verbosity**", "A repetitive-list attack fooled Claude-v1 and GPT-3.5 91.3% of the time and GPT-4 8.7% [[r21]]", "Control for length, grade against criteria, not length", "Prompt design"],
+      ["**Self-preference**", "GPT-4 won about 10% more often and Claude-v1 about 25% more on their own outputs, though the paper called it inconclusive. Judges can recognise their own text, and self-recognition tracks self-preference [[r32]]", "Judge with a different model family", "Second deployment"],
+      ["**Many more**", "The CALM framework quantifies 12 biases [[r44]]", "Red team your judge with perturbations", "Eval effort"]
+    ] },
+    { "t": "p", "md": "A few-shot judge lifted GPT-4's swap consistency from 65.0% to 77.5% at about 4x prompt cost, so mitigation has a price [[r21]]. Proposed calibration schemes include multiple evidence, balanced position and human-in-the-loop calibration [[r31]]." },
+    { "t": "p", "md": "Do not quote these numbers for your own judge: measure it. Two cheap probes work on any judge. A **swap test** runs each pair in both orders and counts how often the verdict flips, and a high flip rate means position is driving the result. A **padding test** adds filler to one answer and checks whether the verdict moves toward the longer text. Both are reasoning-based probes, not vendor features." },
+    { "t": "flow", "title": "Calibrate to a human", "direction": "h", "steps": [
+      { "title": "Label", "md": "One principal expert gives pass/fail plus a written critique on 50 to 100 cases.", "tag": "human" },
+      { "title": "Judge", "md": "Run the judge on the same cases with the draft prompt.", "tag": "model" },
+      { "title": "Compare", "md": "Build a confusion matrix. Report true positive and true negative rates.", "tag": "measure" },
+      { "title": "Fix", "md": "Read the disagreements, edit the rubric or add examples, rerun.", "tag": "iterate" },
+      { "title": "Freeze", "md": "Pin judge model and prompt. Re-check on a held-out labelled set.", "tag": "version" }
+    ] },
+    { "t": "p", "md": "With imbalanced classes, raw agreement misleads. If 95% of outputs pass, a judge that always says pass scores 95% agreement and a true negative rate of 0%. Hamel Husain recommends reporting true positive and true negative rates and reached over 90% agreement in three iterations on one example [[r16]]. EvalGen research names **criteria drift**: people need criteria to grade outputs, but grading outputs helps them define criteria, so expect to revise the rubric [[tr3]]." }
+  ],
+  "whereToUse": [
+    "Before a judge score becomes a CI gate",
+    "When ranking models from the same vendor family as the judge",
+    "When switching judge model or prompt, to prove parity",
+    "In regulated settings where evaluation evidence must be defensible"
+  ],
+  "whenToUse": {
+    "use": ["A judge score will gate or rank", "An expert can label a calibration set", "Class balance is skewed"],
+    "avoid": ["Calibrating on rows you also tuned the prompt against", "Reporting raw agreement alone", "Treating 2023 bias numbers as current for your judge"],
+    "flips": ["Pairwise ranking: swap order every time", "Judge and generator share a family: add a different-family judge for the final call", "Stakes high: use two judge families and human review of disagreements"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Order swapping", "Pairwise comparisons", "Pointwise scoring", "2x calls, tie cases"],
+      ["Reference-guided grading", "Gold answers exist", "Open-ended tasks", "Reference upkeep"],
+      ["Different-family judge", "Self-preference is a concern", "One vendor only", "Second deployment, inconsistent styles"],
+      ["Human-calibrated judge", "Stakes and gates", "No expert time", "Labelling effort"],
+      ["Multiple judges", "Contested high-stakes calls", "Routine screening", "Cost multiple"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "The judge reports 92% agreement yet misses most bad outputs", "cause": "90% of outputs pass, so agreement is dominated by the majority class", "fix": "Report true positive and true negative rates and oversample failures in the calibration set" },
+    { "symptom": "Judge agreement fell after a provider update", "cause": "The judge model changed behind an alias, or the prompt drifted", "fix": "Pin the version, keep a frozen calibration set and re-run it on every change" },
+    { "symptom": "Calibration looks perfect but production disagreement is high", "cause": "The prompt was tuned on the same cases used to report agreement", "fix": "Hold out a labelled set the prompt never saw" }
+  ],
+  "scenarios": [
+    {
+      "id": "w14-t10-s1",
+      "title": "Same vendor for generator and judge",
+      "situation": "A team has one approved model deployment and uses it for both generation and judging. They compare two prompt versions and one wins by 6 points. Budget allows one extra deployment.",
+      "constraints": ["Same model family", "Moderate stakes", "One extra deployment possible"],
+      "unknowns": ["Do both candidates have similar style?", "How large is the calibration set?"],
+      "question": "How do you reduce self-preference risk?",
+      "options": [
+        { "name": "Add a judge from a different family and require both to agree, with order swapping", "verdict": "best", "why": "A different family removes the shared-style advantage, and swapping removes position bias.", "tradeoff": "Second deployment, and disagreements need a tie-break rule." },
+        { "name": "Keep the same judge, lower temperature", "verdict": "poor", "why": "Temperature does not remove a preference for one's own style.", "tradeoff": "It helps only run-to-run noise." },
+        { "name": "Ask a human to review all 300 pairs", "verdict": "good", "why": "Unbiased.", "tradeoff": "Slow and costly for a routine comparison." }
+      ],
+      "flips": [
+        { "if": "Only one deployment is allowed", "then": "Use reference-guided criteria and human review of a sample." },
+        { "if": "Candidates differ strongly in length", "then": "Control for length before comparing." }
+      ],
+      "takeaway": "Break shared-family preference with a different judge."
+    },
+    {
+      "id": "w14-t10-s2",
+      "title": "High-stakes gate, small expert budget",
+      "situation": "An assistant gives guidance in a regulated domain. An expert can label 80 cases once, and the release gate must be defensible to an auditor.",
+      "constraints": ["High stakes", "80 labelled cases", "Audit trail required"],
+      "unknowns": ["What is the pass rate in the labelled cases?", "Can the expert write critiques?"],
+      "question": "How do you build a gate you can defend?",
+      "options": [
+        { "name": "Expert pass/fail with critiques, judge calibrated on a train and a held-out split, TPR and TNR reported, versions pinned", "verdict": "best", "why": "It is auditable, measures the error that matters and avoids overfitting the prompt.", "tradeoff": "Expert time and a small held-out set that gives wide intervals." },
+        { "name": "Report raw agreement only", "verdict": "poor", "why": "A majority-pass dataset makes the number meaningless.", "tradeoff": "Raw agreement is fine when classes are balanced." },
+        { "name": "A panel of three judges and no human labels", "verdict": "good", "why": "Reduces single-model bias.", "tradeoff": "No evidence that the panel agrees with the expert." }
+      ],
+      "flips": [
+        { "if": "Failures are rare in labelled data", "then": "Oversample failures so TNR has enough cases." },
+        { "if": "The expert can label more cases later", "then": "Grow the held-out set to tighten intervals." }
+      ],
+      "takeaway": "Defensible means calibrated, held out and version pinned."
+    }
+  ],
+  "quiz": [
+    { "id": "w14-t10-q1", "type": "numeric", "tag": "numeric", "q": "An expert labels 200 outputs: 180 pass, 20 fail. The judge says pass on 175 of the 180 passes and fail on 8 of the 20 fails. What is the judge's true negative rate (fails caught), in percent?", "answer": 40, "tolerancePct": 1, "unit": "%", "hint": "Caught fails divided by all true fails.", "explain": "8 / 20 = 40%. Raw agreement is (175 + 8) / 200 = 91.5%, which looks good and hides that most bad outputs slip through." },
+    { "id": "w14-t10-q2", "type": "single", "tag": "tradeoff", "q": "A pairwise judge picks the first-listed answer 70% of the time on random pairs. What is the cheapest valid fix?", "options": ["Raise temperature", "Judge both orders and count a win only if it holds both ways", "Use a longer rubric", "Use only the second position"], "answer": 1, "explain": "Swapping order and requiring agreement cancels position preference at the price of twice the calls. Temperature and rubric length do not address position, and always using the second position only flips the bias." },
+    { "id": "w14-t10-q3", "type": "multi", "tag": "concept", "q": "Which are reasons to calibrate a judge on a held-out labelled set rather than the set used to tune the prompt? Select all that apply.", "options": ["The prompt can overfit the tuning cases", "It gives an honest estimate of true positive and negative rates", "It removes position bias", "It reveals drift after a judge model update"], "answers": [0, 1, 3], "explain": "Held-out data guards against overfitting, gives honest rates and exposes drift when rerun. It does not remove position bias, which needs order swapping." }
+  ],
+  "flashcards": [
+    { "front": "Why is raw agreement misleading for judges?", "back": "With imbalanced classes it is dominated by the majority. If 95% pass, an always-pass judge has 95% agreement and a 0% true negative rate. Report TPR and TNR." },
+    { "front": "How do you fix position bias in pairwise judging?", "back": "Judge both orders and count a win only if it holds both ways, or randomise order. Cost is about double the calls." },
+    { "front": "What is self-preference bias?", "back": "A judge favouring its own model family's outputs. MT-Bench saw about 10% (GPT-4) and 25% (Claude-v1) higher win rates but called it inconclusive. Use a different judge family." }
+  ],
+  "related": ["w14-t09", "w14-t14", "w14-t12", "w14-l4"],
+  "refs": ["r21", "r31", "r32", "r44", "r16", "tr3"]
+}

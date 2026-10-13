@@ -1,0 +1,152 @@
+{
+  "id": "w14-l7",
+  "order": 7,
+  "title": "Boss: ship it with evidence",
+  "kind": "boss",
+  "minutes": 18,
+  "brief": "An interviewer asks you to build an evaluation strategy for an AI assistant, before launch and after. Every dial is unspecified. Practise the five steps of Dial-and-Defend out loud, then compare with the model answer.",
+  "blocks": [
+    { "t": "h", "text": "Open with the dials, not the tools", "level": 2 },
+    { "t": "scenario", "title": "The interviewer's prompt", "known": [
+      "A new assistant retrieves documents and calls a few tools",
+      "It is about to launch, and you must design its evaluation before and after launch",
+      "You are expected to compare options and defend a choice"
+    ], "ask": [
+      "What can go wrong, and how bad is it: a wrong answer, a data leak or an unwanted action?",
+      "Which stages exist (retrieval, tools, generation), and do relevance labels or reference answers exist?",
+      "Is there any production traffic or trace history, and how many expert hours are available?",
+      "How much traffic is expected, and what is the cost ceiling for judge and inference calls?",
+      "How fast can a bad release be stopped, and which platform features are preview?"
+    ], "tension": "A heavy pre-launch gate delays the launch and costs expert time. A light gate ships risk. Online scoring catches drift, but only after users saw the answer." },
+    { "t": "flow", "title": "Dial-and-Defend applied to evaluation", "direction": "h", "steps": [
+      { "title": "Clarify", "md": "Harm, stages, labels, traffic, expert time, budget, rollback speed.", "tag": "1" },
+      { "title": "List options", "md": "Heavy gate, light gate with online scoring, and the layered plan. Name the boring one.", "tag": "2" },
+      { "title": "Pick and flip", "md": "Choose for the stated dials. Say what would move you to another plan.", "tag": "3" },
+      { "title": "Failure modes", "md": "Judge bias, stale set, noisy gate, contamination, false positives. Say how you detect each.", "tag": "4" },
+      { "title": "Metrics and rollout", "md": "Name the numbers you report and the order of release.", "tag": "5" }
+    ] },
+    { "t": "table", "caption": "A layered plan across the lifecycle", "head": ["Stage", "Check", "Report"], "rows": [
+      ["Before launch", "Golden set (hand plus reviewed synthetic), component evals, calibrated judge, red team in a purple environment", "Recall at k or nDCG, groundedness and completeness, pass^k with interval, judge TPR and TNR, ASR with manual review"],
+      ["Pull request and nightly", "Small suite on every change, full suite nightly, baseline comparison with significance", "Delta against baseline with confidence interval"],
+      ["Release", "Shadow or mirrored traffic when harm is high, then canary", "Paired scores, rollback trigger on a safety evaluator"],
+      ["After launch", "Sampled continuous evaluation, scheduled evaluation and red teaming, feedback triage", "Online score drift, skipped runs, judge spend"],
+      ["Learning loop", "Failing traces added to the golden set, synthetic rows regenerated when instructions change", "Dataset version, origin mix, held-out score"]
+    ] },
+    { "t": "callout", "kind": "interview", "title": "What interviewers listen for", "md": "They want to hear that you separate retrieval from generation, calibrate the judge, quantify noise with intervals and repeated trials, and label preview features with a fallback. Naming a tool before asking about risk is the most common way to lose the room." }
+  ],
+  "quiz": [
+    {
+      "id": "w14-l7-q1", "type": "single", "tag": "tradeoff", "difficulty": 3, "ref": "r8",
+      "q": "An assistant with retrieval and three tools launches in four weeks. Harm from a wrong action is high, 12 golden cases exist and an expert has two days. Which pre-launch plan gives the most signal for that time?",
+      "options": [
+        "Rerun the existing 12 cases ten times and report the average score, since repetition removes the need for new cases",
+        "Grow to about 40 cases with reviewed synthetic rows, score stages separately, and calibrate a pass/fail judge",
+        "Adopt a public agent benchmark as the release gate, because it has thousands of tasks and is already labelled",
+        "Ship to 5% of users and judge by thumbs ratings, because real traffic is always better than curated test cases"
+      ],
+      "answer": 1,
+      "explain": "Starting sets of 20 to 50 cases from real failures, a reviewed synthetic batch for coverage, stage-level scores and a calibrated judge use two expert days well [[r17]] [[r8]]. Repeating 12 cases lowers sampling noise but adds no coverage. A public benchmark does not test your tools or data and can be saturated or contaminated. A 5% launch with thumbs ratings exposes users to high harm and gives a biased signal."
+    },
+    {
+      "id": "w14-l7-q2", "type": "multi", "tag": "flip", "difficulty": 2, "ref": "r8",
+      "q": "Select every event that should trigger a re-check of the evaluation setup.",
+      "options": [
+        "The agent's system prompt or instructions change materially",
+        "The judge model is upgraded or replaced",
+        "The retriever's chunking changes, so relevance labels keyed to chunk ids no longer match",
+        "The dashboard theme is switched from light to dark"
+      ],
+      "answers": [0, 1, 2],
+      "explain": "A synthetic dataset made from one version of the instructions goes stale when they change, so regenerate and version it [[r8]]. A different judge model has different habits, so recalibrate its true positive and true negative rates against the human sample [[r16]]. Labels keyed to old chunk ids score the wrong chunks after a re-chunk. A theme change touches no evaluation input."
+    },
+    {
+      "id": "w14-l7-q3", "type": "single", "tag": "diagnose", "difficulty": 3, "ref": "r1",
+      "q": "Which explanation is best supported, and what is the first action?",
+      "code": { "lang": "text", "code": "offline regression suite:     97% pass\nsampled online judge score:   falling for 2 weeks\nnew product feature shipped:  3 weeks ago" },
+      "options": [
+        "The online judge is miscalibrated, so the 97% offline pass rate should be trusted instead",
+        "The offline suite is too small to mean anything, so its 97% pass rate carries no information",
+        "The model provider silently degraded quality, which breaks the service agreement",
+        "The golden set no longer covers the new feature's queries, so mine failing traces into it"
+      ],
+      "answer": 3,
+      "explain": "The decline began after a feature changed what users ask, which points to a golden set that stopped matching real queries. The first action is to sample the failing traces, confirm with a human-labelled sample that the judge agrees, and add the cases to the set [[r1]]. Ignoring the online judge skips that check. A small suite can still be informative for the cases it covers. A provider regression is possible but nothing in the data points to it."
+    },
+    {
+      "id": "w14-l7-q4", "type": "match", "tag": "concept", "difficulty": 2, "ref": "r5",
+      "q": "Match each situation to the evaluation layer that fits it best.",
+      "pairs": [
+        { "l": "Block a prompt change that breaks citations", "r": "CI gate on a regression suite" },
+        { "l": "Detect drift in live answer quality without labels", "r": "Continuous evaluation with sampled reference-free judges" },
+        { "l": "Probe for indirect prompt injection before release", "r": "Automated red team scan plus expert review" },
+        { "l": "Compare a new model on real requests with no user exposure", "r": "Shadow traffic" }
+      ],
+      "explain": "A regression suite with a baseline comparison blocks a known behaviour from breaking. Live traces have no references, so drift needs reference-free judges on a sample. Injection probing needs attacks, which automated scans supply and experts review. Only mirrored traffic lets a candidate see real requests without users seeing its answers."
+    }
+  ],
+  "defend": {
+    "prompt": "We are about to launch an AI assistant that retrieves company documents and calls a few tools. How will you evaluate it before launch and after? Walk me through your options.",
+    "timebox": "5 min",
+    "clarify": [
+      "What can go wrong and how bad is it: a wrong answer, a data leak or an unwanted action? That sets the risk tier.",
+      "Which stages exist (retrieval, tools, generation), and do relevance labels or reference answers exist?",
+      "Is there any production traffic or trace history yet, and how many expert hours are available?",
+      "How much traffic will it get, and what is the cost ceiling for judge and inference calls?",
+      "How quickly can a bad release be stopped, and which platform features I would rely on are preview?"
+    ],
+    "options": [
+      { "name": "Heavy pre-launch gate", "when": "Harm is high, traffic is unknown and rollback is slow.", "tradeoff": "The strongest protection before exposure, but it delays launch, spends scarce expert time and a frozen set drifts from real users." },
+      { "name": "Light gate plus online scoring", "when": "Harm is low, errors are cheap to undo, traffic is large and a calibrated judge exists.", "tradeoff": "Fast and realistic, but users see problems first and reference-free judges can mislead." },
+      { "name": "Layered: gate, shadow, then sampled scoring", "when": "Most real systems: moderate to high harm, mixed stages and some traffic after a soft launch.", "tradeoff": "The most parts to maintain, and several Foundry features are preview, so it needs a code-first fallback." }
+    ],
+    "modelAnswer": [
+      { "t": "p", "md": "**Clarify.** I would first ask what can go wrong and how bad it is, which stages exist, what labels and traces I have, how many expert hours and how much budget there are, and how fast I can stop a bad release. Those are my dials." },
+      { "t": "p", "md": "**Options and pick.** There are three plans: a heavy pre-launch gate, a light gate with online scoring, and a layered plan. For a system with retrieval and tools and moderate to high harm I would choose the layered plan. Here is what it contains." },
+      { "t": "list", "style": "ul", "items": [
+        "Golden set: 20 to 50 cases from real failures plus a reviewed synthetic batch. Version it, tag each row by origin and hold out a slice nobody tunes on.",
+        "Stage scores: retrieval with rank or judged context metrics at the k the prompt uses, answers with groundedness and completeness, tools with outcome checks plus selected process evaluators.",
+        "Judge: one accountable expert labels a sample with critiques. I report true positive and true negative rates, swap order for pairwise, use references where answers are checkable and use a different model family from the generator.",
+        "Noise: repeated trials on agent tasks, pass^k and confidence intervals, with the suite sized for the effect I need to see.",
+        "Red team: automated scans (preview) plus expert review in a purple environment, including indirect injection.",
+        "Gate: a small suite per pull request, a full suite nightly, baseline comparison with significance, blocking on safety and regression suites and advisory capability suites.",
+        "Release and after: shadow first when harm is high, then canary, then sampled continuous scoring with caps, scheduled evaluation for drift, feedback as triage and failing traces back into the golden set."
+      ] },
+      { "t": "callout", "kind": "note", "title": "Failure modes and how I detect them", "md": "Judge bias shows as swapped-order disagreement and low TNR on a fresh human sample. A stale golden set shows as a widening gap between offline and online scores. A noisy gate shows as run-to-run variance on the same commit. Contamination shows as a held-out slice scoring below the tuned set. Red team false positives show up in manual review." },
+      { "t": "table", "caption": "What would flip the plan", "head": ["Dial change", "Flip to"], "rows": [
+        ["Harm is very high and rollback is slow", "Heavy gate with a named human sign-off before any exposure"],
+        ["No budget for expert labels", "Judged context metrics and a panel judge, with the weaker evidence stated"],
+        ["Traffic too low for an A/B test", "Shadow runs and paired offline comparisons instead"],
+        ["A needed Foundry feature is preview", "A code-first harness as the fallback, with the date of the last check"]
+      ] },
+      { "t": "p", "md": "**Metrics and rollout.** I report recall at k or nDCG, groundedness and completeness, pass^k with intervals, judge TPR and TNR, ASR trend, online score drift and cost per run. Rollout goes from a staff soft launch to shadow, canary and full release, with a rollback trigger tied to a safety evaluator." }
+    ],
+    "rubric": [
+      { "pt": "Asks about harm, stages, labels, traffic, expert time and budget before naming tools", "w": 3 },
+      { "pt": "Offers at least two plans and picks one for the stated dials", "w": 2 },
+      { "pt": "Scores retrieval and generation separately, with k tied to what the prompt receives", "w": 2 },
+      { "pt": "Calibrates the judge against an expert and names position, verbosity and self-preference bias", "w": 3 },
+      { "pt": "Handles non-determinism with repeated trials, pass^k and confidence intervals", "w": 2 },
+      { "pt": "Designs the CI gate and the online loop, including shadow or canary and sampled scoring", "w": 2 },
+      { "pt": "Names failure modes with detection, plus metrics and a rollout order", "w": 2 },
+      { "pt": "States flip conditions and labels preview features with a fallback", "w": 1 }
+    ],
+    "followUps": [
+      { "q": "The judge agrees with your expert 92% of the time. Do you trust it?", "a": "Not yet. With imbalanced classes raw agreement can hide a judge that misses most failures, so check true positive and true negative rates. Swap order for pairwise, test on a fresh sample and recalibrate whenever the judge model changes." },
+      { "q": "Your gate score moved from 4.2 to 4.4. Do you ship?", "a": "Not on that alone. Without an interval, a paired comparison and a calibrated scale it is probably noise. At 100 tasks and an 80% pass rate the 95% half-width is about 7.8 points. Use a baseline comparison with a significance test, more trials or a larger set." },
+      { "q": "There are no traces and launch is in two weeks. What do you build first?", "a": "Twenty to fifty hand-written cases from known failure types, a reviewed synthetic batch from the agent definition and documents, component evals for retrieval and tools, a calibrated pass/fail judge and a held-out slice. Then a soft launch with sampled scoring so real traces start feeding the set." }
+    ],
+    "redFlags": [
+      "Names a tool or metric before asking about risk, stages and labels",
+      "Treats a single judge score as ground truth with no calibration or interval",
+      "Uses faithfulness alone and calls the answer correct",
+      "Lets one run decide a release with non-deterministic output"
+    ]
+  },
+  "refs": ["r1", "r3", "r5", "r8", "r16", "r17", "r24"],
+  "takeaways": [
+    "Open with the dials: harm, stages, labels, traffic, expert time, budget and rollback speed.",
+    "Layer the checks: component, end-to-end, gate, red team, shadow and sampled live scoring.",
+    "Say how you calibrate the judge and how you quantify noise.",
+    "Close with failure modes, metrics, rollout order and what would flip your plan."
+  ]
+}

@@ -1,0 +1,118 @@
+{
+  "id": "w08-t16",
+  "order": 16,
+  "group": "Design and operations",
+  "title": "Gateways, registry and governance",
+  "minutes": 9,
+  "difficulty": "advanced",
+  "summary": "As servers and agents multiply, put policy in a gateway (API Management), curated bundles behind one endpoint (Foundry Toolbox) and a catalog with an approval workflow (a private registry) instead of wiring every agent to every server.",
+  "useIf": "Several teams publish or consume MCP servers and you need central auth, limits, audit, versioning and discovery.",
+  "avoidIf": "One agent uses two servers you own. Direct connection with allowed tools and approvals is simpler.",
+  "explain": [
+    { "t": "p", "md": "**API Management (APIM)** can expose a managed REST API as an MCP server (operations become tools) or front an existing MCP server. Policies such as rate limiting, quota, IP filtering, caching and tracing currently apply to all tools in a server. It supports MCP tools only, not resources or prompts, and is not supported in workspaces. Inbound auth is a subscription key in `Ocp-Apim-Subscription-Key` or Entra tokens checked with `validate-azure-ad-token`. Outbound credentials use the credential manager and `get-authorization-context` [[r17]] [[r36]]." },
+    { "t": "p", "md": "**Foundry Toolbox** is a versioned, governed bundle of tools (MCP, A2A, OpenAPI, Azure AI Search, web search and more) exposed as one MCP-compatible endpoint, `.../toolboxes/{name}/versions/{version}/mcp`. It adds central Entra auth, OAuth passthrough (Foundry's feature name, so check it against the token rules in [[r5]]), guardrails and promotion of a default version without redeploying agents. Tool search and skills are Preview as of 2026-10-13, as are long-running calls through MCP tasks. A first OAuth use can return `CONSENT_REQUIRED` (`-32006`) [[r16]]." },
+    { "t": "p", "md": "For one agent, Foundry's MCP tool takes `server_url`, `server_label`, `allowed_tools`, `require_approval` and `project_connection_id`. Approvals arrive as `mcp_approval_request` items answered with `mcp_approval_response`. Non-streaming calls time out at 100 seconds, and private MCP needs Standard Agent Setup with private networking [[r15]]." },
+    { "t": "p", "md": "**Registries.** The official MCP Registry is Preview: it stores `server.json` metadata, uses reverse-DNS names with namespace verification, holds no private servers, is not designed for self-hosting, and host apps should consume downstream registries instead of calling it directly [[r10]]. Azure API Center keeps a private inventory of remote or local servers and links to Foundry tool catalogs [[tr15]]." },
+    { "t": "flow", "title": "An approval workflow for a new server", "direction": "h", "steps": [
+      { "title": "Intake", "md": "Owner, purpose, data classes, transport and auth declared." },
+      { "title": "Review", "md": "Security checks tool text, scopes, token handling and SSRF exposure." },
+      { "title": "Register", "md": "Record in a private registry with a pinned version." },
+      { "title": "Expose", "md": "Publish through the gateway or a toolbox with `allowed_tools`." },
+      { "title": "Monitor", "md": "Watch description changes, errors and usage, and re-review on change." }
+    ] }
+  ],
+  "whereToUse": [
+    "A platform team offering shared tools to many agents and frameworks",
+    "Regulated environments that need audit, quotas and approvals",
+    "Foundry agent estates that want one versioned toolset reused everywhere",
+    "A private catalog so staff find approved servers instead of unknown ones"
+  ],
+  "whenToUse": {
+    "use": ["Use a gateway for rate limits, quotas and central auth over tools", "Use a toolbox for versioned bundles reused across agents", "Use a private registry for discovery and approval records", "Pin versions and allow-list tools"],
+    "avoid": ["Depending on the public registry at runtime", "Forwarding inbound tokens through a gateway to a different audience", "Adding layers for a one-agent, two-server setup"],
+    "flips": ["Consumers need MCP resources or prompts: a gateway that supports tools only will not carry them", "Production needs Toolbox tool search or skills: both are Preview, so gate them or run your own search"]
+  },
+  "alternatives": {
+    "title": "Governance layers compared",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Direct connection with `allowed_tools` and approvals", "Few servers, one agent", "Many teams and central policy", "No shared limits or audit"],
+      ["API Management gateway", "Central policy, auth and quotas over tools", "You need resources or prompts, or workspaces", "Another hop and policy to run"],
+      ["Foundry Toolbox", "Versioned bundles reused across agents", "Preview features are required in production", "Managed in Foundry, tool search and skills are Preview"],
+      ["Private registry (API Center)", "Discovery and approval records", "Runtime enforcement is needed", "A catalog does not enforce anything alone"],
+      ["Public MCP Registry", "Finding servers to evaluate", "Production dependency or private servers", "Preview, data resets possible"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Resources and prompts disappear behind the gateway", "cause": "API Management currently supports MCP tools only", "fix": "Use direct access for those primitives or pick a gateway that carries them" },
+    { "symptom": "Production breaks when a registry resets", "cause": "The Preview public registry was a runtime dependency", "fix": "Mirror approved entries into a private registry and pin them" },
+    { "symptom": "A first call returns `CONSENT_REQUIRED`", "cause": "A toolbox tool needs the user's OAuth consent before first use", "fix": "Handle `-32006` in the client and guide the user through consent" }
+  ],
+  "scenarios": [
+    {
+      "id": "w08-t16-s1",
+      "title": "Twenty teams, tools only, mixed frameworks",
+      "situation": "Twenty teams publish MCP servers that expose tools only. Agents run on several frameworks, not only Foundry. Security wants quotas, rate limits and Entra validation in one place.",
+      "constraints": ["Tools only", "Mixed frameworks", "Central policy required"],
+      "unknowns": ["Which tier and region apply?", "Who owns the credential store?"],
+      "question": "Where do you put governance?",
+      "options": [
+        { "name": "An API Management gateway with API Center registration", "verdict": "best", "why": "Policies apply across tools, auth is central and registration gives discovery for any framework.", "tradeoff": "A new hop, and no resources or prompts." },
+        { "name": "A Foundry Toolbox per domain", "verdict": "good", "why": "Versioned bundles with central auth.", "tradeoff": "Managed in Foundry, although any MCP client can use it, and key features such as tool search are Preview." },
+        { "name": "Each agent connects directly to each server", "verdict": "poor", "why": "Credentials, limits and audit are duplicated twenty times.", "tradeoff": "Right for a two-server prototype." }
+      ],
+      "flips": [
+        { "if": "Servers must expose prompts or resources", "then": "Connect directly or use another gateway." },
+        { "if": "You need versioned bundles with default-version promotion", "then": "Choose a Toolbox." }
+      ],
+      "takeaway": "Put policy where every path crosses it."
+    },
+    {
+      "id": "w08-t16-s2",
+      "title": "Foundry agents sharing a toolset",
+      "situation": "A Foundry team runs many agents that need the same CRM, search and ticket tools. They want to promote a new tool version to every agent without redeploying.",
+      "constraints": ["Agents on Foundry", "Shared toolset", "Promote versions without redeploys"],
+      "unknowns": ["Is Preview tool search acceptable here?", "Which auth model does each tool use?"],
+      "question": "How should the tools be packaged?",
+      "options": [
+        { "name": "A Foundry Toolbox with a promoted default version", "verdict": "best", "why": "One endpoint, central auth and version promotion without agent redeploys.", "tradeoff": "Managed in Foundry and some features are Preview." },
+        { "name": "Per-agent MCP tool configs with `allowed_tools`", "verdict": "good", "why": "Simple and explicit.", "tradeoff": "Duplicated config and credentials, and every agent must change together." },
+        { "name": "Pin the public registry entry and call it from each agent", "verdict": "poor", "why": "The public registry is Preview and not meant for host apps to call directly.", "tradeoff": "Use it only to discover servers." }
+      ],
+      "flips": [
+        { "if": "Only one agent uses the tools", "then": "A direct MCP tool is enough." },
+        { "if": "Preview status is unacceptable for production", "then": "Use the stable parts only and gate Preview features." }
+      ],
+      "takeaway": "Bundles pay off when many agents share one versioned toolset."
+    },
+    {
+      "id": "w08-t16-s3",
+      "title": "A small team with two servers",
+      "situation": "A small team ships one agent that uses two MCP servers it operates. It needs approvals for risky calls and wants to ship this month.",
+      "constraints": ["One agent", "Two owned servers", "Fast delivery"],
+      "unknowns": ["Which calls are risky?", "How will the agent authenticate?"],
+      "question": "How much governance do you add?",
+      "options": [
+        { "name": "Direct MCP tool with `allowed_tools`, `require_approval` and pinned versions", "verdict": "best", "why": "Gives control where risk is, with no extra layer to build or run.", "tradeoff": "No central quotas or audit until the estate grows." },
+        { "name": "Front both servers with a gateway", "verdict": "good", "why": "Adds central policy and logs.", "tradeoff": "Extra setup that a two-server team may not need yet." },
+        { "name": "Build a private registry and approval portal first", "verdict": "poor", "why": "It delays delivery for a catalog of two entries.", "tradeoff": "Right when dozens of servers and teams exist." }
+      ],
+      "flips": [
+        { "if": "More teams start publishing servers", "then": "Add a gateway and a registry." },
+        { "if": "Risky calls multiply beyond what reviewers can approve one by one", "then": "Add policy-based approvals and central audit through a gateway." }
+      ],
+      "takeaway": "Match governance to the size of the estate."
+    }
+  ],
+  "quiz": [
+    { "id": "w08-t16-q1", "type": "match", "tag": "concept", "q": "Match each component to its role.", "pairs": [{ "l": "API Management MCP", "r": "Policies over tools: rate limit, quota, tracing" }, { "l": "Foundry Toolbox", "r": "Versioned tool bundle behind one MCP-compatible endpoint" }, { "l": "Azure API Center", "r": "Private inventory of MCP servers" }, { "l": "Official MCP Registry", "r": "Preview public metadata, not for hosts to call directly" }], "explain": "These roles come from the API Management, Toolbox, API Center and registry documentation. The registry is Preview and public only, and host apps should use downstream registries." },
+    { "id": "w08-t16-q2", "type": "single", "tag": "flip", "q": "Your consumers need MCP prompts and resources. Which statement about API Management is correct?", "options": ["It carries prompts and resources automatically", "It currently supports MCP tools but not resources or prompts", "It works inside workspaces for MCP servers", "It replaces OAuth in the MCP spec"], "answer": 1, "explain": "API Management currently supports MCP server tools, not resources or prompts, and MCP capabilities are not supported in workspaces. It does not replace OAuth." }
+  ],
+  "flashcards": [
+    { "front": "What does API Management support for MCP today?", "back": "Tools only, with policies for all tools in a server (rate limit, quota, IP filter, caching, tracing). No resources, prompts or workspaces." },
+    { "front": "What is a Foundry Toolbox?", "back": "A versioned, governed tool bundle served from one MCP-compatible endpoint, with central auth and default-version promotion. Tool search and skills are Preview." },
+    { "front": "Why not depend on the public MCP Registry at runtime?", "back": "It is Preview, can reset data, holds public servers only, and host apps should consume downstream registries instead." }
+  ],
+  "related": ["w08-t12", "w08-t13", "w08-t15", "w08-l06", "w08-l07"],
+  "refs": ["r17", "r36", "r16", "r15", "r10", "tr15", "r5"]
+}

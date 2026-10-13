@@ -1,0 +1,89 @@
+{
+  "id": "w11-l4",
+  "order": 4,
+  "title": "Pause, crash, resume: supersteps, checkpoints and durable hosting",
+  "kind": "problem",
+  "minutes": 20,
+  "brief": "An approval can take two days, and the host will restart in between. Decide what gets saved, where it is stored, what must be rebuilt identically on resume, and which long-running feature you are really using. The dials are not given.",
+  "blocks": [
+    { "t": "h", "text": "A superstep is a barrier", "level": 2 },
+    { "t": "flow", "title": "One superstep (topics w11-t14 and w11-t15)", "direction": "h", "steps": [
+      { "title": "Collect", "md": "Pending messages from the last superstep are gathered." },
+      { "title": "Route", "md": "Messages travel along edges: direct, conditional, switch-case, fan-out or fan-in." },
+      { "title": "Run", "md": "All target executors run concurrently." },
+      { "title": "Barrier", "md": "The step waits for the slowest executor. A writer sees its own shared-state update at once, others see it next superstep." },
+      { "title": "Checkpoint", "md": "Executor state, pending messages, pending requests and responses, and shared state are saved. Then new messages are queued." }
+    ] },
+    { "t": "p", "md": "The model is modified Pregel (bulk synchronous parallel). It gives a deterministic order and clean checkpoint boundaries, and it has a cost: a fan-out where one branch is a chain and another is a single slow executor stalls the chain at the barrier [[r6]]. Python 1.13.0 (2026-07-30) also writes an entry checkpoint before the first superstep and when request responses arrive [[r7]]." },
+    { "t": "diagram", "id": "w11-d3", "title": "A human request across a restart", "alt": "The workflow saves a checkpoint holding a pending request and emits a request_info event. The host restarts. The user's answer arrives with a checkpoint id, the workflow loads the checkpoint, re-emits the request and applies the response.", "src": "sequenceDiagram\n  participant U as User\n  participant W as Workflow\n  participant S as Checkpoint store\n  W->>S: save checkpoint with pending request\n  W-->>U: request_info event\n  Note over W: host restarts, hours pass\n  U->>W: run with checkpoint id and responses\n  W->>S: load checkpoint\n  W->>W: re-emit request, apply response", "caption": "Pending requests live in the checkpoint and are re-emitted on restore. You can pass `checkpoint_id` and `responses` to `workflow.run` in one call [[r8]]. Topic w11-t16." },
+    { "t": "h", "text": "Dial board: checkpoint storage and durability", "level": 2 },
+    { "t": "dials", "id": "w11-l4-storage", "title": "Where do checkpoints and waits live?", "prompt": "Flip the constraints. The Durable Extension is a hosting model and not only a store, but it answers the same recovery question (topics w11-t15 and w11-t24).",
+      "dials": [
+        { "id": "recovery", "label": "Recovery need", "values": [ { "id": "proc", "label": "Process lifetime is enough" }, { "id": "restart", "label": "Survive a restart of one host" }, { "id": "other", "label": "Resume on another instance" } ] },
+        { "id": "trust", "label": "Threat model for stored state", "values": [ { "id": "ok", "label": "Pickle-backed storage is acceptable" }, { "id": "strict", "label": "Pickle is not acceptable" } ] },
+        { "id": "wait", "label": "Length of human waits", "values": [ { "id": "short", "label": "Seconds or minutes" }, { "id": "long", "label": "Hours or days, no idle compute" } ] }
+      ],
+      "options": [
+        { "id": "mem", "name": "In-memory storage", "summary": "`InMemoryCheckpointStorage`." },
+        { "id": "file", "name": "File storage", "summary": "`FileCheckpointStorage` in the `agent-framework` package." },
+        { "id": "cosmos", "name": "Cosmos DB storage", "summary": "`CosmosCheckpointStorage` in `agent-framework-azure-cosmos` (Beta)." },
+        { "id": "custom", "name": "Custom storage", "summary": "Your own class behind the `CheckpointStorage` protocol." },
+        { "id": "durable", "name": "Durable Extension (Beta or preview)", "summary": "Durable Task hosting on Azure Functions or your own compute." }
+      ],
+      "scores": {
+        "mem": {
+          "recovery": { "proc": { "s": 2, "why": "It lives and dies with the process, which is all this case needs." }, "restart": { "s": -2, "why": "Everything is lost on restart." }, "other": { "s": -2, "why": "Another instance cannot read this process's memory." } },
+          "trust": { "ok": { "s": 0, "why": "Works, with nothing to trust or distrust." }, "strict": { "s": 2, "why": "The docs name in-memory storage as an option when pickle is not acceptable." } },
+          "wait": { "short": { "s": 1, "why": "Fine for waits that fit inside one process." }, "long": { "s": -2, "why": "A wait of days outlives any process." } }
+        },
+        "file": {
+          "recovery": { "proc": { "s": 0, "why": "More than the case needs." }, "restart": { "s": 2, "why": "State survives a restart of one host." }, "other": { "s": -1, "why": "Local disk is not shared unless you mount shared storage and trust every writer." } },
+          "trust": { "ok": { "s": 1, "why": "A restricted unpickler is the default since python-1.0.1 (2026-04-09)." }, "strict": { "s": -2, "why": "Non-JSON state is serialized with pickle." } },
+          "wait": { "short": { "s": 1, "why": "Cheap and local." }, "long": { "s": -1, "why": "State survives, but something must restart the host and wake the run." } }
+        },
+        "cosmos": {
+          "recovery": { "proc": { "s": -1, "why": "A network write per superstep for no benefit." }, "restart": { "s": 2, "why": "State outlives the host." }, "other": { "s": 2, "why": "A shared store any instance can read." } },
+          "trust": { "ok": { "s": 1, "why": "A restricted unpickler is the default since python-1.1.0 (2026-04-21)." }, "strict": { "s": -2, "why": "Same pickle-based serialization as file storage." } },
+          "wait": { "short": { "s": 0, "why": "Adds latency per checkpoint but works." }, "long": { "s": 0, "why": "State survives. You still need a host that wakes the run." } }
+        },
+        "custom": {
+          "recovery": { "proc": { "s": -1, "why": "You build what in-memory storage gives you for free." }, "restart": { "s": 2, "why": "Any durable store you choose." }, "other": { "s": 2, "why": "Any shared store you can reach." } },
+          "trust": { "ok": { "s": 0, "why": "You carry the serialization and security work yourself." }, "strict": { "s": 2, "why": "You control serialization, so you can avoid pickle." } },
+          "wait": { "short": { "s": -1, "why": "More to build than the built-ins." }, "long": { "s": 0, "why": "As good as the store and the host you choose." } }
+        },
+        "durable": {
+          "recovery": { "proc": { "s": -2, "why": "Heavy machinery for one process." }, "restart": { "s": 2, "why": "It persists sessions, checkpoints workflows and resumes after failure." }, "other": { "s": 2, "why": "It runs on Azure Functions or your own compute, and any worker resumes the work." } },
+          "trust": { "ok": { "s": 0, "why": "The docs do not say how state is serialized, so verify before relying on it." }, "strict": { "s": 0, "why": "Same unknown: verify the serialization before assuming it is safe." } },
+          "wait": { "short": { "s": -1, "why": "Extra infrastructure for short waits." }, "long": { "s": 2, "why": "It pauses for human input or events without using compute or tokens [[r9]]." } }
+        }
+      },
+      "takeaway": "Storage is a threat-model choice as much as a durability choice. For waits of days the question moves from where the checkpoint lives to what wakes the run, which is what the Durable Extension adds (Beta in Python and preview in .NET as of 2026-10-13)." },
+    { "t": "table", "caption": "Four long-running features that are often confused (topic w11-t24)", "head": ["Feature", "What it is", "Survives a restart?", "Status (2026-10-13)"], "rows": [
+      ["Background responses", "One provider request returns a continuation token you poll, or use to resume an interrupted stream. A null token means done, failed or waiting on input. Python supports it only for agents on the OpenAI Responses API [[r24]]", "The provider holds the run. Your process holds only the token", "Not labelled on the page"],
+      ["Background agents", "A parent delegates tasks to named child agents through six tools. Task status is `running`, `completed`, `failed` or `lost`. There is no cancel tool, results return as text and child approvals are not proxied", "No: in-flight work does not survive a restart", "Experimental"],
+      ["Workflow checkpoints", "Superstep snapshots you resume with `workflow.run(checkpoint_id=..., checkpoint_storage=...)`", "Yes, if the storage outlives the process", "Stable"],
+      ["Durable agents (Durable Extension)", "Persisted sessions, checkpointed workflows, resume after failure, waits without compute and a session TTL", "Yes", "Beta (Python), preview (.NET)"]
+    ], "highlightCol": 2 },
+    { "t": "failure", "title": "Failure modes on the road to resume", "items": [
+      { "symptom": "A rebuilt workflow will not resume, or resumes into the wrong executor.", "cause": "Topology or executor identities changed. In .NET the agents lacked a stable `ChatClientAgentOptions.Id` or the `Name` moved.", "fix": "Pin ids and names, treat the graph as versioned, and test a restore in CI [[r7]]." },
+      { "symptom": "After an upgrade, old checkpoints fail to load a custom class.", "cause": "File storage (since 2026-04-09) and Cosmos storage (since 2026-04-21) use a restricted unpickler that rejects types you have not allowed.", "fix": "List the type in `allowed_checkpoint_types=[\"module:qualname\"]`, or write a custom storage. Module-level functions stay rejected." },
+      { "symptom": "Independent paths run slower than the slowest branch alone.", "cause": "The superstep barrier holds a chain until the slow executor in the same step finishes.", "fix": "Merge the steps of an independent path into one executor." },
+      { "symptom": "Tests that count or order checkpoints break after an upgrade.", "cause": "Python 1.13.0 (2026-07-30) added entry checkpoints, so counts and order changed.", "fix": "Assert on resume behaviour, not on checkpoint counts." },
+      { "symptom": "A user's approval starts a new run instead of continuing the old one.", "cause": "The answer was sent without the pending request or checkpoint it belongs to.", "fix": "Resume with `workflow.run(responses=...)`, passing `checkpoint_id` in the same call after a restart [[r8]]." }
+    ] }
+  ],
+  "quiz": [
+    { "id": "w11-l4-q1", "type": "single", "tag": "diagnose", "difficulty": 2, "q": "After a deploy, a workflow resumed from a file checkpoint fails to load a custom dataclass held in executor state. Nothing else changed. What is the most likely cause and fix?", "options": ["The restricted unpickler rejects unlisted types: add the type to `allowed_checkpoint_types` or use a custom storage", "Checkpoints are written only at workflow entry, so the executor state was never saved", "File storage cannot hold executor state at all, so move everything to in-memory storage and accept losing it on restart", "The superstep barrier discarded the dataclass, so add a fan-in edge before the executor"], "answer": 0, "explain": "File storage has used a restricted unpickler since python-1.0.1 (2026-04-09), so types outside the allowed list fail to load, and `allowed_checkpoint_types` or custom storage is the documented way out. Checkpoints are written at every superstep end, file storage does hold executor state, and the barrier controls timing, not what is serialized.", "ref": "r7" },
+    { "id": "w11-l4-q2", "type": "numeric", "tag": "numeric", "difficulty": 2, "q": "A fan-out starts two branches in the same superstep. Branch A is a chain of three executors that take 2 s each. Branch B is one executor that takes 9 s. How many seconds pass before the third executor of branch A finishes? Supersteps are barriers and each executor starts as soon as its superstep begins.", "answer": 13, "tolerancePct": 0, "unit": "seconds", "hint": "Each superstep lasts as long as its slowest executor.", "explain": "Superstep 1 runs A1 and B1 together and lasts max(2, 9) = 9 s. A2 runs alone in superstep 2 (2 s) and A3 in superstep 3 (2 s), so 9 + 2 + 2 = 13 s. If A's three steps were merged into one executor it would take 6 s and finish inside the same 9 s window.", "ref": "r6" },
+    { "id": "w11-l4-q3", "type": "multi", "tag": "security", "difficulty": 3, "q": "Select every statement about checkpoint storage as a trust boundary that is true.", "options": ["File and Cosmos storage serialize non-JSON state with pickle behind a restricted unpickler by default", "Never load checkpoints from untrusted or potentially tampered sources", "If pickle is unacceptable, use in-memory storage or write a custom `CheckpointStorage`", "Allowing a type with `allowed_checkpoint_types` also allows module-level functions from its module", "Checkpoint files are plain JSON, so reading one from any source is safe"], "answers": [0, 1, 2], "explain": "The first three are the documented position. Module-level functions and other non-type globals stay rejected even when a type is allowed, and checkpoint files can contain pickled data, so a tampered file is a code-execution risk.", "ref": "r7" },
+    { "id": "w11-l4-q4", "type": "single", "tag": "flip", "difficulty": 3, "q": "A manager approval takes up to two days. Deploys replace the host, and the team will not pay for idle compute while waiting. The workflow runs in one process with file checkpoints. What flips the design?", "options": ["Switch to background responses, which keep the run alive for days", "Use background agents so the approval becomes a child task", "Keep file checkpoints and add a loop that polls for the approval", "Move to shared checkpoint storage with the request stored in the checkpoint, or host on the Durable Extension (Beta or preview) so the wait uses no compute"], "answer": 3, "explain": "Waiting for days across host replacement needs state that outlives the host and a way to wake the run, which shared storage or the Durable Extension provides. Background responses are a continuation token for one provider request, and in Python only for the OpenAI Responses API. Background agents lose in-flight work on restart. Polling holds compute and still depends on a local disk.", "ref": "r9" }
+  ],
+  "defend": null,
+  "refs": ["r6", "r7", "r8", "r9", "r24"],
+  "takeaways": [
+    "Supersteps are barriers: parallel inside a step, wait between steps. Merge steps for truly independent paths.",
+    "A resumable workflow needs the same topology and stable executor identities, and a checkpoint store that outlives the process.",
+    "File and Cosmos checkpoint storage are a pickle-based trust boundary. Allow types explicitly, never load untrusted checkpoints, or use in-memory or custom storage.",
+    "Background responses, background agents, checkpoints and durable agents solve different problems. Only the last two survive a restart, and the durable packages are Beta or preview (checked 2026-10-13)."
+  ]
+}

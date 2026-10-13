@@ -1,0 +1,117 @@
+{
+  "id": "w07-t12",
+  "order": 12,
+  "group": "Access control options",
+  "title": "Purview sensitivity labels and SharePoint ACLs",
+  "minutes": 9,
+  "difficulty": "advanced",
+  "summary": "Preview as of 2026-10-13: Azure AI Search can enforce Purview sensitivity labels and ingest SharePoint permissions with the content. Each carries limits on link types, guests, tenants and freshness.",
+  "useIf": "Content lives in SharePoint, OneLake or Blob and access follows Microsoft 365 permissions or sensitivity labels.",
+  "avoidIf": "You need GA, support for guests and Anyone links, or multi-tenant label enforcement.",
+  "explain": [
+    { "t": "callout", "kind": "preview", "title": "Preview, checked 2026-10-13", "md": "Purview label enforcement and SharePoint ACL ingestion are preview features with no SLA, and the docs do not recommend previews for production [[r11]]." },
+    { "t": "p", "md": "**SharePoint ACLs.** The indexer ingests permissions with the content. It supports inheritance, unique item ACLs, Entra groups, list items, ASPX pages and SharePoint site groups (the last three from `2026-05-01-preview`, stored with an `spg:` prefix). It does not support Anyone or People in your organization links, external or guest users, or Information Management policies, and an Entra group nested inside a SharePoint group is not expanded, so those results are filtered out. It needs application permissions, not delegated, and a Basic or higher tier [[r16]]." },
+    { "t": "p", "md": "**Freshness.** From `2026-05-01-preview`, ACL changes on items with unique permissions are picked up on each successful indexer run through SharePoint change tokens. Changes on a parent scope (site, library, list or folder) are not: call `/resync` with `options: [\"permissions\"]`, or `/resetdocs` for specific keys. Earlier previews captured ACLs only at first ingestion [[r16]]." },
+    { "t": "p", "md": "**Purview labels.** Labels are extracted from Blob, ADLS Gen2, SharePoint and OneLake and gate access by classification. They need a system-assigned managed identity, single-tenant scope and RBAC auth, and are available through REST and SDK only. In a chunked index the label must be projected to every chunk row, or the chunks are not filtered. Autocomplete and Suggest are unavailable on such indexes. Retrieval can return `sensitivityLabelInfo` per reference for banners and policy checks [[r11]]. If a label applies encryption, the user needs the EXTRACT usage right as well as VIEW before an AI app returns the content [[tr13]]." },
+    { "t": "compare", "title": "Three Microsoft 365 paths", "options": [
+      { "name": "SharePoint indexer with ACLs", "tag": "Preview", "summary": "Copy content and permissions into the index.", "pros": ["Your own ranking and chunking", "Inheritance and unique ACLs preserved"], "cons": ["No Anyone links, guests or Information Management policies", "Parent-scope changes need an explicit resync"], "bestWhen": "Sites use Entra groups and unique permissions, and revocation can wait for a resync.", "avoidWhen": "Sharing links or guests drive access." },
+      { "name": "Purview label enforcement", "tag": "Preview", "summary": "Gate documents by sensitivity label.", "pros": ["One rule for classified content", "Labels shown per reference for banners"], "cons": ["Single tenant, managed identity, REST and SDK only", "Label must be on every chunk"], "bestWhen": "Policy is classification-based across Blob, ADLS, SharePoint and OneLake.", "avoidWhen": "You need per-person access or multi-tenant labels." },
+      { "name": "Remote SharePoint or Retrieval API", "tag": "Preview billing", "summary": "Let Microsoft 365 retrieve with the user's token.", "pros": ["Live permissions, nothing copied", "Honours the source's own rules"], "cons": ["200 requests per user per hour, 25 results", "The caller must be known to both tenants [[r26]]"], "bestWhen": "Rules are richer than an indexer can copy.", "avoidWhen": "You need your own ranking or high query volume." }
+    ] },
+    { "t": "callout", "kind": "note", "title": "Names changed", "md": "Microsoft Graph connectors are now Microsoft 365 Copilot connectors. They come in a synced model (content indexed into Microsoft Graph) and a federated model (MCP-based, fetched at query time with no indexing). Search for both names when you read older documents [[tr15]]." }
+  ],
+  "whereToUse": [
+    "Assistants over SharePoint sites that use unique permissions and Entra groups",
+    "Compliance-driven corpora where sensitivity labels decide who may read",
+    "Lakehouse and Blob content classified by Purview",
+    "Surfaces that must show a classification banner next to an answer"
+  ],
+  "whenToUse": {
+    "use": ["Access follows Microsoft 365 permissions or labels", "Preview is acceptable for the stage you are in", "You can run the resync jobs and monitor ACL freshness"],
+    "avoid": ["Guests, Anyone links or Information Management policies drive access", "Multi-tenant label enforcement is needed", "You need GA and an SLA"],
+    "flips": ["Sharing links matter: delegate retrieval to Microsoft 365 instead of copying", "Revocation must be minutes: add event-driven resyncs or a live check", "Only a few sites are in scope: the indexer is simple. Dozens of sites with deep nesting: plan the resync load"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["SharePoint indexer ACLs", "Entra groups and unique item ACLs", "Links, guests, policies", "Preview, resync needed for parent changes"],
+      ["Purview label enforcement", "Classification-driven policy", "Per-person rules, multi-tenant", "Preview, label on every chunk"],
+      ["Remote SharePoint or Retrieval API", "Rich rules, live permissions", "Own ranking, high volume", "Quotas, licensing"],
+      ["Security filters with your own export", "GA needed", "You do not want to maintain the export", "Custom sync code"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Chunks of a labelled document are returned to everyone", "cause": "The label was set on the parent document but not projected to each chunk row", "fix": "Project the label into every chunk, then test with a user without access" },
+    { "symptom": "A folder permission change never reaches the index", "cause": "Parent-scope changes are not picked up by indexer runs", "fix": "Call /resync with options [\"permissions\"] on change events, plus a scheduled resync" },
+    { "symptom": "Results disappear for users in a nested group", "cause": "An Entra group nested inside a SharePoint group is not expanded", "fix": "Assign the Entra group directly, or restructure the SharePoint group" },
+    { "symptom": "A remote SharePoint query returns more than expected", "cause": "An invalid KQL filter is ignored and the query runs without it", "fix": "Validate filter expressions before sending [[r17]]" }
+  ],
+  "scenarios": [
+    {
+      "id": "w07-t12-s1",
+      "title": "Sites shared with Anyone links and guests",
+      "situation": "Many SharePoint sites grant access through Anyone links and guest accounts. Security needs the assistant to respect those rules. Revocation within minutes is expected.",
+      "constraints": ["Anyone links and guests drive access", "Minutes-level revocation", "Preview acceptable"],
+      "unknowns": ["Do users hold a Microsoft 365 Copilot licence?", "How heavy is the query load?"],
+      "question": "How do you enforce access?",
+      "options": [
+        { "name": "SharePoint indexer ACLs and trust the result", "verdict": "poor", "why": "Anyone links, guests and Information Management policies are not supported, so access would not match SharePoint.", "tradeoff": "Fine when sites use Entra groups only." },
+        { "name": "Delegate to a remote SharePoint knowledge source or the Retrieval API with the user's token", "verdict": "best", "why": "SharePoint applies its own rules live, and nothing is copied [[r26]].", "tradeoff": "Quotas (200 requests per user per hour), licensing and less ranking control." },
+        { "name": "Index only sites that use Entra groups and exclude link-shared ones", "verdict": "good", "why": "Keeps the indexer approach safe.", "tradeoff": "Link-shared content is out of scope for the assistant." }
+      ],
+      "flips": [
+        { "if": "Sites move to Entra-group access", "then": "The indexer with ACLs becomes viable." },
+        { "if": "Query volume exceeds the per-user quota", "then": "Combine indexed content for most sites with delegation for link-shared ones." }
+      ],
+      "takeaway": "When sharing links decide access, let the source decide."
+    },
+    {
+      "id": "w07-t12-s2",
+      "title": "Classification-driven policy over a chunked index",
+      "situation": "A single-tenant company labels documents Public, General and Confidential in Purview. Content is in Blob, OneLake and SharePoint. The assistant chunks documents. The team wants one rule instead of per-document ACLs.",
+      "constraints": ["Single tenant", "Label-based policy", "Chunked index"],
+      "unknowns": ["Is the service using a system-assigned managed identity?", "Does the app show banners?"],
+      "question": "How do you enforce the label policy?",
+      "options": [
+        { "name": "Purview label enforcement, with the label projected into every chunk row", "verdict": "best", "why": "It matches a classification policy, and per-chunk labels make the filter effective [[r11]].", "tradeoff": "Preview, managed identity and REST or SDK only, with no Autocomplete or Suggest." },
+        { "name": "Label on the parent document only", "verdict": "poor", "why": "Chunks are not filtered without their own label.", "tradeoff": "Works only when the index holds whole documents." },
+        { "name": "Copy labels into a security filter field yourself", "verdict": "good", "why": "GA and under your control.", "tradeoff": "You maintain the mapping and drift between labels and index." }
+      ],
+      "flips": [
+        { "if": "Preview is not allowed", "then": "Use the security filter copy of labels." },
+        { "if": "Labels apply encryption", "then": "Users also need the EXTRACT right for AI apps to return content." }
+      ],
+      "takeaway": "Project labels to every chunk."
+    },
+    {
+      "id": "w07-t12-s3",
+      "title": "Folder permissions change at the parent",
+      "situation": "Access is managed at library and folder level. When an owner changes a folder's permissions, the index must reflect it within 15 minutes. The indexer runs every 5 minutes.",
+      "constraints": ["Parent-scope changes", "15-minute target", "Indexer every 5 minutes"],
+      "unknowns": ["Can change events trigger a job?", "How many documents sit under one folder?"],
+      "question": "How do you meet the target?",
+      "options": [
+        { "name": "Rely on the 5-minute indexer runs", "verdict": "poor", "why": "Runs pick up unique-permission item changes, not parent-scope changes [[r16]].", "tradeoff": "Enough only for items with unique permissions." },
+        { "name": "Trigger /resync with options permissions from change events, plus a scheduled resync", "verdict": "best", "why": "It covers parent-scope changes explicitly and the schedule catches missed events.", "tradeoff": "You build the trigger and watch the resync load." },
+        { "name": "Nightly full resync", "verdict": "good", "why": "Simple and complete.", "tradeoff": "Up to a day of lag, so it misses 15 minutes." }
+      ],
+      "flips": [
+        { "if": "The target relaxes to a day", "then": "The nightly resync is enough." },
+        { "if": "Restricted folders need seconds", "then": "Add a live check on those hits." }
+      ],
+      "takeaway": "Parent-scope changes need an explicit resync."
+    }
+  ],
+  "quiz": [
+    { "id": "w07-t12-q1", "type": "multi", "tag": "security", "q": "Which are NOT supported by the SharePoint indexer's ACL ingestion? Choose all that apply.", "options": ["Entra groups", "Anyone links", "Guest or external users", "Inheritance"], "answers": [1, 2], "explain": "Anyone links, People in your organization links, guests and Information Management policies are not supported. Entra groups and inheritance are supported.", "ref": "r16" },
+    { "id": "w07-t12-q2", "type": "single", "tag": "bug", "q": "A document is labelled Confidential and users without access still receive its text from a chunked index. What is the most likely cause?", "options": ["The managed identity is user-assigned", "The label is on the parent record but was not projected to each chunk row", "The index is on the Basic tier", "Autocomplete is enabled"], "answer": 1, "explain": "In a chunked index each chunk row needs the label or it is not filtered. A user-assigned identity prevents label ingestion altogether rather than leaking chunks, and tier or Autocomplete do not govern filtering.", "ref": "r11" }
+  ],
+  "flashcards": [
+    { "front": "What does the SharePoint indexer's ACL support exclude?", "back": "Anyone and People in your organization links, external or guest users and Information Management policies. Entra groups nested in SharePoint groups are not expanded." },
+    { "front": "How do parent-scope SharePoint permission changes reach the index?", "back": "Not through indexer runs. Call /resync with options [\"permissions\"], or /resetdocs for specific keys." },
+    { "front": "What must you do for Purview labels on chunked indexes?", "back": "Project the label onto every chunk row, or chunks are not filtered. Labels also need a system-assigned managed identity and a single tenant." }
+  ],
+  "related": ["w07-t11", "w07-t10", "w07-t15", "w07-l5", "w03-t02"],
+  "refs": ["r11", "r16", "r17", "r26", "tr13", "tr15"]
+}

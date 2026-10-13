@@ -1,0 +1,143 @@
+{
+  "id": "w14-l3",
+  "order": 3,
+  "title": "Score the retrieval, then the answer",
+  "kind": "problem",
+  "minutes": 20,
+  "brief": "A RAG answer is wrong. The labels you hold, the number of chunks an answer needs and the completeness of your judgments are all unspecified. Pick the metrics that say which half broke before you touch the prompt.",
+  "blocks": [
+    { "t": "h", "text": "Rank metrics in one table", "level": 2 },
+    { "t": "table", "caption": "Rank metrics for retrieval, from the Manning information retrieval text and common practice [[r25]]", "head": ["Metric", "Question it answers", "Needs", "Blind spot"], "highlightCol": 1, "rows": [
+      ["Precision at k", "Of the top k, how many are relevant?", "Binary labels", "Least stable standard measure. A perfect system scores at most 0.4 at k = 20 when only 8 chunks are relevant."],
+      ["Recall at k", "How many of all relevant chunks reached the top k?", "A complete list of relevant chunks per query", "Ignores order inside the top k. Incomplete labels distort it."],
+      ["Hit rate at k", "Did at least one relevant chunk reach the top k?", "One known relevant chunk per query", "Says nothing about the rest or the order. A conventional definition, not a named Foundry evaluator."],
+      ["MRR", "How early did the first correct chunk appear?", "One known correct chunk", "Ignores everything ranked after the first hit."],
+      ["MAP", "Average precision at each relevant rank, averaged over queries", "Complete binary labels", "Good discrimination and stability, but binary relevance only."],
+      ["nDCG at k", "Are highly relevant chunks ranked above partly relevant ones?", "Graded labels", "Two gain formulas exist, so scores differ across tools."]
+    ] },
+    { "t": "formula", "title": "nDCG at k with two gain choices", "expr": "DCG@k = sum over i = 1..k of gain(rel_i) / log2(i + 1)\nnDCG@k = DCG@k / IDCG@k", "vars": [
+      { "k": "gain, linear", "v": "rel_i" },
+      { "k": "gain, exponential", "v": "2^rel_i - 1, common in industry and stresses highly relevant chunks" },
+      { "k": "IDCG@k", "v": "DCG@k of the ideal ordering, so a perfect ranking scores 1" }
+    ], "example": "Ranked relevance 3, 2, 0, 1. Linear gain gives **0.985**. Exponential gain gives **0.993**. Same ranking, different library, different number [[r46]]. MRR for first-relevant ranks 1, 3, none, 2 is (1 + 0.333 + 0 + 0.5) / 4 = **0.458**." },
+    { "t": "dials", "id": "w14-l3-metric", "title": "Pick the retrieval metric", "prompt": "Flip what you know about labels, evidence needs and judgment coverage. The ranking and the reasons update.", "dials": [
+      { "id": "labels", "label": "Relevance labels", "values": [{ "id": "qrels", "label": "Judged per query" }, { "id": "none", "label": "None, only questions" }] },
+      { "id": "need", "label": "Evidence the answer needs", "values": [{ "id": "one", "label": "One chunk is enough" }, { "id": "many", "label": "Several chunks combine" }] },
+      { "id": "cover", "label": "Judgment coverage", "values": [{ "id": "complete", "label": "Every retrieved chunk judged" }, { "id": "holes", "label": "Many chunks unjudged" }] }
+    ], "options": [
+      { "id": "mrr", "name": "MRR", "summary": "Rank of the first correct chunk." },
+      { "id": "hit", "name": "Hit rate at k", "summary": "Share of queries with a relevant chunk in the top k." },
+      { "id": "recall", "name": "Recall at k", "summary": "Share of all relevant chunks found in the top k." },
+      { "id": "ndcg", "name": "nDCG at k", "summary": "Graded relevance with a rank discount." },
+      { "id": "ctx", "name": "Judged context metrics", "summary": "RAGAS context precision and recall, or the Foundry Retrieval evaluator." }
+    ], "scores": {
+      "mrr": {
+        "labels": { "qrels": { "s": 2, "why": "It needs a known correct chunk per query, which qrels supply." }, "none": { "s": -2, "why": "Without a known correct chunk there is nothing to rank against." } },
+        "need": { "one": { "s": 2, "why": "It rewards the first correct chunk, which is all the answer needs." }, "many": { "s": -1, "why": "It ignores every chunk after the first hit." } },
+        "cover": { "complete": { "s": 1, "why": "The first judged-relevant rank is trustworthy." }, "holes": { "s": -1, "why": "An unjudged but relevant chunk ranked first counts as a miss." } }
+      },
+      "hit": {
+        "labels": { "qrels": { "s": 1, "why": "One known relevant chunk per query is enough to score it." }, "none": { "s": -2, "why": "It still needs at least one known relevant chunk." } },
+        "need": { "one": { "s": 2, "why": "The question is whether a good chunk made it into the prompt." }, "many": { "s": 0, "why": "It says nothing about the other chunks the answer needs." } },
+        "cover": { "complete": { "s": 1, "why": "Hits are counted correctly." }, "holes": { "s": 0, "why": "Less sensitive, since only one judged hit is required." } }
+      },
+      "recall": {
+        "labels": { "qrels": { "s": 2, "why": "Counts judged relevant chunks that were found." }, "none": { "s": -2, "why": "The denominator is the list of relevant chunks, which you do not have." } },
+        "need": { "one": { "s": 0, "why": "Overkill when a single chunk answers the question." }, "many": { "s": 2, "why": "It measures whether every needed chunk arrived." } },
+        "cover": { "complete": { "s": 1, "why": "The denominator is trustworthy." }, "holes": { "s": -2, "why": "Unjudged relevant chunks are invisible, so the denominator is a partial list." } }
+      },
+      "ndcg": {
+        "labels": { "qrels": { "s": 1, "why": "Needs graded labels, which cost more than binary ones." }, "none": { "s": -2, "why": "There are no grades to discount." } },
+        "need": { "one": { "s": 0, "why": "Fine, but MRR gives the same signal with fewer labels." }, "many": { "s": 2, "why": "It rewards ranking highly relevant chunks above partial ones." } },
+        "cover": { "complete": { "s": 1, "why": "Grades cover the ranking, so the discount is meaningful." }, "holes": { "s": -1, "why": "Holes drag the score down. Check holes_ratio first." } }
+      },
+      "ctx": {
+        "labels": { "qrels": { "s": 0, "why": "Works, but rank metrics are cheaper and deterministic." }, "none": { "s": 2, "why": "A judge reads the retrieved chunks directly, so no qrels are needed." } },
+        "need": { "one": { "s": 1, "why": "Judged against the question." }, "many": { "s": 1, "why": "Context recall checks reference claims against the retrieved chunks." } },
+        "cover": { "complete": { "s": 0, "why": "No advantage over rank metrics here." }, "holes": { "s": 2, "why": "It does not depend on pre-judged documents, only on judge quality." } }
+      }
+    }, "takeaway": "Rank metrics are cheap and deterministic but need labels. Judged metrics need no labels but add judge noise. Say which you lack, then pick." },
+    { "t": "diagram", "id": "w14-l3-d1", "title": "Score each half where it happens", "alt": "A RAG pipeline from query to retriever, top-k chunks, generator and answer, with retrieval metrics attached to the chunks and groundedness and relevance attached to the answer and the chunks.", "src": "flowchart LR\n  Q[Query] --> R[Retriever]\n  R --> C[Top k chunks]\n  C --> G[Generator]\n  G --> A[Answer]\n  C -.-> E1[Rank and context metrics]\n  A -.-> E2[Groundedness and relevance]\n  C -.-> E2", "caption": "Retrieval metrics read the chunks. Answer metrics read the answer against the chunks. Foundry labels groundedness the precision aspect and response completeness the recall aspect." },
+    { "t": "table", "caption": "Which failure each metric catches", "head": ["Failure", "RAGAS metric", "Foundry evaluator", "Blind spot"], "rows": [
+      ["Needed facts never retrieved", "Context recall (needs a reference). Context entities recall for fact-heavy domains.", "Retrieval (LLM judge on context, no ground truth). Document Retrieval (needs relevance labels).", "Recall ignores order, so a needed chunk can sit at rank 9."],
+      ["Relevant chunks ranked too low", "Context precision, which is order sensitive", "Document Retrieval: `ndcg@3`, `xdcg@3`, `top1_relevance`", "Needs labels. Check `holes_ratio`."],
+      ["Answer claims lack support in the chunks", "Faithfulness", "Groundedness (1 to 5). Groundedness Pro (preview, True/False, no model deployment).", "A wrong chunk produces a faithful wrong answer."],
+      ["Answer leaves out part of what the reference says", "Compare with the reference answer", "Response Completeness (preview, needs `ground_truth`)", "Needs a reference answer for every row."],
+      ["Answer does not address the question", "Answer relevancy (regenerated questions plus embeddings)", "Relevance", "Does not judge facts."],
+      ["Wrong claims traced to irrelevant retrieved chunks", "Noise sensitivity (lower is better)", "No named evaluator for it in the pages checked on 2026-10-13", "Needs a reference and the retrieved contexts."]
+    ] },
+    { "t": "failure", "title": "Retrieval and RAG evaluation pitfalls", "items": [
+      { "symptom": "Recall at 10 is 0.92 and answers still miss facts", "cause": "k is larger than the number of chunks the prompt receives", "fix": "Set k to the number of chunks the generator sees, for example 4, and report recall at that k." },
+      { "symptom": "A new index scores lower although the results look better", "cause": "New documents have no relevance judgments, so they count as non-relevant", "fix": "Track holes_ratio, judge the new top results and extend the qrels before comparing." },
+      { "symptom": "Two libraries report different nDCG for one run", "cause": "Linear gain versus 2^rel - 1 gain", "fix": "Fix one definition in the harness and store it next to the score." },
+      { "symptom": "A dense retriever tops a public benchmark and loses on exact identifiers", "cause": "BEIR shows BM25 is a strong baseline, and your queries differ from the benchmark", "fix": "Score on your own queries and keep identifier-heavy cases as their own slice." },
+      { "symptom": "Answer relevancy shifts after an embedding change", "cause": "The metric embeds the user input and regenerated questions, so the embedder changes the score", "fix": "Pin the embedding model and the number of generated questions (default 3) in the harness." }
+    ] },
+    { "t": "accordion", "items": [
+      { "title": "Go deeper: the Foundry Document Retrieval evaluator", "blocks": [
+        { "t": "p", "md": "`builtin.document_retrieval` is a composite evaluator. It returns Fidelity, NDCG, XDCG, Max Relevance N and Holes, with outputs such as `ndcg@3`, `xdcg@3`, `fidelity`, `top1_relevance`, `top3_max_relevance`, `holes` and `holes_ratio`. Inputs are `retrieval_ground_truth` (a `document_id` plus a `query_relevance_label`) and `retrieved_documents`. Holes count documents that were retrieved without a relevance judgment [[r4]]." }
+      ] },
+      { "title": "Go deeper: RAGAS API and definitions", "blocks": [
+        { "t": "p", "md": "PyPI `ragas` was at 0.4.3 (released 2026-01-13) when checked. The docs show the collections API (`ragas.metrics.collections`, with `ascore` and `score`). The legacy `SingleTurnSample` API is deprecated in 0.4 and removed in 1.0. The docs title says Response Relevancy while the class is `AnswerRelevancy` [[r20]]." },
+        { "t": "p", "md": "`ContextPrecision` compares chunks with a reference answer, while `ContextUtilization` uses the generated response instead. Noise sensitivity takes `mode=\"relevant\"` (default) or `mode=\"irrelevant\"` [[r20]]." }
+      ] },
+      { "title": "Go deeper: what BEIR says about retrievers", "blocks": [
+        { "t": "p", "md": "BEIR bundles 18 public datasets for zero-shot retrieval. BM25 is a strong baseline. Re-ranking and late-interaction models score best on average but at high compute cost, so a benchmark win is not a latency or cost win [[r42]]. The DeepLearning.AI course on advanced RAG shows the same metrics applied end to end [[r14]]." }
+      ] }
+    ] }
+  ],
+  "quiz": [
+    {
+      "id": "w14-l3-q1", "type": "numeric", "tag": "numeric", "difficulty": 1, "ref": "r25",
+      "q": "A retriever is scored on four queries. The first relevant chunk appears at ranks 1, 3, never and 2. What is the MRR? Give the answer to three decimals.",
+      "answer": 0.458, "tolerancePct": 1, "unit": "MRR", "hint": "Reciprocal rank is 1 divided by the rank of the first relevant chunk, and 0 when none is retrieved.",
+      "explain": "Reciprocal ranks are 1, 1/3, 0 and 1/2. Their sum is 1.833 and the mean over four queries is 0.458. Treating the missing query as rank infinity gives the 0, and dropping it would wrongly average over three queries and give 0.611."
+    },
+    {
+      "id": "w14-l3-q2", "type": "single", "tag": "diagnose", "difficulty": 2, "ref": "r4",
+      "q": "Which cause best explains these numbers?",
+      "code": { "lang": "text", "code": "recall@10          = 0.92\nchunks_in_prompt   = 4\nanswer_completeness = low" },
+      "options": [
+        "The embedding model is too small to represent these queries well and needs replacing",
+        "The judge is biased toward long answers, so it under-scores the shorter answers it receives",
+        "The chunk overlap is too low, so facts are split across neighbouring chunks",
+        "k is 10 but the prompt receives 4 chunks, so ranks 5 to 10 never reach the generator"
+      ],
+      "answer": 3,
+      "explain": "Recall at 10 counts chunks the generator never sees. Score recall at the k the prompt actually uses. A weak embedder would also lower recall at 10, which here is high. Judge length bias affects answer scoring, not the retrieval number. Low overlap could split facts, but the high recall at 10 shows the relevant chunks were found."
+    },
+    {
+      "id": "w14-l3-q3", "type": "single", "tag": "flip", "difficulty": 2, "ref": "r25",
+      "q": "Questions need three chunks combined, and experts graded every chunk from 0 to 3. Which metric is the best primary retrieval score?",
+      "options": [
+        "MRR, because it rewards the earliest correct chunk in every ranked list",
+        "Hit rate at 1, because it is the strictest check on the top result",
+        "nDCG at k, where k is the number of chunks in the prompt",
+        "Precision at 20, because it is the simplest metric to explain to stakeholders"
+      ],
+      "answer": 2,
+      "explain": "Graded labels and multi-chunk evidence point to nDCG at the k the prompt uses, because it rewards ranking highly relevant chunks above partial ones. MRR and hit rate at 1 look only at the first correct chunk and ignore the others the answer needs. Precision at 20 is unstable when few chunks are relevant, and it ignores grades and order."
+    },
+    {
+      "id": "w14-l3-q4", "type": "single", "tag": "concept", "difficulty": 2, "ref": "r46",
+      "q": "Two libraries report nDCG@4 of 0.985 and 0.993 for the same ranking with relevance 3, 2, 0, 1. Which explanation fits?",
+      "options": [
+        "One uses linear gain and the other uses 2^rel - 1, which weights highly relevant chunks more",
+        "One library accidentally leaks the ideal ordering into the predicted ranking, which inflates its score",
+        "One of them computes MRR because the labels are graded",
+        "Rounding error at the fourth decimal place"
+      ],
+      "answer": 0,
+      "explain": "Linear gain gives DCG 4.693 against an ideal 4.762, so 0.985. Exponential gain uses 7, 3, 0 and 1, giving 9.324 against 9.393, so 0.993. The two coincide for binary labels and diverge for graded ones. Leaking the ideal order would give 1.0, MRR is a different metric with a different range, and rounding cannot move the result by 0.008."
+    }
+  ],
+  "defend": null,
+  "refs": ["r2", "r4", "r14", "r20", "r25", "r42", "r46"],
+  "takeaways": [
+    "Pick the retrieval metric by your labels: rank metrics need qrels, judged context metrics do not.",
+    "Tie k to the number of chunks the prompt actually receives.",
+    "Score retrieval and generation separately. Faithfulness checks support, not truth.",
+    "Fix one nDCG definition and track holes_ratio before comparing indexes.",
+    "Public retrieval benchmarks say little about your identifiers and paraphrases, so test your own queries."
+  ]
+}

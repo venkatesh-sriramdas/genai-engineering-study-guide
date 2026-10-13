@@ -1,0 +1,113 @@
+{
+  "id": "w12-t03",
+  "order": 3,
+  "group": "Foundry Agent Service",
+  "title": "Hosted agents overview",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "A hosted agent is your own agent code, packaged as a container image or a .zip, that Foundry runs with a dedicated endpoint, a dedicated Entra identity, scaling and session state.",
+  "useIf": "You bring code, a framework, custom protocols, persistent files or need to choose compute size.",
+  "avoidIf": "Instructions, a model and tools already cover the behavior, or the code must stay on another cloud.",
+  "explain": [
+    { "t": "p", "md": "Hosted agents are containerized agentic apps that run on Agent Service. Your code does the orchestration and calls models from the Foundry catalog for reasoning [[r2]]. Supported languages are Python and C#, and the docs name Agent Framework, LangGraph, the OpenAI Agents SDK, the Anthropic Agent SDK and the GitHub Copilot SDK, or custom code [[r1]]. You ship a container image, or a .zip of source that Foundry builds into an image [[r1]]." },
+    { "t": "p", "md": "On deploy the service pulls the image from Azure Container Registry, assigns a **dedicated Entra agent identity** and exposes a **dedicated endpoint**. At runtime it provisions compute **per session** in a VM-isolated sandbox. Your code can call Foundry models, Toolbox tools and downstream Azure services with the agent identity [[r2]]. The split is clear: you own the code inside the sandbox, the platform owns the endpoint, identity, scaling and session state around it [[r2]]." },
+    { "t": "diagram", "id": "w12-t03-d1", "title": "Who owns what", "alt": "A client calls a dedicated endpoint. Agent Service holds versions, identity and conversations and starts a per-session sandbox with your code. The code calls models, a toolbox and Azure services.", "src": "flowchart LR\n  C[Client] --> E[Dedicated endpoint]\n  E --> AS[Agent Service: versions, identity, state]\n  AS --> SB[Per-session sandbox: your code]\n  SB --> M[Foundry models]\n  SB --> TB[Toolbox]\n  SB --> AZ[Your Azure services]" },
+    { "t": "table", "caption": "Why choose hosted over a prompt agent (from the hosted agents page)", "head": ["Need", "How hosted agents answer it"], "rows": [
+      ["Bring your own code", "Any framework or custom code instead of prompt-only definitions"],
+      ["Custom protocols", "Webhooks and non-OpenAI payloads through the Invocations protocol"],
+      ["Control compute", "Choose CPU and memory for the session sandbox"],
+      ["Stateful work", "`$HOME` and the `/files` endpoint persist across turns"],
+      ["Long-lived work", "Preview resilience features keep in-progress work across process interruptions"]
+    ] },
+    { "t": "callout", "kind": "preview", "title": "Status and migration, checked 2026-10-13", "md": "The Foundry GA table has no separate hosted agent row and the concept page has no preview banner, so an explicit \"hosted agents are GA\" statement is **UNVERIFIED** [[r9]]. Long-running resilience articles are preview [[tr2]]. Support for the initial-preview hosted backend ended on 2026-08-20. Redeploy needs `azure-ai-projects` 2.3.0 or later and `azd` 1.23.0 or later with `azd ext install azure.ai.agents`, and the adapter packages were replaced by `azure-ai-agentserver-responses` and `azure-ai-agentserver-invocations` [[r11]]. The docs list 31 regions on this date and say the list grows [[r2]]." }
+  ],
+  "whereToUse": [
+    "An existing LangGraph, Agent Framework or OpenAI Agents SDK app that needs a managed endpoint, identity and scaling",
+    "Agents that receive webhooks, run batch extraction or expose AG-UI streaming",
+    "Agents that need `$HOME` files across turns, such as a working directory or cached data",
+    "Agents that call your own code or private services using the agent identity with explicit RBAC"
+  ],
+  "whenToUse": {
+    "use": [
+      "You need code, a framework or a custom protocol",
+      "You need to choose CPU and memory per session",
+      "You want Foundry to own identity, scaling and observability around your code"
+    ],
+    "avoid": [
+      "The agent is light and a prompt agent would do, since hosted adds compute billed per active session",
+      "The code must stay on another cloud or on premises",
+      "Your policy needs a documented GA label for every component and the hosted status is unconfirmed"
+    ],
+    "flips": [
+      "Sustained high concurrency of heavy agents flips the cost dial: concurrency times allocation drives the bill",
+      "A requirement to run in another cloud flips you to self-hosting with registration for governance",
+      "Only a webhook or batch need appears: still hosted, but use Invocations rather than Responses"
+    ]
+  },
+  "alternatives": {
+    "title": "Hosted agents versus the neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Hosted agent", "Custom code with managed endpoint, identity and session state", "Config would do, or code must run elsewhere", "Compute per active session [[r2]]"],
+      ["Prompt agent", "Least to manage", "Custom orchestration or files", "Less control"],
+      ["Direct Responses API call", "Definition ships with your app", "You want Foundry to host and version it", "You host and secure it [[r1]]"],
+      ["Self-hosted on AKS or Container Apps", "Code must stay in your estate, full network control", "You want managed per-session state and identity", "You operate scaling, identity wiring and patching"],
+      ["Copilot Studio agent", "Low-code makers, Microsoft 365 channels", "You need code-level control", "Different governance surface [[tr4]]"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A guide tells you to set a capability host or use a shared endpoint with `agent_reference`", "cause": "It targets the initial-preview backend that ended on 2026-08-20", "fix": "Follow the migration page: dedicated endpoint per agent, new adapter packages, redeploy [[r11]]." },
+    { "symptom": "Agent cannot reach your storage account after deploy", "cause": "The agent identity only gets model inference and session storage by default", "fix": "Assign RBAC roles to the agent identity for any other resource [[r2]]." },
+    { "symptom": "Costs grow faster than traffic", "cause": "Oversized sandbox multiplied by concurrent active sessions", "fix": "Right-size per version. The docs advise a larger size only if sustained peaks pass about 70 percent of allocation [[r2]]." }
+  ],
+  "scenarios": [
+    {
+      "id": "w12-t03-s1",
+      "title": "Graph agent needs a managed home",
+      "situation": "A team has a working graph-based agent in Python. They want an endpoint, an Entra identity and scaling without running a cluster.",
+      "constraints": ["Custom orchestration already exists", "Azure regions are acceptable", "Small ops team"],
+      "unknowns": ["Does it need persistent files?", "How many concurrent active sessions at peak?"],
+      "question": "Where do you run it?",
+      "options": [
+        { "name": "Hosted agent", "verdict": "best", "why": "Keeps your framework and code and adds a dedicated endpoint, agent identity, scaling and session state.", "tradeoff": "Compute is billed per active session and the hosted GA label is unconfirmed." },
+        { "name": "Self-host on Container Apps", "verdict": "good", "why": "Full control and it works anywhere.", "tradeoff": "You wire identity, scaling, session persistence and observability yourself." },
+        { "name": "Rebuild as a prompt agent", "verdict": "poor", "why": "The graph logic does not fit configuration and would be lost.", "tradeoff": "Right when the logic is a simple tool-calling loop." }
+      ],
+      "flips": [
+        { "if": "The agent is a plain tool-calling loop", "then": "Prompt agent, and drop the container." },
+        { "if": "Policy forbids anything without a GA label", "then": "Self-host until the hosted status is confirmed for you." }
+      ],
+      "takeaway": "Hosted fits existing code that wants a managed endpoint and identity."
+    },
+    {
+      "id": "w12-t03-s2",
+      "title": "Spiky Q&A at high concurrency",
+      "situation": "A stateless question-and-answer agent sees thousands of short sessions at peak and almost none overnight.",
+      "constraints": ["No files or custom protocol", "Cost is watched closely", "Text only"],
+      "unknowns": ["Per-session memory need?", "Is any custom code required?"],
+      "question": "Which runtime do you choose?",
+      "options": [
+        { "name": "Prompt agent", "verdict": "best", "why": "No compute line: you pay for inference and tools, and Foundry scales it.", "tradeoff": "No custom code path." },
+        { "name": "Direct Responses API call from an existing app", "verdict": "good", "why": "Also avoids sandbox compute and keeps the definition in code.", "tradeoff": "You host and secure the caller." },
+        { "name": "Hosted agent at the largest sandbox", "verdict": "poor", "why": "Billing follows CPU and memory across active sessions, so oversizing multiplies cost by concurrency.", "tradeoff": "Right when sessions need code, files or heavy local compute." }
+      ],
+      "flips": [
+        { "if": "Each session needs a working directory or custom code", "then": "Hosted agent, sized at the smallest tier that holds the peak." },
+        { "if": "Concurrency is low and logic is complex", "then": "Hosted cost is small, so code flexibility wins." }
+      ],
+      "takeaway": "Hosted cost is concurrency times allocation, so match the runtime to the work."
+    }
+  ],
+  "quiz": [
+    { "id": "w12-t03-q1", "type": "multi", "tag": "tradeoff", "q": "Which needs are listed by the docs as reasons to choose a hosted agent over a prompt agent?", "options": ["Bring your own code or framework", "Use custom protocols such as webhooks", "Avoid all compute billing", "Persist files and state across turns with `$HOME` and `/files`"], "answers": [0, 1, 3], "explain": "The hosted agents page lists own code, custom protocols, compute control, stateful files and resilient long-lived work. Hosted adds compute, so it does not avoid billing.", "ref": "r2" },
+    { "id": "w12-t03-q2", "type": "single", "tag": "diagnose", "q": "An initial-preview hosted agent stopped working after 2026-08-20. What is the correct fix?", "options": ["Redeploy on the new model with a dedicated endpoint and the new adapter packages", "Raise the idle timeout to 60 minutes", "Add a second identity to the project", "Switch the protocol to Activity"], "answer": 0, "explain": "Support for the initial-preview backend ended and redeploy is required. Idle timeout, identities and protocol choice do not address a retired backend.", "ref": "r11" },
+    { "id": "w12-t03-q3", "type": "single", "tag": "flip", "q": "Which change most directly flips the choice from a hosted agent to a prompt agent?", "options": ["Need to receive webhooks", "Need persistent files", "The behavior now fits instructions, a model and tools", "Need to choose CPU size"], "answer": 2, "explain": "A prompt agent covers behavior expressed as configuration. The other three are the reasons hosted agents exist.", "ref": "r1" }
+  ],
+  "flashcards": [
+    { "front": "What does Foundry create automatically when a hosted agent is deployed?", "back": "A dedicated Microsoft Entra agent identity and a dedicated endpoint. Publishing is not needed for programmatic access." },
+    { "front": "Is there an explicit GA statement for hosted agents (checked 2026-10-13)?", "back": "UNVERIFIED. The GA table has no hosted row and the concept page has no preview banner. Confirm status before a GA-only policy decision." },
+    { "front": "How are hosted agents billed beyond inference?", "back": "CPU and memory consumed across active sessions. Numeric rates are on the pricing page and are UNVERIFIED in this guide." }
+  ],
+  "related": ["w12-t04", "w12-t05", "w12-t06", "w12-t19", "w11-t25", "w12-l2"],
+  "refs": ["r1", "r2", "r9", "r11", "tr2", "tr4"]
+}

@@ -1,0 +1,98 @@
+{
+  "id": "w18-l4",
+  "order": 4,
+  "title": "Models that act: SQL, sandboxes and screens",
+  "kind": "problem",
+  "minutes": 24,
+  "brief": "The model is about to run a query, execute code or click through an interface on someone's behalf. Schema size, whether an API exists, tenant isolation and network needs are open. Choose what runs where, and assume everything the model produces or reads is untrusted.",
+  "blocks": [
+    { "t": "h", "text": "Three ways a model touches the world", "level": 2 },
+    { "t": "compare", "title": "Text-to-SQL approaches", "intro": "Benchmarks show a wide gap between academic and enterprise schemas, so the approach has to match the schema and the cost of a wrong answer.", "options": [
+      { "name": "Free-form generation over the whole schema", "summary": "Give the model the schema and the question, and run what it writes.", "pros": ["No modelling effort", "Good for exploration by analysts"], "cons": ["Accuracy collapses on large or dirty schemas", "Generated SQL is untrusted input"], "bestWhen": "A small clean schema, a read-only role and a user who can judge the result.", "avoidWhen": "Customer-facing answers, large schemas or costly mistakes.", "meta": [{ "k": "Effort", "v": "low" }, { "k": "Accuracy risk", "v": "high on enterprise schemas" }] },
+      { "name": "Schema-linked prompts with sampled values", "summary": "Retrieve only the relevant tables and columns and include descriptions and sample values.", "pros": ["Smaller prompt", "Sample values help with dirty or coded data"], "cons": ["Linking mistakes hide the right column", "Descriptions need upkeep"], "bestWhen": "Many tables, but a stable, documented schema.", "avoidWhen": "Metrics need exact business definitions.", "meta": [{ "k": "Effort", "v": "medium" }, { "k": "Accuracy risk", "v": "medium" }] },
+      { "name": "Semantic layer or curated views", "summary": "The model queries governed views that encode joins, metric definitions and row-level security.", "pros": ["Consistent metrics", "A small surface that you can secure"], "cons": ["Modelling effort", "Covers only what the views expose"], "bestWhen": "Shared metrics, many users and per-user data rules.", "avoidWhen": "Ad hoc exploration over raw tables.", "meta": [{ "k": "Effort", "v": "high" }, { "k": "Accuracy risk", "v": "low" }] },
+      { "name": "Verified templates or stored procedures", "summary": "The model picks a vetted query and fills its parameters.", "pros": ["Predictable and auditable", "No free-form SQL to attack"], "cons": ["Limited coverage", "A catalogue to build and maintain"], "bestWhen": "Repeated questions where a wrong answer is expensive.", "avoidWhen": "Open-ended analysis.", "meta": [{ "k": "Effort", "v": "high" }, { "k": "Accuracy risk", "v": "lowest" }] }
+    ] },
+    { "t": "diagram", "id": "w18-d2", "title": "A guarded text-to-SQL path", "alt": "Flow from a question through view linking, SQL generation and validation to a run under a read-only role with row-level security, with a rejection path.", "src": "flowchart LR\n  Q[Question] --> L[Link views and columns]\n  L --> G[Generate SQL]\n  G --> V[Parse and allow-list]\n  V --> R[Run read-only with row-level security]\n  R --> A[Answer with the query shown]\n  V -->|rejected| X[Refuse or ask]", "caption": "The model's output is untrusted at every step, so the checks sit in code, not in the prompt." },
+    { "t": "stats", "items": [
+      { "label": "BIRD, ChatGPT vs humans", "value": "40.08% vs 92.96%", "note": "Execution accuracy on 12,751 pairs over 95 databases (2023) [[r29]]" },
+      { "label": "Spider 2.0, o1-preview code agent", "value": "21.3%", "note": "632 enterprise workflow problems (2024-11) [[r30]]" },
+      { "label": "Same agent family elsewhere", "value": "91.2% and 73.0%", "note": "Spider 1.0 and BIRD, so the schema is the difference [[r30]]" },
+      { "label": "Spider 2.0 databases", "value": "over 1,000 columns", "note": "Often, on BigQuery and Snowflake. Scores age fast." }
+    ] },
+    { "t": "dials", "id": "w18-l4-act", "title": "Where should generated code or actions run?", "prompt": "Flip the dials. Prefer a typed tool when one exists, and notice what changes once untrusted code or a screen is involved.",
+      "dials": [
+        { "id": "iface", "label": "Interface", "values": [ { "id": "api", "label": "A typed API or MCP tool exists" }, { "id": "ui", "label": "Only a screen exists" } ] },
+        { "id": "code", "label": "Code", "values": [ { "id": "none", "label": "No model-written code needed" }, { "id": "gen", "label": "The model writes and runs code" } ] },
+        { "id": "tenancy", "label": "Isolation", "values": [ { "id": "single", "label": "One trusted user" }, { "id": "multi", "label": "Many users, hard isolation" } ] },
+        { "id": "egress", "label": "Network from the sandbox", "values": [ { "id": "off", "label": "Not needed" }, { "id": "on", "label": "Needed for packages or APIs" } ] }
+      ],
+      "options": [
+        { "id": "api", "name": "Typed API or MCP tool", "summary": "Call a narrow, audited interface." },
+        { "id": "interp", "name": "Vendor code interpreter", "summary": "The model vendor runs the code." },
+        { "id": "aca", "name": "Container Apps dynamic sessions", "summary": "Hyper-V isolated sessions you create per user." },
+        { "id": "self", "name": "Self-managed container sandbox", "summary": "Your containers, your isolation." },
+        { "id": "screen", "name": "Browser or computer-use agent", "summary": "Drive an interface from screenshots." }
+      ],
+      "scores": {
+        "api": {
+          "iface": { "api": { "s": 2, "why": "Typed, auditable and cheapest. Prefer it." }, "ui": { "s": -2, "why": "There is nothing to call." } },
+          "code": { "none": { "s": 2, "why": "No code needs to run." }, "gen": { "s": -1, "why": "Does not cover computation the model must write." } },
+          "tenancy": { "single": { "s": 0, "why": "Neutral." }, "multi": { "s": 1, "why": "Per-user auth through the tool, with no shared compute." } },
+          "egress": { "off": { "s": 1, "why": "Nothing to open up." }, "on": { "s": 0, "why": "Neutral." } }
+        },
+        "interp": {
+          "iface": { "api": { "s": 0, "why": "Neutral." }, "ui": { "s": -2, "why": "It does not drive interfaces." } },
+          "code": { "none": { "s": -1, "why": "Unneeded moving part." }, "gen": { "s": 2, "why": "Built for model-written code." } },
+          "tenancy": { "single": { "s": 1, "why": "Little to manage." }, "multi": { "s": 0, "why": "Check that the vendor's isolation fits per-tenant needs." } },
+          "egress": { "off": { "s": 1, "why": "Few network paths to manage, but check the vendor's settings." }, "on": { "s": -1, "why": "You rely on the vendor's network options." } }
+        },
+        "aca": {
+          "iface": { "api": { "s": 0, "why": "Neutral." }, "ui": { "s": -2, "why": "It runs code, not screens." } },
+          "code": { "none": { "s": -1, "why": "Unneeded moving part." }, "gen": { "s": 2, "why": "Hyper-V isolation designed for untrusted code." } },
+          "tenancy": { "single": { "s": 0, "why": "Neutral." }, "multi": { "s": 2, "why": "One session per user or tenant, if you map identifiers correctly." } },
+          "egress": { "off": { "s": 2, "why": "Outbound network is EgressDisabled by default." }, "on": { "s": 0, "why": "Enable egress deliberately per pool." } }
+        },
+        "self": {
+          "iface": { "api": { "s": 0, "why": "Neutral." }, "ui": { "s": 0, "why": "You can host a headless browser." } },
+          "code": { "none": { "s": -1, "why": "Unneeded moving part." }, "gen": { "s": 1, "why": "Full control, but you build and harden the isolation." } },
+          "tenancy": { "single": { "s": 1, "why": "Simple enough." }, "multi": { "s": -1, "why": "You must build per-tenant isolation yourself." } },
+          "egress": { "off": { "s": 0, "why": "Neutral." }, "on": { "s": 1, "why": "Any network policy you want." } }
+        },
+        "screen": {
+          "iface": { "api": { "s": -2, "why": "Slower, brittle and riskier than a typed call." }, "ui": { "s": 2, "why": "The only way in." } },
+          "code": { "none": { "s": 1, "why": "No code to sandbox." }, "gen": { "s": 0, "why": "Neutral." } },
+          "tenancy": { "single": { "s": 0, "why": "Neutral." }, "multi": { "s": -2, "why": "Shared screen state and credentials are hard to isolate." } },
+          "egress": { "off": { "s": -1, "why": "It must reach the application." }, "on": { "s": 0, "why": "Neutral." } }
+        }
+      },
+      "takeaway": "Order of preference: a typed API or MCP tool, then code execution, then browser tools, then full desktop control." },
+    { "t": "table", "caption": "Computer-use options, status checked 2026-10-13", "head": ["Offering", "Status", "Notes"], "rows": [
+      ["Foundry computer use tool", "Preview, no SLA, not recommended for production", "Uses the `computer-use-preview` model, with access by application form. Screenshot, action, screenshot loop. Run it on VMs with no access to sensitive data or critical resources. Not supported in network-isolated Foundry [[r34]] [[r27]]."],
+      ["Claude `computer_toolset_20260801`", "GA on the Claude API and Google Cloud, beta on Microsoft Foundry and Bedrock", "17 member tools. Claude 5.5 and later reject the older `computer_20251124` and `computer_20250124` versions on the Claude API. A separate browser use tool fits web-only tasks [[r35]]."],
+      ["OpenAI `computer` tool", "See the guide", "For GPT-6 Astra OpenAI recommends code execution with Playwright or PyAutoGUI over the `computer` tool. Safety advice: isolate, allow-list, treat screen content as untrusted, confirm consequential actions and bound the number of steps [[r36]]."]
+    ], "highlightCol": 1 },
+    { "t": "failure", "title": "Failure modes when a model acts", "items": [
+      { "symptom": "The query runs and returns a confident, wrong number", "cause": "Dirty values, external knowledge or a wrong join, which is the gap benchmarks expose on enterprise schemas", "fix": "Curate views, include sampled values, use verified templates for key questions and evaluate on execution results [[r29]] [[r30]]." },
+      { "symptom": "A crafted prompt makes the app drop a table or read another tenant's rows", "cause": "Prompt-to-SQL injection: generated SQL ran with broad rights [[r31]]", "fix": "Treat generated SQL like user-supplied SQL: a read-only role, row-level security, a statement allow-list and parsing before execution." },
+      { "symptom": "One tenant's code runs inside another tenant's session", "cause": "A guessable or shared session identifier. The identifier is caller-defined and sensitive [[r32]]", "fix": "Map each user or tenant to its own session server side and never accept an identifier from the client." },
+      { "symptom": "A sandbox quietly exfiltrates data", "cause": "Outbound network was enabled for convenience", "fix": "Keep `EgressDisabled`, which is the pool default, and allow-list destinations when egress is needed [[r33]]." },
+      { "symptom": "A browser agent follows an instruction it read on a web page", "cause": "Screen content is untrusted input and the agent had real credentials", "fix": "Isolated VM, no sensitive data, an allow-list, confirmation for consequential actions and a step limit [[r34]] [[r36]]." }
+    ] },
+    { "t": "callout", "kind": "tip", "title": "Container Apps dynamic sessions in one breath", "md": "Sessions are isolated by a Hyper-V boundary and designed for untrusted code. A pool allows up to 600 concurrent sessions, an idle cooldown of 300 to 3600 seconds and, by default, `EgressDisabled`. Python sessions include NumPy, pandas and scikit-learn. The documentation samples use the preview REST API version `2025-10-02-preview`, so check status before you promise production use [[r32]] [[r33]]." }
+  ],
+  "quiz": [
+    { "id": "w18-l4-q1", "type": "single", "tag": "flip", "difficulty": 2, "q": "A customer-facing assistant must answer questions over an enterprise warehouse with thousands of columns and dirty values, and a wrong number is costly. Which approach fits?", "options": ["Free-form generation over the full schema using the largest model available, plus a retry on SQL errors", "Schema-linked prompts alone, with no review of which queries are allowed to run", "Curated views or a semantic layer, with verified templates for the most common questions", "Fine-tuning on the schema and trusting the score a public benchmark reports"], "answer": 2, "explain": "Benchmark scores drop sharply from academic to enterprise schemas, and wrong answers are costly, so a smaller governed surface wins. Free-form and unreviewed schema linking keep the failure modes, and a public benchmark does not measure your schema.", "ref": "r30" },
+    { "id": "w18-l4-q2", "type": "single", "tag": "bug", "difficulty": 2, "q": "What is the most serious problem in this handler?", "code": { "lang": "python", "code": "sql = llm.generate_sql(question, schema)\nconn = db.connect(user=\"app_admin\")  # read-write role\nrows = conn.execute(sql).fetchall()" }, "options": ["Model-written SQL runs under a read-write admin role, so an injected prompt can change data", "fetchall loads every row into memory, so large results could exhaust the service's memory", "Passing the schema in the prompt is always unsafe because it reveals table names to the model", "The question is not lower-cased before generation, which can change the generated SQL"], "answer": 0, "explain": "The P2SQL paper shows prompts can drive SQL injection, so generated SQL needs the same defences as user-supplied SQL: a read-only role, row-level security and statement checks. Memory use, schema in the prompt and casing are not the security defect.", "ref": "r31" },
+    { "id": "w18-l4-q3", "type": "numeric", "tag": "numeric", "difficulty": 1, "q": "An o1-preview code agent scored 91.2% on Spider 1.0 and 21.3% on Spider 2.0. By how many percentage points does its score fall?", "answer": 69.9, "tolerancePct": 1, "unit": "percentage points", "hint": "Subtract the Spider 2.0 score from the Spider 1.0 score.", "explain": "91.2 - 21.3 = 69.9 points. The drop comes from enterprise schemas, often over 1,000 columns, and workflow-style problems. Scores come from the 2024 paper and age quickly.", "ref": "r30" },
+    { "id": "w18-l4-q4", "type": "multi", "tag": "security", "difficulty": 2, "q": "Select every safeguard that fits a computer-use or browser agent.", "options": ["Run it in an isolated VM or sandbox with no access to sensitive data", "Give it the user's logged-in admin session so it never needs to stop and ask", "Allow-list destinations, confirm consequential actions and bound the number of steps", "Let it run unbounded until the task completes", "Treat everything it reads on screen as untrusted input, not as instructions"], "answers": [0, 2, 4], "explain": "Isolation, allow-lists with confirmations and step limits, and treating screen content as untrusted are the controls OpenAI and Microsoft recommend. An admin session turns any injected instruction into admin power, and unbounded runs remove the last brake.", "ref": "r36" }
+  ],
+  "defend": null,
+  "refs": ["r29", "r30", "r31", "r32", "r33", "r34", "r35", "r36", "r27"],
+  "takeaways": [
+    "Enterprise text-to-SQL is far harder than benchmarks suggest. Curate the surface and treat generated SQL as untrusted input.",
+    "Prefer a typed API or MCP tool, then code execution, then browser tools, then desktop control.",
+    "Session identifiers are secrets. Keep egress off unless a destination is allow-listed.",
+    "Screen content is untrusted. Isolate, allow-list, confirm consequential actions and bound steps."
+  ]
+}

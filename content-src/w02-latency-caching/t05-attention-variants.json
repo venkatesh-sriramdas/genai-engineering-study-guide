@@ -1,0 +1,123 @@
+{
+  "id": "w02-t05",
+  "order": 5,
+  "group": "KV cache and serving",
+  "title": "MHA, GQA, MQA and MLA",
+  "minutes": 8,
+  "difficulty": "advanced",
+  "summary": "Attention variants decide how many key and value heads a model stores. Fewer KV heads, or a compressed latent, shrink the KV cache and the memory traffic of decode, at some quality risk.",
+  "useIf": "You compare open models for serving cost, or you must explain why two models of equal size need different GPU memory.",
+  "avoidIf": "You call a hosted API and cannot see or change the attention design.",
+  "explain": [
+    { "t": "p", "md": "In **multi-head attention (MHA)** every query head has its own key and value head. **Multi-query attention (MQA)** shares one KV head across all query heads, which greatly reduces the size of keys and values and the memory bandwidth of incremental decoding, at only minor quality loss [[tr10]]. **Grouped-query attention (GQA)** sits between them: more than one KV head but fewer than query heads. MHA checkpoints can be uptrained to GQA with about 5% of the original pre-training compute and reach quality close to MHA at a speed close to MQA [[r10]]." },
+    { "t": "p", "md": "**Multi-head latent attention (MLA)**, used in DeepSeek-V2, takes a different route: it compresses keys and values into a latent vector. DeepSeek reports a 93.3% smaller KV cache and 5.76 times the maximum generation throughput compared with DeepSeek 67B, for a model with 236B total and 21B active parameters and a 128K context [[r11]]. That figure compares two different models, so it is not a like-for-like benchmark." },
+    { "t": "stats", "items": [
+      { "label": "MHA, 32 KV heads", "value": "100%", "note": "KV per token, baseline (derived)" },
+      { "label": "GQA, 8 KV heads", "value": "25%", "note": "4x smaller than MHA with 32 query heads (derived)" },
+      { "label": "MQA, 1 KV head", "value": "3.1%", "note": "32x smaller (derived)" },
+      { "label": "MLA, DeepSeek-V2", "value": "-93.3%", "note": "KV cache versus DeepSeek 67B [[r11]]" }
+    ] },
+    { "t": "table", "caption": "Same query heads, different KV storage", "head": ["Variant", "KV heads per layer", "KV size versus MHA", "Trade-off"], "rows": [
+      ["MHA", "= query heads", "1x", "Best quality baseline, largest cache"],
+      ["GQA", "More than 1, fewer than query heads", "KV heads / query heads", "Near MHA quality with a small cache after uptraining"],
+      ["MQA", "1", "1 / query heads", "Smallest cache, minor quality loss"],
+      ["MLA", "Latent vector, not per-head KV", "Large reduction, design specific", "Needs model and kernel support, different architecture"]
+    ] },
+    { "t": "callout", "kind": "why", "title": "Why fewer KV heads speed up decode", "md": "Decode is memory-bandwidth-bound and re-reads the KV cache for every generated token. A smaller cache means fewer bytes to move per step and more sequences that fit in memory, so both TPOT and concurrency improve [[tr10]]." }
+  ],
+  "whereToUse": [
+    "Comparing open models for long-context serving: read `num_key_value_heads` in the model config",
+    "Deciding whether an in-house MHA model should be uptrained to GQA",
+    "Explaining why a larger model can be cheaper to serve than a smaller one with more KV heads",
+    "Estimating KV memory before benchmarking, using the formula in the KV cache topic",
+    "Judging a vendor claim about long-context throughput"
+  ],
+  "whenToUse": {
+    "use": [
+      "Long context and high concurrency make KV memory the cost driver",
+      "You control model selection or training and can test long-context quality",
+      "You want a smaller cache without changing precision or the serving engine"
+    ],
+    "avoid": [
+      "Do not choose on KV size alone when the task needs the best long-range recall: test it",
+      "Do not expect to retrofit MLA onto an existing model. It is an architecture choice",
+      "Do not treat a paper's headline reduction as a prediction for your own candidates"
+    ],
+    "flips": [
+      "Short contexts and few users: weights dominate memory, so KV design matters little",
+      "A quality-sensitive task shows a drop with fewer KV heads: take a larger GQA group count or MHA",
+      "Your engine lacks MLA kernels: choose a GQA model or wait for support"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with other ways to shrink KV",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["GQA model", "Mature engine support, near-MHA quality", "You need the smallest possible cache", "Choose at model selection"],
+      ["MQA model", "Maximum cache cut", "Quality is sensitive", "Minor quality loss, as reported"],
+      ["MLA model", "Very long context at high concurrency", "Engine or tooling support is thin", "Different architecture, not a drop-in"],
+      ["KV quantization on any model", "Model is fixed", "Long-context quality is fragile", "Needs an eval gate"],
+      ["Paging and prefix sharing", "Variable lengths, shared prompts", "Unique long prompts", "Isolation work"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Two models of the same parameter count need very different GPU memory at 32K context", "cause": "Different KV head counts or layers change KV bytes per token", "fix": "Compute KV per token from each config before you size hardware [[r27]]" },
+    { "symptom": "A migration to MQA lowers long-context answer quality", "cause": "Sharing a single KV head removes capacity that the task used", "fix": "Use GQA with a moderate group count, evaluate at your context lengths [[r10]]" },
+    { "symptom": "An MLA model is slower than expected on your stack", "cause": "The engine runs a fallback attention path without MLA kernels", "fix": "Check the engine version and benchmark before committing" }
+  ],
+  "scenarios": [
+    {
+      "id": "w02-t05-s1",
+      "title": "Own MHA checkpoint, memory-bound serving",
+      "situation": "A team owns a trained MHA model and serves it on its own GPUs. KV memory caps concurrency. Retraining from scratch is out of the question, but a small training budget exists.",
+      "constraints": ["Existing MHA checkpoint", "Small training budget", "Quality must stay near the current level"],
+      "unknowns": ["How much compute is 5% of pre-training for this model?", "Is there a long-context eval?"],
+      "question": "What do you do?",
+      "options": [
+        { "name": "Uptrain to MQA", "verdict": "good", "why": "It gives the largest KV cut.", "tradeoff": "More quality risk than GQA on tasks that use long-range detail." },
+        { "name": "Drop KV heads at inference with no retraining", "verdict": "poor", "why": "The recovery of quality in the paper comes from uptraining, so skipping it is an untested risk.", "tradeoff": "Only acceptable as a throwaway experiment to see the memory effect." },
+        { "name": "Uptrain the checkpoint to GQA with a moderate group count", "verdict": "best", "why": "The published recipe reaches near-MHA quality at near-MQA speed for about 5% of the original compute.", "tradeoff": "It still costs training compute and needs an eval to confirm long-context quality." }
+      ],
+      "flips": [
+        { "if": "No training budget exists", "then": "Quantize KV with an eval gate, or add GPUs." },
+        { "if": "Quality drops on the long-context eval after uptraining", "then": "Raise the number of KV groups." }
+      ],
+      "takeaway": "GQA by uptraining is the cheap path from an MHA checkpoint."
+    },
+    {
+      "id": "w02-t05-s2",
+      "title": "128K context, GQA or MLA",
+      "situation": "A team must serve a 128K-token document workload at high concurrency. One candidate is a GQA model. The other uses MLA and advertises a very small cache.",
+      "constraints": ["Very long context", "High concurrency", "Serving engine is fixed and supports both"],
+      "unknowns": ["Quality on your documents at 128K", "KV bytes per token measured on your engine"],
+      "question": "How do you decide?",
+      "options": [
+        { "name": "Choose the GQA model for mature support", "verdict": "good", "why": "It is the lower-risk path with predictable tooling.", "tradeoff": "You may leave memory and throughput on the table." },
+        { "name": "Choose MLA because it advertises the largest cache cut", "verdict": "poor", "why": "A headline reduction against another model does not predict your quality or throughput.", "tradeoff": "Right once your own tests confirm the gain and the engine support." },
+        { "name": "Benchmark both at your context lengths for quality, KV bytes and throughput on your engine", "verdict": "best", "why": "The 93.3% figure compares DeepSeek-V2 with a different model, so only your own measurement answers the question.", "tradeoff": "It takes a day of testing." }
+      ],
+      "flips": [
+        { "if": "The engine has no efficient MLA path", "then": "Choose GQA." },
+        { "if": "Quality ties and MLA memory use is far lower in your test", "then": "Choose MLA for concurrency." }
+      ],
+      "takeaway": "Treat paper headlines as hypotheses. Measure on your own context lengths."
+    }
+  ],
+  "quiz": [
+    { "id": "w02-t05-q1", "type": "numeric", "tag": "numeric", "q": "A model has 64 query heads and 8 KV heads. By what factor is its KV cache per token smaller than the same model with MHA?", "answer": 8, "tolerancePct": 1, "unit": "x smaller", "hint": "query heads / KV heads", "explain": "KV bytes scale with the number of KV heads. MHA would store 64, GQA stores 8, so the cache is 64 / 8 = 8 times smaller.", "difficulty": 1, "ref": "r10" },
+    { "id": "w02-t05-q2", "type": "match", "tag": "concept", "q": "Match each attention variant to its defining idea.", "pairs": [
+      { "l": "MHA", "r": "Every query head has its own K and V" },
+      { "l": "MQA", "r": "One KV head shared by all query heads" },
+      { "l": "GQA", "r": "Groups of query heads share a KV head" },
+      { "l": "MLA", "r": "KV compressed into a latent vector" }
+    ], "explain": "These are the standard definitions. GQA sits between MHA and MQA, and MLA compresses rather than shares.", "difficulty": 1, "ref": "r10" },
+    { "id": "w02-t05-q3", "type": "single", "tag": "diagnose", "q": "A paper reports a 93.3% KV cache reduction for MLA. What is the correct way to use that number?", "options": ["Assume any model with MLA has a cache 93.3% smaller than any GQA model", "Apply it to a GQA model by changing the config", "Treat it as a lead to test, since it compares DeepSeek-V2 with a different model", "Ignore MLA because a 93.3% cut is impossible"], "answer": 2, "explain": "The figure is against DeepSeek 67B, a different design. It shows what is possible but does not predict your candidates. It cannot be applied to GQA by config, and the paper does report it, so it is not impossible.", "difficulty": 2, "ref": "r11" }
+  ],
+  "flashcards": [
+    { "front": "How does GQA differ from MHA and MQA?", "back": "MHA gives every query head its own KV head, MQA shares one KV head across all, and GQA shares one KV head per group of query heads." },
+    { "front": "What did the GQA paper show about converting MHA checkpoints?", "back": "Uptraining with about 5% of pre-training compute reached quality near MHA at speed near MQA." },
+    { "front": "What does MLA do differently?", "back": "It compresses keys and values into a latent vector. DeepSeek-V2 reports a 93.3% smaller KV cache versus DeepSeek 67B." }
+  ],
+  "related": ["w02-t04", "w02-t06", "w02-t10", "w02-l3"],
+  "refs": ["r10", "r11", "r27", "tr10", "r24"]
+}

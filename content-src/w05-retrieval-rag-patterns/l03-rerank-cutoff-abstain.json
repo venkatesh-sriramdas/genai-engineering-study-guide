@@ -1,0 +1,91 @@
+{
+  "id": "w05-l3",
+  "order": 3,
+  "title": "Rerank the shortlist, set the cutoff, know when to abstain",
+  "kind": "problem",
+  "minutes": 16,
+  "brief": "Hybrid search returned fifty plausible chunks and the answer needs three. Who decides the order, where do you cut, and what does the system do when nothing is good enough?",
+  "blocks": [
+    { "t": "h", "text": "A funnel, not a ranking", "level": 2 },
+    { "t": "diagram", "id": "w05-l3-funnel", "title": "The retrieval funnel", "alt": "A query goes through recall with BM25 and vector search, fusion with RRF, reranking of the top 50, and a good-enough check that either generates with citations or abstains.", "src": "flowchart LR\n  Q[Query] --> R[Recall: BM25 and vector]\n  R --> F[Fuse with RRF]\n  F --> RR[Rerank top 50]\n  RR --> C{Good enough?}\n  C -->|yes| G[Generate with citations]\n  C -->|no| A[Abstain or fall back]", "caption": "Recall decides what can be found. The reranker only reorders what recall supplied." },
+    { "t": "compare", "title": "Rerankers", "intro": "A reranker reads the query and each candidate together, so it can judge relevance that embeddings and term counts miss. Late-interaction models (ColBERT style) sit between: they keep token vectors per document and score a cheap interaction, so they can retrieve or rerank at an index size cost [[r12]].", "options": [
+      { "name": "Azure semantic ranker", "tag": "GA", "summary": "Managed reranker inside Azure AI Search.", "pros": ["One request, no extra service to run", "Returns `@search.rerankerScore` (0 to 4), captions and optional answers"], "cons": ["Reranks only the top 50 and cannot find new documents", "About 2,000 tokens per document reach summarisation, and the summary string is capped at 2,048 tokens", "`orderBy` with semantic ranking returns HTTP 400, and an empty or `*` search string is incompatible with it [[r42]]"], "bestWhen": "You already use Azure AI Search and want a managed precision stage.", "avoidWhen": "Candidates must be scored beyond 50 or the text cannot leave your own hardware.", "meta": [{ "k": "Billing", "v": "premium feature, pay as you go on the standard plan" }, { "k": "Input", "v": "about 2,000 tokens per document" }] },
+      { "name": "Hosted rerank API", "tag": "GA", "summary": "Send the query and candidates to a vendor model such as Cohere Rerank.", "pros": ["Strong multilingual models", "Long context: rerank-v4.0 models take 32k tokens and rerank-v3.5 takes 4096", "Accepts structured documents, and Cohere recommends YAML strings"], "cons": ["Candidates leave your service boundary", "Adds a network hop and a per-query cost"], "bestWhen": "You need long or structured candidates and data may go to a vendor.", "avoidWhen": "Residency or egress rules forbid sending chunk text out.", "meta": [{ "k": "Output", "v": "index and relevance_score" }, { "k": "Data path", "v": "external API" }] },
+      { "name": "Self-hosted cross-encoder", "tag": "Open", "summary": "Run a cross-encoder model on your own GPU or CPU.", "pros": ["You control data path, model choice and fine-tuning", "No per-call vendor fee"], "cons": ["You operate a model service and its scaling", "Input length is limited by the model, so long chunks need splitting"], "bestWhen": "Data must stay in your network or you want to fine-tune on your own judgements.", "avoidWhen": "You cannot staff a model service and a managed option meets the need.", "meta": [{ "k": "Ops", "v": "yours" }, { "k": "Data path", "v": "internal" }] },
+      { "name": "LLM reranker", "tag": "Research", "summary": "Prompt a GPT-class model to order a window of candidates (RankGPT style).", "pros": ["Properly instructed LLMs gave competitive and sometimes better ranking than supervised rerankers on standard benchmarks", "Flexible: add domain rules in the prompt"], "cons": ["An extra model call per candidate window, so the slowest and costliest", "Benchmark contamination is a risk, which is why the authors built NovelEval"], "bestWhen": "Latency is relaxed and ranking quality is the top concern.", "avoidWhen": "You need a tight latency budget or high query volume.", "meta": [{ "k": "Latency", "v": "highest" }, { "k": "Cost", "v": "highest" }] }
+    ] },
+    { "t": "dials", "id": "w05-l3-rerank", "title": "Pick a reranking stage", "prompt": "Flip the latency budget, the allowed data path and the length of your chunks.",
+      "dials": [
+        { "id": "latency", "label": "Latency budget", "values": [ { "id": "tight", "label": "Tight" }, { "id": "relaxed", "label": "Relaxed" } ] },
+        { "id": "path", "label": "Where the text may go", "values": [ { "id": "service", "label": "Stay inside the search service" }, { "id": "vendor", "label": "A vendor API is fine" }, { "id": "own", "label": "Only our own hardware" } ] },
+        { "id": "text", "label": "Candidate length", "values": [ { "id": "short", "label": "Short, focused chunks" }, { "id": "long", "label": "Long or structured chunks" } ] }
+      ],
+      "options": [
+        { "id": "none", "name": "No reranker", "summary": "Use the fused order." },
+        { "id": "semantic", "name": "Azure semantic ranker", "summary": "Managed rerank of the top 50." },
+        { "id": "hosted", "name": "Hosted rerank API", "summary": "Vendor rerank model over the candidates." },
+        { "id": "selfhost", "name": "Self-hosted cross-encoder", "summary": "Your own model service." },
+        { "id": "llm", "name": "LLM reranker", "summary": "A prompted model orders candidate windows." }
+      ],
+      "scores": {
+        "none": {
+          "latency": { "tight": { "s": 2, "why": "No extra hop." }, "relaxed": { "s": 0, "why": "Spare latency is left unused, and precision stays on the table." } },
+          "path": { "service": { "s": 2, "why": "Nothing leaves the service." }, "vendor": { "s": 0, "why": "Neutral." }, "own": { "s": 1, "why": "Nothing extra to host." } },
+          "text": { "short": { "s": 0, "why": "Fusion order is often acceptable for short, focused chunks." }, "long": { "s": -1, "why": "Long mixed chunks stay ordered by coarse signals." } }
+        },
+        "semantic": {
+          "latency": { "tight": { "s": 1, "why": "It runs in the service on the top 50 within the same request." }, "relaxed": { "s": 1, "why": "Adds precision at little cost." } },
+          "path": { "service": { "s": 2, "why": "Candidates never leave the search service." }, "vendor": { "s": 1, "why": "It is a managed Azure feature, so no extra vendor contract." }, "own": { "s": -2, "why": "You cannot move it onto your own hardware." } },
+          "text": { "short": { "s": 1, "why": "Short chunks fit the 2,048-token summary budget." }, "long": { "s": 0, "why": "About 2,000 tokens per document reach summarisation, so very long chunks are cut off." } }
+        },
+        "hosted": {
+          "latency": { "tight": { "s": 0, "why": "A network hop plus model time." }, "relaxed": { "s": 1, "why": "The hop is affordable." } },
+          "path": { "service": { "s": -2, "why": "Candidates leave the service boundary." }, "vendor": { "s": 2, "why": "A hosted API is the intended path." }, "own": { "s": -2, "why": "It is not self-hosted." } },
+          "text": { "short": { "s": 1, "why": "Fine for short chunks." }, "long": { "s": 2, "why": "Cohere rerank-v4.0 models take 32k tokens of context and rerank-v3.5 takes 4096." } }
+        },
+        "selfhost": {
+          "latency": { "tight": { "s": 1, "why": "A small cross-encoder near the index avoids the vendor hop." }, "relaxed": { "s": 0, "why": "Spare latency could fund a bigger model, but you carry the operations." } },
+          "path": { "service": { "s": -1, "why": "You add another service to the request path." }, "vendor": { "s": 0, "why": "Neutral." }, "own": { "s": 2, "why": "You control data path, model choice and tuning." } },
+          "text": { "short": { "s": 1, "why": "Cross-encoders suit short passages." }, "long": { "s": 0, "why": "Check the model's maximum input length, and split or truncate long chunks." } }
+        },
+        "llm": {
+          "latency": { "tight": { "s": -2, "why": "At least one extra LLM call per candidate window makes it the slowest option." }, "relaxed": { "s": 1, "why": "Competitive rankings when latency is spare." } },
+          "path": { "service": { "s": -1, "why": "It needs a model endpoint outside the search service." }, "vendor": { "s": 1, "why": "It reuses a model API you may already call." }, "own": { "s": 0, "why": "Possible with an open model, at GPU cost." } },
+          "text": { "short": { "s": 0, "why": "Works, but cost per candidate is unchanged." }, "long": { "s": 1, "why": "Large context windows can read longer passages." } }
+        }
+      },
+      "takeaway": "The reranker choice is mostly a data path and latency decision. The ranking quality gap between the options is smaller than the cost of getting those two wrong." },
+    { "t": "table", "caption": "Signals you can cut on", "head": ["Signal", "Scale", "How stable it is", "How to use it"], "rows": [
+      ["Azure `@search.rerankerScore`", "0.00 to 4.00", "The distribution shifts with infrastructure and model updates [[r3]]", "Coarse cutoff only. Track the abstention rate and recalibrate after updates."],
+      ["Vector similarity `threshold`", "Cosine 0.333 to 1.00", "Depends on the embedding model. Preview in 2026-08-01-preview [[r35]]", "Drops weak vector matches before fusion, even if fewer than `k` remain."],
+      ["RRF score", "About 1/k per list", "Depends on how many lists and which k, not on relevance [[r1]]", "Use for ordering only. Never threshold on it."],
+      ["OpenAI file search `score_threshold`", "0.0 to 1.0", "Depends on the `ranker` (`auto` or `default-2024-08-21`) [[r30]]", "Filters retrieved results. Pair with `max_num_results` (default 10, up to 50)."],
+      ["Gap to the top score, or top n", "Relative", "Moves with the model, but the shape is steadier", "Keep hits within a margin of the best, capped at n. Author suggestion, calibrate on your eval set."]
+    ], "highlightCol": 3 },
+    { "t": "compare", "title": "Confidence gates: what to do when the shortlist is weak", "intro": "Abstention is a design, not an error path. Pick the cheapest gate that meets the cost of a wrong answer.", "options": [
+      { "name": "Score cutoff", "summary": "Abstain when the best reranker score is below a coarse threshold.", "pros": ["Free at runtime", "Easy to monitor as an abstention rate"], "cons": ["Brittle when the score distribution drifts", "Cannot tell a good partial answer from noise"], "bestWhen": "A wrong answer is costly and you can accept some over-abstention.", "avoidWhen": "You have no labelled set to calibrate against." },
+      { "name": "CRAG-style evaluator", "tag": "Research", "summary": "A lightweight evaluator scores retrieved documents and triggers different actions, such as filtering them by decompose-then-recompose or falling back to web search.", "pros": ["Plug and play, no model fine-tuning", "Gives an explicit fallback path"], "cons": ["An extra model call and a fallback source to govern", "Web fallback may be forbidden for private data"], "bestWhen": "The corpus is sometimes weak and a safe fallback exists.", "avoidWhen": "Answers must come only from approved internal sources." },
+      { "name": "Self-RAG", "tag": "Research", "summary": "One trained LM decides when to retrieve and critiques passages and its own output with reflection tokens.", "pros": ["Adaptive: skips retrieval when it is not needed", "Critique is built into generation"], "cons": ["Needs a fine-tuned model (the paper reports 7B and 13B)", "Hard to reproduce with a closed hosted model"], "bestWhen": "You control the model and can train it.", "avoidWhen": "You call a hosted general model and cannot fine-tune." },
+      { "name": "Answerability instruction", "summary": "Tell the model it may say it does not know, and for long documents ask for word-for-word quotes first.", "pros": ["No extra stage", "Anthropic guidance recommends explicit permission to say I don't know"], "cons": ["The model can still over-claim, so it is not a guarantee", "Hard to measure without a check on the answer"], "bestWhen": "Used together with a cutoff and a citation check.", "avoidWhen": "It is your only guard in a high-risk domain." }
+    ] },
+    { "t": "failure", "title": "Reranking failure modes", "items": [
+      { "symptom": "Adding the semantic ranker changed little, and the best document still never appears.", "cause": "It reorders only the top 50 candidates. The document never entered the candidate set.", "fix": "Raise recall first: make `k` plus `maxTextRecallSize` at least 50 and check the document's rank before reranking." },
+      { "symptom": "The abstention rate doubled after a service update, with no change on your side.", "cause": "A fixed score cutoff met a shifted reranker score distribution.", "fix": "Use a coarse cutoff, alert on the abstention rate, and re-run the labelled set after updates." },
+      { "symptom": "A chunk with the right sentence at its end scores low.", "cause": "Only about 2,000 tokens per document reach the ranker summary, with the title and keywords taking a share.", "fix": "Shorten chunks, move the key facts earlier, and compare scores for a chunk and its sub-chunks." },
+      { "symptom": "A sort option added to the request returns HTTP 400.", "cause": "`orderBy` is not allowed with semantic ranking.", "fix": "Remove it and sort client side if the product needs a different order." }
+    ] }
+  ],
+  "quiz": [
+    { "id": "w05-l3-q1", "type": "order", "tag": "order", "difficulty": 1, "q": "Put the stages of a confidence-aware retrieval funnel in order.", "items": ["Retrieve candidates with BM25 and vector search", "Fuse the lists with RRF", "Rerank the top 50 candidates", "Apply a cutoff or abstain", "Generate with citations"], "explain": "Recall comes first because later stages only reorder or drop what recall supplies. Fusion merges the lists before the reranker, which then reads full text. The cutoff needs the reranker's judgement and the model answers last." },
+    { "id": "w05-l3-q2", "type": "single", "tag": "diagnose", "difficulty": 3, "q": "After enabling the semantic ranker, a relevant document still never appears. Debug output shows it at BM25 rank 35 and vector rank 40. Which change addresses the cause?", "code": { "lang": "json", "code": "{\n  \"search\": \"ERR_4021 retry guidance\",\n  \"queryType\": \"semantic\",\n  \"vectorQueries\": [{ \"kind\": \"text\", \"text\": \"ERR_4021 retry guidance\", \"fields\": \"contentVector\", \"k\": 10 }],\n  \"hybridSearch\": { \"maxTextRecallSize\": 20 },\n  \"top\": 10\n}" }, "options": ["Sort the results by `@search.rerankerScore` with an `orderBy` clause", "Lower the reranker score threshold that is applied before generation", "Request more extractive captions for each candidate document", "Raise `k` and `maxTextRecallSize` to sum to at least 50"], "answer": 3, "explain": "With `k` at 10 and `maxTextRecallSize` at 20 the candidate set is at most 30 documents, so rank 35 and 40 never reach the ranker, which takes the top 50. Raise recall, then check again. `orderBy` returns HTTP 400 with semantic ranking, a lower threshold only filters what exists and captions change what is shown, not what is retrieved." },
+    { "id": "w05-l3-q3", "type": "single", "tag": "flip", "difficulty": 2, "q": "Your abstain cutoff on `@search.rerankerScore` worked at launch. After a service model update the abstention rate doubles. What is the best response?", "options": ["Hard-code a lower number such as 2.4 and move on without monitoring it", "Threshold on the RRF score instead, because it does not change between model updates", "Keep a coarse cutoff, alert on the abstention rate and recalibrate after updates", "Remove the cutoff so that the system always answers every question"], "answer": 2, "explain": "The docs warn that the reranker score distribution shifts with infrastructure and model updates, so use coarse cutoffs and re-test. A new hard-coded number will drift again, the RRF score depends on how many lists and which k you use rather than on relevance, and never abstaining turns weak retrieval into confident wrong answers." }
+  ],
+  "defend": null,
+  "refs": ["r3", "r42", "r2", "r12", "r13", "r19", "r20", "r31", "r35", "r30"],
+  "takeaways": [
+    "A reranker can only reorder the candidates recall gave it, so fix recall first",
+    "Choose the reranker by data path and latency before quality",
+    "Never threshold on RRF scores, and keep reranker cutoffs coarse because the distribution drifts",
+    "Abstention needs a signal, a fallback and a monitored rate"
+  ]
+}

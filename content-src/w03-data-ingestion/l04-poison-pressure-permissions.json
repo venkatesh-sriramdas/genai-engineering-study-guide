@@ -1,0 +1,47 @@
+{
+  "id": "w03-l4",
+  "order": 4,
+  "title": "Poison, pressure and permissions",
+  "kind": "problem",
+  "minutes": 15,
+  "brief": "One corrupt PDF blocks the queue, the embedding API starts returning 429, and compliance asks whether a national id number can reach the index and who may read it. Decide what the pipeline does at each gate.",
+  "blocks": [
+    { "t": "h", "text": "When a document fails, the pipeline must not", "level": 2 },
+    { "t": "p", "md": "A pipeline that handles the happy path is a demo. Topics `w03-t10` (dead letters, backpressure, replay) and `w03-t11` (PII, ACL capture, metadata, observability) give the mechanisms. This level is about classification: which failures retry, which go to a dead-letter store, and which gates must run **before** a chunk is embedded, because a vector cannot be un-leaked." },
+    { "t": "diagram", "id": "w03-l4-deadletter", "title": "Retry, throttle or dead-letter", "alt": "Messages flow from a queue to a worker. Success writes to the index. A transient error goes to a retry with backoff and back to the worker. A poison document, or one whose retries are spent, goes to a dead-letter store with its reason, then to triage and back to the queue once fixed. The worker calls an embedding API, and a rate limit response tells it to slow down.", "src": "flowchart LR\n  Q[Queue] --> W[Worker]\n  W -->|ok| IDX[Index]\n  W -->|transient| R[Retry with backoff]\n  R --> W\n  W -->|poison or retries spent| DLQ[Dead-letter store with reason]\n  DLQ --> T[Triage and fix]\n  T -->|replay| Q\n  W -->|embed call| EMB[Embedding API]\n  EMB -->|429 slow down| W", "caption": "Backpressure is the arrow from the embedding API back to the worker: concurrency follows the rate limit, not the queue depth." },
+    { "t": "table", "caption": "Classify the failure before you choose the action", "head": ["Failure class", "Examples", "Action"], "rows": [
+      ["Transient", "429 from the embedding API, HTTP 503 from search", "Retry with exponential backoff and jitter, and lower worker concurrency. The search docs say wait and retry on 503 [[r2]]"],
+      ["Partial batch failure", "HTTP 207 on a push batch", "Read the per-document status and retry only the failed documents [[r2]]"],
+      ["Oversized request", "A push request above 1,000 documents or 16 MB (HTTP 413), or an embeddings call with more than 2,048 inputs", "Split by bytes and count, then retry. Azure embeddings accept up to 2,048 inputs per call [[r2]] [[r34]]"],
+      ["Poison document", "A corrupt file, an unsupported type, a password-protected or user-encrypted file", "Dead-letter on the first deterministic failure, with the reason. Never retry forever [[r7]]"],
+      ["Tolerated by configuration", "`maxFailedItems` and `maxFailedItemsPerBatch`, where `-1` continues however many errors occur", "Use a finite limit so a bad deploy stops the run, and alert on the count [[r32]]"]
+    ], "highlightCol": 2 },
+    { "t": "flow", "title": "Quality gates before the vector is written", "direction": "v", "steps": [
+      { "title": "Capture permissions", "md": "Copy ACL fields such as `metadata_user_ids`, `metadata_group_ids` and `metadata_spo_site_url` onto every chunk through index projection mappings [[r13]].", "tag": "acl" },
+      { "title": "Detect and mask PII", "md": "The PII skill takes `minimumPrecision` (0.0 to 1.0, default 0.0), `maskingMode` (default `none`, `replace` returns `maskedText`), `maskingCharacter`, `domain` and `piiCategories`. Run it before embedding if PII must not reach the index [[r14]].", "tag": "pii" },
+      { "title": "Enrich metadata", "md": "Title, section path, source URL, modified time, content hash, parser and chunker version, and sensitivity label, so you can filter and debug later.", "tag": "metadata" },
+      { "title": "Embed and write", "md": "Idempotent upsert by stable key, with the state record written last." },
+      { "title": "Observe", "md": "Per-document status, stage latency, dead-letter depth and a count of source ids against index keys. A run can report Success while documents are missing [[r33]].", "tag": "ops" }
+    ] },
+    { "t": "failure", "title": "Failure modes at the gates", "items": [
+      { "symptom": "Queue depth climbs and errors rise after the embedding API returns 429", "cause": "Workers retry immediately with no backoff and no concurrency cap, so retries add load to a service that is already limiting you.", "fix": "Exponential backoff with jitter, concurrency tied to the rate limit, and a pause when 429s persist." },
+      { "symptom": "One bad PDF holds up the whole queue", "cause": "There is no dead-letter path, so the same message retries forever.", "fix": "Cap attempts, then move the message to a dead-letter store with the reason and the file hash. Replay it after the fix." },
+      { "symptom": "A run reports Success, yet about 4 percent of documents never arrive", "cause": "A high or `-1` failure tolerance lets a run succeed while errors stay below the limit [[r32]] [[r33]].", "fix": "Set a finite limit, alert on the error count and its trend, and publish a dead-letter report." },
+      { "symptom": "Chunks are returned to people who should not see them", "cause": "ACLs were captured on the parent only, or not at all. `ingestionPermissionOptions` needs `2026-08-01-preview`, and `2026-04-01` does not support it [[r13]].", "fix": "Map the ACL fields onto every chunk, test with a restricted user, and plan a re-sync for permission changes. Query-time trimming belongs to the security chapter." }
+    ] },
+    { "t": "callout", "kind": "preview", "title": "Status as of 2026-10-13", "md": "ACL ingestion for ADLS Gen2 and SharePoint is preview, and the SharePoint indexer itself is preview [[r7]] [[r13]]. The PII Detection skill is GA [[r14]]. Treat any permission feature you adopt as a dependency with an end date to check." }
+  ],
+  "quiz": [
+    { "id": "w03-l4-q1", "type": "single", "tag": "diagnose", "difficulty": 2, "q": "The embedding API returns 429, queue depth is growing, the error rate is climbing and every worker retries immediately. What is the right fix?", "options": ["Add more workers so that the backlog drains before the limit takes effect", "Cap concurrency to the rate limit and retry with exponential backoff and jitter", "Retry up to ten times at once, then drop the message if it still fails", "Switch the queue to at-most-once delivery so that the retries stop completely and quickly"], "answer": 1, "explain": "Immediate retries multiply the load on a service that is already limiting you. Backoff with jitter spreads retries and a concurrency cap keeps you under the limit. More workers make the storm worse, dropping messages loses documents, and at-most-once delivery trades a retry problem for silent loss." },
+    { "id": "w03-l4-q2", "type": "multi", "tag": "security", "difficulty": 3, "q": "Permissions must be enforceable later at query time. Select what has to be true at ingest.", "options": ["The system prompt tells the model to refuse content a user should not see", "ACL or group ids are copied onto every chunk, not only the parent document", "A re-sync path exists, because permissions change without the content changing", "On API `2026-08-01-preview` the knowledge source sets `ingestionPermissionOptions`, since `2026-04-01` does not support it"], "answers": [1, 2, 3], "explain": "A query-time filter needs the permission data on each chunk it filters, and a re-sync path keeps it true after a permission change. As of 2026-10-13 knowledge source ACL ingestion is a preview feature. A prompt instruction is not access control, because the content has already reached the model [[r13]]." },
+    { "id": "w03-l4-q3", "type": "single", "tag": "flip", "difficulty": 3, "q": "An HR assistant must let analysts ask for an employee's national id, while all other staff must never see it. How should PII be handled at ingest?", "options": ["Mask every PII value with `maskingMode: replace` before it is embedded", "Drop every document that contains PII from the corpus entirely", "Keep the value, put ACLs on each chunk and filter by the caller's groups", "Index masked text and keep the original values in an application log"], "answer": 2, "explain": "Masking before embedding is right when no answer ever needs the value, but here it destroys the analysts' use case, and dropping documents does too. Logging the original does not make it retrievable. Keeping the value with per-chunk permissions satisfies both groups, provided the filter is enforced before ranking [[r14]]." }
+  ],
+  "defend": null,
+  "refs": ["r2", "r7", "r13", "r14", "r32", "r33", "r34"],
+  "takeaways": [
+    "Classify failures: retry transient ones with backoff, retry only the failed documents of a 207, and dead-letter poison documents with a reason",
+    "Backpressure means concurrency follows the downstream rate limit, not the queue depth",
+    "Gate PII and permissions before embedding, because a vector cannot be un-leaked",
+    "A Success status can hide errors, so alert on error counts and source to index drift"
+  ]
+}

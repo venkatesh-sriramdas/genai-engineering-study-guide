@@ -1,0 +1,107 @@
+{
+  "id": "w12-t10",
+  "order": 10,
+  "group": "Tools and knowledge",
+  "title": "Foundry IQ knowledge bases",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "Foundry IQ is a managed, permission-aware knowledge layer. A knowledge base combines knowledge sources with retrieval settings and runs on Azure AI Search agentic retrieval, so several agents can share one governed source of grounding.",
+  "useIf": "Agents need grounded answers from scattered enterprise content with citations and per-user permissions.",
+  "avoidIf": "You only need a few ad hoc files in a chat, or one well-tuned index with fixed query logic and a tight latency budget.",
+  "explain": [
+    { "t": "p", "md": "A Foundry IQ **knowledge base** is a configurable, multi-source resource made of **knowledge sources** (Azure Blob Storage, SharePoint, OneLake, public web) and parameters that control retrieval. Azure AI Search provides the indexing and retrieval underneath, and many agents can share one knowledge base [[r6]]. For indexed sources it can automate chunking, embedding generation and metadata extraction, and schedule recurring indexer runs for incremental refresh [[r6]]." },
+    { "t": "p", "md": "Queries go through **agentic retrieval**: a multi-query pipeline that decomposes a complex question into subqueries, runs them in parallel, semantically reranks results and returns a unified response, optionally using an LLM for query planning [[r6]] [[tr8]]. The knowledge base sets a **retrieval reasoning effort** of minimal, low or medium for that LLM processing [[r6]]. More effort should mean more LLM work and more latency (inference, not a vendor figure)." },
+    { "t": "diagram", "id": "w12-t10-d1", "title": "From question to cited answer", "alt": "An agent asks a knowledge base. Agentic retrieval plans subqueries, searches sources in parallel with the caller identity, reranks, and returns extractive results with citations.", "src": "flowchart LR\n  A[Agent] --> KB[Knowledge base]\n  KB --> P[Plan subqueries]\n  P --> S1[Blob]\n  P --> S2[SharePoint]\n  P --> S3[OneLake]\n  P --> S4[Public web]\n  S1 --> R[Rerank and merge]\n  S2 --> R\n  S3 --> R\n  S4 --> R\n  R --> A" },
+    { "t": "p", "md": "**Permissions.** Foundry IQ synchronizes ACLs for supported sources, honors Microsoft Purview sensitivity labels and can run queries under the caller's Entra identity so permissions are enforced at query time [[r6]]. You can use it from Agent Service, Microsoft Agent Framework or any app through the knowledge base REST API or Azure SDKs, and connect it to a Copilot Studio agent [[r6]]." },
+    { "t": "callout", "kind": "preview", "title": "Status, checked 2026-10-13", "md": "Some Foundry IQ features are GA and others preview, depending on the Search REST API version you call. The Foundry and Azure portals continue to provide preview-only access to all agentic retrieval features, and LLM query planning is marked preview in the Search docs [[r6]] [[tr8]]. Foundry IQ is one of three IQ workloads: **Fabric IQ** (semantic layer for analytics in OneLake and Power BI) and **Work IQ** (Microsoft 365 collaboration signals) are the siblings [[r6]]." }
+  ],
+  "whereToUse": [
+    "Enterprise assistants over SharePoint, Blob Storage and OneLake that must respect source permissions",
+    "Several agents (prompt, hosted, Agent Framework, Copilot Studio) that need the same governed grounding",
+    "Complex questions that benefit from decomposition into subqueries",
+    "Answers that need extractive content and citations that trace back to source documents"
+  ],
+  "whenToUse": {
+    "use": [
+      "Content is curated, shared across agents and spread over several sources",
+      "Permissions matter and you want ACL sync, Purview labels and caller identity enforced",
+      "Questions are multi-part and one flat vector query would miss pieces"
+    ],
+    "avoid": [
+      "A handful of user-provided files in one chat: file search is lighter",
+      "A single well-tuned index and a tight latency budget where LLM planning is wasted",
+      "Your policy needs every retrieval feature to be GA and the portal path is preview-only"
+    ],
+    "flips": [
+      "Latency budget tightens: lower the retrieval reasoning effort or query the index directly",
+      "Corpus is small and stable: file search or long context can replace a knowledge base",
+      "Questions are single-hop lookups: skip LLM planning"
+    ]
+  },
+  "alternatives": {
+    "title": "Grounding options in Foundry",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Foundry IQ knowledge base", "Multi-source, permission-aware, shared across agents", "Tiny corpus or fixed-query lookups", "LLM planning adds latency and cost (inference), partly preview"],
+      ["File search", "User-provided documents in a chat", "ACL-aware multi-source retrieval", "Extra charges, limited governance [[tr9]]"],
+      ["Azure AI Search tool on your own index", "You own the index design and query logic", "You want managed sources and indexers", "You run ingestion and ACL sync"],
+      ["Foundry memory", "User-specific facts across sessions", "Shared policy or curated content", "Preview, LLM-consolidated per-user store [[r7]]"],
+      ["Long context", "Small, stable material", "Large or changing corpora", "Token cost on every call"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A user sees content from a source they cannot open", "cause": "The source is not supported for ACL sync, or the query ran under a shared identity", "fix": "Run queries under the caller's Entra identity and confirm ACL sync support for each source [[r6]]." },
+    { "symptom": "Answers are slow on simple questions", "cause": "LLM query planning and reasoning effort are higher than the question needs", "fix": "Lower the retrieval reasoning effort to minimal or low and test quality (inference on cost and latency) [[r6]]." },
+    { "symptom": "Code that worked in the portal breaks in production", "cause": "The portal exposes preview-only agentic retrieval features, while the GA surface depends on the Search REST API version", "fix": "Check the migration guide for what is GA by API version before pinning [[r6]]." }
+  ],
+  "scenarios": [
+    {
+      "id": "w12-t10-s1",
+      "title": "Many sources, per-user permissions",
+      "situation": "A company assistant must answer from SharePoint sites, a Blob container and OneLake data. Each user may see only what their groups allow, and three agents need the same grounding.",
+      "constraints": ["Per-user permissions are mandatory", "Three agents share the knowledge", "Questions are often multi-part"],
+      "unknowns": ["Are all sources supported for ACL sync?", "How fast must a revocation take effect?"],
+      "question": "How do you ground the agents?",
+      "options": [
+        { "name": "One Foundry IQ knowledge base with ACL sync and caller-identity queries", "verdict": "best", "why": "Shared across agents, permission-aware and built for multi-part questions with citations.", "tradeoff": "Partly preview, LLM planning cost and latency, and revocation depends on ACL sync timing." },
+        { "name": "Azure AI Search tool over a custom index with security filters", "verdict": "good", "why": "Full control of index and filters.", "tradeoff": "You build ingestion, ACL sync and agentic planning yourself." },
+        { "name": "File search per agent", "verdict": "poor", "why": "Per-agent vector stores duplicate content and do not enforce source permissions.", "tradeoff": "Right for user-uploaded files in a single chat." }
+      ],
+      "flips": [
+        { "if": "Revocation must take effect within seconds", "then": "Add a live source check on sensitive hits, whatever the retrieval layer." },
+        { "if": "Policy forbids preview features", "then": "Build on the GA Search surface and own more of the pipeline." }
+      ],
+      "takeaway": "Shared, permission-aware grounding is what a knowledge base is for."
+    },
+    {
+      "id": "w12-t10-s2",
+      "title": "Tight latency, one known index",
+      "situation": "A support widget answers single-hop lookups against one well-tuned search index. The latency budget is tight and questions are short.",
+      "constraints": ["Strict latency budget", "One index already tuned", "No multi-part questions"],
+      "unknowns": ["What are p95 latency targets?", "Does the index already hold ACLs?"],
+      "question": "What retrieval do you use?",
+      "options": [
+        { "name": "Query the existing index directly or with the Azure AI Search tool", "verdict": "best", "why": "No planning step, and you keep your tuned query logic.", "tradeoff": "No decomposition or managed multi-source features." },
+        { "name": "Knowledge base at minimal reasoning effort", "verdict": "good", "why": "Keeps the managed layer with the least LLM planning.", "tradeoff": "Still extra hops compared with a direct query." },
+        { "name": "Knowledge base at medium reasoning effort", "verdict": "poor", "why": "Heavy planning for single-hop lookups spends latency and tokens for little gain.", "tradeoff": "Right for ambiguous, multi-part questions." }
+      ],
+      "flips": [
+        { "if": "Questions become multi-part", "then": "Move to the knowledge base with low or medium effort." },
+        { "if": "Sources multiply", "then": "A knowledge base removes custom connector work." }
+      ],
+      "takeaway": "Do not pay for planning that the question does not need."
+    }
+  ],
+  "quiz": [
+    { "id": "w12-t10-q1", "type": "single", "tag": "concept", "q": "Which values does Foundry IQ allow for retrieval reasoning effort?", "options": ["Low, medium, high", "Minimal, low, medium", "None, auto, max", "Fast, balanced, deep"], "answer": 1, "explain": "The knowledge base page lists minimal, low or medium. The other sets are not Foundry IQ values.", "ref": "r6" },
+    { "id": "w12-t10-q2", "type": "multi", "tag": "security", "q": "Which permission features does Foundry IQ document?", "options": ["ACL synchronization for supported sources", "Honoring Purview sensitivity labels", "Queries under the caller's Entra identity", "Automatic removal of all prompt injection"], "answers": [0, 1, 2], "explain": "The page lists ACL sync, Purview labels and caller-identity queries. It makes no claim to remove prompt injection, which needs separate controls.", "ref": "r6" },
+    { "id": "w12-t10-q3", "type": "single", "tag": "flip", "q": "Which change most favors dropping a knowledge base for a direct index query?", "options": ["A new SharePoint source appears", "A second agent needs the same content", "Questions are single-hop and latency is tight", "Users complain answers lack citations"], "answer": 2, "explain": "Single-hop questions under a tight latency budget do not need LLM planning. The other changes favor a shared knowledge base.", "ref": "tr8" }
+  ],
+  "flashcards": [
+    { "front": "What is a Foundry IQ knowledge base made of?", "back": "Knowledge sources (Blob, SharePoint, OneLake, public web) plus retrieval settings, run on Azure AI Search agentic retrieval and shareable across agents." },
+    { "front": "Is Foundry IQ GA?", "back": "Partly. GA depends on the Search REST API version, while portal access to all agentic retrieval features is preview-only (checked 2026-10-13)." },
+    { "front": "Foundry IQ vs Fabric IQ vs Work IQ?", "back": "Foundry IQ: enterprise knowledge layer. Fabric IQ: semantic layer over OneLake and Power BI. Work IQ: Microsoft 365 collaboration signals." }
+  ],
+  "related": ["w12-t09", "w12-t12", "w05-t13", "w07-t11", "w07-t13", "w12-l4"],
+  "refs": ["r6", "r7", "tr8", "tr9"]
+}

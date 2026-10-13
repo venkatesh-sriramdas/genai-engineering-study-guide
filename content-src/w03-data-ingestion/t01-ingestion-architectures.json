@@ -1,0 +1,109 @@
+{
+  "id": "w03-t01",
+  "order": 1,
+  "group": "Architecture",
+  "title": "Ingestion architectures: indexer, push, event-driven, batch",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "Four ways to get content into a search index: a managed indexer pulls on a schedule, your code pushes documents, an event pipeline reacts to changes, or a batch job rebuilds in bulk.",
+  "useIf": "You must pick how content reaches the index and can state the freshness target, the source type and who will operate the pipeline.",
+  "avoidIf": "You treat the choice as permanent: most real systems mix a pull path for bulk content with a push path for hot content.",
+  "explain": [
+    { "t": "p", "md": "**Pull** means an indexer connects to a supported data source, detects what changed and can run a skillset (chunk, embed, OCR) on the way in [[tr1]]. You declare it and Azure AI Search runs it. The smallest schedule interval is 5 minutes and the longest is 1,440 minutes [[tr3]], and you should plan for runs that stop at about 2 hours [[tr31]]." },
+    { "t": "p", "md": "**Push** means your code calls the Index Documents API with the actions `upload`, `merge`, `mergeOrUpload` and `delete`. A request carries at most 1,000 documents or 16 MB, and HTTP 207 means some documents failed while 503 means wait and retry [[tr2]]. You own parsing, chunking and embedding, which is the price of full control." },
+    { "t": "p", "md": "**Event-driven** is push with a trigger. A blob event, a Cosmos DB change feed entry or a Debezium record lands on a queue, a worker parses and embeds, then pushes. Event Grid and Debezium both deliver at least once, so the worker must be idempotent [[tr26]] [[tr25]]. **Batch** is a scheduled or one-off job that rebuilds or backfills the whole corpus, and it is the simplest way to re-embed." },
+    { "t": "diagram", "id": "w03-t01-d1", "title": "Four paths into one index", "alt": "Sources feed an indexer, an event queue with a worker, or a batch job. The worker and the batch job write through the push API. The indexer and the push API both write to the search index.", "src": "flowchart LR\n  S[Sources] --> I[Indexer pull]\n  S --> E[Events or CDC]\n  E --> Q[Queue]\n  Q --> W[Worker]\n  W --> P[Push API]\n  S --> B[Batch job]\n  B --> P\n  I --> X[(Search index)]\n  P --> X" },
+    { "t": "callout", "kind": "tip", "title": "Mix paths on purpose", "md": "Use the indexer for the long tail of stable files and a push path for the few sources where seconds matter. Both can write to the same index if they agree on the document key (see the idempotency topic)." }
+  ],
+  "whereToUse": [
+    "Indexer: knowledge bases over Blob Storage, ADLS Gen2, OneLake, Azure SQL or Cosmos DB where hourly or daily freshness is fine",
+    "Push: SaaS tools, wikis and internal systems that no indexer can read, or content that needs custom parsing",
+    "Event-driven: support tickets, chat transcripts or order data that must be searchable within seconds",
+    "Batch: first load, backfills and re-embedding after a model change",
+    "Foundry IQ knowledge sources, which generate an indexer pipeline for you when your source kind is supported [[tr13]]"
+  ],
+  "whenToUse": {
+    "use": [
+      "Pick the indexer when the source is a supported GA store, minutes of staleness are acceptable and built-in skills cover the work",
+      "Pick push or event-driven when you need seconds of freshness, custom parsing, dead-letter handling or a source with no indexer",
+      "Pick batch when the data changes rarely or you are rebuilding the whole index",
+      "Keep the sink idempotent whatever the path, because retries and replays happen"
+    ],
+    "avoid": [
+      "Do not run an event pipeline for a corpus that changes nightly: you pay for queues, workers and on-call for no freshness gain",
+      "Do not use an indexer for a source whose indexer is still preview when you need a production service level",
+      "Do not hand-write a push pipeline to chunk and embed files that a skillset already handles"
+    ],
+    "flips": [
+      "Freshness target drops from hours to seconds: move the hot path from indexer to event-driven push",
+      "The source has no indexer or the indexer is preview and you need a firm SLA: push from your own code",
+      "The team has no capacity to run queues and workers: accept minutes of staleness and use the indexer"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Scheduled indexer", "Supported GA store, minutes to hours of staleness, built-in skills", "Seconds of freshness, exotic sources, custom parsing", "5 minute floor, per-run time caps, preview sources"],
+      ["Push from your code", "Custom parsing, any source, per-document control", "Small team with no ops capacity", "You own retries, batching limits and monitoring"],
+      ["Event-driven push", "Seconds of freshness, replay and dead-letter needs", "Corpus changes rarely", "At-least-once delivery, ordering gaps, queue operations"],
+      ["Batch ETL", "Backfills, re-embedding, snapshots", "Continuous change", "Stale between runs, large bursts of embedding calls"],
+      ["Foundry IQ knowledge source", "You want the pipeline generated for a supported kind", "You need custom chunking or a kind still in preview", "Several kinds are preview, check status first"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "New files show up much later than the schedule suggests", "cause": "The schedule is only the minimum interval. A big backlog keeps one run busy until it hits the run time cap", "fix": "Check run history, split the source, give the hot path to a push pipeline" },
+    { "symptom": "Push requests fail with 413 or return 207", "cause": "A batch above 1,000 documents or 16 MB, or some documents failed validation", "fix": "Cap batch size, read the per-document status, retry only failed keys and back off on 503" },
+    { "symptom": "The same chunk is indexed twice after a retry", "cause": "Event delivery is at least once and the key was generated per attempt", "fix": "Derive the key from the source id and chunk position, and use `mergeOrUpload`" }
+  ],
+  "scenarios": [
+    {
+      "id": "w03-t01-s1",
+      "title": "Policies in blob storage, hourly is fine",
+      "situation": "A small team indexes a few thousand PDFs and Word files that live in Blob Storage. Editors change a handful per day. Nobody on the team wants to run extra infrastructure.",
+      "constraints": ["Source is a supported GA store", "Staleness of an hour is acceptable", "Two engineers, no on-call rota", "Standard layout parsing is enough"],
+      "unknowns": ["Is any document needed within minutes of publishing?", "Do files need custom parsing that skills cannot do?"],
+      "question": "How do you ingest?",
+      "options": [
+        { "name": "Scheduled indexer with a skillset", "verdict": "best", "why": "It matches the source, the freshness and the team size, and built-in change detection handles updates.", "tradeoff": "5 minute minimum interval and limited control over parsing." },
+        { "name": "Event-driven push with Event Grid and a worker", "verdict": "poor", "why": "It adds queues, workers and dead-letter handling to buy seconds nobody asked for.", "tradeoff": "Right when freshness is seconds or the parsing is custom." },
+        { "name": "Nightly batch rebuild", "verdict": "good", "why": "Simple and cheap to reason about, and it fits the update rate.", "tradeoff": "Re-embeds unchanged files and stays stale up to a day." }
+      ],
+      "flips": [
+        { "if": "Editors need changes searchable within a minute", "then": "Add an event-driven push path for those folders and keep the indexer for the rest." },
+        { "if": "Files need a proprietary parser", "then": "Push from your code, since a skillset cannot run it." }
+      ],
+      "takeaway": "Match the pipeline to the freshness target and the team, not to the most sophisticated option."
+    },
+    {
+      "id": "w03-t01-s2",
+      "title": "Tickets searchable in seconds",
+      "situation": "Support tickets live in a SaaS tool that can call a webhook on every change. Agents expect a new ticket to be findable within 30 seconds. Volume is high and bursty after incidents.",
+      "constraints": ["Freshness target 30 seconds", "Source has no indexer", "Bursty volume", "A platform team can run queues"],
+      "unknowns": ["How large can a burst be?", "What happens to a ticket that keeps failing?"],
+      "question": "Which architecture fits?",
+      "options": [
+        { "name": "Webhook to queue to worker to push API", "verdict": "best", "why": "The queue absorbs bursts, the worker can retry and dead-letter, and push gives seconds of freshness.", "tradeoff": "More moving parts and an idempotent worker are required." },
+        { "name": "Scheduled indexer every 5 minutes", "verdict": "poor", "why": "The source has no indexer and the 5 minute floor misses the 30 second target.", "tradeoff": "Right for supported stores where minutes of lag are fine." },
+        { "name": "Webhook straight to the push API", "verdict": "good", "why": "Fewer parts and low latency for light traffic.", "tradeoff": "A burst or a throttled embedding call loses events, with no replay or dead-letter path." }
+      ],
+      "flips": [
+        { "if": "Volume is low and a lost event is cheap to repair", "then": "Direct webhook to push is acceptable." },
+        { "if": "Freshness relaxes to 15 minutes", "then": "A scheduled export plus batch push is simpler." }
+      ],
+      "takeaway": "Seconds of freshness and bursts both argue for a queue in front of the push call."
+    }
+  ],
+  "quiz": [
+    { "id": "w03-t01-q1", "type": "single", "tag": "tradeoff", "q": "The business wants new documents searchable within 30 seconds. Which statement about indexers is correct?", "options": ["An indexer can be scheduled every 10 seconds", "The smallest indexer schedule interval is 5 minutes, so a push or event path is needed", "Indexers push documents faster than the Index Documents API", "Indexers cannot run skillsets"], "answer": 1, "explain": "The schedule floor is 5 minutes, so seconds of freshness need a push path. Indexers cannot run every 10 seconds. They do not beat push on latency. They can run skillsets, which is a reason to choose them elsewhere.", "ref": "tr3" },
+    { "id": "w03-t01-q2", "type": "numeric", "tag": "numeric", "q": "You must push 4,500 small documents. Each request may carry at most 1,000 documents. What is the minimum number of requests?", "answer": 5, "tolerancePct": 0, "unit": "requests", "explain": "4,500 divided by 1,000 is 4.5, so you need 5 requests. The 16 MB limit also applies, so check payload size if documents are large.", "ref": "tr2" },
+    { "id": "w03-t01-q3", "type": "multi", "tag": "diagnose", "q": "Which are real reasons to prefer your own push pipeline over an indexer?", "options": ["The source has no indexer", "You need custom parsing the skillset cannot do", "You want to avoid writing any code", "You need to dead-letter poison documents and replay them"], "answers": [0, 1, 3], "explain": "No indexer, custom parsing and replay control all favour push. Avoiding code is the reason to choose the indexer, so it is not a reason to leave it." }
+  ],
+  "flashcards": [
+    { "front": "What are the smallest and largest indexer schedule intervals?", "back": "5 minutes and 1,440 minutes (24 hours), set as an XSD duration such as `PT2H`." },
+    { "front": "Push API batch limits and status codes?", "back": "1,000 documents or 16 MB per request. 413 is too large, 207 is partial failure, 503 means wait and retry." },
+    { "front": "Why must event-driven workers be idempotent?", "back": "Event Grid and Debezium deliver at least once, so the same change can arrive twice. The sink must tolerate replays." }
+  ],
+  "related": ["w03-t02", "w03-t06", "w03-t07", "w03-t08", "w04-t01"],
+  "refs": ["tr1", "tr2", "tr3", "tr13", "tr25", "tr26", "tr31", "tr37"]
+}

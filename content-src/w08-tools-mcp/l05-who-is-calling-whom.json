@@ -1,0 +1,99 @@
+{
+  "id": "w08-l05",
+  "order": 5,
+  "title": "Who is calling whom",
+  "kind": "problem",
+  "minutes": 18,
+  "brief": "Your MCP server fronts internal APIs. Some callers are people in a host application and some are unattended jobs. The identity provider, whether admins need central control and whether the server calls downstream APIs as the user are all open. Decide how callers authenticate and which tokens the server accepts.",
+  "blocks": [
+    { "t": "h", "text": "The discovery chain from 401 to token", "level": 2 },
+    { "t": "diagram", "id": "w08-l05-d1", "title": "MCP authorization flow over HTTP", "alt": "A client calls the MCP server without a token and gets a 401 with a resource metadata pointer. It fetches protected resource metadata, authorizes at the authorization server with PKCE and the resource parameter, redeems the code, and calls the server with a bearer token.", "src": "sequenceDiagram\n  participant C as Client\n  participant M as MCP server\n  participant A as Auth server\n  C->>M: request without a token\n  M-->>C: 401 with resource_metadata\n  C->>M: fetch protected resource metadata\n  M-->>C: authorization_servers\n  C->>A: authorize with PKCE S256 and resource\n  A-->>C: code with iss\n  C->>A: token request with resource\n  A-->>C: access token for this server\n  C->>M: request with bearer token", "caption": "The MCP server is an OAuth 2.1 resource server. It MUST publish RFC 9728 protected resource metadata and MUST validate that each token was issued for it as the audience [[r4]]." },
+    { "t": "compare", "title": "How should the client register with the authorization server?", "intro": "The spec's priority order for clients that support every option [[r35]].", "options": [
+      { "name": "Pre-registered credentials", "tag": "First choice", "summary": "A client id, and a secret for confidential clients, obtained out of band for a known server.", "pros": ["No discovery or fetching of client metadata", "Works with any authorization server"], "cons": ["Manual work for every server", "Does not scale to servers you have never seen"], "bestWhen": "Client and server have an existing relationship, such as an enterprise-owned host.", "avoidWhen": "Users connect to arbitrary servers.", "meta": [{ "k": "Scale", "v": "low" }, { "k": "Trust", "v": "high" }] },
+      { "name": "Client ID Metadata Document", "tag": "Preferred, no prior relationship", "summary": "The `client_id` is an HTTPS URL with a path. It points to a JSON document with at least `client_id`, `client_name` and `redirect_uris`.", "pros": ["No registration call and no stored client record", "The authorization server validates redirect URIs against the document"], "cons": ["The authorization server must fetch URLs, which carries SSRF risk", "Only usable when the server sets `client_id_metadata_document_supported` to true"], "bestWhen": "Client and server have no prior relationship, which is the common MCP case.", "avoidWhen": "The authorization server does not advertise support.", "meta": [{ "k": "Scale", "v": "high" }, { "k": "Status", "v": "SHOULD support" }] },
+      { "name": "Dynamic Client Registration", "tag": "Deprecated", "summary": "The client posts to a `registration_endpoint` (RFC 7591). Clients MUST send `application_type`, and credentials are bound to the issuing authorization server.", "pros": ["Supported by older authorization servers"], "cons": ["Deprecated in 2026-07-28", "Needs a registration endpoint and stored client records", "Re-register when the authorization server changes"], "bestWhen": "The authorization server supports only this and you need backward compatibility.", "avoidWhen": "Starting new work. Earliest removal is the first revision released on or after 2027-07-28.", "meta": [{ "k": "Scale", "v": "medium" }, { "k": "Status", "v": "Deprecated" }] },
+      { "name": "Ask the user", "tag": "Last resort", "summary": "Prompt the user to type client information.", "pros": ["Works anywhere"], "cons": ["Poor experience and easy to get wrong"], "bestWhen": "No other mechanism is available.", "avoidWhen": "Any other option works.", "meta": [{ "k": "Scale", "v": "low" }, { "k": "Trust", "v": "depends on user" }] }
+    ] },
+    { "t": "dials", "id": "w08-l05-authpattern", "title": "Pick an inbound authentication pattern", "prompt": "Flip who is calling, how much central control admins need, and whether the server calls downstream APIs as the user.",
+      "dials": [
+        { "id": "actor", "label": "Who is calling", "values": [ { "id": "person", "label": "A signed-in person" }, { "id": "job", "label": "An unattended job" } ] },
+        { "id": "policy", "label": "Central control over reachable servers", "values": [ { "id": "none", "label": "Not required" }, { "id": "central", "label": "Required by tenant admins" } ] },
+        { "id": "downstream", "label": "Server calls downstream APIs as the user", "values": [ { "id": "no", "label": "No" }, { "id": "yes", "label": "Yes" } ] }
+      ],
+      "options": [
+        { "id": "user", "name": "Per-user OAuth", "summary": "Authorization code with PKCE through the user's identity provider." },
+        { "id": "ent", "name": "Enterprise-managed authorization", "summary": "Official extension where a central identity provider decides which servers employees can reach." },
+        { "id": "cc", "name": "Client credentials", "summary": "Official machine-to-machine extension." },
+        { "id": "key", "name": "API or subscription key", "summary": "A shared key checked at the server or a gateway." }
+      ],
+      "scores": {
+        "user": {
+          "actor": { "person": { "s": 2, "why": "Interactive consent and a real user identity fit authorization code with PKCE." }, "job": { "s": -2, "why": "No user is present to consent." } },
+          "policy": { "none": { "s": 1, "why": "Each user authorizes each server once." }, "central": { "s": -1, "why": "Users decide for themselves, and admins have no central say." } },
+          "downstream": { "no": { "s": 0, "why": "Nothing extra needed." }, "yes": { "s": 2, "why": "The user token can be exchanged on-behalf-of so downstream systems see the real user." } }
+        },
+        "ent": {
+          "actor": { "person": { "s": 1, "why": "Employees sign in through the enterprise identity provider." }, "job": { "s": -1, "why": "Designed for employees reaching servers, not unattended jobs." } },
+          "policy": { "none": { "s": -1, "why": "Extra setup with no control benefit." }, "central": { "s": 2, "why": "A central identity provider decides which servers employees can reach." } },
+          "downstream": { "no": { "s": 0, "why": "Neutral." }, "yes": { "s": 1, "why": "User identity is preserved for exchange." } }
+        },
+        "cc": {
+          "actor": { "person": { "s": -2, "why": "A machine identity loses the user." }, "job": { "s": 2, "why": "Machine-to-machine access with no user present." } },
+          "policy": { "none": { "s": 0, "why": "Neutral." }, "central": { "s": 0, "why": "Neutral. It is a separate opt-in extension." } },
+          "downstream": { "no": { "s": 1, "why": "The service identity is enough." }, "yes": { "s": -1, "why": "Downstream sees the service, so per-user access control is lost." } }
+        },
+        "key": {
+          "actor": { "person": { "s": -1, "why": "A shared key identifies the app, not the person." }, "job": { "s": 1, "why": "Simple for a known job." } },
+          "policy": { "none": { "s": 1, "why": "Cheapest to run." }, "central": { "s": -1, "why": "Keys are hard to govern per user or per server." } },
+          "downstream": { "no": { "s": 0, "why": "Neutral." }, "yes": { "s": -2, "why": "There is no user identity to exchange downstream." } }
+        }
+      },
+      "takeaway": "A user in the loop points to per-user OAuth. Central admin control points to the enterprise extension. No user points to client credentials. Keys are the cheapest and the least accountable." },
+    { "t": "failure", "title": "Failure modes and how to detect them", "items": [
+      { "symptom": "A token issued for another service works on your server", "cause": "The server checks the signature but not the audience. MCP servers MUST validate that tokens were issued specifically for them", "fix": "Validate `aud` against your canonical URI. Test with a token minted for a different resource and expect a 401" },
+      { "symptom": "A gateway forwards the inbound `Authorization` header to a backend with a different audience", "cause": "Token passthrough. It bypasses rate limits, muddies the audit trail and breaks the trust boundary", "fix": "Exchange the token or use the gateway's credential manager so the backend receives a token issued for it" },
+      { "symptom": "A proxy MCP server lets a malicious client skip the consent screen", "cause": "Confused deputy: a static client id at a third-party authorization server plus a saved consent cookie", "fix": "Require per-client consent. Use `__Host-` cookies that are `Secure`, `HttpOnly`, `SameSite=Lax`, signed and bound to `client_id`. Set the state cookie only after consent [[r5]]" },
+      { "symptom": "Outbound requests from the client hit a cloud metadata address", "cause": "SSRF through OAuth discovery: `resource_metadata` and `authorization_servers` URLs are attacker-influenced", "fix": "Require HTTPS, block private and link-local ranges with a vetted library, validate redirects, pin DNS between check and use, and use an egress proxy" },
+      { "symptom": "An authorization code is redeemed at the wrong server", "cause": "A mix-up attack. The client did not compare `iss` to the issuer it recorded", "fix": "Record the issuer before redirecting and compare a present `iss` exactly, with no normalization, before redeeming the code [[r4]]" },
+      { "symptom": "Clients sending `resource` get an error from Entra", "cause": "The app registration issues v1 tokens, so an HTTPS Application ID URI that matches the server URL cannot be set", "fix": "Set `requestedAccessTokenVersion` to 2, then set the Application ID URI to the server's exact canonical URL [[r18]]" }
+    ] },
+    { "t": "accordion", "items": [
+      { "title": "Hard requirements to check in a review", "blocks": [
+        { "t": "list", "style": "checks", "items": [
+          "Client sends the RFC 8707 `resource` parameter in both the authorization and the token request, even if the authorization server does not advertise support [[r4]]",
+          "Client uses PKCE with S256 and refuses to proceed when `code_challenge_methods_supported` is absent from the metadata [[r34]]",
+          "Authorization server endpoints use HTTPS. Redirect URIs are `localhost` or HTTPS and are matched exactly. Public-client refresh tokens rotate [[r34]]",
+          "Server returns `WWW-Authenticate` with `resource_metadata` and SHOULD include `scope`. Clients also fall back to the well-known `/.well-known/oauth-protected-resource` path [[r4]]",
+          "Server MUST NOT accept tokens that were not issued for it, and MUST NOT forward them downstream [[r5]]"
+        ] }
+      ] },
+      { "title": "Scope challenges and step-up", "blocks": [
+        { "t": "p", "md": "A 403 with `error=\"insufficient_scope\"`, a `scope` value and `resource_metadata` tells the client to re-authorize. Clients MUST treat the challenged scopes as authoritative for the operation, MUST NOT assume they match `scopes_supported`, and SHOULD request them together with scopes already granted so earlier permissions are not lost [[r4]]." }
+      ] },
+      { "title": "Microsoft Entra ID specifics", "blocks": [
+        { "t": "list", "style": "ul", "items": [
+          "Entra matches the `resource` value against the Application ID URI of the app registration and issues a v2 access token. The registration must request v2 tokens before an HTTPS URI matching the server URL can be set [[r18]].",
+          "The article says not to write token validation from scratch. Use a maintained library or middleware [[r18]].",
+          "Whether Entra supports Dynamic Client Registration or Client ID Metadata Documents for arbitrary MCP clients is not stated in that article. It was not verified on 2026-10-13, so check before designing around it.",
+          "stdio servers SHOULD NOT follow the HTTP authorization spec. They retrieve credentials from the environment instead [[r4]]."
+        ] }
+      ] }
+    ] },
+    { "t": "callout", "kind": "gotcha", "title": "OAuth 2.1 is still an IETF draft", "md": "The spec cites `draft-ietf-oauth-v2-1-13`, not a published RFC, alongside RFC 6750, RFC 8414, RFC 8707, RFC 9728, RFC 9207, OpenID Connect Discovery and the Client ID Metadata Document draft. Say \"the profile the MCP spec defines\" in an interview, not \"the OAuth 2.1 standard\" [[r4]]. Authorization servers SHOULD return `iss` today, and the spec says a future revision is expected to raise that from SHOULD to MUST." }
+  ],
+  "quiz": [
+    { "id": "w08-l05-q1", "type": "single", "tag": "security", "q": "An API gateway validates the caller's Entra token and then forwards the same `Authorization` header to a backend API whose audience is a different application. Which spec rule is at risk?", "options": ["Token passthrough is forbidden: the backend receives a token that was not issued for it, so audience binding and audit are lost", "Servers must use Dynamic Client Registration before forwarding", "The gateway must use HTTP+SSE so tokens stay in one stream", "Tokens may be forwarded freely inside a private network, because the network perimeter is the trust boundary and the backend trusts the gateway"], "answer": 0, "explain": "MCP servers MUST NOT accept or forward tokens not issued for them. Audience binding, rate limiting and audit all depend on it. DCR is about client registration and is Deprecated. The transport has no bearing on token audience, and a private network does not remove the confused-deputy risk.", "difficulty": 2, "ref": "r5" },
+    { "id": "w08-l05-q2", "type": "multi", "tag": "security", "q": "Select every behavior the 2026-07-28 spec requires of an MCP OAuth client.", "options": ["Use PKCE with the S256 method when technically capable", "Send the `resource` parameter in authorization and token requests", "Register through Dynamic Client Registration before trying anything else", "Assume the scope in a 401 challenge equals `scopes_supported`", "Compare a present `iss` to the recorded issuer before redeeming the code"], "answers": [0, 1, 4], "explain": "PKCE with S256, the RFC 8707 `resource` parameter and the `iss` comparison are MUST requirements. DCR is last in the priority order and is Deprecated. Clients MUST NOT assume any relationship between the challenge scopes and `scopes_supported`.", "difficulty": 2, "ref": "r4" },
+    { "id": "w08-l05-q3", "type": "order", "tag": "order", "q": "Put the client registration mechanisms in the spec's priority order.", "items": ["Pre-registered client information", "Client ID Metadata Document, when the authorization server advertises support", "Dynamic Client Registration, when a `registration_endpoint` exists", "Prompt the user for client information"], "explain": "Clients that support everything SHOULD try pre-registration first, then Client ID Metadata Documents, then Dynamic Client Registration as a fallback, and ask the user only when nothing else works.", "difficulty": 1, "ref": "r35" },
+    { "id": "w08-l05-q4", "type": "single", "tag": "diagnose", "q": "MCP clients that send the `resource` parameter with the server's canonical URL (for example mcp.contoso.com) receive an error from Microsoft Entra ID. The server app registration still issues v1 access tokens. What is the fix?", "options": ["Switch the transport to HTTP+SSE", "Disable PKCE for this client", "Set `requestedAccessTokenVersion` to 2, then set the Application ID URI to the server's exact canonical URL", "Add a trailing slash to the `resource` value"], "answer": 2, "explain": "Entra compares `resource` with the Application ID URI and needs v2 tokens before an HTTPS URI that matches the server URL can be set. Transport and PKCE are unrelated, and the spec's convention is to avoid a trailing slash.", "difficulty": 2, "ref": "r18" }
+  ],
+  "defend": null,
+  "refs": ["r4", "r5", "r11", "r18", "r34", "r35"],
+  "takeaways": [
+    "The MCP server is an OAuth 2.1 resource server that publishes protected resource metadata and validates token audience.",
+    "Clients send `resource`, use PKCE with S256 and check `iss`. Register by pre-registration first, then Client ID Metadata Documents. Dynamic Client Registration is Deprecated.",
+    "Token passthrough is forbidden. Exchange tokens or use a credential manager for downstream calls.",
+    "Pick the pattern by actor, central control and downstream identity: per-user OAuth, enterprise-managed, client credentials or keys.",
+    "The spec cites an IETF draft for OAuth 2.1, so describe it as the MCP profile."
+  ]
+}

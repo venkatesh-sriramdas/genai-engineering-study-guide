@@ -1,0 +1,102 @@
+{
+  "id": "w14-t02",
+  "order": 2,
+  "group": "Foundations",
+  "title": "Offline vs online evaluation",
+  "minutes": 7,
+  "difficulty": "core",
+  "summary": "Offline evaluation runs a fixed dataset with reference answers before release. Online evaluation scores sampled live traffic without references after release. You need both, joined by a loop that turns production failures into new test cases.",
+  "useIf": "You must decide which checks gate a release and which keep watching after it.",
+  "avoidIf": "You are tempted to use either one alone: offline alone misses drift, online alone lets users find regressions.",
+  "explain": [
+    { "t": "p", "md": "**Offline** evaluation runs a candidate over dataset examples that carry reference outputs. It suits benchmarking, regression checks, unit tests and backtesting, and it is repeatable, so two versions can be compared on identical inputs. **Online** evaluation scores production runs and threads as they arrive. They have no reference outputs, so it checks quality patterns, safety and anomalies [[r29]]." },
+    { "t": "p", "md": "Online scoring runs on logged traces asynchronously, so it adds no latency to the user request. Without ground truth it relies on reference-free judges [[r30]]. Foundry frames three lifecycle stages: base model selection, pre-production evaluation and post-production monitoring. The last covers operational metrics, continuous evaluation of sampled live traffic, scheduled evaluation on a test set to detect drift, scheduled red teaming and Azure Monitor alerts [[r1]]." },
+    { "t": "diagram", "id": "w14-t02-d1", "title": "The loop between offline and online", "alt": "An offline golden set gates a release, live traffic is scored online, and failing production traces flow back into the offline set.", "src": "flowchart LR\n  G[Offline golden set] --> Q{Gate}\n  Q -->|pass| L[Live traffic]\n  L --> O[Online scoring]\n  O --> F[Failing traces]\n  F --> G" },
+    { "t": "table", "caption": "What each side can and cannot do", "head": ["Question", "Offline", "Online"], "rows": [
+      ["Reference answers?", "Yes, so reference-based metrics work", "No, so reference-free judges and safety checks"],
+      ["Inputs", "Fixed, curated", "Real and shifting"],
+      ["User exposure", "None", "Scoring is passive, but content is read"],
+      ["Catches", "Regressions before release", "Drift, new query types, rare failures"],
+      ["Cost driver", "Dataset size x evaluators x trials", "Sampling rate x judge tokens"]
+    ] },
+    { "t": "p", "md": "Foundry continuous evaluation is preview as checked on 2026-10-13. Its documented default is 100 runs per hour (`max_hourly_runs`), and runs are skipped once that cap is reached [[r7]]. Intelligent sampling dedupes, drops broken traces and picks diverse ones without extra model calls [[r40]]." }
+  ],
+  "whereToUse": [
+    "Release gates in CI, where a fixed dataset makes versions comparable",
+    "Model or prompt upgrades, where you backtest on a set built from past traffic",
+    "Production dashboards that sample traces and score groundedness and safety",
+    "Drift detection on a schedule when the input mix changes",
+    "Triage queues that feed low-scoring traces back into the golden set"
+  ],
+  "whenToUse": {
+    "use": ["Offline when you can write or mine reference answers", "Online when traffic is large and real inputs differ from your set", "Both when a regression is costly and the user mix moves"],
+    "avoid": ["Online-only when harm happens before anyone notices", "Offline-only when the corpus or users change weekly", "Scoring every live trace with a large judge when sampling would do"],
+    "flips": ["Privacy rules forbid reading live content: keep online scoring to metadata and redacted text, or skip it", "Traffic is tiny: online samples are too few, so lean on offline sets and human review", "No traces exist yet (pre-launch): offline only, built from hand-written and synthetic cases"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Offline golden set", "Gating a change with references", "Inputs drift from your set", "Stale set gives false comfort"],
+      ["Continuous online scoring", "Watching real traffic without references", "Content cannot be read, or traffic is tiny", "Judge tokens, privacy review"],
+      ["Shadow traffic", "Testing a new version with zero user impact", "No gateway can mirror requests", "Doubled model cost, side effects"],
+      ["Canary or A/B", "Measuring real user outcomes", "Harm is high and exposure unacceptable", "Users see the worse version"],
+      ["Human review of sampled traces", "Calibrating judges and finding new failure types", "Volume is large and reviewers are few", "Slow and costly"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Online scores stop updating on busy days", "cause": "The continuous evaluation hourly cap was hit and runs were skipped", "fix": "Raise `max_hourly_runs`, lower the sampling rate on purpose, or alert on skipped runs" },
+    { "symptom": "Offline score stays green while users complain", "cause": "The golden set no longer resembles real queries", "fix": "Feed failing and low-feedback traces back into the set and refresh on a schedule" },
+    { "symptom": "A privacy review blocks online scoring", "cause": "Judges read real prompts and responses", "fix": "Redact before scoring, restrict access to results, set retention, and sample rather than score everything" }
+  ],
+  "scenarios": [
+    {
+      "id": "w14-t02-s1",
+      "title": "New assistant, nothing in production",
+      "situation": "A team is two weeks from the first release of a document Q&A assistant. There is no traffic, a corpus of a few thousand documents and one subject expert.",
+      "constraints": ["No traces", "Reference answers can be written for a small set", "Launch date is fixed"],
+      "unknowns": ["How harmful is a wrong answer?", "Can the first users be a small pilot group?"],
+      "question": "Which checks do you put in place before launch?",
+      "options": [
+        { "name": "Offline set of hand-written and synthetic cases, plus a pilot with sampled online scoring after launch", "verdict": "best", "why": "It gates the release with references and prepares the online loop that will catch what the set misses.", "tradeoff": "The first set is guessed, so early scores overstate how real users will fare." },
+        { "name": "Online scoring only, starting at launch", "verdict": "poor", "why": "There would be no regression gate, so the first users find the failures.", "tradeoff": "Online-only fits an internal tool with instant rollback and low harm." },
+        { "name": "A 2,000-case synthetic set judged by five judges", "verdict": "good", "why": "Broad coverage and judge agreement.", "tradeoff": "Large cost, and unreviewed synthetic rows can be easy or wrong." }
+      ],
+      "flips": [
+        { "if": "The pilot users are named staff who can report errors", "then": "A lighter offline set is enough because feedback is quick." },
+        { "if": "Wrong answers carry legal exposure", "then": "Add red teaming and a human-reviewed safety slice before launch." }
+      ],
+      "takeaway": "Before launch you only have offline. Plan the online loop before launch."
+    },
+    {
+      "id": "w14-t02-s2",
+      "title": "Mature assistant, heavy traffic, sensitive content",
+      "situation": "An assistant handles millions of conversations a month over confidential documents. Quality has drifted twice after content updates. Security restricts who may read stored prompts.",
+      "constraints": ["Very high volume", "Content is confidential", "Drift has already happened twice", "Judge budget is capped"],
+      "unknowns": ["Can redacted traces be scored?", "How quickly must drift be seen?", "Who may read stored content?"],
+      "question": "How do you monitor quality without exposing content or overspending?",
+      "options": [
+        { "name": "Sample and redact traces, score with reference-free judges, schedule an offline drift run", "verdict": "best", "why": "Sampling controls cost, redaction answers security, and the scheduled offline run catches drift with references.", "tradeoff": "Rare failures can fall between samples and redaction may blur some context." },
+        { "name": "Score every trace with the strongest judge", "verdict": "poor", "why": "The cost is large and it reads all confidential content.", "tradeoff": "It is right only for a low-volume, high-stakes service with approved content access." },
+        { "name": "Rely on thumbs up and down alone", "verdict": "good", "why": "Cheap and needs no content reading.", "tradeoff": "Feedback is sparse and biased toward vocal users, so quality can drift unseen." }
+      ],
+      "flips": [
+        { "if": "Volume falls to a few hundred requests a day", "then": "Review all or most traces by hand and drop sampling." },
+        { "if": "Content may not be stored at all", "then": "Score inside the request path on metadata and safety signals only." }
+      ],
+      "takeaway": "At scale, sampling and redaction are the cost and privacy controls."
+    }
+  ],
+  "quiz": [
+    { "id": "w14-t02-q1", "type": "single", "tag": "concept", "q": "Why can online evaluation not use reference-based metrics?", "options": ["Online runs are too slow for metrics", "Reference-based metrics only support English", "Live requests have no reference output to compare against", "The judge cannot see the response"], "answer": 2, "explain": "Production runs carry no gold answer, so online scoring uses reference-free judges and safety checks. Online scoring is asynchronous, so speed is not the issue." },
+    { "id": "w14-t02-q2", "type": "single", "tag": "diagnose", "q": "Online quality scores flatline during a traffic peak, yet nothing in the app changed. What do you check first?", "options": ["Whether the golden set has been versioned", "Whether the continuous evaluation hourly run cap was reached and runs were skipped", "Whether temperature is set to 0", "Whether the judge prompt has few-shot examples"], "answer": 1, "explain": "The documented default is 100 runs per hour and runs are skipped at the cap. The others do not explain a flatline tied to traffic." },
+    { "id": "w14-t02-q3", "type": "order", "tag": "order", "q": "Order the loop that keeps an evaluation set fresh.", "items": ["Gate the release on the offline set", "Release and sample live traffic", "Score sampled traces online", "Triage the failing traces", "Add confirmed failures to the offline set"], "explain": "The gate comes first, then live sampling and scoring, then human triage so only confirmed failures enter the set." }
+  ],
+  "flashcards": [
+    { "front": "What can offline evaluation use that online cannot?", "back": "Reference outputs. Offline examples carry gold answers, so reference-based metrics and exact comparisons work. Online traces have none." },
+    { "front": "How does Foundry label its three lifecycle stages?", "back": "Base model selection, pre-production evaluation and post-production monitoring, which adds continuous evaluation, scheduled evaluation, scheduled red teaming and alerts." },
+    { "front": "What is the cost control for online scoring?", "back": "Sampling rate and filters. Each scored trace costs judge tokens, so sample, dedupe and cap runs per hour." }
+  ],
+  "related": ["w14-t01", "w14-t15", "w14-t14", "w15-t11", "w14-l1"],
+  "refs": ["r1", "r29", "r30", "r7", "r40"]
+}

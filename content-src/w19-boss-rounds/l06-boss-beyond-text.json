@@ -1,0 +1,158 @@
+{
+  "id": "w19-l6",
+  "order": 6,
+  "title": "Beyond text: multimodal, reasoning and open-model choices",
+  "kind": "boss",
+  "minutes": 25,
+  "brief": "An interviewer wants an assistant that sees photos, reads visually rich pages and talks, and the team is split between a hosted reasoning model and an open model it serves itself. Leave the dials open, then decide the modality path, the model home and the safety stance.",
+  "blocks": [
+    { "t": "h", "text": "The setup: eyes, ears and a model choice", "level": 2 },
+    { "t": "scenario", "title": "The interviewer's setup", "known": [
+      "People away from a desk photograph equipment and pages, then ask questions out loud",
+      "The pages carry tables, diagrams and small print, and the network is unreliable",
+      "One camp wants a hosted frontier reasoning model, the other wants an open model served in house"
+    ], "ask": [
+      "How fast must a voice turn feel, and what happens when the network drops?",
+      "How complex is the page layout, how many pages, and how often do they change?",
+      "May audio and images leave the site, and which residency or key rules apply?",
+      "Are the questions lookups, or multi-step diagnosis that needs reasoning?",
+      "Which languages are in play, and can a photo carry text an attacker controls?"
+    ], "tension": "Voice wants speed and a short path. Documents want layout fidelity. Reasoning wants time. Open models want steady load and an operations team." },
+    { "t": "h", "text": "One question, three decisions", "level": 2 },
+    { "t": "diagram", "id": "w19-l6-turn-path", "title": "What happens to one photo-and-voice turn", "src": "flowchart LR\n  P[Photo or page image] --> S[Size and detail choice]\n  V[Voice turn] --> T[Turn detection]\n  S --> R[Retrieve pages and text]\n  T --> R\n  R --> M{Router}\n  M -->|lookup| F[Fast model]\n  M -->|hard| H[Reasoning model]\n  F --> A[Answer and voice out]\n  H --> A", "alt": "A photo goes through a size and detail choice and a voice turn goes through turn detection. Both feed retrieval. A router then sends lookups to a fast model and hard questions to a reasoning model, and both produce the answer and voice output.", "caption": "Chapter 13 owns the left half, chapter 18 the router and the reasoning branch, chapter 1 the budgets and parameters that make both branches work." },
+    { "t": "h", "text": "Numbers worth carrying into the room", "level": 2 },
+    { "t": "stats", "items": [
+      { "label": "1,229 tokens", "value": "1024 x 1024 at high", "note": "Patch models: ceil(w/32) x ceil(h/32) patches, times 1.2 on gpt-5.x" },
+      { "label": "1 token per 100 ms", "value": "User audio in realtime", "note": "1 per 50 ms of assistant audio, and the conversation is resent every turn" },
+      { "label": "257.5 KB", "value": "Per page for ColPali", "note": "Against 8.6 KB per page for BGE-M3" },
+      { "label": "25,000 tokens", "value": "Reserve for reasoning and output", "note": "OpenAI and Azure advice when starting with a reasoning model" }
+    ] },
+    { "t": "h", "text": "Flip the dials across three chapters", "level": 2 },
+    { "t": "dials", "id": "w19-l6-turn-path-board", "title": "Pick the path for a turn", "prompt": "Flip turn latency, the data boundary and how hard the questions are. The ranking and the reasons update.", "dials": [
+      { "id": "turn", "label": "Turn latency target", "values": [
+        { "id": "conv", "label": "Conversational, about a second" },
+        { "id": "relaxed", "label": "Several seconds are fine" }
+      ] },
+      { "id": "data", "label": "Data boundary", "values": [
+        { "id": "cloud", "label": "Cloud processing is allowed" },
+        { "id": "site", "label": "Audio and images must stay on site" }
+      ] },
+      { "id": "think", "label": "Question difficulty", "values": [
+        { "id": "lookup", "label": "Mostly lookups and extraction" },
+        { "id": "hard", "label": "Hard multi-step diagnosis" }
+      ] }
+    ], "options": [
+      { "id": "s2s", "name": "Hosted speech-to-speech", "summary": "One realtime model hears and speaks, with a retrieval tool for facts." },
+      { "id": "cascade", "name": "Hosted cascaded pipeline", "summary": "Speech to text, a routed text model, then text to speech." },
+      { "id": "self", "name": "Self-served open model", "summary": "vLLM or KAITO on GPUs you run, behind the same cascade." },
+      { "id": "edge", "name": "On-device model with cloud fallback", "summary": "A device runtime such as Foundry Local for the first hop." },
+      { "id": "reason", "name": "Reasoning route with an interim reply", "summary": "Hard turns go to a reasoning model while a short reply keeps the user informed." }
+    ], "scores": {
+      "s2s": {
+        "turn": { "conv": { "s": 2, "why": "Audio in and out over WebRTC, about 100 ms in Azure docs, with no text hops." }, "relaxed": { "s": -1, "why": "Audio tokens bill each turn and the conversation is resent, so you pay for speed you do not need." } },
+        "data": { "cloud": { "s": 1, "why": "Hosted audio models need no GPUs of yours." }, "site": { "s": -2, "why": "Audio leaves the site." } },
+        "think": { "lookup": { "s": 1, "why": "Lookups through a retrieval tool fit." }, "hard": { "s": -1, "why": "Reasoning usually has to be delegated to another model, which adds a hop." } }
+      },
+      "cascade": {
+        "turn": { "conv": { "s": -1, "why": "Three hops add latency before the first audio." }, "relaxed": { "s": 1, "why": "Text between stages carries guardrails, tools and routing." } },
+        "data": { "cloud": { "s": 1, "why": "All hosted, nothing to run." }, "site": { "s": -2, "why": "Audio and images still leave the site." } },
+        "think": { "lookup": { "s": 1, "why": "A small text model with retrieval is enough." }, "hard": { "s": 1, "why": "The text stage is the natural place to route to a reasoning model." } }
+      },
+      "self": {
+        "turn": { "conv": { "s": 0, "why": "Fast on good GPUs, but you own queueing and warm capacity." }, "relaxed": { "s": 1, "why": "Throughput engines such as vLLM suit steady, batch-friendly load." } },
+        "data": { "cloud": { "s": 0, "why": "You run GPUs and patching for no data reason." }, "site": { "s": 2, "why": "Weights run where the data is allowed to stay." } },
+        "think": { "lookup": { "s": 1, "why": "Open models handle extraction and lookup well enough to test." }, "hard": { "s": -1, "why": "Smaller open models can lose ground on multi-step diagnosis, so measure first." } }
+      },
+      "edge": {
+        "turn": { "conv": { "s": 1, "why": "No network hop for the first stage." }, "relaxed": { "s": 0, "why": "Latency is not the constraint." } },
+        "data": { "cloud": { "s": -1, "why": "Device-size models limit quality for no gain." }, "site": { "s": 2, "why": "Audio and images never leave the device." } },
+        "think": { "lookup": { "s": 1, "why": "Small models handle extraction and lookup." }, "hard": { "s": -2, "why": "A single-user device runtime with device-size models cannot carry hard diagnosis." } }
+      },
+      "reason": {
+        "turn": { "conv": { "s": -2, "why": "Reasoning effort adds seconds to every turn." }, "relaxed": { "s": 1, "why": "Spend time where the task pays for it." } },
+        "data": { "cloud": { "s": 1, "why": "Hosted reasoning models need no GPUs of yours." }, "site": { "s": -2, "why": "A hosted model sees the data." } },
+        "think": { "lookup": { "s": -1, "why": "Reasoning tokens bill as output and are wasted on lookups." }, "hard": { "s": 2, "why": "Test-time compute helps multi-step diagnosis." } }
+      }
+    }, "takeaway": "Route by turn, not by system: a fast path for lookups, a reasoning path for hard questions, and a data boundary that decides who may host either." },
+    { "t": "callout", "kind": "interview", "title": "What interviewers listen for", "md": "A number for voice latency, a reason for the voice path, token arithmetic for images, a measured reason to run your own GPUs and a stance on text hidden in photos." }
+  ],
+  "quiz": [
+    { "id": "w19-l6-q1", "type": "numeric", "tag": "numeric", "q": "A request carries 6 photos of 1600 x 900 pixels at high detail. The model uses 32 px patches, a 2,500-patch budget at high and a 1.2 multiplier, rounded up. How many image tokens does the request use?", "answer": 10440, "tolerancePct": 1, "unit": "tokens", "hint": "Patches per photo are ceil(w/32) x ceil(h/32).", "explain": "Each photo is ceil(1600/32) = 50 patches wide and ceil(900/32) = 29 tall, so 1,450 patches, which is under the 2,500 budget and is not resized. 1,450 x 1.2 = 1,740 tokens per photo, and 6 photos give 10,440. Measure real usage per model: on the gpt-5.4 family `low` uses a 2048 px and 6,144-patch budget and can cost more than `high`.", "difficulty": 2 },
+    { "id": "w19-l6-q2", "type": "single", "tag": "diagnose", "q": "Per-turn input tokens keep growing in a long realtime voice session, as the usage log shows. Why, and what is the fix?", "code": { "lang": "text", "code": "turn  input_tokens  cached_tokens\n   1        1,150              0\n   4        5,900          3,200\n   8       12,700          9,600\n  12       19,300         14,100" }, "options": ["User audio is billed at 1 token per 10 ms, so input scales with speaking time only and cannot be reduced", "Semantic turn detection splits one user turn into several billed turns, so switch to silence-based detection", "The conversation is resent each turn, so input grows; a lower retention ratio truncates in bigger steps", "The WebRTC transport re-sends each audio frame until acknowledged, so switch to the WebSocket transport"], "answer": 2, "explain": "Realtime sessions resend the whole conversation every turn, so input tokens grow with session length, and cached tokens grow with them. `session.truncation.retention_ratio` defaults to 1.0, and 0.8 drops extra items at each truncation, which keeps the cache valid longer. User audio costs 1 token per 100 ms, not per 10 ms. Turn detection type changes when turns end, not how history is billed, and transport retries do not appear as billed input.", "difficulty": 3 },
+    { "id": "w19-l6-q3", "type": "multi", "tag": "bug", "q": "This call fails. Which statements explain the failure? Choose all that apply.", "code": { "lang": "python", "code": "resp = client.chat.completions.create(\n    model=\"gpt-6.1-sol\",\n    reasoning_effort=\"minimal\",\n    tools=tools,\n    messages=messages,\n)" }, "options": ["The model accepts neither none nor minimal reasoning effort, and its default is medium", "Chat Completions does not support function calling with this model, so tools need the Responses API", "The model name needs a date suffix, because aliases are rejected for reasoning models", "Reasoning effort is accepted only as a request header, not as a body field", "The `tools` list must be serialized to a JSON string before it is sent"], "answers": [0, 1], "explain": "GPT-6.1 Sol rejects `none` and `minimal` and defaults to medium, so pick low, medium or high. Chat Completions does not support function calling with it either, so the call moves to the Responses API, where `reasoning.effort` is a body field and tools are a list. The date-suffix, header and JSON-string explanations are not behaviors of this API.", "difficulty": 3 },
+    { "id": "w19-l6-q4", "type": "match", "tag": "tradeoff", "q": "Match each document situation to the pipeline that fits it.", "pairs": [
+      { "l": "Documents must be processed on premises or air-gapped", "r": "Document Intelligence containers" },
+      { "l": "A stable form layout with about five labelled samples", "r": "A Document Intelligence custom model" },
+      { "l": "Training video where speech carries the content", "r": "Content Understanding video analyzer, about 1 frame per second" },
+      { "l": "Diagrams and charts carry the meaning and the query is visual", "r": "Page-image retrieval from the ColPali family" }
+    ], "explain": "Document Intelligence containers are the only on-premises or air-gapped option, and a custom model can start from as few as 5 labelled samples. The Content Understanding video analyzer samples about 1 frame per second at 512 x 512 and transcribes only speech, which suits speech-led video. Page-image retrieval keeps visual meaning but costs about 257.5 KB per page against 8.6 KB for BGE-M3, so use it where the figure is the answer.", "difficulty": 2 },
+    { "id": "w19-l6-q5", "type": "single", "tag": "security", "q": "Technicians upload photos, and a photo of a label says to email the maintenance log to an outside address. Which design best limits the damage?", "options": ["Strip EXIF metadata from every upload, which removes any text an attacker could hide in the image file", "Limit what an image-influenced session may do: no external sends or state changes without approval", "Add a system prompt line that tells the model to ignore any text it finds inside uploaded images", "Set image detail to low, so small hidden text is never read by the model and costs fewer tokens"], "answer": 1, "explain": "OWASP names hidden instructions in images as a multimodal injection risk and says reliable defenses are an open research area. The Model Spec gives images no authority by default, but production models do not yet fully reflect it. So design for blast radius: a session with untrusted input should not also hold sensitive access and an external send without approval. EXIF stripping misses visible text, a prompt line is not a control, and low detail neither hides text reliably nor is always cheaper.", "difficulty": 3 },
+    { "id": "w19-l6-q6", "type": "single", "tag": "flip", "q": "Data must be processed only inside the EU data zone, and you want Azure model router to send easy turns to a small model. Which deployment type can host it?", "options": ["Global Standard, because it routes across every region to find the cheapest capacity at the best price", "Regional Standard in one EU region, because the router runs wherever the pool of models is deployed", "Data Zone Standard for the EU, because the router runs on Global Standard and Data Zone Standard only", "Global Batch, because routing decisions can wait for the 24-hour completion window of that tier"], "answer": 2, "explain": "Global deployments may process data in any region, which breaks a data-zone rule. Model router runs only on Global Standard and Data Zone Standard, so a regional Standard deployment cannot host it, and Batch is a different, asynchronous tier. Expect two costs: the router's effective context window is the smallest model in its pool, and caching helps only when consecutive requests reach the same model.", "difficulty": 3 }
+  ],
+  "defend": {
+    "prompt": "We want a voice-and-camera assistant for people working away from a desk. They photograph equipment and visually rich pages, ask questions out loud and have an unreliable network. The team is split between a hosted frontier reasoning model and an open model we serve ourselves. Design the modality and model strategy.",
+    "timebox": "5 min",
+    "clarify": [
+      "How fast must a voice turn feel, and what should happen when the network drops?",
+      "How complex are the pages, how many are there, and how often do they change?",
+      "May audio and images leave the site, and which residency or key rules apply?",
+      "Are the questions lookups or multi-step diagnosis, and which languages are used?",
+      "Is traffic steady or spiky, and does the team already run GPUs?",
+      "What can the assistant do, and can a photo carry text an attacker controls?"
+    ],
+    "options": [
+      { "name": "Hosted cascaded pipeline with a router", "when": "Control, guardrails and tool use matter more than the last few hundred milliseconds, and data may go to a hosted region.", "tradeoff": "Three hops add latency, and a reasoning route needs an interim reply." },
+      { "name": "Hosted speech-to-speech with a retrieval tool", "when": "A conversational feel is the product and questions are mostly lookups.", "tradeoff": "Audio tokens bill every turn with the history resent, and guardrails and routing are harder to place." },
+      { "name": "Self-served open model, with a hosted fallback for hard turns", "when": "Data must stay on site, or steady volume keeps GPUs busy and you can run an operations team.", "tradeoff": "You own GPUs, patching and a re-evaluation on every weights or serving change." }
+    ],
+    "modelAnswer": [
+      { "t": "p", "md": "**Clarify.** I would ask for the voice latency target, page complexity and volume, the data boundary, how hard the questions are, traffic shape and what a hidden instruction in a photo could trigger. Those answers set the voice path, the document pipeline and the model home." },
+      { "t": "p", "md": "**Options.** A hosted cascaded pipeline is the boring default. Speech-to-speech wins on feel and loses on control and cost growth. A self-served open model wins on boundary and steady load and loses on operations and hard-task quality." },
+      { "t": "p", "md": "**Pick and flip.** I would start with the cascade: the text between speech stages is where guardrails, tools and a router live. Lookups go to a fast model, and hard diagnosis goes to a reasoning model with an interim reply, because reasoning tokens bill as output, share the window and need at least 25,000 tokens of headroom at first. Pages go through layout extraction with figures verbalized, and page-image retrieval is added only where the figure is the answer, since ColPali costs about 257.5 KB per page against 8.6 KB for BGE-M3. Photos are resized by patch arithmetic and measured per model, because low detail is not always cheaper. A short manual set could go whole into the prompt, but long-context accuracy drops well before the advertised window, so I keep retrieval. Anything a photo says is data, and an image-influenced session cannot send externally or change state without approval." },
+      { "t": "list", "style": "ul", "items": [
+        "Flip to speech-to-speech when sub-second feel is the product and questions are lookups. Then I cap history with a retention ratio of 0.8 and tune turn detection.",
+        "Flip to self-serving when audio or images must stay on site, or when steady load keeps GPUs busy. vLLM reports 2 to 4 times the throughput of earlier systems, and Foundry Local covers a single-user device while multi-user serving points to vLLM or Triton.",
+        "Flip back to hosted data-zone deployments when GPU utilization is low, because residency, zero data retention, customer-managed keys and private endpoints already cover many boundaries."
+      ] },
+      { "t": "table", "head": ["Failure mode", "How I detect it"], "rows": [
+        ["The voice bill grows with session length", "Per-turn input and cached tokens against turn number, and the retention ratio in effect"],
+        ["The assistant cuts users off or lags in noisy places", "Barge-in and cut-off rates by environment, turn detection settings under noise"],
+        ["A figure is misread from a photo (small text, rotation)", "Page-level retrieval hit and answer accuracy on a labelled photo set"],
+        ["Hidden text in a photo steers a tool call", "Injected-image cases in the red-team suite, alerts on tool calls that follow image input"],
+        ["A reasoning route returns empty or incomplete", "Status incomplete at max_output_tokens before visible output, headroom below 25,000 tokens"],
+        ["Open-model quality regresses after a change", "Golden-set gate per weights and serving version, pinned versions"]
+      ] },
+      { "t": "p", "md": "**Metrics and rollout.** I would track time to first audio at p95, task success on a golden set that includes photo and noisy-voice cases, page-level retrieval hit rate, cost per resolved task by route, the share of turns sent to the reasoning route, tokens per language (the same text can cost up to 15 times more across languages with 2023 tokenizers) and GPU utilization if we self-serve. Rollout shadows a sample of turns to the alternative path, canaries by route and keeps a fallback when the preferred model or network fails." }
+    ],
+    "rubric": [
+      { "pt": "Asks about voice latency, page complexity, data boundary, question difficulty, traffic shape and risk", "w": 3 },
+      { "pt": "Chooses a voice path with a stated reason and explains how each path's cost and control behave", "w": 3 },
+      { "pt": "Picks the document pipeline by layout complexity and says when page-image retrieval pays", "w": 2 },
+      { "pt": "Budgets image tokens with the patch arithmetic and knows low detail is not always cheaper", "w": 2 },
+      { "pt": "Routes lookups and hard turns, reserves reasoning headroom and uses an interim reply", "w": 2 },
+      { "pt": "Compares hosted and self-served models on control, cost and compliance with flip conditions", "w": 3 },
+      { "pt": "Treats text in images as untrusted and limits the blast radius of image-influenced sessions", "w": 2 },
+      { "pt": "Names failure signals, metrics and a shadow and canary rollout", "w": 2 }
+    ],
+    "followUps": [
+      { "q": "Finance says self-serving looks cheaper per token. What do you check?", "a": "Utilization, not list price. Steady traffic keeps GPUs busy and spiky traffic does not. Add operations, patching and a re-evaluation on each weights or serving change, then compare with batch, caching and data-zone pricing on your own prompts." },
+      { "q": "A handwritten note in a photo tells the assistant to email the maintenance log. What happens?", "a": "Image text has no authority, but no defense is reliable, so the design caps the damage. A session with untrusted input must not also hold sensitive access and an external send without approval. Log the attempted tool call and test this case in the red-team suite." },
+      { "q": "Voice is fast in the lab and slow on site. What do you test?", "a": "The network path (Azure lists about 100 ms for WebRTC and about 200 ms for WebSocket), turn detection under noise, region distance and whether the reasoning route fires without an interim reply." }
+    ],
+    "redFlags": [
+      "Chooses speech-to-speech or an open model because it sounds modern, with no latency, data or utilization number",
+      "Assumes low image detail is always cheaper and never measures tokens per model",
+      "Sends every turn to a reasoning model, including simple lookups",
+      "Treats text found inside a photo as instructions the assistant may follow",
+      "Compares token prices and ignores GPU utilization and operations cost"
+    ]
+  },
+  "refs": ["r4", "r16", "r27", "r61", "r62", "r64", "r65", "r66", "r67", "r68", "r69", "r70", "r71"],
+  "takeaways": [
+    "Route by turn: a fast path for lookups, a reasoning path for hard questions",
+    "A cascade gives control, speech-to-speech gives feel, and the realtime history is resent every turn",
+    "Image tokens follow patch arithmetic per model, and low detail is not always cheaper",
+    "Run your own GPUs for the data boundary or steady load, not for list price",
+    "Text inside an image is data with no authority, so cap what an image-influenced session can do"
+  ]
+}

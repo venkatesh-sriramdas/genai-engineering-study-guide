@@ -1,0 +1,115 @@
+{
+  "id": "w14-t09",
+  "order": 9,
+  "group": "Judges",
+  "title": "LLM-as-judge setups",
+  "minutes": 9,
+  "difficulty": "core",
+  "summary": "An LLM judge scores outputs against a rubric. The setup, not the model alone, decides reliability: pass/fail with a critique, pairwise with order swapping, reference-guided grading, rubric prompts, or several judges. Pick by the decision you are making and the stakes.",
+  "useIf": "Quality is about meaning, tone or completeness that code cannot check, and you can calibrate the judge against human labels.",
+  "avoidIf": "A code check or an exact reference comparison already answers the question, or you cannot spare any human labels to validate the judge.",
+  "explain": [
+    { "t": "p", "md": "Strong judges agree with humans often. In the MT-Bench study GPT-4 exceeded 80% agreement, matching human-human agreement, and reached 85% against 81% among humans in the non-tie setup [[r21]]. That is a 2023 result, so validate your own judge. The setup matters more than the headline number." },
+    { "t": "list", "style": "ul", "items": [
+      "**Pass/fail with a written critique.** Hamel Husain's critique shadowing has one principal domain expert give pass/fail judgments with critiques, then iterates the judge prompt until it agrees. He warns against uncalibrated 1 to 5 scales [[r16]].",
+      "**Pairwise.** Ask which of two answers is better. OpenAI's guidance says pairwise or pass/fail is more reliable than fine-grained scores, and to have the judge reason before it scores [[r18]].",
+      "**Reference-guided.** Give the judge the gold answer. On math questions in MT-Bench the judge failed 14 of 20 by default, 6 of 20 with chain-of-thought and 3 of 20 with a reference-guided judge [[r21]].",
+      "**Rubric or G-Eval.** Chain-of-thought plus a form-filling prompt reached a Spearman correlation of 0.514 with humans on summarization with GPT-4, with a noted bias toward LLM-generated text [[r22]].",
+      "**Several judges.** More cost, less single-model bias. Use it when stakes are high."
+    ] },
+    { "t": "dials", "id": "w14-t09-setup", "title": "Pick a judge setup", "prompt": "Flip the decision and the stakes. The ranking updates.", "dials": [
+      { "id": "decision", "label": "Decision", "values": [ { "id": "gate", "label": "Gate one system" }, { "id": "rank", "label": "Rank two candidates" }, { "id": "ref", "label": "Check against a reference" } ] },
+      { "id": "stakes", "label": "Stakes", "values": [ { "id": "screen", "label": "Screening" }, { "id": "high", "label": "High stakes" } ] }
+    ], "options": [
+      { "id": "point", "name": "Pointwise 1 to 5", "summary": "One absolute score per answer." },
+      { "id": "binary", "name": "Pass/fail with critique", "summary": "Binary verdict plus written reason." },
+      { "id": "pair", "name": "Pairwise with order swap", "summary": "Pick the better of two, both orders." },
+      { "id": "refg", "name": "Reference-guided", "summary": "Judge sees the gold answer." },
+      { "id": "panel", "name": "Panel of judges", "summary": "Several judges, vote or agreement." }
+    ], "scores": {
+      "point": { "decision": { "gate": { "s": -1, "why": "Threshold is arbitrary on a loose scale." }, "rank": { "s": 0, "why": "Works if means are compared with intervals." }, "ref": { "s": -1, "why": "Ignores the gold answer." } }, "stakes": { "screen": { "s": 1, "why": "Cheap trend signal." }, "high": { "s": -2, "why": "Too noisy to defend." } } },
+      "binary": { "decision": { "gate": { "s": 2, "why": "A threshold maps to a pass rate." }, "rank": { "s": 0, "why": "Coarse for close calls." }, "ref": { "s": 1, "why": "Add the reference to the prompt." } }, "stakes": { "screen": { "s": 1, "why": "Cheap and readable." }, "high": { "s": 0, "why": "Needs calibration on expert labels." } } },
+      "pair": { "decision": { "gate": { "s": -1, "why": "Needs a baseline answer each time." }, "rank": { "s": 2, "why": "Built for comparing two versions." }, "ref": { "s": 0, "why": "Adds little over a reference." } }, "stakes": { "screen": { "s": 0, "why": "Order swap doubles calls." }, "high": { "s": 1, "why": "Swap removes position bias." } } },
+      "refg": { "decision": { "gate": { "s": 1, "why": "Stable when gold answers exist." }, "rank": { "s": 0, "why": "Both answers vs one gold." }, "ref": { "s": 2, "why": "Designed for this." } }, "stakes": { "screen": { "s": 0, "why": "Needs gold answers per case." }, "high": { "s": 1, "why": "Cuts judge errors on checkable tasks." } } },
+      "panel": { "decision": { "gate": { "s": 0, "why": "Strong but costly." }, "rank": { "s": 1, "why": "Reduces single-judge bias." }, "ref": { "s": 0, "why": "Rarely needed with a reference." } }, "stakes": { "screen": { "s": -2, "why": "Cost not justified." }, "high": { "s": 2, "why": "Best defence for contested calls." } } }
+    }, "takeaway": "Gating favours pass/fail, ranking favours pairwise, checkable tasks favour a reference. Panels earn their cost only at high stakes." },
+    { "t": "code", "lang": "text", "title": "A pass/fail judge prompt (template)", "code": "You are grading an answer for correctness against the policy excerpt.\nPolicy: {context}\nQuestion: {question}\nAnswer: {answer}\nFirst write a two sentence critique that cites the policy.\nThen output JSON: {\"verdict\": \"pass\" | \"fail\", \"reason\": \"...\"}\nFail if any claim is not supported by the policy." },
+    { "t": "p", "md": "Cost is roughly items x evaluators x trials x tokens per judge call (an estimate, not a vendor formula). Levers: batch criteria in one call (Foundry `output_quality` and `tool_use_quality`), sample, validate a cheaper judge and swap order only for pairwise. Foundry's target cost view excludes evaluator model usage, so budget the judge separately [[r39]]." }
+  ],
+  "whereToUse": [
+    "Grading open-ended answers for correctness, completeness or tone",
+    "Comparing two prompt or model versions in a pairwise tournament",
+    "Online scoring of sampled production traces where no reference exists",
+    "Agent transcript checks against a policy rubric"
+  ],
+  "whenToUse": {
+    "use": ["Meaning, not form, decides quality", "You can label 50 to 100 cases to calibrate", "Binary criteria can be written clearly"],
+    "avoid": ["Using a judge for something a regex or end-state check can verify", "Trusting a 1 to 5 mean difference without an interval", "Changing the judge prompt or model without re-checking agreement"],
+    "flips": ["Gold answers exist: add them to the judge prompt", "Two candidates, one decision: switch from pointwise to pairwise", "Stakes rise: add order swapping, a second judge family and human review of disagreements"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["LLM judge (this topic)", "Meaning and tone decide quality", "A deterministic check exists", "Biases, drift, token cost"],
+      ["Code-based graders", "Outputs are checkable: end state, schema, tool call", "Free text with many phrasings", "False failures"],
+      ["Human review", "Calibration and high-stakes calls", "Volume is large", "Slow and expensive"],
+      ["Similarity metrics (BLEU, ROUGE, F1)", "Short answers close to a reference", "Paraphrase is valid", "Weak correlation with meaning"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Judge scores cluster at 4 and 5 and never separate versions", "cause": "An uncalibrated 1 to 5 scale", "fix": "Use binary criteria with critiques and check true positive and negative rates against expert labels" },
+    { "symptom": "Scores shift after a provider update with no code change", "cause": "The judge model alias or prompt changed", "fix": "Pin the judge version, store the judge prompt in version control and re-run a calibration set after any change" },
+    { "symptom": "The judge favours one candidate regardless of quality", "cause": "Position or self-preference bias", "fix": "Swap order, use a different model family and see the bias topic" }
+  ],
+  "scenarios": [
+    {
+      "id": "w14-t09-s1",
+      "title": "Choosing between two prompt versions weekly",
+      "situation": "A team iterates on a summarisation prompt and wants to know, each week, which of two candidate prompts is better. There are no reference summaries, and 300 test documents.",
+      "constraints": ["Two candidates", "No references", "300 items", "Moderate stakes"],
+      "unknowns": ["How close are the candidates usually?", "How many judge calls fit the budget?"],
+      "question": "Which judge setup do you use?",
+      "options": [
+        { "name": "Pairwise comparison with both orders, counting a win only if it holds both ways", "verdict": "best", "why": "It matches a ranking decision and removes position bias, at twice the calls.", "tradeoff": "Doubled cost and ties when the swap disagrees." },
+        { "name": "Score each summary 1 to 5 and compare means", "verdict": "poor", "why": "A loose scale plus no interval means small differences are noise.", "tradeoff": "Fine for a quick trend check when decisions are cheap to reverse." },
+        { "name": "A panel of three judges per item", "verdict": "good", "why": "Reduces single-judge bias.", "tradeoff": "Three times the cost for a moderate-stakes decision." }
+      ],
+      "flips": [
+        { "if": "The decision becomes a release gate for one system", "then": "Move to pass/fail criteria with a threshold." },
+        { "if": "Reference summaries become available", "then": "Use a reference-guided judge." }
+      ],
+      "takeaway": "Ranking two candidates is a pairwise job."
+    },
+    {
+      "id": "w14-t09-s2",
+      "title": "Release gate over policy answers, capped budget",
+      "situation": "An assistant answers from a policy library. A CI job gates every release on 200 items. Gold answers exist for all, and the judge budget is capped.",
+      "constraints": ["Gate a single system", "Gold answers exist", "Budget cap"],
+      "unknowns": ["What pass rate is acceptable?", "Which cheaper judge has been validated?"],
+      "question": "How do you set up the judge?",
+      "options": [
+        { "name": "Reference-guided pass/fail judge with critique, calibrated on an expert-labelled sample", "verdict": "best", "why": "A gate wants a binary verdict, and gold answers cut judge errors. Calibration keeps it honest.", "tradeoff": "Needs gold answers and an initial labelling effort." },
+        { "name": "Pairwise against last release", "verdict": "good", "why": "Detects regressions relative to the baseline.", "tradeoff": "Does not give an absolute pass rate and doubles calls." },
+        { "name": "A panel of five judges on every item", "verdict": "poor", "why": "Cost blows the cap for a routine gate.", "tradeoff": "Panels suit rare, contested, high-stakes decisions." }
+      ],
+      "flips": [
+        { "if": "No gold answers exist", "then": "Use pass/fail criteria derived from the policy text with critique." },
+        { "if": "Stakes become regulatory", "then": "Add a second judge family and sampled human review." }
+      ],
+      "takeaway": "A gate wants binary verdicts and references, not a panel."
+    }
+  ],
+  "quiz": [
+    { "id": "w14-t09-q1", "type": "single", "tag": "tradeoff", "q": "You must rank two prompt versions with no reference answers. Which judge setup fits best?", "options": ["Pointwise 1 to 5 mean difference", "Panel of five on every item", "Pairwise comparison with both orders", "Similarity to the old output"], "answer": 2, "explain": "Pairwise matches a ranking decision and swapping removes position bias. A 1 to 5 mean is noisy, a panel is costly for a moderate decision, and similarity to the old output rewards sameness." },
+    { "id": "w14-t09-q2", "type": "numeric", "tag": "numeric", "q": "In the MT-Bench math grading test the default judge failed 14 of 20 problems and a reference-guided judge failed 3 of 20. By how many percentage points did the failure rate fall?", "answer": 55, "tolerancePct": 2, "unit": "points", "hint": "14/20 and 3/20 as percentages.", "explain": "14/20 = 70% and 3/20 = 15%, a fall of 55 percentage points." },
+    { "id": "w14-t09-q3", "type": "multi", "tag": "tradeoff", "q": "Which choices follow the published guidance for reliable judges? Select all that apply.", "options": ["Prefer pass/fail or pairwise over fine-grained scores", "Let the judge reason before it scores", "Optimise judge cost before checking agreement with humans", "Control for response length"], "answers": [0, 1, 3], "explain": "OpenAI advises pairwise or pass/fail, reasoning before scoring, controlling length, and validating agreement with human labels before optimising cost." }
+  ],
+  "flashcards": [
+    { "front": "Why prefer pass/fail or pairwise over a 1 to 5 score?", "back": "Fine-grained scales are noisy and uncalibrated. Binary or pairwise decisions are easier to define, calibrate and gate on." },
+    { "front": "What is critique shadowing?", "back": "One principal domain expert gives pass/fail judgments with written critiques, and the judge prompt is iterated until it agrees with them." },
+    { "front": "What does a reference-guided judge change?", "back": "The judge sees the gold answer. In MT-Bench math it cut judge failures from 14 of 20 to 3 of 20." }
+  ],
+  "related": ["w14-t10", "w14-t07", "w14-t14", "w14-l4", "w06-t02"],
+  "refs": ["r21", "r22", "r16", "r18", "r39"]
+}

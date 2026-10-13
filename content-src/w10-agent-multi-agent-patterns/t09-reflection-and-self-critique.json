@@ -1,0 +1,101 @@
+{
+  "id": "w10-t09",
+  "order": 9,
+  "group": "Reasoning loops",
+  "title": "Reflection and self-critique",
+  "minutes": 7,
+  "difficulty": "core",
+  "summary": "The model reviews its own output or trajectory, writes down what went wrong and tries again. It helps when the critique rests on an external signal and often fails when it rests on the model's own judgement alone.",
+  "useIf": "A reliable signal exists after an attempt (tests, tool results, retrieval, a validator) that the critique can use.",
+  "avoidIf": "The only evidence is the model's own opinion of its reasoning, or latency and cost leave no room for a second pass.",
+  "explain": [
+    { "t": "p", "md": "**Reflection** adds a critique step after an attempt. **Reflexion** stores verbal reflections in an episodic memory buffer and uses them in the next attempt, with no weight updates. The paper reports 91 percent pass@1 on HumanEval against 80 percent for a GPT-4 baseline, in a setting where code execution gives feedback [[r17]]. **Self-Refine** has one model generate, give feedback and refine, and reports about 20 percent absolute improvement on average across seven tasks [[tr8]]." },
+    { "t": "p", "md": "The counter-evidence matters. A study of intrinsic self-correction, where the model corrects itself with no external feedback, found that LLMs struggle to self-correct reasoning and that performance sometimes degrades after self-correction [[tr7]]. The pattern is consistent: critique works when it is anchored to something the model did not generate, and it is weak when the model must find its own reasoning errors. Reflection is cheap to try and easy to over-trust, so the useful design question is always what evidence the critique rests on." },
+    { "t": "diagram", "id": "w10-t09-d1", "title": "Anchor the critique", "alt": "An attempt is checked by an external signal such as tests or sources. The signal result feeds a critique and a retry. A critique with no signal is a weak path.", "src": "flowchart LR\n  A[Attempt] --> X[External signal: tests, sources, schema]\n  X --> C[Critique using the signal]\n  C --> R[Retry with notes]\n  R --> A\n  A -.->|no signal| W[Self-opinion only: weak]" },
+    { "t": "table", "caption": "Where critique has a signal", "head": ["Task", "Signal the critique can use", "Strength"], "rows": [
+      ["Code generation", "Unit tests, compiler and linter output", "Strong"],
+      ["Grounded answers", "Retrieved passages, citation checks", "Strong"],
+      ["Structured extraction", "Schema validation, business rules", "Strong"],
+      ["Math or logic with no checker", "Only the model's own judgement", "Weak, prefer voting or a stronger model"],
+      ["Open writing", "A rubric with named criteria", "Medium"]
+    ], "compact": true },
+    { "t": "callout", "kind": "tip", "title": "Use a clean-context reviewer", "md": "Cognition reports a review loop works best when the reviewer shares no context with the coder, which avoids copying the coder's assumptions. The numbers are vendor-reported [[r4]]." }
+  ],
+  "whereToUse": [
+    "Coding agents that retry after a failed test run",
+    "RAG answer drafting checked for support against retrieved sources",
+    "Extraction pipelines that fix output after schema or rule violations",
+    "Long agent runs that write lessons learned into notes for the next attempt",
+    "Review steps where a second model with fresh context audits the first"
+  ],
+  "whenToUse": {
+    "use": ["An objective signal exists after the attempt", "The cost of a retry is lower than the cost of a wrong answer", "Reflections can be stored and reused, for example as notes"],
+    "avoid": ["The only evidence is the model's own confidence", "One extra pass would break the latency budget", "Critic and generator share the same blind spots and context"],
+    "flips": ["No signal exists: add one (tests, retrieval check) or use voting and a stronger model instead", "Reflection helps once but not twice: cap at one revision", "Stakes are high: add independent review by a different model or a person"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Tool-verified reflection (this topic)", "A test or source gives real feedback", "No checker exists", "Extra calls per retry"],
+      ["Intrinsic self-critique", "Cheap polish for style or clarity", "Reasoning or factual errors", "Can degrade correct answers [[tr7]]"],
+      ["Independent critic model", "Different model or context removes shared bias", "Judge is weaker than the generator", "Second model cost"],
+      ["Voting or best-of-N", "Errors are independent across samples", "Errors are systematic", "N times the cost"],
+      ["Human review", "High stakes, low volume", "High volume", "Slow, costly"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A correct answer gets worse after the critique round", "cause": "The model second-guesses itself with no external evidence [[tr7]]", "fix": "Only revise when a signal fails, and keep the original if the check passes." },
+    { "symptom": "Reflections pile up and mislead later attempts", "cause": "Notes are never pruned or scored", "fix": "Keep reflections short, tied to a failure, and expire or rank them." },
+    { "symptom": "The critic approves flawed work every time", "cause": "It shares the generator's model, context and bias", "fix": "Use a different prompt or model with fresh context, and calibrate on known bad outputs." }
+  ],
+  "scenarios": [
+    {
+      "id": "w10-t09-s1",
+      "title": "Code agent with a test runner",
+      "situation": "A coding assistant writes a patch and can run the project's tests. First-try success is moderate, and reruns take seconds.",
+      "constraints": ["Objective pass or fail from tests", "Cheap retries", "Moderate latency tolerance"],
+      "unknowns": ["How many retries usually help?", "Do the tests cover the behaviour being changed?"],
+      "question": "How do you add reflection?",
+      "options": [
+        { "name": "Run tests, feed failures into a short reflection, retry with a cap", "verdict": "best", "why": "The test output is external evidence, so the reflection targets real errors and the cap bounds cost.", "tradeoff": "Coverage gaps in the tests become blind spots, and each retry adds latency." },
+        { "name": "Ask the model to double-check its patch with no execution", "verdict": "poor", "why": "Self-checking without feedback often misses reasoning errors and can talk itself out of a correct fix.", "tradeoff": "Reasonable for cosmetic review, not correctness." },
+        { "name": "Run five independent patches and pick by majority", "verdict": "good", "why": "Diversity can surface a working patch.", "tradeoff": "Five times the generation cost, and majority is weak when patches differ textually." }
+      ],
+      "flips": [
+        { "if": "Tests are slow or flaky", "then": "Reduce retries, or reflect against static analysis and type checks first." },
+        { "if": "Tests do not exist", "then": "Generate and review tests first, or use an independent reviewer." }
+      ],
+      "takeaway": "Reflect against evidence, not against vibes."
+    },
+    {
+      "id": "w10-t09-s2",
+      "title": "Reasoning question, no checker",
+      "situation": "An assistant answers multi-step reasoning questions with no ground truth to check against. Users ask for higher accuracy and the team proposes a self-review step.",
+      "constraints": ["No external signal", "Interactive latency", "Accuracy matters"],
+      "unknowns": ["Does a stronger model or higher reasoning effort close the gap?", "Do eval results show gain or loss from self-review?"],
+      "question": "Do you add a self-review pass?",
+      "options": [
+        { "name": "Measure it on a golden set, and prefer a stronger model, more reasoning effort or voting if it does not help", "verdict": "best", "why": "Evidence says intrinsic self-correction is unreliable without feedback, so test it before shipping it.", "tradeoff": "Evaluation effort and possibly higher per-call cost from effort or voting." },
+        { "name": "Ship a self-review pass by default", "verdict": "poor", "why": "It adds latency and can degrade answers that were right.", "tradeoff": "Right if your own evals show a net gain on this task." },
+        { "name": "Add an independent verifier model with fresh context", "verdict": "good", "why": "Independence reduces shared blind spots.", "tradeoff": "A second model call and a verifier that may be weaker than the generator." }
+      ],
+      "flips": [
+        { "if": "A checker becomes available, such as retrieval of sources", "then": "Reflect against that evidence." },
+        { "if": "Latency budget grows", "then": "Higher reasoning effort or voting becomes affordable." }
+      ],
+      "takeaway": "Reflection without a signal is a hypothesis, so test it."
+    }
+  ],
+  "quiz": [
+    { "id": "w10-t09-q1", "type": "single", "tag": "concept", "q": "What does the study of intrinsic self-correction conclude about reasoning tasks without external feedback?", "options": ["Self-correction reliably improves accuracy", "LLMs struggle to self-correct, and performance sometimes degrades", "Self-correction works only for code", "It works only with temperature above one"], "answer": 1, "explain": "The paper finds models struggle to self-correct reasoning without external feedback and may get worse. It does not restrict the finding to code or to a temperature range. [[tr7]]", "ref": "tr7", "difficulty": 2 },
+    { "id": "w10-t09-q2", "type": "match", "tag": "tradeoff", "q": "Match each task to the signal a critique can use.", "pairs": [{ "l": "Code generation", "r": "Unit test output" }, { "l": "Grounded answer", "r": "Retrieved passages" }, { "l": "Structured extraction", "r": "Schema validation" }, { "l": "Math with no checker", "r": "No external signal" }], "explain": "Tests, sources and schemas are evidence the model did not generate. With no checker the critique rests on the model's opinion, where voting or a stronger model is the better lever." }
+  ],
+  "flashcards": [
+    { "front": "What does Reflexion store, and what does it not do?", "back": "It stores verbal reflections in an episodic memory buffer. It does no weight updates. Paper: 91 percent pass@1 on HumanEval vs 80 percent for the GPT-4 baseline [[r17]]." },
+    { "front": "When does self-critique fail?", "back": "When the model must find its own reasoning errors with no external feedback. Performance can even degrade [[tr7]]." },
+    { "front": "What makes a reviewer more useful?", "back": "Independence: a different prompt or model, and fresh context that does not share the generator's assumptions [[r4]]." }
+  ],
+  "related": ["w10-l2", "w10-t06", "w10-t07", "w10-t16"],
+  "refs": ["r17", "tr8", "tr7", "r4"]
+}

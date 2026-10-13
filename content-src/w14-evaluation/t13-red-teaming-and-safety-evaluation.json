@@ -1,0 +1,124 @@
+{
+  "id": "w14-t13",
+  "order": 13,
+  "group": "Agents and safety",
+  "title": "Red teaming and safety evaluation",
+  "minutes": 10,
+  "difficulty": "advanced",
+  "summary": "Red teaming probes a system with adversarial inputs to find harms and security failures. Start with manual expert probing, then automate with PyRIT and the Foundry AI Red Teaming Agent, score attack success rate, and review results by hand. Scans are non-deterministic and cover only the targets and categories each mode supports.",
+  "useIf": "You are about to expose a model or agent to users, tools or untrusted content and must measure how it fails under attack.",
+  "avoidIf": "You expect one scan to certify safety, or to run attacks against production systems that have real side effects.",
+  "explain": [
+    { "t": "p", "md": "Microsoft's guidance is that red teaming is not a replacement for systematic measurement: complete an initial round of manual red teaming first to list the harms, then measure and mitigate. Mix experts with an adversarial mindset and ordinary users, assign testers to harms, and test the model, the application and both before and after mitigations [[tr2]]." },
+    { "t": "p", "md": "The **AI Red Teaming Agent** uses Microsoft's open-source PyRIT [[r26]] together with Foundry risk and safety evaluations to scan, score and report. Its key metric is **attack success rate (ASR)**: successful attacks divided by total attacks. Limits: risk categories are text only, data is synthetic, mock tools only return data, and ASR is scored by a generative model, so it can be non-deterministic and produce false positives. Review before mitigating, and run in a purple environment (non-production with production-like resources) [[r5]]. Local mode is preview and not compatible with the new Foundry portal and SDK." },
+    { "t": "flow", "title": "From manual probing to a scheduled scan", "direction": "h", "steps": [
+      { "title": "Manual round", "md": "Experts and ordinary users probe for harms. Record input, output and date.", "tag": "discover" },
+      { "title": "Harm list", "md": "Decide what to measure: categories, tools, languages.", "tag": "scope" },
+      { "title": "Automated scan", "md": "Risk categories x objectives x attack strategies against the target.", "tag": "PyRIT" },
+      { "title": "Review ASR", "md": "Humans check hits for false positives before mitigating.", "tag": "triage" },
+      { "title": "Mitigate and rescan", "md": "Fix, rerun on a schedule, keep results per version.", "tag": "operate" }
+    ] },
+    { "t": "code", "lang": "python", "title": "Local scan (preview, azure-ai-evaluation[redteam], Python 3.10 to 3.13)", "code": "from azure.identity import DefaultAzureCredential\nfrom azure.ai.evaluation.red_team import RedTeam, RiskCategory\n\nred_team = RedTeam(\n    azure_ai_project=project,                 # required\n    credential=DefaultAzureCredential(),      # required\n    risk_categories=[RiskCategory.Violence, RiskCategory.HateUnfairness],\n    num_objectives=5,                         # default is 10\n)\nresult = await red_team.scan(target=my_app_callback)", "caption": "Targets can be a callback, an Azure OpenAI config or a PyRIT chat target [[r6]]." },
+    { "t": "table", "caption": "Where each mode applies (checked 2026-10-13)", "head": ["Mode", "Covers", "Does not cover"], "rows": [
+      ["Local SDK scan (preview)", "Text risk categories, single-turn only; complexity groups EASY (Base64, Flip, Morse), MODERATE (Tense), DIFFICULT (Tense with Base64). 4 categories x 1 objective x 4 strategies = 20 attack-response pairs [[r6]]", "New Foundry portal and SDK"],
+      ["Cloud agentic scan", "Prohibited actions, sensitive data leakage, task adherence, indirect prompt injection (XPIA). Targets: Foundry prompt agents and hosted container agents with Azure tool calls [[r5]]", "Workflow agents, non-Foundry agents, function tool calls, browser automation, connected agents, computer use"]
+    ] },
+    { "t": "p", "md": "Regions differ between two Learn pages (five regions on the concept page, two on the limits page), so check both before promising a region [[r37]]. Public suites help too: HarmBench compares 18 red-teaming methods on 33 target models [[r43]], and AgentDojo has 97 tasks and 629 security test cases for prompt injection against tool-using agents [[r47]]." }
+  ],
+  "whereToUse": [
+    "Before launching a chatbot or agent to external users",
+    "After adding tools or retrieval sources that carry untrusted text",
+    "On a schedule, because models, prompts and tools change",
+    "To produce evidence for a safety review or risk register",
+    "To seed regression cases from confirmed attack successes"
+  ],
+  "whenToUse": {
+    "use": ["Harm from a bad output is significant", "Untrusted content reaches the model", "You can run in a non-production environment"],
+    "avoid": ["Treating ASR as ground truth without human review", "Scanning production where tool calls have real effects", "Assuming coverage for tools and agent types the scan does not support"],
+    "flips": ["Agent uses function tools: add manual and custom prompt-injection tests", "Region unavailable: run local mode (preview) or manual testing", "Non-English users: set the `language` option (six non-English languages are listed) and add native-speaker testers"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Manual expert red team", "Discovering new harms", "Repeating on every release", "Expert time"],
+      ["Automated PyRIT scan", "Coverage and repeatability", "Novel attacks and context", "Judge noise, false positives"],
+      ["Public benchmarks (HarmBench, AgentDojo)", "Comparable baselines", "Your tools and data", "Leakage, generic"],
+      ["Safety evaluators on your dataset", "Measuring defect rate on real prompts", "Attack discovery", "Needs representative data"],
+      ["Platform guardrails only", "Baseline filtering", "Application-specific abuse", "Gaps unmeasured"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Attack success rate changes between identical scans", "cause": "ASR is scored by a generative model and attacks are sampled", "fix": "Review hits by hand, track trends across several scans and keep failing prompts as fixed regression cases" },
+    { "symptom": "A scan reports zero risk for an agent with function tools", "cause": "Function tool calls are not supported by the cloud agentic scan", "fix": "Add manual tests and custom indirect-injection cases for those tools" },
+    { "symptom": "Scan side effects appear in a real system", "cause": "The target was production with live tools", "fix": "Use a purple environment with production-like resources and mock or sandboxed tools" }
+  ],
+  "scenarios": [
+    {
+      "id": "w14-t13-s1",
+      "title": "Public text chatbot, no tools",
+      "situation": "A consumer chatbot answers general questions with no tools or retrieval. The harm concern is offensive and unsafe content. The team has a Foundry project and no red team.",
+      "constraints": ["Text only", "No tools", "Public users", "Small team"],
+      "unknowns": ["Which languages do users speak?", "Which harm classes matter most?"],
+      "question": "What do you run before launch?",
+      "options": [
+        { "name": "A short manual round, then an automated scan across the four content categories and difficulty groups, with human review of hits", "verdict": "best", "why": "Manual probing lists the harms and the automated scan adds repeatable coverage. Review handles false positives.", "tradeoff": "Local mode is preview, and scans are single-turn and text only." },
+        { "name": "Rely on platform content filters only", "verdict": "poor", "why": "Application-specific abuse and filter gaps stay unmeasured.", "tradeoff": "Reasonable as a baseline layer, never as the only evidence." },
+        { "name": "Run the public benchmark and ship", "verdict": "good", "why": "Comparable baseline numbers.", "tradeoff": "It does not reflect your prompt, users or mitigations." }
+      ],
+      "flips": [
+        { "if": "Users are mostly non-English", "then": "Add native-speaker manual testing." },
+        { "if": "A retrieval source is added later", "then": "Add indirect prompt injection tests." }
+      ],
+      "takeaway": "Manual first, automated for repeatability, humans review."
+    },
+    {
+      "id": "w14-t13-s2",
+      "title": "Agent with function tools and customer data",
+      "situation": "A support agent calls function tools to read orders and send emails. Customer data and untrusted email text reach the model. The cloud agentic scan does not support function tool calls.",
+      "constraints": ["Function tools", "Untrusted content", "Customer data"],
+      "unknowns": ["Which tools can change data?", "Can tools be sandboxed?"],
+      "question": "How do you test for injection and data leakage?",
+      "options": [
+        { "name": "Custom indirect-injection and leakage test cases against sandboxed tools, plus manual red team, with fixed regression cases", "verdict": "best", "why": "The automated agentic scan does not cover function tools, so you build the cases yourself and keep confirmed attacks as regressions.", "tradeoff": "Considerable authoring effort and no vendor ASR number." },
+        { "name": "Run the cloud agentic scan and report the result", "verdict": "poor", "why": "Function tool calls are not supported, so the result would not cover the real risk.", "tradeoff": "It fits prompt agents or hosted agents using Azure tool calls." },
+        { "name": "Run the text-only local scan on the underlying model", "verdict": "good", "why": "Measures model-level harms.", "tradeoff": "It misses tool misuse and XPIA through your tools." }
+      ],
+      "flips": [
+        { "if": "Tools move to Azure tool calls on a Foundry agent", "then": "Use the cloud agentic scan." },
+        { "if": "Tools cannot be sandboxed", "then": "Mock tool outputs and test the model decision only." }
+      ],
+      "takeaway": "Know what the scan does not cover, then fill the gap."
+    },
+    {
+      "id": "w14-t13-s3",
+      "title": "Weekly changes, regulated sector",
+      "situation": "An assistant in a regulated sector changes prompts and tools weekly. Compliance requires evidence for every release. A Foundry hosted agent uses Azure tool calls.",
+      "constraints": ["Weekly change", "Evidence required", "Hosted agent with Azure tools"],
+      "unknowns": ["Which region is supported?", "Who reviews findings?"],
+      "question": "How do you schedule red teaming?",
+      "options": [
+        { "name": "Scheduled cloud scans each release, human triage, confirmed attacks added to a regression suite", "verdict": "best", "why": "Scheduling catches regressions from weekly change and triage controls false positives.", "tradeoff": "Preview features, regional limits and reviewer time." },
+        { "name": "One scan before launch", "verdict": "poor", "why": "The system changes weekly, so the scan describes a past version.", "tradeoff": "Fine for a frozen system." },
+        { "name": "Manual red team every release", "verdict": "good", "why": "Highest insight.", "tradeoff": "Too slow and costly weekly." }
+      ],
+      "flips": [
+        { "if": "Releases slow to quarterly", "then": "Add a full manual round each release." },
+        { "if": "Region unsupported", "then": "Use local scans in a purple environment." }
+      ],
+      "takeaway": "Change frequency sets scan frequency."
+    }
+  ],
+  "quiz": [
+    { "id": "w14-t13-q1", "type": "single", "tag": "concept", "q": "How is attack success rate (ASR) defined in the AI Red Teaming Agent?", "options": ["Successful attacks divided by total attacks", "Blocked attacks divided by total attacks", "Attack strategies divided by risk categories", "Findings reviewed by humans divided by findings"], "answer": 0, "explain": "ASR is successful attacks over total attacks. It is scored by a generative model, so it can be non-deterministic and needs review." },
+    { "id": "w14-t13-q2", "type": "numeric", "tag": "numeric", "q": "A local scan generates one attack objective for each of 4 risk categories and converts each baseline prompt with 4 attack strategies. The baseline prompts are sent too. How many attack-response pairs result?", "answer": 20, "tolerancePct": 0, "hint": "Baseline prompts plus converted prompts.", "explain": "4 baseline prompts + 4 x 4 converted prompts = 20, which matches the documented total of 20 attack-response pairs." },
+    { "id": "w14-t13-q3", "type": "multi", "tag": "security", "q": "Which are documented limits of the AI Red Teaming Agent? Select all that apply.", "options": ["ASR is scored by a generative model and may produce false positives", "Mock tools only return data", "It can only attack models, never agents", "Cloud agentic scans do not support function tool calls"], "answers": [0, 1, 3], "explain": "Judge noise, mock tools and unsupported function tools are documented limits. It also supports agents in the cloud, so option three is wrong." }
+  ],
+  "flashcards": [
+    { "front": "What is ASR?", "back": "Attack success rate: successful attacks divided by total attacks. Scored by a generative model, so it can be non-deterministic and needs human review." },
+    { "front": "Which targets does the cloud agentic red teaming support?", "back": "Foundry prompt agents and hosted container agents with Azure tool calls. Not workflow agents, non-Foundry agents, function tool calls, browser automation, connected agents or computer use." },
+    { "front": "What is a purple environment?", "back": "A non-production environment with production-like resources, used to run red team scans safely." }
+  ],
+  "related": ["w14-t08", "w14-t11", "w14-t14", "w07-t17", "w07-t19", "w06-t05", "w14-l6"],
+  "refs": ["r5", "r6", "r26", "r37", "r43", "r47", "tr2"]
+}

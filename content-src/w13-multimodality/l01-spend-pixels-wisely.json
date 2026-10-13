@@ -1,0 +1,57 @@
+{
+  "id": "w13-l1",
+  "order": 1,
+  "title": "Spend pixels wisely",
+  "kind": "problem",
+  "minutes": 16,
+  "brief": "A photo, a screenshot or a scanned page reaches the model. Text density, the need for pixel coordinates and the token budget are all open. Choose a detail level and predict the bill before you ship.",
+  "blocks": [
+    { "t": "h", "text": "What an image costs", "level": 2 },
+    { "t": "p", "md": "Images become input tokens and count toward TPM [[r1]]. The `detail` parameter defaults to `auto` in both the Responses API and Chat Completions. Two tokenizers exist. **Patch models** cover the image with 32 px patches and apply a model multiplier. **Tile models** charge base tokens plus tokens for each 512 px tile. The same image costs different amounts across families, so compute tokens with the model's own rule before you budget.\n\nThe OpenAI page lists 512 MB total payload, 1,500 images per request and up to 30,000 patches per image, and it rejects larger images instead of shrinking them. Azure's older vision chat page lists 20 MB per image and 10 images per call [[r17]]. Treat the Azure numbers as the limit on Azure-hosted deployments until that page changes. Both were checked on 2026-10-13." },
+    { "t": "formula", "title": "Patch models", "expr": "patches = ceil(w/32) x ceil(h/32), then tokens = ceil(patches x multiplier)", "vars": [
+      { "k": "patch budget", "v": "2,500 patches at `high` on gpt-6-astra, gpt-5.6, gpt-5.5 and gpt-5.4. A larger image shrinks to fit" },
+      { "k": "multiplier", "v": "1.2 for gpt-6-astra, gpt-5.6, gpt-5.5, gpt-5.4 and gpt-5.2. 1.62 for gpt-4.1-mini (2025-04-14)" }
+    ], "example": "At `high`: 1024 x 1024 is 1,024 patches, so **1,229** tokens. 2048 x 2048 is 4,096 patches, shrinks to 1600 x 1600 (2,500 patches), so **3,000** tokens. 4096 x 512 is 2,048 patches, so **2,458** tokens." },
+    { "t": "formula", "title": "Tile models such as gpt-4o and gpt-4.1", "expr": "tokens = base + tiles x tile_tokens, and low = base only", "vars": [
+      { "k": "base and tile", "v": "85 and 170 for gpt-4o and gpt-4.1, 2,833 and 5,667 for gpt-4o-mini, 70 and 140 for gpt-5.1" },
+      { "k": "steps at high", "v": "fit inside 2048 x 2048, scale the short side down to 768, count 512 px tiles" }
+    ], "example": "gpt-4o, 1024 x 1024 at `high`: scale to 768 x 768, 2 x 2 = 4 tiles, 85 + 4 x 170 = **765** tokens. This follows the documented rules. The docs do not print this example." },
+    { "t": "table", "caption": "Sizing by model family, from the OpenAI guide checked on 2026-10-13", "head": ["Model family", "`low`", "`high`", "`original`", "`auto` behaves like"], "rows": [
+      ["gpt-6-astra", "Fits 512 x 512", "Up to 2,500 patches, 65,535 px side", "Keeps size, rejects over 30,000 patches", "`original`"],
+      ["gpt-5.6-sol, -terra, -luna", "Fits 512 x 512", "Within 2048 x 2048 and 2,500 patches", "Keeps size, rejects over 30,000 patches", "`original`"],
+      ["gpt-5.5", "Fits 512 x 512", "2,500 patches, 2048 px", "Up to 10,000 patches, 6000 px", "`original`"],
+      ["gpt-5.4, -mini, -nano", "2048 px and 6,144 patches, so it can cost more than `high`", "2,500 patches, 2048 px", "Up to 10,000 patches, 6000 px", "`high`"],
+      ["gpt-5.2, gpt-4.1-mini", "2048 px and 6,144 patches", "Same limits", "Not supported", "Same limits"],
+      ["gpt-5.1, gpt-4.1, gpt-4o, gpt-4o-mini", "Fixed token count", "Tile based", "Not supported", "Tile based"]
+    ] },
+    { "t": "compare", "title": "Choosing a detail level", "intro": "Model names change often. Check the sizing table for the model you deploy.", "options": [
+      { "name": "`low`", "summary": "Coarse understanding. Behaviour depends on the model.", "pros": ["Base tokens only on tile models", "Fast for coarse scenes"], "cons": ["Misses small text", "On the gpt-5.4 family it can cost more than `high`"], "bestWhen": "A coarse scene or classification on a tile model.", "avoidWhen": "Text, tables or small objects matter, or the family is gpt-5.4." },
+      { "name": "`high`", "summary": "Standard high-fidelity understanding when exact original coordinates are not required.", "pros": ["A predictable cap on tokens", "Good default for documents and photos"], "cons": ["Large images are downscaled", "Coordinates no longer map one to one"], "bestWhen": "You need reading accuracy and can accept resizing.", "avoidWhen": "Computer use or pixel-exact localization." },
+      { "name": "`original`", "tag": "Where supported", "summary": "Large, dense or spatially sensitive images. Not available on gpt-5.2, gpt-4.1-mini or the tile models.", "pros": ["Best for OCR, tiny objects and computer use"], "cons": ["Up to 10,000 patches on gpt-5.5, which is 12,000 tokens at 1.2", "The image can still be resized, so map coordinates back yourself"], "bestWhen": "Dense pages, small print, UI screenshots.", "avoidWhen": "A cheap coarse look is enough." },
+      { "name": "`auto`", "summary": "The model's default sizing, so it differs by family.", "pros": ["No decision to make"], "cons": ["Equals `original` on gpt-6-astra, gpt-5.6 and gpt-5.5, but `high` on the gpt-5.4 family, so a model swap changes cost silently"], "bestWhen": "Prototypes on one pinned model.", "avoidWhen": "You budget tokens or plan to swap models." }
+    ] },
+    { "t": "failure", "title": "Failure modes", "items": [
+      { "symptom": "Cost estimates are far off after a model swap", "cause": "A patch model and a tile model count the same image differently, and `auto` maps to different behaviour per family", "fix": "Pin `detail`, and compute tokens with the target model's rule or the OpenAI image cost calculator. Detect it by logging image tokens per request." },
+      { "symptom": "Small print and table digits are misread", "cause": "`low` or `high` downscaled the page, and vision models are weak on small text and rotation", "fix": "Use `original` where supported, enlarge the text, or run layout extraction first (level 2)." },
+      { "symptom": "Computer-use clicks land in the wrong place", "cause": "The image was resized, so model coordinates no longer match screen pixels", "fix": "Resize the image yourself to a known size and map coordinates back." },
+      { "symptom": "A huge scan returns an error instead of an answer", "cause": "An image over 30,000 patches after processing is rejected, not shrunk", "fix": "Downscale before sending and reduce dimensions until the request passes." },
+      { "symptom": "A 30 MB image works in one environment and fails in another", "cause": "The OpenAI page and the Azure vision chat page list different limits", "fix": "Test on the exact deployment and treat the stricter number as the limit." }
+    ] },
+    { "t": "accordion", "items": [
+      { "title": "Go deeper: what vision models still get wrong", "blocks": [
+        { "t": "p", "md": "The OpenAI guide lists these limits [[r1]]: medical images such as CT scans are unsuitable, non-Latin text can degrade, small text needs enlarging, rotated or upside-down content is misread, graphs with varying line styles are hard, precise spatial localization (a chess position) fails, descriptions can be wrong, panoramic and fisheye shapes struggle, counts are approximate, file names and metadata are ignored and CAPTCHAs are blocked." }
+      ] },
+      { "title": "Go deeper: generating images", "blocks": [
+        { "t": "p", "md": "Use the Image API (generations and edits) or the Responses API `image_generation` tool, which adds multi-turn editing and file-ID inputs [[r2]]. The 2026-10-13 guide names `gpt-image-2.5-sunburst` for editing precision and `gpt-image-2.5-flare` for fast everyday work. `partial_images` takes 0 to 3 for streaming. A `moderation` parameter exists and blocked requests return `moderation_blocked` with `moderation_details`. Organization verification may be required. Some input-token rules are still documented for the older `gpt-image-1`: 65 base plus 129 per tile at low fidelity." }
+      ] }
+    ] }
+  ],
+  "quiz": [
+    { "id": "w13-l1-q1", "type": "numeric", "tag": "numeric", "q": "A patch model has multiplier 1.2 and a 2,500 patch budget at `detail: high`. How many billable tokens does a 4096 x 1024 image cost?", "answer": 3000, "tolerancePct": 1, "unit": "tokens", "hint": "Count patches first. If they exceed the budget, shrink by sqrt(32^2 x budget / (w x h)).", "explain": "4096 x 1024 needs 128 x 32 = 4,096 patches, over the 2,500 budget. The shrink factor is sqrt(1024 x 2500 / 4,194,304) = 0.78125, giving 3200 x 800 pixels, which is 100 x 25 = 2,500 patches. Then ceil(2500 x 1.2) = 3,000 tokens.", "difficulty": 3, "ref": "r1" },
+    { "id": "w13-l1-q2", "type": "single", "tag": "diagnose", "q": "A team moves to the gpt-5.4 family and sets `detail: low` to cut cost. Image tokens per request rise compared with `high`. Which cause fits?", "options": ["The `low` multiplier is higher than the `high` multiplier on every GPT-5.x model, so `low` always costs more", "Requests at `low` are rejected and retried automatically, which doubles the billed tokens", "On that family `low` uses a 2048 px and 6,144 patch budget, so it can use more tokens than `high`", "`low` is unsupported on that family and silently maps to `original`, which has the largest budget"], "answer": 2, "explain": "The sizing table gives `low` a 6,144 patch budget on gpt-5.4, above the 2,500 patches of `high`. The multiplier is the same 1.2 for both levels, rejected requests are not retried and billed, and `low` is supported on this family.", "difficulty": 3, "ref": "r1" },
+    { "id": "w13-l1-q3", "type": "multi", "tag": "concept", "q": "Select every statement that holds for OpenAI image input on 2026-10-13.", "options": ["An image over 30,000 patches after processing is rejected, not resized.", "Image tokens do not count toward TPM.", "`detail` defaults to `auto`.", "The same image costs the same tokens on every model family."], "answers": [0, 2], "explain": "The guide states both the 30,000 patch rejection rule and the `auto` default. Image tokens do count toward TPM. Patch and tile models count the same image differently, so costs differ across families.", "difficulty": 2, "ref": "r1" }
+  ],
+  "defend": null,
+  "refs": ["r1", "r2", "r17"],
+  "takeaways": ["Images are billed as tokens, and patch and tile models count them differently", "Compute tokens with the deployed model's formula, and pin `detail` instead of trusting `auto`", "`low` is not always cheaper: on the gpt-5.4 family it can cost more than `high`", "Use `original` for dense or coordinate-sensitive images, then map coordinates back"]
+}

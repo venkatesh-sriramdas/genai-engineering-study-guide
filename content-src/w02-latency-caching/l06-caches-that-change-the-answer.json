@@ -1,0 +1,87 @@
+{
+  "id": "w02-l6",
+  "order": 6,
+  "title": "Beyond the prefix: caches that change the answer",
+  "kind": "problem",
+  "minutes": 20,
+  "brief": "Some caches skip the model altogether. They save the most and carry the most risk: stale answers, near-miss matches and one user's data surfacing for another. How often questions repeat, who shares the cache and how costly a wrong answer is are all open.",
+  "blocks": [
+    { "t": "h", "text": "Six cache layers, one rule: the key carries the scope", "level": 2 },
+    { "t": "table", "caption": "Only the provider and engine prefix caches leave the answer untouched", "head": ["Layer", "What it saves", "Changes the answer?", "Key must include", "Main risk"], "rows": [
+      ["**Provider prefix cache**", "Prefill compute and input cost", "No", "Nothing for correctness. Use `prompt_cache_key` for per-customer accounting and to block probing on GPT-5.6+", "Silent misses and the write premium"],
+      ["**Exact response cache**", "The whole call", "Replays an earlier answer", "Normalized request, identity or permission scope, model, template and tool versions", "Stale answers. Useless when inputs vary"],
+      ["**Semantic cache**", "The whole call for paraphrases", "Yes, and it can be wrong", "Tenant or user scope, model id, embedding model id, template, tool configuration and safety-policy versions [[r17]]", "Wrong, stale, unsafe or foreign answers. Every miss also pays an embedding and a lookup"],
+      ["**Embedding cache**", "Embedding calls on re-ingest and repeated queries", "No, vectors are deterministic", "Content hash plus embedding model id and version (author inference from the partition rule above)", "Stale vectors after a model change"],
+      ["**MCP list and read cache**", "Round trips, and a stable tool order that protects the prompt cache", "No", "`cacheScope: private` results must not cross authorization contexts. `ttlMs` absent means 0 [[r18]]", "Serving one user's list to another"],
+      ["**Engine prefix cache** (vLLM, SGLang)", "Same as the provider cache, on self-hosted models", "No", "A per-tenant `cache_salt` [[r7]]", "Cross-tenant timing leaks"]
+    ], "highlightCol": 0 },
+    { "t": "dials", "id": "w02-l6-cache", "title": "Pick the cache layer", "prompt": "Flip how questions repeat, who shares the cache and how costly a wrong answer is.", "dials": [
+      { "id": "repeat", "label": "Repetition", "values": [{ "id": "exact", "label": "Same normalized questions repeat" }, { "id": "para", "label": "Paraphrases of a few questions" }, { "id": "unique", "label": "A long tail of unique questions" }] },
+      { "id": "tenancy", "label": "Tenancy", "values": [{ "id": "shared", "label": "Public data, one audience" }, { "id": "multi", "label": "Permissioned data, many tenants or users" }] },
+      { "id": "risk", "label": "Cost of a wrong answer", "values": [{ "id": "low", "label": "Low, stale is tolerable" }, { "id": "high", "label": "High, wrong or stale hurts" }] }
+    ], "options": [
+      { "id": "prefix", "name": "Provider prefix cache", "summary": "Reuse prefill state for a stable prefix." },
+      { "id": "exact", "name": "Exact response cache", "summary": "Replay the answer for an identical request." },
+      { "id": "semfree", "name": "Semantic cache, shared", "summary": "One cache for every caller." },
+      { "id": "sempart", "name": "Semantic cache, partitioned", "summary": "Partition by tenant, user and versions." },
+      { "id": "embed", "name": "Embedding cache", "summary": "Skip repeat embedding calls." }
+    ], "scores": {
+      "prefix": {
+        "repeat": { "exact": { "s": 1, "why": "Saves prefill for any repeat, but still calls the model." }, "para": { "s": 1, "why": "Works for any wording once the prefix is stable." }, "unique": { "s": 2, "why": "Helps whenever a long stable prefix exists, even if questions are unique." } },
+        "tenancy": { "shared": { "s": 1, "why": "No answer is shared, so no leak path." }, "multi": { "s": 1, "why": "Per-organization cache. Use per-customer keys for accounting." } },
+        "risk": { "low": { "s": 0, "why": "Safe but saves less than a whole-call cache." }, "high": { "s": 2, "why": "The output is unchanged, so correctness is untouched." } }
+      },
+      "exact": {
+        "repeat": { "exact": { "s": 2, "why": "Skips the whole call for identical normalized requests." }, "para": { "s": -1, "why": "A different wording is a different key, so it misses." }, "unique": { "s": -2, "why": "No repeats, no hits." } },
+        "tenancy": { "shared": { "s": 1, "why": "One key space is fine for public data." }, "multi": { "s": -1, "why": "The key must carry identity and permission scope or it leaks." } },
+        "risk": { "low": { "s": 1, "why": "Stale answers are tolerable until the TTL." }, "high": { "s": -1, "why": "Stale until TTL unless you invalidate on source change." } }
+      },
+      "semfree": {
+        "repeat": { "exact": { "s": 1, "why": "Hits, but pays the embedding and lookup first." }, "para": { "s": 2, "why": "Matches paraphrases by embedding distance." }, "unique": { "s": -2, "why": "Every miss pays an embedding and a lookup for nothing." } },
+        "tenancy": { "shared": { "s": 1, "why": "Acceptable for public content." }, "multi": { "s": -2, "why": "One user's answer can surface for another." } },
+        "risk": { "low": { "s": 1, "why": "A near-miss match costs little." }, "high": { "s": -2, "why": "Microsoft warns results can be incorrect, outdated or unsafe." } }
+      },
+      "sempart": {
+        "repeat": { "exact": { "s": 1, "why": "Hits, with the same overhead as any semantic cache." }, "para": { "s": 2, "why": "Matches paraphrases inside each partition." }, "unique": { "s": -2, "why": "Partitioning also shrinks the pool of possible hits." } },
+        "tenancy": { "shared": { "s": 0, "why": "Partitioning loses hit rate and buys no safety here." }, "multi": { "s": 2, "why": "Scope, model, template and safety versions keep answers apart." } },
+        "risk": { "low": { "s": 1, "why": "Safer than shared at a modest cost in hit rate." }, "high": { "s": -1, "why": "Still returns a stored answer, so a wrong match remains possible." } }
+      },
+      "embed": {
+        "repeat": { "exact": { "s": 1, "why": "Skips the embedding call for repeated text." }, "para": { "s": 0, "why": "Different text is a different key." }, "unique": { "s": 0, "why": "Little to reuse, little to lose." } },
+        "tenancy": { "shared": { "s": 1, "why": "Content-hash keys carry no answers." }, "multi": { "s": 1, "why": "Vectors hold no permissioned answer, but key on the model version." } },
+        "risk": { "low": { "s": 1, "why": "Deterministic, so nothing wrong can be replayed." }, "high": { "s": 1, "why": "No answer is replayed, so the risk stays low." } }
+      }
+    }, "takeaway": "The prefix cache is the only layer that never changes the answer. Every layer above it needs a key that carries identity, permissions and versions." },
+    { "t": "code", "lang": "xml", "title": "APIM semantic cache with a partition and a rate limit", "code": "<policies>\n  <inbound>\n    <base />\n    <llm-semantic-cache-lookup\n        score-threshold=\"0.05\"\n        embeddings-backend-id=\"llm-backend\"\n        embeddings-backend-auth=\"system-assigned\"\n        ignore-system-messages=\"true\"\n        max-message-count=\"10\">\n      <vary-by>@(context.Subscription.Id)</vary-by>\n    </llm-semantic-cache-lookup>\n    <rate-limit calls=\"20\" renewal-period=\"90\" />\n  </inbound>\n  <outbound>\n    <llm-semantic-cache-store duration=\"60\" />\n    <base />\n  </outbound>\n</policies>", "caption": "Lookup and store must be paired. A lower `score-threshold` is stricter. Microsoft suggests starting near 0.05 and says values above 0.2 may cause mismatches [[r16]]. The `vary-by` expression partitions by caller subscription. For per-user data, partition by user or tenant. RedisVL uses `distance_threshold` in cosine distance from 0 to 2 (tutorial sample 0.15), a different scale [[r17]]." },
+    { "t": "failure", "title": "Cache failure modes and how you would see them", "items": [
+      { "symptom": "User B receives an answer that names User A's documents", "cause": "The cache key is only the question embedding, with no tenant or user scope", "fix": "Partition by tenant or user, or do not semantic-cache answers built from permissioned data. Re-check access on every hit" },
+      { "symptom": "Answers cite a policy that was updated last week", "cause": "The TTL is longer than the source changes and entries are not tied to a source version", "fix": "Add the index or source version to the key, keep TTLs short and invalidate on source change" },
+      { "symptom": "Two questions that differ by one number get the same answer", "cause": "The threshold is too loose, and embeddings treat near-identical questions as the same", "fix": "Tighten the threshold, gate on numbers and entities, and measure the false-hit rate on a labelled pair set" },
+      { "symptom": "Latency and cost got worse after enabling the cache", "cause": "Hit rate is low, and every miss still pays the embedding, the lookup and the normal call", "fix": "Measure net savings and switch the cache off below break-even" },
+      { "symptom": "Old answers appear after a model or prompt release", "cause": "Model, template, tool and safety-policy versions are not part of the partition", "fix": "Put every version that shapes the answer into the key" },
+      { "symptom": "Response timing reveals that another user's prompt was cached", "cause": "Gu et al. detected global cache sharing across users in seven providers, including OpenAI [[r12]]", "fix": "Scope caches per customer. Use per-customer `prompt_cache_key` on GPT-5.6+ and `cache_salt` on self-hosted engines" }
+    ] },
+    { "t": "h", "text": "Not a cache, but cheaper tokens: batch and flex", "level": 2 },
+    { "t": "table", "caption": "Asynchronous and delay-tolerant modes, as of 2026-10-13. Cost and capacity decisions continue in the cost world", "head": ["Mode", "Discount", "Latency contract", "Limits and notes"], "rows": [
+      ["**OpenAI Batch API**", "50%", "Completes within 24 hours", "`.jsonl` file with a unique `custom_id` per request, one model per file, 200 MB upload limit, separate higher limits [[r22]]"],
+      ["**Azure Global and Data Zone Batch**", "50% less than Global Standard", "24-hour target, no real-time SLA", "Separate enqueued-token quota"],
+      ["**Anthropic Message Batches**", "50%", "Most finish within 1 hour, expire after 24 hours", "Up to 100,000 requests or 256 MB. Results kept 29 days [[r30]]"],
+      ["**Flex processing** (Azure: preview)", "50%, and cached-token discounts also apply", "No latency or service SLA", "Per-request `service_tier: \"flex\"`. Capacity is preemptible, so 429 can mean no capacity and 408 means raise the timeout. Unsupported models return 400, a rule Microsoft's priority-processing page dates to 2026-09-25 [[r23]]"]
+    ], "highlightCol": 0 }
+  ],
+  "quiz": [
+    { "id": "w02-l6-q1", "type": "single", "tag": "security", "q": "In a multi-tenant RAG assistant, User B received an answer that quoted User A's contract. The assistant uses a semantic cache in front of the model. Which cause fits best?", "options": ["The embedding model is too small, so a larger one would separate the two questions clearly", "The partition has no tenant or user scope, so an answer from A's documents matched B's question", "The score threshold is too loose in general, so only a much stricter value would have prevented it", "The provider prefix cache leaked KV tensors between the two organizations that share the endpoint"], "answer": 1, "explain": "A semantic cache returns a stored answer, and without a scope in the key any similar question hits it, whatever data built the answer. A bigger embedding model does not add scope. A stricter threshold reduces matches but does not remove the leak path. Provider prefix caches are per organization and never store answers.", "difficulty": 2, "ref": "r16" },
+    { "id": "w02-l6-q2", "type": "multi", "tag": "security", "q": "Select everything that belongs in the partition key of a semantic cache for a multi-tenant assistant that uses tools.", "options": ["Tenant or user scope", "Embedding model id", "The request's trace id", "Prompt template and safety-policy versions", "The response length"], "answers": [0, 1, 3], "explain": "Scope keeps answers apart, the embedding model id keeps vectors comparable, and template and policy versions stop old behavior from being replayed after a release. A trace id is unique per request, so nothing would ever hit. Response length is an output, not an input that defines which answers are interchangeable.", "difficulty": 2, "ref": "r17" },
+    { "id": "w02-l6-q3", "type": "single", "tag": "tradeoff", "q": "A public product FAQ bot gets many paraphrases of about 200 questions. The content is public and a day-old answer is acceptable. Which choice fits these dials best?", "options": ["Only an exact response cache, because semantic caches are never safe to run for any kind of workload", "Only the provider prefix cache, because it never changes the answer and so carries no risk at all", "No cache at all, because any staleness is unacceptable for a bot that answers customers", "Semantic cache with a strict threshold, short TTL and versioned partitions, plus prefix caching"], "answer": 3, "explain": "Paraphrase-heavy public traffic with a tolerance for staleness is the semantic cache's best case. Keep the threshold strict, partition by versions and keep the TTL short. An exact cache misses paraphrases. The prefix cache alone leaves most of the cost. The stem says staleness is acceptable, so refusing all caching is the wrong trade.", "difficulty": 2, "ref": "r16" },
+    { "id": "w02-l6-q4", "type": "numeric", "tag": "numeric", "q": "A semantic cache adds an embedding and lookup that cost 3% of one model call, on every request. The hit rate is 20%. A hit costs only that overhead. A miss pays the overhead and the full call. What does an average request cost, as a percentage of a call with no cache?", "answer": 83, "tolerancePct": 2, "unit": "percent", "hint": "overhead + (1 - hit rate) x 1.0", "explain": "Every request pays 0.03. Misses, 80% of requests, also pay 1.0: 0.03 + 0.8 = 0.83, so 83% of baseline, a 17% saving. Break-even is where 0.03 + (1 - h) = 1, so h = 3%. Below that hit rate the cache costs more than it saves, before counting the risk of wrong answers.", "difficulty": 2, "ref": "r17" }
+  ],
+  "defend": null,
+  "refs": ["r7", "r12", "r16", "r17", "r18", "r22", "r23", "r26", "r30"],
+  "takeaways": [
+    "Only prefix caches leave the answer untouched. Response and semantic caches replace the model's answer",
+    "Every answer cache needs a key with scope, model, template, tool and safety versions",
+    "Semantic caches pay embedding and lookup on every miss, so compute the break-even hit rate",
+    "APIM's `score-threshold` is stricter when lower, and RedisVL uses a different scale",
+    "Timing can leak that another user's prompt was cached, so scope caches per customer"
+  ]
+}

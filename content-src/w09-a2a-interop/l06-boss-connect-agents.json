@@ -1,0 +1,95 @@
+{
+  "id": "w09-l06",
+  "order": 6,
+  "title": "Boss: connect agents you do not own",
+  "kind": "boss",
+  "minutes": 22,
+  "brief": "An interviewer asks you to connect agents owned by different teams and vendors so they can work together on customer requests. Nothing else is specified. Run the Dial-and-Defend method: clarify, list options, choose, name failure modes, then metrics and rollout.",
+  "blocks": [
+    { "t": "h", "text": "Before you answer", "level": 2 },
+    { "t": "scenario", "title": "The prompt", "known": ["Agents are owned by different teams and by outside vendors", "They must cooperate on customer requests", "Vendors may run different frameworks and A2A versions", "The interviewer will not volunteer constraints"], "ask": ["Which boundaries are crossed: same process, other teams, other organizations?", "How long do tasks run, and do they need questions or artifacts?", "Who is the caller, and must the callee see the end user?", "Can callees reach us by webhook, or must we poll or stream?", "Which versions and platforms do vendors support?"], "tension": "Opaque peers keep teams independent, but every hop adds latency, a trust decision and a version to manage." },
+    { "t": "diagram", "id": "w09-l06-d1", "title": "A reference shape", "alt": "A user talks to an orchestrator agent. The orchestrator looks up cards in a registry and calls a team agent and a vendor agent through a gateway using A2A. The identity provider feeds the gateway. The team agent uses MCP for its tools. Trace context flows to a tracing store.", "src": "flowchart LR\n  U[User] --> O[Orchestrator agent]\n  O -->|A2A| G[Gateway]\n  G -->|A2A| T[Team agent]\n  G -->|A2A| V[Vendor agent]\n  R[Registry] -.-> O\n  I[Identity provider] -.-> G\n  T -->|MCP| X[Team tools]\n  O -->|trace context| OBS[Tracing]", "caption": "Decide where discovery, identity, policy and tracing live before you draw the agents." },
+    { "t": "table", "caption": "Where each step of the answer draws on this world", "head": ["Step", "What you say", "Levels"], "rows": [
+      ["1. Clarify the dials", "Boundaries, task length, caller and delegation, reachability, versions", "1, 4, 5"],
+      ["2. List the options", "In-process tools, MCP wrappers, direct A2A peers, A2A through a gateway and registry", "1, 2"],
+      ["3. Pick and say what flips it", "Choose for the stated dials. Name the dial that would change the pick", "1, 2, 4, 5"],
+      ["4. Failure modes and detection", "Card swaps, SSRF in webhooks, version drift, terminal-task follow-ups, cross-tenant leaks, AUTH_REQUIRED misuse", "2, 3, 4, 5"],
+      ["5. Metrics and rollout", "Task success, time to first status, version mix, auth and webhook failures", "3, 4, 5"]
+    ] },
+    { "t": "callout", "kind": "interview", "title": "What gets points", "md": "Draw the boundary before the protocol. Say which delivery mode you chose and why. Mention version negotiation and the Foundry v1.0 limits if the callee runs there. State that the card is a claim and every request is authenticated." }
+  ],
+  "quiz": [
+    { "id": "w09-l06-q1", "type": "multi", "tag": "security", "q": "Select every element a strong cross-team A2A design includes.", "options": ["Check the card's `capabilities` before using streaming or push", "Send `A2A-Version` on every request", "Treat `contextId` as proof that the caller may read the task", "Scope `GetTask` and `ListTasks` to the authenticated caller", "Embed the vendor's API key in the public card for convenience"], "answers": [0, 1, 3], "explain": "Capability checks, version headers and per-caller scoping are in the spec. `contextId` is an opaque grouping value and not an authorization proof. Secrets never belong in a public card.", "difficulty": 2, "ref": "r1" },
+    { "id": "w09-l06-q2", "type": "order", "tag": "order", "q": "Put the steps of a first call to a vendor's agent in order.", "items": ["Fetch the Agent Card and verify TLS and any signature", "Choose the first supported interface and the `A2A-Version`", "Authenticate with the scheme the card declares", "Send `SendMessage` with `returnImmediately` true, then poll or subscribe", "Handle `INPUT_REQUIRED` or `AUTH_REQUIRED`, then read the Artifacts"], "explain": "You cannot choose an interface before you have read the card, and you cannot authenticate before you know the declared scheme. Returning immediately avoids blocking, and interrupted states and artifacts come after the task is running.", "difficulty": 2, "ref": "r1" },
+    { "id": "w09-l06-q3", "type": "single", "tag": "flip", "q": "The vendor's agent is hosted on Foundry and exposes A2A 1.0 over JSON-RPC only, text only, with no streaming. You planned to show live progress. What changes?", "options": ["Use gRPC streaming instead, because it is always available", "Ask the vendor to add streaming through the agent card alone", "Fall back to `returnImmediately` and poll `GetTask`, showing status messages as progress", "Switch to the HTTP+JSON binding, because Foundry streams events over it even for v1.0 agents"], "answer": 2, "explain": "For v1.0 Foundry supports only JSON-RPC, text only and no streaming responses. Streaming over gRPC or HTTP+JSON is not available there, and a card field cannot add a capability the platform lacks. Polling works with every binding.", "difficulty": 2, "ref": "r17" },
+    { "id": "w09-l06-q4", "type": "single", "tag": "tradeoff", "q": "Twelve internal teams and three vendors will expose agents. Tasks run about 15 minutes, some need questions, and governance is strict. Which design fits best?", "options": ["Every agent rewritten and wrapped as an in-process tool inside one monolith that all twelve teams and the vendors must deploy together", "A2A peers discovered through a private registry and called through a gateway with central auth, rate limits and tracing", "A single shared MCP server that every team's agent calls with no task support", "Email-based hand-offs with agent summaries attached"], "answer": 1, "explain": "Many owners, long tasks and strict governance point to A2A with a registry and a gateway. A monolith cannot cross vendor boundaries. An MCP server without tasks cannot carry questions or 15-minute work, and email has no contract or audit.", "difficulty": 2, "ref": "r8" }
+  ],
+  "defend": {
+    "prompt": "Connect agents owned by different teams and by outside vendors so they can work together on customer requests. Walk me through your options and tell me what you would choose.",
+    "timebox": "5 min",
+    "clarify": [
+      "Which boundaries do the agents cross: one process, other teams in the company, other organizations?",
+      "How long do tasks run, and do they need mid-task questions or file artifacts?",
+      "Who is the caller, and must the callee see the end user's identity?",
+      "Can callees reach us by webhook, or must we poll or stream?",
+      "Which platforms and A2A versions do the vendors run?",
+      "How strict are governance, audit and data-residency needs?"
+    ],
+    "options": [
+      { "name": "Agents as in-process tools", "when": "One team and one process own both agents.", "tradeoff": "Simplest and fastest, but it cannot cross owners or release cycles." },
+      { "name": "Agents exposed as MCP tools", "when": "The agent behaves like a stateless function with a fixed input and output.", "tradeoff": "Reuses MCP hosts and auth, but a tool call has no task lifecycle unless the Tasks extension is supported on both sides." },
+      { "name": "Direct A2A peers with pinned cards", "when": "A few known partners and slow-changing cards.", "tradeoff": "Low setup and no registry, but every change needs reconfiguration and policy lives in each agent." },
+      { "name": "A2A through a gateway and private registry", "when": "Many owners, strict governance and cross-boundary tasks.", "tradeoff": "Central policy, discovery and tracing, at the cost of running a registry and gateway. The spec defines no registry API." }
+    ],
+    "modelAnswer": [
+      { "t": "p", "md": "**1. Clarify.** I would ask which boundaries are crossed, how long tasks run and whether they need questions or artifacts, who the caller is and whether the callee must see the user, whether callees can receive webhooks, and which A2A versions and platforms vendors run. I will assume twelve internal teams and three vendors, tasks of about fifteen minutes with occasional questions, strict governance, some user-delegated calls, and a vendor on Foundry." },
+      { "t": "table", "head": ["Option", "Wins when", "Loses when"], "rows": [
+        ["In-process tools", "One team and process", "Separate owners or release cycles"],
+        ["MCP-wrapped agents", "Stateless, fixed-shape calls", "Long, interactive or artifact-producing work"],
+        ["Direct A2A with pinned cards", "A few stable partners", "Many agents or frequent card changes"],
+        ["A2A via gateway and registry", "Many owners and strict policy", "A tiny estate that cannot run the extra pieces"]
+      ] },
+      { "t": "p", "md": "**3. Choose, and say what flips it.** Inside each team I keep agents as in-process tools. Across teams and vendors I use A2A through an API management gateway, with a private registry for discovery and signed cards where vendors publish them. Callers send `A2A-Version` on every request and check `capabilities` first. I default to `returnImmediately` with polling, use streaming where the callee supports it, and use push only for reachable server callers with validated webhooks. Service-to-service calls use client credentials or OpenID Connect, and user-delegated calls use an on-behalf-of token so the callee can scope to that user. For the Foundry vendor I use the GA `a2a` tool, select 1.0 explicitly, and accept polling because v1.0 there has no streaming." },
+      { "t": "list", "style": "ul", "items": [
+        "Flip to in-process tools if one team ends up owning both sides.",
+        "Flip to MCP-wrapped agents if the work is stateless with a fixed schema and MCP hosts already exist.",
+        "Flip to pinned cards if there are only a few partners and cards rarely change.",
+        "Flip to dual-version clients if a vendor is stuck on 0.3, and plan the move to 1.0."
+      ] },
+      { "t": "p", "md": "**4. Failure modes and detection.** A swapped card: verify TLS and signatures and alert when interface URLs change. SSRF through webhooks: validate URLs and use allowlists. Version drift: log the version per call and test against both. Follow-ups on terminal tasks: create new tasks with `referenceTaskIds`. Cross-tenant leaks: scope task operations to the caller. `AUTH_REQUIRED` misuse: check the scope of each operation after a credential arrives. Lost context: Foundry keeps tasks 60 days from the last write, so persist our own summary. Trace gaps: propagate W3C trace context and log `taskId`." },
+      { "t": "p", "md": "**5. Metrics and rollout.** Track task success rate per skill, time to first status, p95 task duration, the share of tasks that hit `INPUT_REQUIRED`, timeout rate, request share per protocol version, auth failures and webhook delivery success. Roll out with one vendor behind contract tests on the card, run shadow tasks next to the current process, then open the registry to more teams." },
+      { "t": "callout", "kind": "tip", "md": "Close with the dial that would change your pick. It shows you chose, not guessed." }
+    ],
+    "rubric": [
+      { "pt": "Asks about boundaries, task length, caller identity, reachability and versions before choosing", "w": 3 },
+      { "pt": "Compares at least three real options including in-process tools", "w": 2 },
+      { "pt": "Chooses for stated dials and names what would flip the choice", "w": 3 },
+      { "pt": "Explains the card as a claim, the interface and version choice, and per-request authentication", "w": 3 },
+      { "pt": "Picks a delivery mode with reasons: polling, streaming or push, and knows `returnImmediately`", "w": 2 },
+      { "pt": "Names failure modes with detection: card swaps, SSRF, version drift, terminal tasks, AUTH_REQUIRED misuse", "w": 2 },
+      { "pt": "Knows the Microsoft specifics and labels GA versus preview with a date", "w": 2 },
+      { "pt": "Names concrete metrics and a staged rollout", "w": 2 }
+    ],
+    "followUps": [
+      { "q": "A vendor's agent only speaks A2A 0.3. What do you do?", "a": "Send `A2A-Version: 0.3` to that callee, keep a compatibility layer in the client, and track it as debt. Remember the enum, discriminator and operation-name changes. In Foundry the `a2a_preview` tool targets 0.3 and is in preview, so ask the vendor for a 1.0 date." },
+      { "q": "How do you give a callee the real end user's identity?", "a": "A2A payloads carry no identity, so use an on-behalf-of token at the HTTP layer with a scheme the card declares, such as OAuth 2.0 authorization code or OpenID Connect. The callee authorizes the user's scope on every operation." },
+      { "q": "A task asks for credentials halfway. How do you handle it?", "a": "The task moves to `AUTH_REQUIRED`. Prefer an out-of-band channel for the credential, keep a stream or poll open to catch the resume, and never assume the credential covers later operations beyond what the agent defines." },
+      { "q": "Why not wrap every agent as an MCP tool?", "a": "A tool call has no task lifecycle unless the Tasks extension is supported on both sides. A2A has tasks, contexts, input-required and artifacts built in, so it fits long, interactive work across owners." }
+    ],
+    "redFlags": [
+      "Treats a remote agent like a synchronous function with no timeout or task handling",
+      "Trusts the Agent Card or its skills as a security boundary",
+      "Puts secrets or sensitive internal URLs in a public card",
+      "Ignores version negotiation and assumes every peer speaks 1.0",
+      "Accepts webhook URLs without validation"
+    ]
+  },
+  "refs": ["r1", "r8", "r17"],
+  "takeaways": [
+    "Open with the dials: boundaries, task length, caller identity, reachability and versions.",
+    "Keep same-team agents in-process, and use A2A with a registry and gateway across owners.",
+    "A card is a claim. Authenticate every request, scope every task operation and verify signatures where they exist.",
+    "Default to returnImmediately with polling. Use streaming and push only where both sides support them.",
+    "Label GA and preview with a date, and name the one dial that would flip your choice."
+  ]
+}

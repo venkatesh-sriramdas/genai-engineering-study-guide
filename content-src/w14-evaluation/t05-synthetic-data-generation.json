@@ -1,0 +1,101 @@
+{
+  "id": "w14-t05",
+  "order": 5,
+  "group": "Data",
+  "title": "Synthetic data generation",
+  "minutes": 7,
+  "difficulty": "core",
+  "summary": "A model generates test inputs, and sometimes reference answers, from your documents or your agent's definition. It solves the cold start and widens coverage, but only after human review and with a tag that keeps it apart from real rows.",
+  "useIf": "You have no traces yet, expert time is scarce, or you need more edge-case coverage than hand writing allows.",
+  "avoidIf": "You plan to use unreviewed generated rows as the only evidence of quality, or to keep them after the prompt changed.",
+  "explain": [
+    { "t": "p", "md": "In **synthetic data generation** an LLM reads a source and writes cases. Foundry offers two task types: **Simple QnA**, single turn with `query` and `ground_truth`, and **Simulation seed**, multi-turn scenarios described by `test_case_description`. Inputs can be an agent definition, an inline prompt or a reference file, and `max_samples` accepts 1 to 1,000 [[r8]]." },
+    { "t": "p", "md": "Foundry's own practice advice is the checklist to follow: generate a small batch first and review the rows by hand, mirror the production system prompt, regenerate and version the dataset whenever instructions change, and combine synthetic with trace-derived data [[r8]]. RAGAS states the target as a dataset with high-quality samples, wide variety, enough rows for significant conclusions, and continual updates against drift [[tr4]]." },
+    { "t": "flow", "title": "A review-first pipeline", "direction": "h", "steps": [
+      { "title": "Generate small", "md": "Ten to twenty rows from a document or agent definition.", "tag": "batch" },
+      { "title": "Review by hand", "md": "Check the question is answerable and the reference is correct.", "tag": "expert" },
+      { "title": "Filter and dedupe", "md": "Drop near duplicates and trivial rows. Add hard and multi-hop cases.", "tag": "quality" },
+      { "title": "Tag and version", "md": "Mark `source: synthetic`, record the generator and prompt version.", "tag": "provenance" },
+      { "title": "Scale and refresh", "md": "Generate more once a reviewed sample is sound. Regenerate on prompt change.", "tag": "operate" }
+    ] },
+    { "t": "p", "md": "Mind three biases (reasoning, not a vendor claim). A question written from a chunk reuses that chunk's words, so lexical retrieval looks better than it will on real user wording. A generator from the same model family tends to write questions that model finds easy. And a generated reference can be wrong, which then punishes a correct system." },
+    { "t": "callout", "kind": "note", "title": "Region support", "md": "Synthetic data generation is supported only in a listed set of regions, for example East US 2, Sweden Central and West Europe, per the limits page checked on 2026-10-13 [[r37]]. Check before you plan on it." }
+  ],
+  "whereToUse": [
+    "Cold start before launch, when there are no traces",
+    "Coverage of edge cases and rare document types that hand writing would miss",
+    "Multi-turn simulation seeds for conversational agents",
+    "Stress cases built from a knowledge base after a large content update",
+    "Augmenting a small expert-labelled set, never replacing it"
+  ],
+  "whenToUse": {
+    "use": ["No traces exist or traffic is private", "A reviewer can check a sample of rows", "You can regenerate when instructions change"],
+    "avoid": ["Using it as the only evidence for a high-harm launch", "Skipping review because generation was cheap", "Keeping stale rows after the system prompt changed"],
+    "flips": ["Traces become available: shift weight to trace-mined rows and keep synthetic for gaps", "Instructions or corpus change: regenerate and re-version", "Rows are used to rank retrievers: add paraphrased and trace-style queries to reduce lexical overlap"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Synthetic generation (this topic)", "Cold start, breadth, edge cases", "Nobody reviews the rows", "Easy or wrong rows, lexical overlap"],
+      ["Hand-written by an expert", "Accuracy matters most", "You need hundreds of rows fast", "Expert time"],
+      ["Mined from traces", "The product is live", "Before launch or under strict privacy rules", "Redaction work, skew to common queries"],
+      ["Paraphrasing existing rows", "Testing robustness to wording", "You need new content coverage", "Near duplicates inflate size"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Retrieval scores look excellent on synthetic rows and poor in production", "cause": "Questions were generated from the chunks and share their vocabulary", "fix": "Add paraphrased and trace-style queries, and judge retrieval on a held-out real slice" },
+    { "symptom": "A correct system fails many synthetic rows", "cause": "The generated reference answer is wrong", "fix": "Review a sample, compute an error rate for the generator, and drop or correct bad rows" },
+    { "symptom": "The agent behaves differently from what the dataset assumes", "cause": "The set was generated against an old system prompt", "fix": "Mirror the production prompt and regenerate and version the set on every instruction change" }
+  ],
+  "scenarios": [
+    {
+      "id": "w14-t05-s1",
+      "title": "New corpus, no users, one expert",
+      "situation": "A team indexes 5,000 product manuals for a support assistant. There is no traffic and one engineer who can review about 40 rows an hour.",
+      "constraints": ["Cold start", "Review capacity of about 40 rows an hour", "Manuals change quarterly"],
+      "unknowns": ["How multi-hop are real questions?", "How often do manuals change?", "Is lexical overlap a risk for this corpus?"],
+      "question": "How do you generate the first set?",
+      "options": [
+        { "name": "Generate a small batch, review it, then scale with hard and multi-hop prompts and tag every row as synthetic", "verdict": "best", "why": "The review step measures the generator's error rate before volume, and tags keep synthetic apart from real data.", "tradeoff": "Review time up front and a quarterly regeneration chore." },
+        { "name": "Generate 3,000 rows and use them as-is", "verdict": "poor", "why": "Unreviewed rows carry wrong references and easy questions, so scores are unreliable.", "tradeoff": "At volume it is fine only after a sampled review shows a low error rate." },
+        { "name": "Write 40 rows by hand and stop", "verdict": "good", "why": "High accuracy and fast.", "tradeoff": "Narrow coverage, and the set cannot detect small regressions." }
+      ],
+      "flips": [
+        { "if": "Real pilot queries arrive", "then": "Add them and shrink the synthetic share." },
+        { "if": "Manuals change monthly", "then": "Automate regeneration and review a rolling sample." }
+      ],
+      "takeaway": "Review before you scale."
+    },
+    {
+      "id": "w14-t05-s2",
+      "title": "Multi-turn agent, tool budget limited",
+      "situation": "A scheduling agent handles multi-turn conversations and calls booking tools. Real transcripts contain personal data, so no one will approve reuse for a few months.",
+      "constraints": ["Multi-turn behaviour", "No approved real transcripts", "Tool calls cost money in a sandbox"],
+      "unknowns": ["Which intents and edge cases matter most?", "Can tools run against a sandbox?", "How are success and failure defined?"],
+      "question": "How do you create test conversations?",
+      "options": [
+        { "name": "Simulation seeds describing scenarios, reviewed, run against sandboxed tools with outcome checks", "verdict": "best", "why": "Seeds cover multi-turn flows without real PII, and outcome checks avoid judging fragile wording.", "tradeoff": "Simulated users are cleaner than real ones, so real transcripts remain the later target." },
+        { "name": "Single-turn question and answer rows only", "verdict": "poor", "why": "They cannot exercise clarification, memory or tool sequences.", "tradeoff": "Right for a stateless lookup assistant." },
+        { "name": "Wait for approved transcripts", "verdict": "good", "why": "Most realistic data.", "tradeoff": "Months with no regression gate." }
+      ],
+      "flips": [
+        { "if": "Transcripts are approved after redaction", "then": "Mine them and use seeds for gaps." },
+        { "if": "Tools cannot be sandboxed", "then": "Mock tool responses and grade the call arguments only." }
+      ],
+      "takeaway": "For multi-turn agents, seed scenarios, not single questions."
+    }
+  ],
+  "quiz": [
+    { "id": "w14-t05-q1", "type": "single", "tag": "diagnose", "q": "Retrieval metrics are very high on generated questions but weak on real user queries. Most likely cause?", "options": ["The embedding model is too small", "The judge is biased toward long answers", "The index is stale", "Generated questions reuse the source chunks' wording, favouring lexical matching"], "answer": 3, "explain": "Questions written from a chunk echo its vocabulary, which flatters retrieval. Model size, judge length bias and a stale index are possible in general but do not explain this gap." },
+    { "id": "w14-t05-q2", "type": "numeric", "tag": "numeric", "q": "A reviewer checks 40 generated rows and finds 6 with a wrong reference. What is the sample error rate, in percent?", "answer": 15, "tolerancePct": 1, "unit": "%", "hint": "Wrong divided by reviewed.", "explain": "6 / 40 = 0.15, so 15%. With only 40 rows the interval is wide, but 15% is too high to scale without improving the generator prompt." },
+    { "id": "w14-t05-q3", "type": "single", "tag": "tradeoff", "q": "The production system prompt was rewritten last week. What should you do with the synthetic set?", "options": ["Keep it, synthetic rows never go stale", "Regenerate and version it against the new prompt", "Delete all trace-derived rows", "Only change the judge model"], "answer": 1, "explain": "Foundry advises mirroring the production prompt and regenerating when instructions change. The old set describes old behaviour." }
+  ],
+  "flashcards": [
+    { "front": "Foundry synthetic dataset task types?", "back": "Simple QnA (single turn, query and ground_truth) and Simulation seed (multi-turn scenarios with test_case_description). max_samples accepts 1 to 1,000." },
+    { "front": "Three bias risks of synthetic test data?", "back": "Questions reuse chunk wording and flatter lexical retrieval, same-family generators write easy questions, and generated references can be wrong." },
+    { "front": "When must synthetic rows be regenerated?", "back": "Whenever the system instructions change. Review a small batch first and combine synthetic with trace-derived data." }
+  ],
+  "related": ["w14-t04", "w14-t06", "w14-t11", "w14-l2", "w05-t01"],
+  "refs": ["r8", "r12", "r37", "tr4"]
+}

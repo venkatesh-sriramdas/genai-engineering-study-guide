@@ -1,0 +1,125 @@
+{
+  "id": "w18-t10",
+  "order": 10,
+  "group": "Specialised agents",
+  "title": "Deep research agents",
+  "minutes": 8,
+  "difficulty": "advanced",
+  "summary": "A long-horizon agent plans, searches many sources in parallel, reads them and writes a cited report. It can take tens of minutes and many times the tokens of a chat, so value per task and verification decide whether it pays.",
+  "useIf": "The question is open-ended and breadth-first, the report is worth real money or time, and you can check citations.",
+  "avoidIf": "A single retrieval-augmented answer is enough, latency must be seconds, or no one will verify the sources.",
+  "explain": [
+    { "t": "p", "md": "A **deep research agent** is an orchestrator-workers pattern. A lead agent plans, workers search and read in parallel, and the lead synthesizes a report with citations. Anthropic's write-up of its multi-agent research system reports about 4x the tokens of a chat for an agent and about 15x for multi-agent, token usage explaining 80% of BrowseComp variance (95% with tool calls and model choice), a 90.2% gain over single-agent Opus 4 on its internal eval and research time cut by up to 90% by parallel subagents and tools. These are vendor-reported figures on 2025 models, and the value must justify the cost [[r47]]." },
+    { "t": "diagram", "id": "w18-t10-d1", "title": "Deep research shape", "alt": "A question goes to a lead agent that plans and fans out to parallel search workers. Workers return findings, the lead synthesizes a cited draft, and a verifier checks claims against sources before the report is released.", "src": "flowchart TB\n  Q[Question] --> L[Lead: plan]\n  L --> W1[Worker: search and read]\n  L --> W2[Worker: search and read]\n  L --> W3[Worker: search and read]\n  W1 --> S[Synthesize with citations]\n  W2 --> S\n  W3 --> S\n  S --> V[Verify claims]\n  V --> R[Report]" },
+    { "t": "p", "md": "**Vendor models and their churn.** OpenAI's `o3-deep-research` and `o4-mini-deep-research` run through the Responses API and need at least one data source: web search, remote MCP or file search. Its deprecation notice lists 2026-07-23 as the shutdown date with `gpt-5.6-sol` as the replacement, and the docs say changing the model ID alone is not a complete migration. That date had passed by 2026-10-13 [[r37]]. The Foundry Deep Research tool is deprecated. Azure cites 2026-11-19 for `o3-deep-research`, which differs from OpenAI's date, probably because the platforms keep separate schedules (an inference). The old tool needed `2025-05-15-preview`, West US or Norway East and Grounding with Bing, so data leaves the Azure compliance boundary [[r38]]." },
+    { "t": "p", "md": "**Operating facts** for OpenAI deep research: run in background mode because tasks can take tens of minutes. Background mode keeps data for about 10 minutes, so it conflicts with ZDR [[r37]] [[tr7]]. A remote MCP server must expose `search` and `fetch` tools and `require_approval` must be `never`. File search accepts a current maximum of two vector stores. The API has no clarification or prompt-rewriting step, so send a fully formed prompt [[r37]]." },
+    { "t": "callout", "kind": "why", "title": "Verify, do not trust the polish", "md": "A well-formatted report with citations can still cite a source that does not say what the report claims. Check claim against source, sample for fabricated URLs and cap spend per task." }
+  ],
+  "whereToUse": [
+    "Market, legal or scientific literature scans where breadth matters and a human reviews the output",
+    "Reporting across large bodies of internal documents, through file search or an MCP search interface",
+    "Due diligence and competitor briefs that justify minutes of runtime and a larger token bill",
+    "Any task where parallel exploration beats a single linear search"
+  ],
+  "whenToUse": {
+    "use": [
+      "The task is open-ended, breadth-first and valuable enough for 4x to 15x token use",
+      "You can verify claims against sources and sample for errors",
+      "A background, asynchronous workflow is acceptable"
+    ],
+    "avoid": [
+      "Simple lookups that a single retrieval call answers",
+      "Interactive paths with a seconds-level latency budget",
+      "Sensitive data paths where the tool sends queries or content outside your compliance boundary"
+    ],
+    "flips": [
+      "Sources are internal: build on MCP or file search so data stays inside your boundary",
+      "Source is the public web: a vendor model or a latest GPT with web search is reasonable, after you check retirement dates",
+      "Writes are coupled (the output is one artifact): keep one writer and use workers only for reading"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Single RAG answer", "A known corpus and a short answer", "Open-ended multi-source questions", "Misses breadth, low cost"],
+      ["Build orchestrator-workers on your sources", "Source control, permissions and citations matter", "You lack time to build and evaluate it", "Engineering and eval cost"],
+      ["Vendor deep research model with web search, MCP or file search", "Public web questions, fast start", "Model retirement risk and limited control", "OpenAI lists 2026-07-23 shutdown. Azure cites 2026-11-19"],
+      ["Foundry Deep Research tool", "Nothing new (deprecated)", "Any new project or compliance-bound data", "Bing grounding sends data out of the Azure boundary"],
+      ["Single agent with web search", "Moderate breadth, tight budget", "Very broad questions", "Lower cost, slower for broad scans"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Report cites a source that does not support the claim", "cause": "Synthesis blended sources or the model invented a link", "fix": "Verify claim-level against fetched text, keep source spans and block uncited claims." },
+    { "symptom": "Costs per task are far above a normal chat", "cause": "Parallel workers multiply tokens, about 15x for multi-agent in Anthropic's data", "fix": "Gate by task value, cap budget and worker count and monitor tokens per run." },
+    { "symptom": "A migration breaks after swapping the model ID", "cause": "Tools and configuration differ, so changing the ID alone is not a complete migration", "fix": "Re-test tools, data sources and prompts on the replacement and watch the retirement dates." }
+  ],
+  "scenarios": [
+    {
+      "id": "w18-t10-s1",
+      "title": "Weekly public-web competitor brief",
+      "situation": "An analyst team wants a weekly brief from public sources on five competitors. Nothing confidential is sent out. A person reviews the result.",
+      "constraints": ["Public web only", "Weekly cadence", "Human reviewer"],
+      "unknowns": ["Which model does the platform offer after retirements?", "What is the per-report budget?"],
+      "question": "What do you choose?",
+      "options": [
+        { "name": "Adopt the Foundry Deep Research tool", "verdict": "poor", "why": "It is deprecated and needs Grounding with Bing, so data leaves the Azure compliance boundary.", "tradeoff": "Only relevant for an existing system you are migrating off." },
+        { "name": "A current GPT with web search in a planned research loop, citations required and spend capped", "verdict": "best", "why": "It follows OpenAI's migration direction, and a human reviews the cited output.", "tradeoff": "You build and evaluate the loop and re-test whenever models change." },
+        { "name": "Keep `o3-deep-research` on Azure until its retirement", "verdict": "good", "why": "Works today and avoids rework.", "tradeoff": "Azure cites 2026-11-19 retirement, so you inherit a deadline." }
+      ],
+      "flips": [
+        { "if": "The brief includes confidential internal text", "then": "Keep queries and content inside your boundary and avoid public-web grounding for that part." },
+        { "if": "Budget per report is tiny", "then": "Use a single agent with web search." }
+      ],
+      "takeaway": "Check retirement dates before building on a vendor research model."
+    },
+    {
+      "id": "w18-t10-s2",
+      "title": "Research across internal documents",
+      "situation": "Lawyers want a synthesis across thousands of internal documents. Data must not leave the compliance boundary and each person may see only their permitted files.",
+      "constraints": ["Internal corpus", "Permission-aware access", "Compliance boundary"],
+      "unknowns": ["Is the corpus already indexed?", "Can retrieval run as the user?"],
+      "question": "Which architecture fits?",
+      "options": [
+        { "name": "Build workers over permission-aware search through MCP or file search, with citation checks", "verdict": "best", "why": "Sources and permissions stay under your control and data stays in your boundary.", "tradeoff": "Engineering and evaluation effort." },
+        { "name": "Foundry Deep Research tool with Bing grounding", "verdict": "poor", "why": "Bing grounding sends data outside the Azure compliance boundary, and the tool is deprecated.", "tradeoff": "Fits only public research with no confidential content." },
+        { "name": "A vendor deep research model with file search", "verdict": "good", "why": "Fast start with documents in vector stores.", "tradeoff": "At most two vector stores and limited permission control, so check per-user access." }
+      ],
+      "flips": [
+        { "if": "Corpus is small and public", "then": "A vendor model with file search may be enough." },
+        { "if": "Need pinpoint answers, not synthesis", "then": "Use RAG with citations instead." }
+      ],
+      "takeaway": "Internal sources favour building on your own search and MCP."
+    },
+    {
+      "id": "w18-t10-s3",
+      "title": "Deep research for every support ticket",
+      "situation": "A product manager proposes running deep research on every incoming support ticket to improve answers. Tickets are short, high volume and mostly routine.",
+      "constraints": ["Very high volume", "Mostly routine questions", "Answers needed in seconds"],
+      "unknowns": ["What share of tickets are truly open-ended?", "What is the value of a better answer?"],
+      "question": "How do you apply deep research?",
+      "options": [
+        { "name": "Run it on every ticket for maximum quality", "verdict": "poor", "why": "Multi-agent runs use about 15x the tokens of chat in Anthropic's data and take minutes, which breaks the latency and cost profile.", "tradeoff": "Right for rare, high-value, open-ended cases." },
+        { "name": "Use RAG by default and escalate rare complex tickets to deep research asynchronously", "verdict": "best", "why": "It matches cost and latency to value: routine tickets stay cheap and fast.", "tradeoff": "You need a routing rule and a queue for escalations." },
+        { "name": "Use a single agent with web search for all tickets", "verdict": "good", "why": "Cheaper than multi-agent and more flexible than plain RAG.", "tradeoff": "Still slower and costlier than RAG for routine tickets." }
+      ],
+      "flips": [
+        { "if": "Ticket value is high, for example enterprise escalations", "then": "Deep research on those becomes justified." },
+        { "if": "Most tickets turn out open-ended", "then": "Re-run the cost model and consider a cheaper research loop." }
+      ],
+      "takeaway": "Pay for deep research only where value per task covers the multiplier."
+    }
+  ],
+  "quiz": [
+    { "id": "w18-t10-q1", "type": "numeric", "tag": "numeric", "q": "A chat answer uses 10,000 tokens. Using Anthropic's reported multi-agent multiplier of about 15x, roughly how many tokens does a multi-agent research run use?", "answer": 150000, "tolerancePct": 5, "unit": "tokens", "hint": "Multiply.", "explain": "10,000 x 15 is about 150,000 tokens. The 15x figure is vendor-reported on 2025 models, so measure your own runs.", "ref": "r47" },
+    { "id": "w18-t10-q2", "type": "multi", "tag": "concept", "q": "Which are true for OpenAI's deep research models in the Responses API?", "options": ["At least one data source is required", "A remote MCP server must expose `search` and `fetch`", "Background mode is compatible with ZDR", "The API adds a clarification step automatically"], "answers": [0, 1], "explain": "A data source is required and a remote MCP server needs `search` and `fetch` tools. Background mode keeps data for about 10 minutes, which conflicts with ZDR, and the API has no clarification or rewriting step.", "ref": "r37" },
+    { "id": "w18-t10-q3", "type": "single", "tag": "security", "q": "Why is the Foundry Deep Research tool a poor fit for confidential data?", "options": ["It cannot cite sources, so reports are unverifiable by design", "It needs Bing grounding, so data leaves the Azure boundary", "It only runs offline against a local index of documents", "It requires a customer-managed key before it will start"], "answer": 1, "explain": "The old tool needed Grounding with Bing, which sends data outside the Azure compliance boundary. It can cite sources, it is not offline and it does not require CMK.", "ref": "r38" }
+  ],
+  "flashcards": [
+    { "front": "How much more do agents and multi-agent systems cost in tokens, per Anthropic?", "back": "About 4x for an agent and about 15x for multi-agent versus chat, on its own traffic. Vendor-reported, so measure your own." },
+    { "front": "What must a remote MCP server provide for OpenAI deep research?", "back": "A `search` tool and a `fetch` tool, with `require_approval` set to `never`." },
+    { "front": "Why is deep research in background mode awkward under ZDR?", "back": "Background mode retains response data for about 10 minutes so polling works, which conflicts with zero data retention." }
+  ],
+  "related": ["w18-l5", "w10-t05", "w10-t11", "w05-t13", "w16-t01", "w13-t13"],
+  "refs": ["r37", "r38", "r47", "tr7"]
+}

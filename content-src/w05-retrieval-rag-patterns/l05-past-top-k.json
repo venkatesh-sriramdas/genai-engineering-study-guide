@@ -1,0 +1,90 @@
+{
+  "id": "w05-l5",
+  "order": 5,
+  "title": "Past top-k: trees, graphs and planners",
+  "kind": "problem",
+  "minutes": 18,
+  "brief": "Some questions have no single answer chunk: the main themes across thousands of reports, or a question with three parts. When does a structure beyond a flat list of chunks pay for its index bill and its latency?",
+  "blocks": [
+    { "t": "h", "text": "When one flat list of chunks is not enough", "level": 2 },
+    { "t": "compare", "title": "Beyond flat top-k", "intro": "Three change the index (RAPTOR, GraphRAG, LazyGraphRAG). One changes the query path (agentic retrieval). Evidence quality differs, so each card says who measured what.", "options": [
+      { "name": "RAPTOR", "tag": "Paper", "summary": "Recursively embed, cluster and summarise chunks into a tree, then retrieve from several levels.", "pros": ["Upper nodes carry cross-chunk context for broad questions", "Paired with GPT-4 it improved the best QuALITY result by 20% (absolute)"], "cons": ["Index build runs recursive summarisation, so LLM calls grow with corpus size", "Summary nodes are not source text, which complicates exact citations"], "bestWhen": "Long documents need multi-step reasoning across sections and the corpus is stable.", "avoidWhen": "Content changes daily or answers must quote source spans.", "meta": [{ "k": "Index cost", "v": "high" }, { "k": "Maturity", "v": "research code" }] },
+      { "name": "GraphRAG", "tag": "Open source", "summary": "An LLM extracts entities, relationships and claims, the graph is clustered with Leiden, and community summaries answer global questions.", "pros": ["Built for corpus-wide questions that top-k vector RAG handles poorly", "Query modes Global, Local, DRIFT and Basic", "`FastGraphRAG` swaps some LLM steps for classic NLP"], "cons": ["The `standard` method uses an LLM for all reasoning, so indexing is costly", "A changing corpus means re-extraction and rebuilt communities"], "bestWhen": "Many questions are thematic or multi-document and the corpus changes slowly.", "avoidWhen": "Most questions are single-fact lookups.", "meta": [{ "k": "Index cost", "v": "highest" }, { "k": "Maturity", "v": "research code" }] },
+      { "name": "LazyGraphRAG", "tag": "Vendor benchmark", "summary": "Defer LLM work to query time and spend a relevance test budget instead of summarising the whole graph up front.", "pros": ["Microsoft Research reports indexing cost identical to vector RAG and 0.1% of full GraphRAG", "Comparable global-query quality at over 700 times lower query cost than GraphRAG global search", "One cost and quality dial"], "cons": ["Vendor's own benchmark, posted 2024-11-25", "Reached Microsoft Discovery and Azure Local as public preview (editor's note 2025-06-06), not a general Azure AI Search feature"], "bestWhen": "You want graph-style answers on a corpus that changes, and can run it where it is offered.", "avoidWhen": "You need a generally available managed service today.", "meta": [{ "k": "Index cost", "v": "same as vector RAG" }, { "k": "Query cost", "v": "tunable" }] },
+      { "name": "Agentic retrieval (Azure AI Search)", "tag": "Preview", "summary": "A knowledge base plans subqueries with an LLM, runs them in parallel over knowledge sources, reranks and merges.", "pros": ["Handles multi-part and context-dependent questions", "Returns merged content, references and an activity log", "Queries the live index, so no graph rebuild"], "cons": ["Planning adds latency over a single query, and planning tokens are billed separately", "Most effort levels are preview as of 2026-10-13"], "bestWhen": "Questions are complex, chat history matters and the latency budget allows one planning pass.", "avoidWhen": "Latency is tight, or you need only GA features.", "meta": [{ "k": "Stable API", "v": "2026-04-01, minimal only" }, { "k": "Preview API", "v": "2026-08-01-preview" }] }
+    ] },
+    { "t": "dials", "id": "w05-l5-pays", "title": "Does a graph or a planner pay?", "prompt": "Flip the question shape, how fast the corpus changes and the latency budget.",
+      "dials": [
+        { "id": "shape", "label": "Question shape", "values": [ { "id": "local", "label": "Single-fact lookups" }, { "id": "multi", "label": "Multi-part or context-dependent" }, { "id": "global", "label": "Corpus-wide themes" } ] },
+        { "id": "churn", "label": "Corpus change rate", "values": [ { "id": "stable", "label": "Slow" }, { "id": "fast", "label": "Daily" } ] },
+        { "id": "latency", "label": "Latency budget", "values": [ { "id": "tight", "label": "Tight" }, { "id": "relaxed", "label": "Relaxed" } ] }
+      ],
+      "options": [
+        { "id": "flat", "name": "Hybrid plus semantic ranker", "summary": "One query, one ranked shortlist." },
+        { "id": "agentic", "name": "Agentic retrieval (low or medium)", "summary": "LLM-planned parallel subqueries. Preview." },
+        { "id": "raptor", "name": "RAPTOR tree", "summary": "Summary tree searched at several levels." },
+        { "id": "graphrag", "name": "GraphRAG", "summary": "Entity graph plus community summaries." },
+        { "id": "lazy", "name": "LazyGraphRAG", "summary": "Deferred LLM work with a relevance test budget." }
+      ],
+      "scores": {
+        "flat": {
+          "shape": { "local": { "s": 2, "why": "A lookup needs the right chunk, and hybrid plus reranking finds it." }, "multi": { "s": -1, "why": "One query cannot cover several parts at once." }, "global": { "s": -2, "why": "Top-k chunks cannot summarise a whole corpus." } },
+          "churn": { "stable": { "s": 0, "why": "Works, with no special advantage." }, "fast": { "s": 2, "why": "Incremental indexing keeps it fresh with no rebuild." } },
+          "latency": { "tight": { "s": 2, "why": "A single query is the fastest path." }, "relaxed": { "s": 0, "why": "Spare latency goes unused." } }
+        },
+        "agentic": {
+          "shape": { "local": { "s": 0, "why": "One planning pass adds latency a lookup does not need." }, "multi": { "s": 2, "why": "The planner splits the question into focused subqueries run in parallel." }, "global": { "s": -1, "why": "It still returns top passages, not corpus-level summaries." } },
+          "churn": { "stable": { "s": 0, "why": "No special advantage." }, "fast": { "s": 1, "why": "It queries the live index, so there is no graph to rebuild." } },
+          "latency": { "tight": { "s": -2, "why": "The docs say it adds latency compared with a single query." }, "relaxed": { "s": 1, "why": "One planning pass, and a retry at medium, fit a relaxed budget." } }
+        },
+        "raptor": {
+          "shape": { "local": { "s": 0, "why": "Leaf nodes still answer lookups, so the tree adds little." }, "multi": { "s": 1, "why": "Higher levels carry cross-chunk context, as in the QuALITY result." }, "global": { "s": 1, "why": "Upper summary nodes cover broad questions better than flat chunks." } },
+          "churn": { "stable": { "s": 1, "why": "Summaries are built once." }, "fast": { "s": -2, "why": "Re-clustering and re-summarising follow every change." } },
+          "latency": { "tight": { "s": 1, "why": "Retrieval is a vector search over tree nodes." }, "relaxed": { "s": 0, "why": "No extra benefit from spare latency." } }
+        },
+        "graphrag": {
+          "shape": { "local": { "s": 0, "why": "A Local mode exists, but flat hybrid is cheaper for lookups." }, "multi": { "s": 1, "why": "Entity links connect evidence across documents." }, "global": { "s": 2, "why": "Community summaries are built for corpus-wide questions." } },
+          "churn": { "stable": { "s": 1, "why": "The indexing bill is paid once." }, "fast": { "s": -2, "why": "Re-extraction and community rebuilds are costly." } },
+          "latency": { "tight": { "s": -1, "why": "Global search reads many community summaries per query." }, "relaxed": { "s": 1, "why": "Quality-first answers fit a relaxed budget." } }
+        },
+        "lazy": {
+          "shape": { "local": { "s": 0, "why": "Not needed for single lookups." }, "multi": { "s": 1, "why": "Query-time graph work links evidence across documents." }, "global": { "s": 2, "why": "Vendor benchmark: comparable to GraphRAG global search at far lower query cost." } },
+          "churn": { "stable": { "s": 1, "why": "Cheap to index and cheap to keep." }, "fast": { "s": 1, "why": "Indexing cost equals vector RAG, so changes are affordable." } },
+          "latency": { "tight": { "s": 0, "why": "Query-time LLM work grows with the relevance test budget." }, "relaxed": { "s": 1, "why": "A single dial trades cost against quality." } }
+        }
+      },
+      "takeaway": "A structure pays only when your questions are global or multi-part. Count how many of them you actually get before you pay the index bill." },
+    { "t": "diagram", "id": "w05-l5-agentic", "title": "Agentic retrieval request path", "alt": "An app sends a retrieve call with chat history. An LLM plans subqueries, they run in parallel, each is semantically reranked, the results are merged and returned with references and an activity log.", "src": "flowchart LR\n  A[App retrieve call] --> P[LLM plans subqueries]\n  P --> S1[Subquery 1]\n  P --> S2[Subquery 2]\n  S1 --> R[Semantic rerank each]\n  S2 --> R\n  R --> M[Merge]\n  M --> O[Content, references, activity]", "caption": "From the Azure AI Search agentic retrieval overview, checked 2026-10-13. Planning applies at low and medium effort." },
+    { "t": "table", "caption": "Retrieval reasoning effort (status checked 2026-10-13)", "head": ["Effort", "LLM work", "Answer token cap", "Limits worth knowing", "Status"], "rows": [
+      ["`minimal`", "No query planning. Searches every knowledge source in the knowledge base", "Extractive output only", "`outputMode` must be `extractiveData`, no answer synthesis or web source, up to 10 sources per knowledge base", "Stable in 2026-04-01"],
+      ["`low`", "One planning pass and source selection. The default if unset", "5,000", "Up to 50 documents to semantic ranking, 10 with L3 classification", "Preview"],
+      ["`medium`", "Adds a semantic classifier and one retry with a revised plan", "10,000", "50 documents, 20 with L3. Select regions only (15 listed)", "Preview"],
+      ["`auto`", "Light first pass, escalates up to medium if grounding is weak", "Not stated on the page", "Needs 2026-08-01-preview and a model on the knowledge base. Earlier versions return 400", "Preview"]
+    ], "highlightCol": 1 },
+    { "t": "callout", "kind": "preview", "title": "Status as of 2026-10-13", "md": "Only `minimal` extractive retrieval with `intents` input is in the stable `2026-04-01` API. Query planning, answer synthesis, `low`, `medium`, `auto`, `messages` input and SSE streaming need `2026-08-01-preview` [[r4]] [[r5]]. Portal-made objects use preview schemas and may need migration [[r34]]. Planner models: the page updated 2026-09-17 lists the `gpt-5` family and marks GPT-4o and GPT-4.1 families deprecated [[r39]]. **Azure OpenAI On Your Data retires 2026-10-14**, and Microsoft recommends Foundry Agent Service with Foundry IQ [[r33]]." },
+    { "t": "accordion", "items": [
+      { "title": "Go deeper: Foundry IQ and permissions", "blocks": [ { "t": "p", "md": "Foundry IQ is a managed knowledge layer: one knowledge base can serve Foundry Agent Service, Microsoft Agent Framework, custom apps through the Search REST API, and Copilot Studio through a Foundry agent (preview). Sources include Blob, SharePoint, OneLake and the public web. It automates chunking, embeddings and metadata extraction for indexed sources, syncs ACLs for supported sources and honours Purview sensitivity labels [[r7]].\n\nFor indexed sources, ACLs and labels must be ingested with `ingestionPermissionOptions`. At query time pass the user token (scope `https://search.azure.com/.default`) in `x-ms-query-source-authorization`. **If you omit the identity, indexed sources return unfiltered results.** If `ingestionPermissionOptions` was not set at creation, results are unfiltered whatever the header says [[r6]]. The full access-control design is the subject of world w07." } ] },
+      { "title": "Go deeper: limits, runtime and billing", "blocks": [ { "t": "p", "md": "`maxRuntimeInSeconds` has a minimum of 10, a default of 90 and a maximum of 600, and the 600 applies to the Search retrieve request only. A knowledge base holds up to 10 knowledge sources on most paid tiers and 3 on Free. The output budget is `maxOutputSizeInTokens` (`maxOutputSize` in `2026-05-01-preview` and later, and samples show both spellings), and a document larger than the budget can be dropped with a warning in `activity` and empty `references` [[r38]].\n\nSearch bills retrieval tokens, meaning subquery execution and semantic ranking. Azure OpenAI bills planning and answer synthesis tokens separately at pay-as-you-go rates [[r39]]. With `Accept: text/event-stream` (since `2026-08-01-preview`) the response streams events such as `activity.completed` and `response.completed`. The HTTP status stays 200 once the stream opens, so read the terminal event [[r6]]." } ] }
+    ] },
+    { "t": "failure", "title": "Failure modes beyond flat retrieval", "items": [
+      { "symptom": "A retrieve call returns passages from documents the caller must not see.", "cause": "No user token in `x-ms-query-source-authorization`, or `ingestionPermissionOptions` was never set. Indexed sources fail open.", "fix": "Pass the user token, ingest permissions, and test with a second user who lacks access." },
+      { "symptom": "HTTP 400 at `low` effort after adding stored filter hints.", "cause": "A GPT-4o or GPT-4.1 family planner rejects stored hints that contain a filter.", "fix": "Move the knowledge base to a supported `gpt-5` family planner and re-test." },
+      { "symptom": "A large document never appears, and the activity log shows a warning.", "cause": "The document exceeded the output budget and was dropped.", "fix": "Raise the output budget or chunk the source, and alert on warnings in `activity`." },
+      { "symptom": "A streamed call looks fine and has no answer.", "cause": "The stream ended with an `error` event after an HTTP 200.", "fix": "Check the terminal event, which is `response.completed` (200 or 206) or `error`." },
+      { "symptom": "The index bill explodes when the corpus changes daily.", "cause": "Full GraphRAG or RAPTOR rebuilds follow every change.", "fix": "Limit the structure to a stable subset, or test a deferred approach such as LazyGraphRAG." }
+    ] }
+  ],
+  "quiz": [
+    { "id": "w05-l5-q1", "type": "single", "tag": "tradeoff", "difficulty": 1, "q": "Most questions are single-fact lookups, the corpus changes daily and the latency budget is tight. Which option fits best?", "options": ["GraphRAG with community summaries rebuilt on every change", "A RAPTOR tree rebuilt every night", "Agentic retrieval at medium effort", "Hybrid search with the semantic ranker"], "answer": 3, "explain": "Lookups need the right chunk, daily change favours incremental indexing, and a tight budget favours one query. GraphRAG and RAPTOR pay their indexing bill again on every change and serve questions you rarely get. Agentic retrieval at medium adds a planning pass and a possible retry, which a tight budget cannot absorb." },
+    { "id": "w05-l5-q2", "type": "single", "tag": "security", "difficulty": 2, "q": "A knowledge base retrieve call returns passages from documents the caller must not see. The request looks like this. What is the most likely cause?", "code": { "lang": "http", "code": "POST /knowledgebases/hr-kb/retrieve?api-version=2026-08-01-preview\nAuthorization: Bearer <application token>\nContent-Type: application/json" }, "options": ["No user token is sent in `x-ms-query-source-authorization`, so the call fails open", "The reasoning effort is set to `low`, which skips permission trimming", "The semantic ranker reordered results past the access rules during the reranking step", "`maxRuntimeInSeconds` is shorter than the default value of 90 seconds"], "answer": 0, "explain": "For indexed sources the service filters by the identity in `x-ms-query-source-authorization` and fails open when it is missing. The effort level, the ranker and the runtime limit do not touch access control. Also confirm `ingestionPermissionOptions` was set when the source was created, because without it results are unfiltered whatever the header says." },
+    { "id": "w05-l5-q3", "type": "multi", "tag": "concept", "difficulty": 2, "q": "Select every statement that is true of Azure AI Search agentic retrieval as of 2026-10-13.", "options": ["Only `minimal` effort with `intents` input and extractive output is in the stable 2026-04-01 API", "At `low` effort an LLM plans subqueries that run in parallel and are each semantically reranked", "`auto` effort works on every API version", "A GPT-4.1 family planner is the recommended choice"], "answers": [0, 1], "explain": "The stable version is limited to `minimal`, and the planning pass at `low` fans subqueries out in parallel with semantic reranking of each. `auto` needs 2026-08-01-preview and earlier versions return 400, and the docs mark the GPT-4o and GPT-4.1 families deprecated for planning in favour of the `gpt-5` family." }
+  ],
+  "defend": null,
+  "refs": ["r4", "r5", "r6", "r7", "r16", "r17", "r18", "r33", "r34", "r38", "r39", "r40"],
+  "takeaways": [
+    "Flat hybrid plus reranking wins on single-fact lookups and fast-changing corpora",
+    "Graphs and trees pay for global or multi-part questions, and cost a rebuild on every change",
+    "Only minimal-effort extractive agentic retrieval is stable as of 2026-10-13, the rest is preview",
+    "A knowledge base queried without a user identity fails open on indexed sources"
+  ]
+}

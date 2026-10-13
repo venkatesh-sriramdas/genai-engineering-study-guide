@@ -1,0 +1,94 @@
+{
+  "id": "w10-t03",
+  "order": 3,
+  "group": "Workflow patterns",
+  "title": "Routing",
+  "minutes": 7,
+  "difficulty": "core",
+  "summary": "Classify the input first, then send it down a specialised path: a different prompt, tool set, model or agent for each category.",
+  "useIf": "Inputs fall into distinct categories that are better handled separately, and a classifier can tell them apart with acceptable accuracy.",
+  "avoidIf": "Every input needs the same handling, categories overlap heavily, or a wrong route is costly and you cannot detect it.",
+  "explain": [
+    { "t": "p", "md": "**Routing** classifies an input and directs it to a specialised follow-up task, which lets you separate concerns and tune each path on its own. Anthropic gives two examples: sending different customer-service query types down different paths, and sending easy questions to a smaller model and hard ones to a larger model to save cost [[r1]]. The router does not do the work. It only decides who does. Keep the label set small and the category definitions mutually exclusive, so the classifier has one clear answer for each input." },
+    { "t": "diagram", "id": "w10-t03-d1", "title": "A router with a fallback", "alt": "Input goes to a router. High confidence routes go to path A or B. Low confidence goes to a general fallback path.", "src": "flowchart LR\n  I[Input] --> R{Router}\n  R -->|billing| A[Billing path]\n  R -->|technical| B[Technical path]\n  R -->|low confidence| F[General fallback]\n  A --> O[Answer]\n  B --> O\n  F --> O" },
+    { "t": "p", "md": "The router can be rules or keywords, an embedding similarity lookup, a small LLM classifier, or a trained model. RouteLLM trains routers on preference data to choose between a stronger and a weaker model, and reports cost reductions of over 2x in certain cases without losing response quality [[tr9]]. Whatever you use, plan for the miss: a confidence threshold, a safe default path, and a log of every route so you can build a confusion matrix against labelled traffic." },
+    { "t": "callout", "kind": "gotcha", "title": "Router versus handoff", "md": "A router classifies once and steps aside. In a handoff the agents themselves decide to transfer control and may bounce. If the right path is identifiable from the first input, Microsoft advises deterministic routing or a simple dispatcher that does not take an active role, instead of a handoff mesh [[r9]]." }
+  ],
+  "whereToUse": [
+    "Customer-service flows with distinct request types, each with its own tools and policy",
+    "Model cascades that send easy queries to a small model and hard ones to a large one",
+    "Choosing between retrieval corpora, SQL, and a plain chat path for a question",
+    "Language or locale specific prompts and guardrails",
+    "Front door of a multi-agent system that dispatches to specialists"
+  ],
+  "whenToUse": {
+    "use": ["Categories are distinct and each benefits from its own prompt, tools or model", "A cheap classifier reaches high accuracy on labelled traffic", "Cost or latency differs a lot between easy and hard inputs"],
+    "avoid": ["Categories overlap so heavily that routing accuracy stays low", "A misroute is costly and silent, and nothing downstream can detect it", "One prompt already handles all inputs well"],
+    "flips": ["Misroutes are common and expensive: add a confidence threshold and a clarifying question or general fallback", "Routing becomes dynamic during the conversation: consider handoff", "The router costs more than it saves: collapse the paths back into one"]
+  },
+  "alternatives": {
+    "title": "Router types and neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Rules or keywords", "Categories are crisp and stable", "Wording varies widely", "Free and fast, brittle"],
+      ["Embedding similarity", "Labelled examples per category exist", "Categories are subtle or new", "Needs example upkeep"],
+      ["LLM classifier", "Categories need judgement", "Volume is high and latency tight", "One extra call per request"],
+      ["Trained router (for model choice)", "You have preference or outcome data", "Traffic shifts away from training data", "Training and drift monitoring [[tr9]]"],
+      ["Handoff between agents", "The right specialist emerges mid-task", "Route is clear at the start", "Loops and bouncing [[r9]]"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Hard questions get shallow answers", "cause": "The router sent them to the small model", "fix": "Add an escalation rule: low confidence or a failed check retries on the large model." },
+    { "symptom": "Quality drops only for one request type", "cause": "That type is split across two categories with unclear boundaries", "fix": "Merge or redefine categories, then measure per-route accuracy on labelled traffic." },
+    { "symptom": "Routing accuracy decays over months", "cause": "New request types appeared that no category covers", "fix": "Route unknowns to a fallback, sample them for review and add categories deliberately." }
+  ],
+  "scenarios": [
+    {
+      "id": "w10-t03-s1",
+      "title": "Cost cascade at scale",
+      "situation": "A high-volume assistant uses one large model for everything. Most queries are simple lookups, and the monthly bill is the main complaint.",
+      "constraints": ["Large share of easy queries", "Cost is the pressure, latency is secondary", "A wrong answer on a hard query is visible to the user"],
+      "unknowns": ["How are easy and hard defined and labelled?", "Can the system detect a weak answer and retry?"],
+      "question": "How do you route?",
+      "options": [
+        { "name": "Router to a small model by default, with escalation to the large model on low confidence or a failed check", "verdict": "best", "why": "It captures most of the savings and has a safety net for the hard tail.", "tradeoff": "Extra classification cost and some added latency on escalated queries." },
+        { "name": "Static split by query length", "verdict": "poor", "why": "Length is a weak proxy: short questions can be hard and long ones easy.", "tradeoff": "Acceptable only after you prove length predicts difficulty on your traffic." },
+        { "name": "Keep the large model for all queries", "verdict": "good", "why": "Highest quality and no routing risk.", "tradeoff": "You keep paying for capability most queries do not need." }
+      ],
+      "flips": [
+        { "if": "The small model matches the large one on your golden set", "then": "Drop the router and use the small model alone." },
+        { "if": "Wrong answers carry legal or safety risk", "then": "Route by risk class and keep the large model plus a check on the high-risk class." }
+      ],
+      "takeaway": "A router saves money only with a measured miss path."
+    },
+    {
+      "id": "w10-t03-s2",
+      "title": "Distinct domains, costly misroutes",
+      "situation": "An assistant fronts three tool sets: account changes, product questions and general chat. Account changes move money, and users phrase requests loosely.",
+      "constraints": ["Three domains with different tools and permissions", "A misroute to account changes can trigger a real action", "Users write ambiguous requests"],
+      "unknowns": ["What does a wrong route cost in each direction?", "Is a clarifying question acceptable to the user?"],
+      "question": "How do you design the front door?",
+      "options": [
+        { "name": "LLM router with a confidence threshold, a clarifying question below it, and approval on account actions", "verdict": "best", "why": "Ambiguity is expected, so the design asks instead of guessing, and the costly path has its own gate.", "tradeoff": "More turns for unclear requests and one extra call per request." },
+        { "name": "Keyword rules only", "verdict": "poor", "why": "Loose phrasing defeats keywords and the failure is silent on a money path.", "tradeoff": "Right for crisp inputs such as slash commands or form fields." },
+        { "name": "One agent with all tools and no router", "verdict": "good", "why": "Simplest to build and handles ambiguity through conversation.", "tradeoff": "Tool overload, broad permissions and a larger blast radius for one prompt injection." }
+      ],
+      "flips": [
+        { "if": "Requests arrive through a form with a category field", "then": "Skip the classifier and route on the field." },
+        { "if": "Specialists need to take over a long conversation", "then": "Use handoff so the specialist converses with the user." }
+      ],
+      "takeaway": "Route on confidence, and make the expensive path harder to reach."
+    }
+  ],
+  "quiz": [
+    { "id": "w10-t03-q1", "type": "single", "tag": "tradeoff", "q": "A router sends 70 percent of traffic to a small model. What must you add to protect answer quality on the remaining hard queries?", "options": ["A larger context window for the small model", "More examples in the router prompt only", "A second router that votes with the first", "An escalation path on low confidence or a failed check"], "answer": 3, "explain": "The savings depend on sending the hard tail to the stronger model, so you need a measured miss path. A bigger window does not add capability, more router examples do not catch downstream failure, and a second router adds cost without a quality check on the answer.", "difficulty": 2 },
+    { "id": "w10-t03-q2", "type": "multi", "tag": "diagnose", "q": "Per-route accuracy is high on test data, but users report wrong answers for one request type. Which are plausible causes?", "options": ["That request type straddles two categories", "A new request type appears in production that no category covers", "The router temperature is set to zero", "Production wording differs from the labelled examples"], "answers": [0, 1, 3], "explain": "Overlapping categories, uncovered types and distribution shift all hide behind good test scores. A temperature of zero makes routing more repeatable, not less accurate by itself.", "difficulty": 2 }
+  ],
+  "flashcards": [
+    { "front": "What two examples does Anthropic give for routing?", "back": "Different customer-service query types down different paths, and easy questions to a smaller model with hard ones to a larger model [[r1]]." },
+    { "front": "What three things should every router have?", "back": "A confidence threshold, a safe fallback path and a route log to measure per-route accuracy." },
+    { "front": "Router versus handoff?", "back": "A router classifies once and steps aside. Handoff lets agents transfer control during the task and can loop [[r9]][[r11]]." }
+  ],
+  "related": ["w10-l1", "w10-t01", "w10-t13", "w10-t12"],
+  "refs": ["r1", "r9", "r11", "tr9"]
+}

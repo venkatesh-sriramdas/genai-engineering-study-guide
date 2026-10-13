@@ -1,0 +1,103 @@
+{
+  "id": "w13-l4",
+  "order": 4,
+  "title": "Speak and listen",
+  "kind": "problem",
+  "minutes": 18,
+  "brief": "A voice arrives and must be answered before the caller loses patience. Latency, control over the text in between and cost are open. Choose the architecture, the transport and the turn detection.",
+  "blocks": [
+    { "t": "h", "text": "Five ways to build a voice agent", "level": 2 },
+    { "t": "p", "md": "OpenAI's voice guide says to start new conversational voice apps with **GPT-Live**: full duplex, so it listens while it speaks, with reasoning delegated to a separate backend, billed per second, over WebRTC, WebSocket or SIP [[r3]]. The Realtime API runs one speech-to-speech model per session. A chained pipeline (speech-to-text, agent, text-to-speech) is the choice when you must inspect text between stages. On Azure, **Voice Live** bundles recognition, model and synthesis [[r7]], and Foundry voice-based prompt agents add managed voice to a prompt agent and are preview as of 2026-10-13 [[r8]]." },
+    { "t": "compare", "title": "Voice architectures", "intro": "Product names and status were checked on 2026-10-13. Confirm availability on your cloud and region.", "options": [
+      { "name": "Chained pipeline", "summary": "Speech-to-text, then a text agent, then text-to-speech.", "pros": ["Text between stages can be inspected, redacted and logged", "Reuses an existing text agent", "You choose each model"], "cons": ["Each stage adds latency", "More parts to run and monitor"], "bestWhen": "Compliance needs the text, or a tuned text agent already exists.", "avoidWhen": "The lowest latency is the top priority.", "meta": [{ "k": "Latency", "v": "highest" }, { "k": "Text control", "v": "full" }] },
+      { "name": "Realtime speech-to-speech", "tag": "GA on Azure", "summary": "One speech-to-speech model per session over browser WebRTC or server WebSocket.", "pros": ["Low latency", "One model handles audio in and out"], "cons": ["Little text control between stages", "The whole conversation is resent each turn, so later turns cost more"], "bestWhen": "A new voice app where latency matters most.", "avoidWhen": "You must filter text before the model sees it.", "meta": [{ "k": "Latency", "v": "low" }, { "k": "Text control", "v": "low" }] },
+      { "name": "GPT-Live with a backend", "summary": "Full duplex voice that delegates reasoning to a separate backend through Responses or client delegation.", "pros": ["A slow backend does not freeze the conversation", "Keeps an existing agent as the brain", "Partner paths for LiveKit, Twilio, Telnyx, Daily and Pipecat"], "cons": ["Backend tokens are billed separately from per-second voice time", "Documented on the OpenAI platform, so check Azure availability"], "bestWhen": "Reasoning is slow or tool heavy and the voice must stay responsive.", "avoidWhen": "You need Azure-managed speech features and data zones.", "meta": [{ "k": "Billing", "v": "per second plus backend" }] },
+      { "name": "Azure Voice Live", "summary": "Managed speech-to-speech with a WebSocket interface close to the Azure OpenAI Realtime events.", "pros": ["Noise suppression, echo cancellation and end-of-turn detection", "Over 140 speech-to-text locales and over 600 standard voices", "No orchestration to host"], "cons": ["The agent surface is preview", "Less control over the text path"], "bestWhen": "You want Azure Speech features without hosting orchestration.", "avoidWhen": "A GA-only rule covers the whole stack.", "meta": [{ "k": "Latency", "v": "low" }] },
+      { "name": "Foundry voice-based prompt agent", "tag": "Preview", "summary": "Managed voice for a prompt agent, native speech-to-speech or cascaded.", "pros": ["Managed in the agent service", "Cascaded mode adds model, voice and phrase-list control"], "cons": ["Preview on 2026-10-13", "No direct SIP, and no standard Teams card layout", "Evaluation supports full conversations only"], "bestWhen": "A prompt agent needs a voice front end and preview is allowed.", "avoidWhen": "Production needs a preview waiver you cannot get.", "meta": [{ "k": "Status", "v": "Preview" }] }
+    ] },
+    { "t": "dials", "id": "w13-l4-voice", "title": "Pick a voice architecture", "prompt": "Change how much you must control the text, how strict latency is, whether a text agent exists and preview tolerance.",
+      "dials": [
+        { "id": "control", "label": "Control over text", "values": [ { "id": "none", "label": "Audio in, audio out is fine" }, { "id": "text", "label": "Inspect, redact or log text" } ] },
+        { "id": "latency", "label": "Latency", "values": [ { "id": "strict", "label": "Lowest latency matters most" }, { "id": "relaxed", "label": "A short pause is acceptable" } ] },
+        { "id": "brain", "label": "Reasoning", "values": [ { "id": "new", "label": "Greenfield voice app" }, { "id": "existing", "label": "Keep an existing text agent" } ] },
+        { "id": "preview", "label": "Preview tolerance", "values": [ { "id": "ok", "label": "Preview is acceptable" }, { "id": "ga", "label": "GA only" } ] }
+      ],
+      "options": [
+        { "id": "chained", "name": "Chained pipeline", "summary": "Speech-to-text, agent, text-to-speech." },
+        { "id": "s2s", "name": "Realtime speech-to-speech", "summary": "One model per session." },
+        { "id": "gptlive", "name": "GPT-Live with a backend", "summary": "Full duplex, delegated reasoning." },
+        { "id": "voicelive", "name": "Azure Voice Live", "summary": "Managed speech-to-speech." },
+        { "id": "foundry", "name": "Foundry voice agent", "summary": "Voice for a prompt agent." }
+      ],
+      "scores": {
+        "chained": {
+          "control": { "none": { "s": 0, "why": "Extra stages add parts you do not need." }, "text": { "s": 2, "why": "Text between stages can be filtered and logged." } },
+          "latency": { "strict": { "s": -2, "why": "Each stage adds latency." }, "relaxed": { "s": 1, "why": "A pause is tolerated." } },
+          "brain": { "new": { "s": 0, "why": "Neutral." }, "existing": { "s": 2, "why": "Reuses the text agent as is." } },
+          "preview": { "ok": { "s": 0, "why": "Neutral." }, "ga": { "s": 1, "why": "Built from separate components (inference)." } }
+        },
+        "s2s": {
+          "control": { "none": { "s": 2, "why": "Direct audio in and out." }, "text": { "s": -2, "why": "No text between stages." } },
+          "latency": { "strict": { "s": 2, "why": "Built for low latency." }, "relaxed": { "s": 0, "why": "Neutral." } },
+          "brain": { "new": { "s": 1, "why": "A clean start." }, "existing": { "s": -1, "why": "Reasoning sits in the voice model unless tools delegate." } },
+          "preview": { "ok": { "s": 0, "why": "Neutral." }, "ga": { "s": 1, "why": "The Azure realtime API is GA." } }
+        },
+        "gptlive": {
+          "control": { "none": { "s": 1, "why": "Audio in and out." }, "text": { "s": -1, "why": "Text control is limited." } },
+          "latency": { "strict": { "s": 1, "why": "Full duplex keeps the call responsive." }, "relaxed": { "s": 0, "why": "Neutral." } },
+          "brain": { "new": { "s": 0, "why": "Neutral." }, "existing": { "s": 2, "why": "Delegates reasoning to a separate backend." } },
+          "preview": { "ok": { "s": 0, "why": "Neutral." }, "ga": { "s": 0, "why": "No GA label found, doc-stated." } }
+        },
+        "voicelive": {
+          "control": { "none": { "s": 1, "why": "Managed audio path." }, "text": { "s": -1, "why": "Bundled stages hide the text path (inference)." } },
+          "latency": { "strict": { "s": 1, "why": "End-of-turn detection and speech-to-speech." }, "relaxed": { "s": 0, "why": "Neutral." } },
+          "brain": { "new": { "s": 1, "why": "Fits a new managed voice app." }, "existing": { "s": 0, "why": "Possible through tools (inference)." } },
+          "preview": { "ok": { "s": 0, "why": "Neutral." }, "ga": { "s": -1, "why": "The agent surface is preview." } }
+        },
+        "foundry": {
+          "control": { "none": { "s": 1, "why": "Native mode is audio to audio." }, "text": { "s": 0, "why": "Cascaded mode exposes text." } },
+          "latency": { "strict": { "s": 0, "why": "Native is fast, cascaded adds latency." }, "relaxed": { "s": 1, "why": "Cascaded gives more control." } },
+          "brain": { "new": { "s": 0, "why": "Neutral." }, "existing": { "s": 1, "why": "A prompt agent with tools is the brain." } },
+          "preview": { "ok": { "s": 1, "why": "Managed in Foundry." }, "ga": { "s": -2, "why": "Preview on 2026-10-13." } }
+        }
+      },
+      "takeaway": "Speech-to-speech wins on latency, chained wins when text must be inspected, and GPT-Live wins when a slow brain must not freeze the call." },
+    { "t": "table", "caption": "Realtime transports, checked 2026-10-13", "head": ["Transport", "Microsoft's figure", "Use for", "Notes"], "rows": [
+      ["WebRTC", "About 100 ms", "Client apps in a browser or on a device", "OpenAI mints ephemeral keys with `POST /v1/realtime/client_secrets`. GA calls use `/v1/realtime/calls`"],
+      ["WebSocket", "About 200 ms", "Server to server pipelines", "On Azure use the GA `/openai/v1` endpoint and send no `api-version`"],
+      ["SIP", "Varies", "Telephony", "Foundry voice agents offer no direct SIP. Use Teams Phone extensibility or Twilio"]
+    ], "highlightCol": 1 },
+    { "t": "formula", "title": "Audio tokens and history growth", "expr": "audio_tokens = user_seconds x 10 + assistant_seconds x 20", "vars": [
+      { "k": "user audio", "v": "1 token per 100 ms" },
+      { "k": "assistant audio", "v": "1 token per 50 ms" },
+      { "k": "history", "v": "the full conversation is resent each turn, and prompt caching is best effort" }
+    ], "example": "A turn of 10 s user audio and 10 s assistant audio is 100 + 200 = **300** tokens. At turn 9 the resent history is 8 x 300 = **2,400** tokens before the new audio, so long calls cost more per turn. Changing history or instructions mid-session busts the cache." },
+    { "t": "failure", "title": "Failure modes", "items": [
+      { "symptom": "The assistant cuts in when callers pause to think", "cause": "`server_vad` is silence based and cannot tell a thinking pause from a finished thought", "fix": "Use `semantic_vad` with a lower `eagerness`, or lengthen `silence_duration_ms`. Measure interruption rate." },
+      { "symptom": "Cost per call climbs on long calls", "cause": "The full conversation is resent each turn and mid-session edits bust the cache", "fix": "Keep instructions stable. `session.truncation.retention_ratio` defaults to 1.0, and 0.8 drops extra items so the cache stays valid longer [[r5]]." },
+      { "symptom": "Calls drop at the one hour mark", "cause": "The Azure realtime session maximum is 60 minutes", "fix": "Build reconnect logic that carries state to a new session [[r6]]." },
+      { "symptom": "A transcription-only session returns nothing", "cause": "`gpt-live-transcribe` and `gpt-realtime-whisper` need turn detection omitted or `null` and a manual `input_audio_buffer.commit`", "fix": "Commit the buffer yourself [[r4]]." },
+      { "symptom": "The 'one moment' filler arrives too late in a Foundry voice agent", "cause": "`latency_threshold_ms` for interim responses defaults to 2000", "fix": "Lower it, as the docs advise [[r9]]." }
+    ] },
+    { "t": "accordion", "items": [
+      { "title": "Go deeper: turn detection settings", "blocks": [
+        { "t": "p", "md": "`session.audio.input.turn_detection` takes `server_vad` (silence based, the default, tunable with `threshold`, `prefix_padding_ms` and `silence_duration_ms`) or `semantic_vad` (a classifier on the words, with `eagerness` of `low`, `medium`, `high` or `auto`, where `auto` equals `medium`) [[r4]]. `create_response` and `interrupt_response` apply to conversations only. On Azure, `turn_detection` accepts `none`, `semantic_vad` or `server_vad` [[r6]]." }
+      ] },
+      { "title": "Go deeper: Foundry voice agents and Voice Live", "blocks": [
+        { "t": "p", "md": "Foundry voice agents offer native speech-to-speech and cascaded architectures. Phone channels use Teams Phone extensibility and Twilio. Noise reduction values are `near_field`, `far_field` and `azure_deep_noise_suppression` [[r8]]. Voice Live models include `gpt-realtime-2.1` (also `-datazone` and `-regional`), `gpt-realtime-2.1-mini`, `gpt-realtime-1.5`, `gpt-realtime`, `gpt-realtime-mini`, `gpt-4o` and `gpt-4o-mini`. It adds avatars, phrase lists and custom voice [[r7]]." }
+      ] },
+      { "title": "Go deeper: moving from the realtime beta to GA", "blocks": [
+        { "t": "p", "md": "Drop the `OpenAI-Beta: realtime=v1` header, mint keys with `/v1/realtime/client_secrets`, use `/v1/realtime/calls`, set `session.type` and use renamed events such as `response.output_audio.delta` [[r3]]. On Azure use the `/openai/v1` endpoint with no `api-version`. The Azure API does not connect straight to end-user devices, so a client integration must terminate the audio [[r6]]." }
+      ] }
+    ] }
+  ],
+  "quiz": [
+    { "id": "w13-l4-q1", "type": "numeric", "tag": "numeric", "q": "Each turn has 10 s of user audio and 10 s of assistant audio. User audio costs 1 token per 100 ms and assistant audio 1 token per 50 ms. At the start of turn 9, how many audio tokens of history are resent, ignoring text and truncation?", "answer": 2400, "tolerancePct": 1, "unit": "tokens", "hint": "One turn is 100 + 200 tokens. Eight turns are complete.", "explain": "10 s of user audio is 100 tokens and 10 s of assistant audio is 200 tokens, so a turn is 300 tokens. Eight completed turns give 8 x 300 = 2,400 tokens, resent before the new audio. This growth is why long calls cost more per turn.", "difficulty": 2, "ref": "r5" },
+    { "id": "w13-l4-q2", "type": "match", "tag": "concept", "q": "Match each setting to what it does.", "pairs": [ { "l": "`server_vad`", "r": "Silence-based turn detection with `threshold`, `prefix_padding_ms` and `silence_duration_ms`" }, { "l": "`semantic_vad`", "r": "A classifier on the words, with `eagerness` low, medium, high or auto" }, { "l": "Manual `input_audio_buffer.commit`", "r": "Required with `gpt-live-transcribe` and `gpt-realtime-whisper`" }, { "l": "`session.truncation.retention_ratio`", "r": "Defaults to 1.0, and 0.8 keeps the cache valid longer" } ], "explain": "Silence-based detection and word-aware detection are the two turn-detection modes. Transcription-only models need turn detection off and a manual commit. The retention ratio controls how much history truncation drops.", "difficulty": 2, "ref": "r4" },
+    { "id": "w13-l4-q3", "type": "single", "tag": "flip", "q": "Compliance requires card numbers to be redacted from the transcript before any model sees it. Which architecture fits?", "options": ["Native speech-to-speech, since it has the lowest latency", "GPT-Live full duplex, since it listens while it speaks", "A chained pipeline, so text can be inspected and redacted between stages", "A Foundry voice agent in native mode, which is preview"], "answer": 2, "explain": "Only a chained pipeline exposes text between stages, so a redaction step can sit there. Native speech-to-speech and GPT-Live hand audio to the model, and native mode in a Foundry voice agent has the same property plus preview status.", "difficulty": 2, "ref": "r3" },
+    { "id": "w13-l4-q4", "type": "single", "tag": "diagnose", "q": "Callers say the assistant cuts in while they pause to think. The session uses `server_vad` with defaults. Which change fits best?", "options": ["Switch to `semantic_vad` with `eagerness` set to `low`, or lengthen `silence_duration_ms`", "Lower the temperature of the voice model so the replies become shorter and less likely to interrupt", "Disable turn detection and send audio as one long message", "Move from WebRTC to WebSocket to cut latency"], "answer": 0, "explain": "Silence-based detection ends a turn on any long enough pause. A word-aware detector with low eagerness, or a longer silence window, waits longer. Temperature does not control turn endings, disabling detection removes the conversation loop, and a transport swap changes latency, not turn logic.", "difficulty": 2, "ref": "r4" }
+  ],
+  "defend": null,
+  "refs": ["r3", "r4", "r5", "r6", "r7", "r8", "r9"],
+  "takeaways": ["Chained gives text control, speech-to-speech gives latency, GPT-Live keeps the call alive while a backend thinks", "Silence-based turn detection cannot tell a thinking pause from a finished thought", "Audio history is resent each turn, so long calls cost more per turn", "Foundry voice agents are preview, and Azure realtime sessions end at 60 minutes"]
+}

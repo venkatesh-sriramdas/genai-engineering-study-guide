@@ -1,0 +1,89 @@
+{
+  "id": "w12-l5",
+  "order": 5,
+  "title": "Who is this agent?",
+  "kind": "problem",
+  "minutes": 18,
+  "brief": "An agent calls APIs, reads mail and may join a group chat. Someone must be accountable and each credential must have a boundary. Choose the identity mode and the credential boundary before the permissions.",
+  "blocks": [
+    { "t": "h", "text": "Objects, modes and accountability", "level": 2 },
+    { "t": "p", "md": "Agent 365 uses Entra Agent ID to give each agent its own identity [[r17]]. Three objects make up the model, and not every agent uses all three. The **agent identity blueprint** is a template that holds the credentials (federated identity credentials, certificates or keys, client secrets), the permissions and the verified publisher. The **agent identity** is a service principal with `servicePrincipalType` `ServiceIdentity` and `@odata.type` `#microsoft.graph.agentIdentity`, and it has no credentials of its own. The optional **agent user** is a user account marked as an AI agent, 1:1 with its identity, available only to tenants in the Frontier preview program.\n\nOne blueprint creates many identities, so an administrator can apply Conditional Access, revoke a grant or disable every agent of a kind in one step [[r14]]. Agent identities are single tenant. Blueprints can be multitenant." },
+    { "t": "diagram", "id": "w12-l5-d1", "title": "Blueprint, identities and sponsor", "alt": "A sponsor is accountable for a blueprint. The blueprint holds the credentials and creates several agent identities. One identity may have an optional agent user.", "src": "flowchart LR\n  S[Sponsor] --> B[Blueprint]\n  B --> C[Credentials held here]\n  B --> I1[Agent identity A]\n  B --> I2[Agent identity B]\n  I1 --> U[Agent user, optional]", "caption": "The blueprint is the credential boundary, so group only identities that can share credentials and baseline permissions." },
+    { "t": "compare", "title": "Three execution modes", "intro": "Choose the mode first, then confirm permissions and consent. Source checked on 2026-10-13.", "options": [
+      { "name": "S2S (agent acts as itself)", "tag": "GA", "summary": "No user context. Application permissions, and the agent identity is the token subject.", "pros": ["Fits scheduled tasks, monitoring and background work", "No user needs to be present"], "cons": ["Access is not bounded by any user's permissions", "Application permissions can be broad if granted carelessly"], "bestWhen": "A job runs on a schedule or an event, with its own scope of work.", "avoidWhen": "Access must follow the signed-in user." },
+      { "name": "OBO (on behalf of a user)", "tag": "GA", "summary": "The signed-in user is the token subject and the agent identity is the actor. Delegated permissions.", "pros": ["Access is bounded by the user's permissions", "Clear accountability to one person"], "cons": ["Needs a user present", "No single right user in a group chat or an event-triggered run"], "bestWhen": "A chat assistant acts for one person.", "avoidWhen": "The context is a team or no user is signed in." },
+      { "name": "Agentic-User (own user account)", "tag": "Preview (Frontier)", "summary": "The agent acts as its own Entra user account with a mailbox, Teams presence and Word or Outlook interactions.", "pros": ["Can act as a team member in group chats", "Has its own mailbox and presence"], "cons": ["Needs the Frontier preview program", "One more account and license to govern"], "bestWhen": "The agent must work alongside people as itself.", "avoidWhen": "You are GA only, or no Microsoft 365 presence is needed." }
+    ] },
+    { "t": "dials", "id": "w12-l5-mode", "title": "Pick the identity mode", "prompt": "Change who is present, what bounds access and what the audience is.",
+      "dials": [
+        { "id": "presence", "label": "Who is present", "values": [ { "id": "user", "label": "A user is signed in" }, { "id": "none", "label": "Scheduled or event driven" } ] },
+        { "id": "bound", "label": "What bounds access", "values": [ { "id": "user", "label": "The user's permissions" }, { "id": "agent", "label": "The agent's own scope" } ] },
+        { "id": "audience", "label": "Audience", "values": [ { "id": "one", "label": "One user at a time" }, { "id": "team", "label": "Team or group context" } ] },
+        { "id": "preview", "label": "Preview tolerance", "values": [ { "id": "ok", "label": "Preview is acceptable" }, { "id": "ga", "label": "GA only" } ] }
+      ],
+      "options": [
+        { "id": "s2s", "name": "S2S", "summary": "Agent identity, app permissions." },
+        { "id": "obo", "name": "OBO", "summary": "User subject, agent actor." },
+        { "id": "au", "name": "Agentic-User", "summary": "Own user account." },
+        { "id": "shared", "name": "Shared app registration", "summary": "One long-lived secret for many agents." }
+      ],
+      "scores": {
+        "s2s": {
+          "presence": { "user": { "s": 0, "why": "Ignores the user even when one is present." }, "none": { "s": 2, "why": "Built for scheduled and background work." } },
+          "bound": { "user": { "s": -2, "why": "The user's permissions do not limit what it reads." }, "agent": { "s": 2, "why": "Application permissions fit an own scope." } },
+          "audience": { "one": { "s": 0, "why": "Neutral." }, "team": { "s": -1, "why": "No mailbox or Teams presence." } },
+          "preview": { "ok": { "s": 0, "why": "Neutral." }, "ga": { "s": 1, "why": "GA at the 2026-05-01 announcement." } }
+        },
+        "obo": {
+          "presence": { "user": { "s": 2, "why": "Needs a signed-in user, who is there." }, "none": { "s": -2, "why": "No user to act for." } },
+          "bound": { "user": { "s": 2, "why": "Delegated permissions bound access to the user." }, "agent": { "s": -1, "why": "Over-constrains work with its own scope." } },
+          "audience": { "one": { "s": 1, "why": "One accountable user." }, "team": { "s": -2, "why": "No single right user in a group chat." } },
+          "preview": { "ok": { "s": 0, "why": "Neutral." }, "ga": { "s": 1, "why": "GA at the 2026-05-01 announcement." } }
+        },
+        "au": {
+          "presence": { "user": { "s": 0, "why": "Acts as itself, not as the user." }, "none": { "s": 1, "why": "Works without a user present." } },
+          "bound": { "user": { "s": -1, "why": "Not bounded by a user." }, "agent": { "s": 1, "why": "Own account and own scope." } },
+          "audience": { "one": { "s": -1, "why": "Heavy for one user." }, "team": { "s": 2, "why": "Acts as a team member with mailbox and Teams presence." } },
+          "preview": { "ok": { "s": 1, "why": "Frontier program access is assumed." }, "ga": { "s": -2, "why": "Needs the Frontier preview program." } }
+        },
+        "shared": {
+          "presence": { "user": { "s": 0, "why": "Works, but loses who acted." }, "none": { "s": 1, "why": "Easy for scheduled jobs." } },
+          "bound": { "user": { "s": -2, "why": "Broad shared access ignores the user." }, "agent": { "s": -1, "why": "Shared scope grows over time." } },
+          "audience": { "one": { "s": -1, "why": "No per-agent accountability." }, "team": { "s": 0, "why": "Neutral." } },
+          "preview": { "ok": { "s": 0, "why": "Neutral." }, "ga": { "s": 1, "why": "Not preview, but outside agent governance." } }
+        }
+      },
+      "takeaway": "OBO when access must follow the user, S2S for scheduled work, Agentic-User when the agent is a teammate. The shared registration never leads on accountability." },
+    { "t": "table", "caption": "Sponsors, owners and managers", "head": ["Role", "Required", "Who can hold it", "Powers"], "rows": [
+      ["Sponsor", "Yes, at least one on every blueprint and agent identity", "Users and some groups. Not role-assignable groups or assigned security groups", "Business accountability. Decides lifecycle, can disable or soft-delete, cannot edit auth settings or re-enable"],
+      ["Owner", "Optional", "Users or service principals, never groups", "Technical control. Manages credentials, can re-enable or hard-delete"],
+      ["Manager", "Optional", "Not detailed here", "Can request access packages for agents"]
+    ], "highlightCol": 0 },
+    { "t": "failure", "title": "Failure modes", "items": [
+      { "symptom": "A 403 from storage even though RBAC is correct", "cause": "The token audience is the MCP server URL, not the downstream resource id such as `https://storage.azure.com`", "fix": "Request the token for the resource id. Decode the token and compare its `aud` claim [[r4]]." },
+      { "symptom": "A secret is found in an agent's configuration", "cause": "A team expected the agent identity to hold credentials. They live on the blueprint and every identity from it shares them", "fix": "Federate the blueprint to an Azure managed identity so no secret is stored, and group only identities that can share credentials." },
+      { "symptom": "A group-chat agent reads one participant's mailbox", "cause": "OBO had to choose one user for a shared context", "fix": "Give the agent its own account (Agentic-User) or a scoped S2S identity." },
+      { "symptom": "A sponsor disabled an agent and cannot bring it back", "cause": "Sponsors can disable or soft-delete but cannot re-enable", "fix": "Keep an owner on every agent, and write the recovery path into the runbook." },
+      { "symptom": "A policy plan assumes an MFA prompt for the agent", "cause": "Agents do not use passwords or authenticator apps, so MFA does not apply", "fix": "Govern with Conditional Access policies at token issue or refresh." }
+    ] },
+    { "t": "accordion", "items": [
+      { "title": "Go deeper: Conditional Access and ID Governance", "blocks": [
+        { "t": "p", "md": "Conditional Access for agents is evaluated when a token is issued or refreshed, and Continuous Access Evaluation covers some resources [[r15]]. It needs Microsoft 365 E7 or an Agent 365 license with at least Entra P1 or Microsoft 365 E3. Entra ID Governance uses access packages for agent identities (security groups, OAuth permissions, Entra roles) under the same license rule [[r27]]. Entra Agent ID itself is available to all Entra customers." }
+      ] },
+      { "title": "Go deeper: how each platform gets an identity", "blocks": [
+        { "t": "p", "md": "Foundry provisions a blueprint and identity automatically [[r27]]. Hosted agents get a dedicated agent identity at deploy [[r2]]. It can call model inference and session storage by default, and other resources need manual RBAC. A separate project managed identity pulls from Azure Container Registry. User-invoked calls support OAuth On-Behalf-Of, and autonomous calls use the agent identity.\n\nIn the older agent application model, unpublished agents share a project identity and publishing creates a distinct one, so RBAC must be reassigned. The Foundry docs say the publishing experience is changing, so confirm which model your project uses. Copilot Studio can auto-assign agent identities (preview). App Service and Azure Functions can use an agent identity. Third-party agents on AWS Bedrock or n8n use the Entra ID Auth SDK sidecar or workload identity federation." }
+      ] },
+      { "title": "Go deeper: autopilot agents", "blocks": [
+        { "t": "p", "md": "An autopilot is a Foundry agent with an Entra agent user in addition to its agent identity, so it acts as itself in Microsoft 365 [[r19]]. You publish a blueprint and teams create instances, each with its own identity and access. Only hosted agents can be published as autopilot blueprints. The identity types are assistive (user context), background service (app-only, no Microsoft 365 actions) and autopilot. The page stated no preview label on 2026-10-13, but agent users need the Frontier program, so treat it as preview." }
+      ] }
+    ] }
+  ],
+  "quiz": [
+    { "id": "w12-l5-q1", "type": "single", "tag": "diagnose", "q": "A hosted agent gets 403 from a storage account although its agent identity holds the right role. What is the likely cause?", "code": { "lang": "text", "code": "token aud = https://mcp-tools.example\nRBAC: agent identity has Storage Blob Data Reader\nresult: 403" }, "options": ["The agent identity needs a client secret stored on its own object", "The token audience is the MCP server URL, not the downstream resource id", "No sponsor has approved the agent yet", "Conditional Access is forcing an MFA prompt the agent cannot answer"], "answer": 1, "explain": "A token whose audience is the MCP server URL is not valid for storage, even with correct RBAC. The docs say to use the downstream resource id such as `https://storage.azure.com`. Agent identities hold no credentials, sponsors do not gate tokens, and MFA does not apply to agents.", "difficulty": 2, "ref": "r4" },
+    { "id": "w12-l5-q2", "type": "single", "tag": "flip", "q": "A nightly job summarizes tickets and posts to a channel. No user is signed in, the agent has its own scope and the team wants GA features only. Which mode fits?", "options": ["OBO, because every call needs a user as the token subject", "Agentic-User, because every agent needs its own mailbox", "S2S, where the agent acts as its own identity with application permissions", "A shared app registration with one long-lived secret that every scheduled agent in the tenant reuses"], "answer": 2, "explain": "S2S is built for scheduled and background work, with the agent identity as token subject. OBO needs a signed-in user. Agentic-User needs the Frontier preview program and is for user-like presence. A shared secret removes per-agent accountability.", "difficulty": 1, "ref": "r17" },
+    { "id": "w12-l5-q3", "type": "multi", "tag": "security", "q": "Select every true statement about agent identity and accountability.", "options": ["Every blueprint and agent identity needs at least one sponsor.", "A sponsor can re-enable a disabled agent.", "Credentials sit on the blueprint, not on the agent identity.", "Agent identities can be multitenant, while blueprints are single tenant."], "answers": [0, 2], "explain": "Sponsors are required, and credentials live on the blueprint, which makes it the credential boundary. Sponsors can disable or soft-delete but cannot re-enable, which is an owner power. The tenancy statement is reversed: identities are single tenant and blueprints can be multitenant.", "difficulty": 2, "ref": "r18" }
+  ],
+  "defend": null,
+  "refs": ["r2", "r4", "r14", "r15", "r17", "r18", "r19", "r27"],
+  "takeaways": ["Pick the mode first: S2S, OBO or Agentic-User, then confirm permissions and consent", "The blueprint holds credentials and is the credential boundary", "Sponsors carry business accountability, owners carry technical control", "A token audience mismatch fails even with correct RBAC"]
+}

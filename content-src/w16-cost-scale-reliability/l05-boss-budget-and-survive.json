@@ -1,0 +1,100 @@
+{
+  "id": "w16-l5",
+  "order": 5,
+  "title": "Boss: stay in budget through a regional incident",
+  "kind": "boss",
+  "minutes": 25,
+  "brief": "An interviewer says token spend doubled last quarter, and last week a regional incident took the assistant offline for 40 minutes. Keep it inside budget and available. Traffic shape, latency needs, residency and recovery targets are all unspecified.",
+  "blocks": [
+    { "t": "h", "text": "SLOs and error budgets for an LLM application", "level": 2 },
+    { "t": "table", "caption": "Author synthesis, not a vendor rule. Pair every latency number with token counts", "head": ["Category", "SLI", "How to measure", "Dials that change the target"], "rows": [
+      ["**Latency**", "TTFT p95 for streaming UIs", "Azure Monitor `AzureOpenAITimeToResponse`, or first-byte time from your traces", "Interactive versus batch, user tolerance for a first-token delay"],
+      ["**Latency**", "TTLT p95, bucketed by output tokens", "`AzureOpenAITTLTInMS` with `GeneratedTokens`", "Output length and reasoning effort"],
+      ["**Reliability**", "Success rate excluding client quota errors, plus 429 and 503 rates", "Gateway logs and backend metrics", "Whether a degraded answer counts as success"],
+      ["**Reliability**", "Breaker-open time and failover success", "Gateway metrics and rehearsal results", "Recovery tier: hot/hot, hot/warm or hot/cold"],
+      ["**Efficiency**", "Cache hit ratio, cost per successful task, tokens per task", "`cached_tokens` over prompt tokens, `llm-emit-token-metric` by consumer", "Prefix stability, routing, agent loop depth"]
+    ], "highlightCol": 0 },
+    { "t": "diagram", "id": "w16-l5-topology", "title": "A budget-aware, region-tolerant topology", "alt": "Clients reach Azure Front Door, which routes to two API Management instances in different regions. Region A has a PTU deployment that spills over to a standard deployment, and a batch lane for asynchronous work. Region B has a standard deployment.", "src": "flowchart TB\n  U[Clients] --> F[Front Door]\n  F --> A[APIM region A]\n  F --> B[APIM region B]\n  A --> P[PTU deployment A]\n  P -- spillover --> S[Standard deployment A]\n  B --> D[Standard deployment B]\n  A --> Q[Batch lane for async work]", "caption": "Baseline on PTU, bursts on standard through spillover, asynchronous work on Batch, and a second region built in advance. Front Door with one APIM per region can route around a dead region [[r15]]." },
+    { "t": "flow", "title": "Capacity planning loop", "direction": "h", "steps": [
+      { "title": "Measure", "md": "Peak and average RPM, prompt and output token distributions, cache rate and the interactive versus async split per consumer." },
+      { "title": "Split", "md": "Baseline on provisioned capacity, bursts on Priority or Standard, asynchronous work on Batch." },
+      { "title": "Size", "md": "Apply the PTU formula with a measured cache rate. Add failover headroom in the surviving region." },
+      { "title": "Limit", "md": "Per-consumer token limits and quotas at the gateway, with attribution metrics." },
+      { "title": "Rehearse", "md": "Fail a region on purpose. Check quota, model versions, cold-cache cost and degraded mode." },
+      { "title": "Review", "md": "Compare cost per successful task and SLO burn monthly, then resize." }
+    ] },
+    { "t": "callout", "kind": "interview", "title": "How this round is scored", "md": "Treat cost and availability as one design. Say that cheaper routing can split your cache, that failover starts cold, and that a quota is not capacity. Name the SLO before you name the product, and say which dial would flip each choice." }
+  ],
+  "quiz": [
+    { "id": "w16-l5-q1", "type": "numeric", "tag": "numeric", "q": "A 99.9% availability SLO is measured over a 30-day month. How many minutes of unavailability does the error budget allow?", "answer": 43.2, "tolerancePct": 1, "unit": "minutes", "hint": "30 x 24 x 60 x 0.001", "explain": "A 30-day month has 43,200 minutes, and 0.1% of that is 43.2 minutes. A single 40-minute incident therefore consumes about 93% of the monthly budget, which is why recovery tier and failover rehearsal matter.", "difficulty": 1, "ref": "r15" },
+    { "id": "w16-l5-q2", "type": "match", "tag": "concept", "q": "Match each regional recovery strategy to its approximate recovery profile.", "pairs": [
+      { "l": "Hot/hot", "r": "Recovery in minutes, near-zero data loss, highest cost" },
+      { "l": "Hot/warm", "r": "Recovery in 30 minutes to 2 hours, moderate cost" },
+      { "l": "Hot/cold", "r": "Recovery in 2 to 8 hours, lowest cost" }
+    ], "explain": "The Foundry guidance gives these approximate targets and says Foundry does not fail over on its own. The tier is a business choice: how much downtime and standby cost the service can accept.", "difficulty": 1, "ref": "r15" },
+    { "id": "w16-l5-q3", "type": "single", "tag": "diagnose", "q": "After traffic failed over to a standby region, spend per request rose about 60% and p95 TTFT doubled. Traffic and prompts are unchanged, and the cached-token ratio fell to near zero. Which cause fits best?", "options": ["The standby region runs a larger model by default and bills at a higher rate", "Prompt caches are not shared across regions, so the standby started cold", "The gateway token limit counts every token twice after a failover", "Priority processing was disabled by the failover and is billed at a premium"], "answer": 1, "explain": "The cached-token ratio collapsing points to a cold cache: provider caches are per region and not shared across regional boundaries. A larger default model would not change the cache ratio. Double counting would cause 429s rather than higher cost per request. Priority processing does not switch off because of a failover.", "difficulty": 2, "ref": "r15" },
+    { "id": "w16-l5-q4", "type": "single", "tag": "flip", "q": "Region A fails in a hot/warm setup, and region B has about 30% of normal quota. What is the best first move?", "options": ["Shed or degrade non-critical traffic, send critical traffic to region B, queue async work", "Retry all traffic against region B until its quota resets, adding jitter between each attempt", "Raise client timeouts so queued requests can wait patiently for the capacity to appear in B", "Hedge every request across both regions so the first reply wins and latency stays low overall"], "answer": 0, "explain": "With 30% of normal capacity, something has to give, and a product-level decision about what to drop is the only fix. Retries against exhausted quota cannot succeed. Longer timeouts only hide the queue. Hedging doubles load on the scarce region.", "difficulty": 3, "ref": "r1" }
+  ],
+  "defend": {
+    "prompt": "Token spend doubled last quarter, and last week a regional incident took our assistant offline for 40 minutes. Keep it within budget and available. Where do you start?",
+    "timebox": "5 min",
+    "clarify": [
+      "What is the traffic shape: steady, spiky, or business-hours, and what share is interactive versus asynchronous?",
+      "Where do the tokens go today, by consumer and by prompt section, and what is the cost per successful task?",
+      "What are the residency limits, and can prompts be processed outside our geography?",
+      "What are the availability target, RTO and RPO, and what degraded mode would users accept?",
+      "What capacity and quota do we have today, and what are our current 429 and cache hit rates?"
+    ],
+    "options": [
+      { "name": "Cut tokens first: caching, routing, output caps", "when": "Spend has a clear sink such as a long stable prefix, mixed difficulty or long outputs.", "tradeoff": "Routing splits the cache across models. Compression and caps risk quality. Needs an eval set." },
+      { "name": "Gateway with per-consumer token limits, metrics and quotas", "when": "Several consumers share capacity and nobody owns the bill.", "tradeoff": "An extra hop and a single point of failure. Counters are per gateway and limits can briefly overshoot." },
+      { "name": "Capacity mix: PTU baseline, spillover, Priority for bursts, Batch for async", "when": "Predictable baseline with bursts and a share of delay-tolerant work.", "tradeoff": "PTU is billed while idle, and quota and reservations do not guarantee capacity." },
+      { "name": "Second region: hot/warm or hot/hot behind Front Door and APIM", "when": "The availability target exceeds what one region can deliver.", "tradeoff": "Standby cost, per-region quota, cold caches and state that is per region." },
+      { "name": "Degradation plan: smaller model, shorter answers, cached answers, queue or shed", "when": "Capacity can be exhausted and some work is non-critical.", "tradeoff": "Needs a product decision on what to drop, and degraded answers can break guarantees." }
+    ],
+    "modelAnswer": [
+      { "t": "p", "md": "**Clarify.** I would first ask for the traffic shape and the interactive versus asynchronous split, where tokens go by consumer and prompt section, the residency limits, the availability target with RTO and RPO, and the current quota and 429 rates. Without a cost per successful task and an SLO I would be optimizing blind." },
+      { "t": "p", "md": "**Options.** The boring options come first: output caps, a stable cached prefix and Batch for work nobody waits for. Then a gateway with per-consumer limits and metrics, a capacity mix, a second region and a degradation plan. I would treat cost and availability as one design because each lever moves the other: routing splits the cache, failover starts cold and a retry layer can multiply spend." },
+      { "t": "p", "md": "**Pick, and what flips it.** I would put a gateway in front first, with `llm-token-limit` per consumer and token metrics for attribution, because without attribution nobody owns the spend. Then I would cut tokens at the biggest sink: caching for a stable prefix, output caps for long answers, Batch for async. For capacity I would size PTUs for the steady baseline with the measured cache rate, spill over to standard for bursts and use Priority only for bursty interactive traffic. For availability I would build a hot/warm second region behind Front Door and APIM, with its own quota and deployments, and a written degraded mode." },
+      { "t": "table", "head": ["If this dial changes", "The choice changes to"], "rows": [
+        ["Traffic is small or spiky", "Pay-as-you-go and Priority instead of PTU"],
+        ["Residency forbids global processing", "Data Zone or Regional deployment types and a second region inside the boundary"],
+        ["Availability target is minutes, not hours", "Hot/hot with warmed caches and tested failover"],
+        ["Spend is dominated by long unique context", "Compression and retrieval changes before a router"],
+        ["Quality bar is strict", "No router or smaller model without an eval gate"],
+        ["Most work is delay-tolerant", "Batch first, Flex only where 429 and 408 are acceptable"]
+      ] },
+      { "t": "p", "md": "**Failure modes and detection.** Retry storms from nested layers, detected by requests per unique task id. A 429 below quota, detected by comparing `x-ratelimit-limit-tokens` with the assignment. Reservations bought before capacity exists. Failover into a region without quota, or with a cold cache, found by rehearsing it. Metric dimensions with high cardinality that silently drop data. A tripped breaker that looks like a model outage, found by tagging gateway-originated 503s." },
+      { "t": "p", "md": "**Metrics and rollout.** I would track cost per successful task, tokens per task, cache hit ratio, 429 and 503 rates, breaker-open time, TTFT and TTLT p95 by output bucket, PTU utilization and error budget burn. I would roll out limits in monitor-only mode first, shadow the second region, run a game day that fails a region on purpose, and set rollback thresholds before the first change." }
+    ],
+    "rubric": [
+      { "pt": "Asks about traffic shape, interactive versus async split, residency, RTO and RPO and where tokens go", "w": 3 },
+      { "pt": "Uses cost per successful task and attributes spend by consumer before choosing levers", "w": 2 },
+      { "pt": "Offers several options including the boring ones: caps, a cached prefix, Batch", "w": 2 },
+      { "pt": "Sizes capacity from the formula and says quota and reservations do not guarantee capacity", "w": 2 },
+      { "pt": "Chooses a resilience pattern per failure type and avoids retrying quota errors", "w": 3 },
+      { "pt": "Plans the second region with quota, deployments, cold caches and a rehearsal", "w": 2 },
+      { "pt": "States flip conditions tied to dials such as traffic shape, residency and quality bar", "w": 2 },
+      { "pt": "Names SLIs, SLOs, detection signals and a staged rollout with rollback thresholds", "w": 2 }
+    ],
+    "followUps": [
+      { "q": "Finance wants one global token cap for the whole company. What do you say?", "a": "Use per-consumer limits and quotas at the gateway for attribution. Counters are per gateway and limits can briefly overshoot, so keep headroom below the provider limit and avoid one global number across regions." },
+      { "q": "A 429 storm hits while your PTU usage is only 40%. Where do you look?", "a": "Check which kind of 429 it is. Look at the Azure headers, compare the effective limit with the assignment, and check whether `max_tokens` inflates the counted tokens. Check spillover configuration and whether a different deployment is the one throttled." },
+      { "q": "Security wants prompts to stay in one geography. How does that change the design?", "a": "Use Data Zone or Regional deployment types and put the second region inside the same boundary. Global Standard may process prompts in any region, and a cold standby cache plus smaller quota must be planned inside the boundary." }
+    ],
+    "redFlags": [
+      "Retries 429 quota errors or stacks retry layers without caps",
+      "Buys a reservation or PTU before confirming capacity and utilization",
+      "Proposes failover without testing it or without quota in the second region",
+      "Optimizes cost per token and never mentions cost per successful task"
+    ]
+  },
+  "refs": ["r15", "r1", "r2", "r3", "r6", "r7", "r27"],
+  "takeaways": [
+    "Cost and availability are one design: routing splits caches, failover starts cold and retries multiply spend",
+    "Attribute spend at the gateway, then cut the biggest sink first",
+    "Size PTUs for the baseline, spill over for bursts and use Batch for async work",
+    "Failover is not automatic on Foundry. Build, size and rehearse the second region",
+    "Write SLIs and an error budget, and treat a 40-minute outage as 93% of a monthly 99.9% budget"
+  ]
+}

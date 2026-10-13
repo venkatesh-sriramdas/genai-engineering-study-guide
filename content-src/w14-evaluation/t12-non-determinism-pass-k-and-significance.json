@@ -1,0 +1,101 @@
+{
+  "id": "w14-t12",
+  "order": 12,
+  "group": "Agents and safety",
+  "title": "Non-determinism, pass^k and significance",
+  "minutes": 10,
+  "difficulty": "advanced",
+  "summary": "Run each task several times. Report pass@k when one success is enough and pass^k when every run must succeed. Attach a confidence interval to every pass rate and compare versions paired, because small eval sets cannot see small differences.",
+  "useIf": "An agent or prompt change moves a score by a few points and you must decide whether it is real.",
+  "avoidIf": "The system is deterministic and fully checkable, where one run is the truth.",
+  "explain": [
+    { "t": "p", "md": "Scores vary because sampling, tools, the environment and the judge are all noisy. So run each task n times. Two summaries answer different questions: **pass@k** is the chance at least one of k trials succeeds, and **pass^k** is the chance all k succeed. tau-bench defines pass^k and gives unbiased estimators from n trials with c successes per task, averaged over tasks [[r23]]." },
+    { "t": "formula", "title": "Unbiased estimators (tau-bench)", "expr": "pass^k = mean over tasks of C(c, k) / C(n, k);  pass@k = 1 - mean over tasks of C(n - c, k) / C(n, k)", "vars": [
+      { "k": "n", "v": "trials run per task" },
+      { "k": "c", "v": "successful trials for that task" },
+      { "k": "k", "v": "trials that must (pass^k) or may (pass@k) succeed" }
+    ], "example": "Ten trials, seven successes, k = 3: pass^3 = C(7,3) / C(10,3) = 35 / 120 = 0.292. pass^1 equals pass@1 [[r23]]." },
+    { "t": "p", "md": "Reliability decays fast. If every trial succeeded with the same probability p, pass^k would be p^k. This is a computed estimate, because real tasks vary in difficulty." },
+    { "t": "table", "caption": "pass^k = p^k (computed)", "head": ["Per-trial p", "k = 3", "k = 5", "k = 8"], "rows": [["0.90", "0.729", "0.590", "0.430"], ["0.75", "0.422", "0.237", "0.100"]] },
+    { "t": "p", "md": "In tau-bench, gpt-4o with function calling scored about 61% in retail and 35% in airline at pass^1, and about 25% in retail at pass^8 (2024 model) [[r23]]. Use pass@k when one success is enough, for example code the user can retry, and pass^k when consistency matters, such as a customer-facing agent [[r17]]. The gap can be large: the Codex paper's abstract reports 28.8% of problems solved with one sample and 70.2% with 100 samples per problem, and its Table 2 lists 72.3% at 100 samples for the 12B model [[tr8]]." },
+    { "t": "table", "caption": "95% half-width for an 80% pass rate (computed: 1.96 x sqrt(p(1-p)/n) [[r24]])", "head": ["Items n", "50", "100", "200", "400", "1,000"], "rows": [["Half-width (points)", "11.1", "7.8", "5.5", "3.9", "2.5"]] },
+    { "t": "p", "md": "At n = 100, an 80% pass rate is anywhere from about 72% to 88%, so a 3-point gain is noise. Anthropic's error-bar guidance adds clustered standard errors when questions are grouped (they can exceed 3x the naive value), paired question-level differences when comparing two models, and power analysis [[r24]]. For small n or rates near 0 or 100%, the Wilson interval behaves better than the normal approximation, and the rule of three says zero failures in n runs bounds the failure rate near 3/n [[tr9]]. Foundry's compare view marks a change strong at p <= 0.001 and weak at 0.001 < p <= 0.05 [[r39]]." }
+  ],
+  "whereToUse": [
+    "Customer-facing agents, where pass^k with k near the number of repeat uses matters",
+    "Code or search assistants, where pass@k shows the value of retry or best-of-n",
+    "Release gates that must say a change is real, not noise",
+    "Model upgrade decisions between two close candidates"
+  ],
+  "whenToUse": {
+    "use": ["Outputs vary between runs", "A decision hinges on a few points", "Reliability, not peak ability, is the requirement"],
+    "avoid": ["Reporting one run of a stochastic agent as the score", "Comparing two means without an interval or pairing", "Computing p^k from an average p and calling it measured"],
+    "flips": ["User can retry or pick the best: pass@k", "Every use must succeed: pass^k", "Eval set under about 100 items: report intervals and treat small deltas as unproven", "Gap target is small: size the set with a power analysis"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["pass^k", "Consistency is required", "One success is enough", "k times the runs"],
+      ["pass@k", "Retry or best-of-n is real", "Reliability matters", "Overstates dependable ability"],
+      ["Mean pass rate (k = 1)", "A single quick estimate", "Judging reliability", "Hides run-to-run variance"],
+      ["Paired comparison with interval", "Comparing two versions", "You only have one version", "Needs the same items for both"],
+      ["Significance test (t-test)", "A defensible yes or no", "Small noisy sets", "False alarms with many metrics"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A prompt tweak raised the score 2 points then lost it next run", "cause": "A single run on a small set, so the difference is inside the noise", "fix": "Repeat trials, report an interval and compare paired against the baseline" },
+    { "symptom": "pass^5 is far lower than predicted from the mean pass rate", "cause": "Tasks differ in difficulty, so failures concentrate on some tasks", "fix": "Estimate pass^k per task from repeated trials, not as p^k" },
+    { "symptom": "Many metrics, and some always regress", "cause": "More metrics mean more chances of a false alarm", "fix": "Name one or two primary metrics per gate and correct for multiple tests" }
+  ],
+  "scenarios": [
+    {
+      "id": "w14-t12-s1",
+      "title": "Refund agent, every call must be right",
+      "situation": "An agent processes customer refunds. A customer may interact with it several times a month. Each wrong refund costs money and trust. A 100-task eval is available and runs are affordable.",
+      "constraints": ["Reliability is the requirement", "100 tasks", "Runs are affordable"],
+      "unknowns": ["How many repeat interactions per customer?", "What does one failure cost?"],
+      "question": "How do you report the agent's reliability?",
+      "options": [
+        { "name": "Run 8 trials per task, report pass^k for k near real repeat use, with an interval", "verdict": "best", "why": "Consistency is the product requirement, and pass^k exposes decay that a mean hides.", "tradeoff": "Eight times the runs and judge cost." },
+        { "name": "Report the mean pass rate from one run", "verdict": "poor", "why": "It hides variance and makes a 75% agent look fine when three in a row succeed only about 42% of the time.", "tradeoff": "Acceptable for a first rough screen." },
+        { "name": "Report pass@8", "verdict": "good", "why": "Shows ceiling ability.", "tradeoff": "Overstates reliability when users cannot pick the best of eight." }
+      ],
+      "flips": [
+        { "if": "A human reviews every output and picks", "then": "pass@k better reflects the workflow." },
+        { "if": "Budget limits runs to 3 per task", "then": "Report pass^3 and say so." }
+      ],
+      "takeaway": "Customer-facing reliability is a pass^k question."
+    },
+    {
+      "id": "w14-t12-s2",
+      "title": "Two prompts, 40 items, a 3-point gap",
+      "situation": "A team compares two prompt versions on a 40-item set. Version B scores 3 points higher. Labelling more items is slow.",
+      "constraints": ["40 items", "3-point gap", "Slow labelling"],
+      "unknowns": ["Can trials be repeated cheaply?", "Are the same items used for both?"],
+      "question": "What do you conclude and do next?",
+      "options": [
+        { "name": "Treat it as unproven, run repeated trials with a paired comparison and grow the set", "verdict": "best", "why": "At n=40 the interval is about plus or minus 12 points, so 3 points is noise. Pairing the same items cuts variance.", "tradeoff": "More runs and labelling time." },
+        { "name": "Ship B because it scored higher", "verdict": "poor", "why": "The gap sits well inside the interval.", "tradeoff": "Acceptable if the change is free, reversible and harmless." },
+        { "name": "Compute a t-test on the single run and ship if p < 0.05", "verdict": "good", "why": "Better than nothing and gives a defensible number.", "tradeoff": "One noisy run on 40 items gives a fragile test." }
+      ],
+      "flips": [
+        { "if": "Labels exist for 400 items", "then": "A 3-point gap becomes measurable but still needs pairing." },
+        { "if": "B costs less and is not worse", "then": "A non-inferiority framing may justify shipping." }
+      ],
+      "takeaway": "Small sets cannot see small gaps."
+    }
+  ],
+  "quiz": [
+    { "id": "w14-t12-q1", "type": "numeric", "tag": "numeric", "q": "A task is tried 10 times and succeeds 7 times. Using the unbiased estimator, what is pass^3 for this task? Give a decimal.", "answer": 0.292, "tolerancePct": 2, "hint": "C(7,3) / C(10,3).", "explain": "C(7,3) = 35 and C(10,3) = 120, so 35 / 120 = 0.2917. That is far below the 0.7 per-trial rate." },
+    { "id": "w14-t12-q2", "type": "numeric", "tag": "numeric", "q": "An agent succeeds on each independent trial with probability 0.75. Roughly what is the chance of three successes in a row, in percent?", "answer": 42, "tolerancePct": 3, "unit": "%", "hint": "0.75 cubed.", "explain": "0.75^3 = 0.4219, about 42%. This assumes identical independent trials, which real tasks only approximate." },
+    { "id": "w14-t12-q3", "type": "single", "tag": "flip", "q": "Which change makes pass@k the better headline metric than pass^k?", "options": ["The agent calls tools", "A user can retry or pick the best of several outputs", "The eval set doubled in size", "The judge became cheaper"], "answer": 1, "explain": "pass@k credits at least one success, which matches workflows where retry or best-of-n exists. Tool use, set size and judge cost do not change which question you ask." }
+  ],
+  "flashcards": [
+    { "front": "pass@k vs pass^k?", "back": "pass@k: at least one of k trials succeeds. pass^k: all k trials succeed. pass^1 equals pass@1. Use pass^k when consistency matters." },
+    { "front": "95% half-width at n=100 for an 80% pass rate?", "back": "About 7.8 points (1.96 x sqrt(0.8 x 0.2 / 100)). At n=400 it is 3.9 and at n=1,000 it is 2.5." },
+    { "front": "Why compare two models paired?", "back": "Question-level differences on the same items cancel item difficulty and shrink variance. Anthropic's error-bar guidance recommends it, plus clustered standard errors and power analysis." }
+  ],
+  "related": ["w14-t11", "w14-t14", "w14-t10", "w14-l5", "w01-t05"],
+  "refs": ["r23", "r17", "r24", "r39", "tr9", "tr8"]
+}

@@ -1,0 +1,117 @@
+{
+  "id": "w17-t01",
+  "order": 1,
+  "group": "Oversight",
+  "title": "Human oversight models",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "Human oversight ranges from approving each action before it happens, through supervising with a stop control, to setting policy and reviewing samples afterwards. The right level follows the action's reversibility, reach and regulatory class, and costs friction.",
+  "useIf": "You must decide how much a person should be involved in what an AI system or agent does.",
+  "avoidIf": "You plan to bolt on a yes/no button and call it oversight: approval without evidence or authority is theatre.",
+  "explain": [
+    { "t": "p", "md": "Three models are in common use, though sources define them loosely, so state your own definitions. **In the loop**: a person approves or makes each decision before it takes effect. **On the loop**: the system acts and a person monitors, with the power to interrupt or stop. **Over the loop**: people set policy and boundaries, then audit logs and review samples afterwards. The same system can mix them by action class: reads run freely, reversible writes are sampled, irreversible actions wait for approval." },
+    { "t": "p", "md": "Law points the same way. For high-risk systems, EU AI Act Article 14 requires oversight commensurate with risk, autonomy and context. People must be able to understand the system's limits, stay aware of automation bias, interpret outputs, decide not to use or override an output, and interrupt with a stop control. For biometric identification under Annex III point 1(a), two competent people must verify separately before action [[r5]]. Deployers must assign oversight to people with competence, training, authority and support [[tr1]]. Meta's Agents Rule of Two adds a design rule: if a session needs untrusted input, sensitive access and the ability to change state or communicate externally, require human approval or an equivalent [[r23]]." },
+    { "t": "table", "caption": "Oversight models and their price", "head": ["Model", "Person does", "Friction", "Fails when"], "rows": [
+      ["In the loop (approve first)", "Decides each action", "High: latency, reviewer cost", "Rubber-stamping, queue backlog"],
+      ["On the loop (supervise, escalate)", "Watches, steps in on triggers", "Medium", "Triggers are wrong, no stop control"],
+      ["Over the loop (set policy, audit)", "Sets bounds, reviews samples and logs", "Low per action", "Harm is irreversible before the audit"]
+    ] },
+    { "t": "callout", "kind": "gotcha", "title": "Approval is not oversight by itself", "md": "A reviewer who sees no evidence, has no authority to refuse or is rewarded for speed will approve everything. Show arguments and sources, seed known-bad items and measure the catch rate. The Agent Framework binds a local approval response to a pending request in the same session by default, and `disable_approval_response_binding` opts out [[r16]]." }
+  ],
+  "whereToUse": [
+    "Agents that send email, change records, move money or deploy code",
+    "High-risk systems under the EU AI Act, where Article 14 and Article 26 apply",
+    "Customer-facing assistants that escalate on low confidence or policy triggers",
+    "Bulk automation, using sampled review with an easy undo",
+    "Sessions that combine untrusted input, sensitive data and external effects"
+  ],
+  "whenToUse": {
+    "use": ["Approve first when actions are irreversible or externally visible", "Supervise and escalate when volume is moderate and triggers are reliable", "Audit samples when actions are reversible, low-risk and high-volume", "Require two reviewers where the law or the stakes demand it"],
+    "avoid": ["Approving every low-risk action: reviewers learn to click through", "Relying on after-the-fact audit for irreversible harm", "Putting oversight on people with no authority or competence to override"],
+    "flips": ["The action becomes irreversible: move from sampled audit to approval", "Volume rises tenfold: replace blanket approval with risk-tiered gates", "The system is classified high-risk: add the Article 14 capabilities and a stop control"]
+  },
+  "alternatives": {
+    "title": "Oversight levels compared",
+    "head": ["Level", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Approve before action", "Irreversible, external, high-value", "High volume, low risk", "Latency, fatigue, rubber-stamping"],
+      ["Escalate on trigger", "Most cases are routine, some are not", "Triggers are hard to define", "Missed triggers, noisy alerts"],
+      ["Sampled review after the fact", "Reversible, high-volume", "Harm cannot be undone", "Defects found late"],
+      ["Audit log only", "Low risk, internal", "Anything with external effect", "Accountability without prevention"],
+      ["No human in the loop", "Fully reversible, trivial stakes", "Regulated or consequential use", "No check on drift or misuse"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Approval rate is 99.8% and median review time is a few seconds", "cause": "Rubber-stamping from automation bias, no evidence shown or pressure to clear the queue", "fix": "Show arguments and sources, seed known-bad items, track catch rate and rotate reviewers" },
+    { "symptom": "An approval is replayed or fabricated", "cause": "Approval responses are not bound to the pending request, user and session", "fix": "Keep the default binding in Agent Framework and bind approvals to request, user and session [[r16]]" },
+    { "symptom": "A write path bypasses the gate", "cause": "Approval was attached to one tool, not to the action class", "fix": "Gate by action class and arguments, so another tool cannot cause the same effect" }
+  ],
+  "scenarios": [
+    {
+      "id": "w17-t01-s1",
+      "title": "An agent that emails customers",
+      "situation": "An agent drafts and sends account emails to customers. About 200 emails go out per day. A sent email cannot be recalled.",
+      "constraints": ["Externally visible and irreversible", "Moderate volume", "Reviewers are trained support staff"],
+      "unknowns": ["Can the reviewer see the sources and the diff?", "How fast must emails go out?", "Is any email class low-risk enough to skip approval?"],
+      "question": "What oversight model fits?",
+      "options": [
+        { "name": "Approve before sending, with the draft, recipient and source evidence on screen", "verdict": "best", "why": "The action is irreversible and public, and 200 per day is a manageable queue.", "tradeoff": "Adds minutes of latency and reviewer time." },
+        { "name": "Send first and sample-review afterwards", "verdict": "poor", "why": "A wrong or injected email cannot be taken back.", "tradeoff": "Right for reversible actions such as internal tags." },
+        { "name": "Escalate only when the model reports low confidence", "verdict": "good", "why": "Cuts review load.", "tradeoff": "Model confidence is a weak signal, and a prompt-injected agent can be confident and wrong." }
+      ],
+      "flips": [
+        { "if": "Volume reaches 20,000 per day", "then": "Tier by risk: approve high-value or new-recipient emails, template the rest." },
+        { "if": "Emails are internal and recallable", "then": "Sampled review with an undo is enough." }
+      ],
+      "takeaway": "Irreversible and external means approve first."
+    },
+    {
+      "id": "w17-t01-s2",
+      "title": "Bulk tagging of documents",
+      "situation": "An agent applies metadata tags to 50,000 internal documents a day. Tags can be changed at any time and affect search ranking only.",
+      "constraints": ["Reversible", "High volume", "Low blast radius"],
+      "unknowns": ["How are wrong tags detected?", "Who owns the tag taxonomy?"],
+      "question": "How much human oversight?",
+      "options": [
+        { "name": "Sampled review with an easy undo and an alert on drift in tag distribution", "verdict": "best", "why": "Per-item approval would be impossible and adds little safety for reversible tags.", "tradeoff": "Some wrong tags live until the sample or alert catches them." },
+        { "name": "Approve every tag", "verdict": "poor", "why": "50,000 approvals a day produces rubber-stamping, not safety.", "tradeoff": "Right for a small, high-value set." },
+        { "name": "Audit log only", "verdict": "good", "why": "Cheap and keeps records.", "tradeoff": "No active check, so drift goes unseen." }
+      ],
+      "flips": [
+        { "if": "Tags drive access control", "then": "They are no longer low-risk: add approval for permission-affecting tags." },
+        { "if": "Error rate in samples exceeds a threshold", "then": "Pause the agent and escalate." }
+      ],
+      "takeaway": "Reversible and high-volume means sample, with undo."
+    },
+    {
+      "id": "w17-t01-s3",
+      "title": "A system classed as high-risk",
+      "situation": "A deployer uses an AI system that ranks applicants for a service. The deployer has classified it as high-risk under the EU AI Act. A reviewer currently clicks Accept on the ranking.",
+      "constraints": ["Regulated high-risk system", "Decisions affect people", "Reviewers are overloaded"],
+      "unknowns": ["Do reviewers have competence, training and authority to override?", "Is there a stop control?", "Are reviewers told how the system can be wrong?"],
+      "question": "What do you change?",
+      "options": [
+        { "name": "Redesign review: show evidence and limits, allow override and stop, assign trained reviewers with authority, log decisions", "verdict": "best", "why": "Article 14 and 26 expect understanding, awareness of automation bias, override and interruption, with competent and empowered people.", "tradeoff": "Slower reviews and training cost." },
+        { "name": "Keep the Accept button and add an audit log", "verdict": "poor", "why": "A log without real review does not meet the intent of oversight.", "tradeoff": "Acceptable only for non-regulated, low-stakes use." },
+        { "name": "Remove the human and publish accuracy numbers", "verdict": "poor", "why": "It drops the oversight the Act expects and shifts risk to affected people.", "tradeoff": "Not a fit for high-risk use." }
+      ],
+      "flips": [
+        { "if": "Biometric identification under Annex III point 1(a) is involved", "then": "Two competent people must verify separately." },
+        { "if": "The classification is not high-risk", "then": "Oversight can be lighter, but keep escalation for harm." }
+      ],
+      "takeaway": "In high-risk use, oversight is a capability, not a button."
+    }
+  ],
+  "quiz": [
+    { "id": "w17-t01-q1", "type": "multi", "tag": "concept", "q": "Which capabilities does EU AI Act Article 14 expect oversight people to have for high-risk systems?", "options": ["Understand the system's limits and stay aware of automation bias", "Decide not to use or override an output", "Interrupt the system with a stop control", "Approve outputs without access to the reasoning inputs"], "answers": [0, 1, 2], "explain": "Article 14 lists understanding limits, automation-bias awareness, interpretation, override and a stop control. Approving without evidence is the failure it guards against [[r5]].", "difficulty": 2 },
+    { "id": "w17-t01-q2", "type": "single", "tag": "diagnose", "q": "A review queue shows 99.8% approvals with a median review time of 4 seconds. What is the most likely issue and first fix?", "options": ["The model is perfect: raise volume", "Reviewers are too slow: remove review", "Rubber-stamping: seed known-bad items and show evidence"], "answer": 2, "explain": "Near-total approval at seconds per item signals automation bias. Seeding bad items measures real catch rate. Perfection is unlikely and removing review drops the control.", "difficulty": 2 },
+    { "id": "w17-t01-q3", "type": "single", "tag": "flip", "q": "Which change most clearly moves an action from sampled audit to approve-first?", "options": ["Volume doubles", "The action becomes irreversible or externally visible", "The model gets a higher benchmark score"], "answer": 1, "explain": "Reversibility and reach choose the family of brake. Volume adjusts it, and benchmark scores do not change blast radius.", "difficulty": 1 }
+  ],
+  "flashcards": [
+    { "front": "In, on and over the loop?", "back": "In: a person approves each decision. On: the system acts and a person can interrupt. Over: people set policy and audit samples afterwards. Definitions vary by source." },
+    { "front": "What does Article 14 require of oversight people?", "back": "Understand limits, stay aware of automation bias, interpret output, override and interrupt with a stop control. Two competent people for Annex III point 1(a)." },
+    { "front": "What is the Agents Rule of Two?", "back": "In one session, avoid combining untrusted input, sensitive access and external effects. If all three are needed, require human approval." }
+  ],
+  "related": ["w17-t02", "w17-t03", "w17-t04", "w17-l1", "w10-t10"],
+  "refs": ["r5", "r16", "r23", "tr1"]
+}

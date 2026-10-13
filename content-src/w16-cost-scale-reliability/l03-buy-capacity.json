@@ -1,0 +1,98 @@
+{
+  "id": "w16-l3",
+  "order": 3,
+  "title": "Buy capacity that fits the traffic",
+  "kind": "problem",
+  "minutes": 20,
+  "brief": "You need model capacity and the invoice must make sense. Traffic may be steady or spiky, users may be waiting or not, and data may or may not be allowed to leave a region. Choose how to buy tokens, then size it.",
+  "blocks": [
+    { "t": "h", "text": "Five ways to buy tokens on Azure", "level": 2 },
+    { "t": "compare", "title": "Capacity and pricing modes", "intro": "Dials: traffic predictability and burstiness, p95 latency need, residency boundary, interactive versus asynchronous, cache hit rate and the cost of idle reserved capacity. Prices change often, so use these as structure and plug in your own price sheet.", "options": [
+      { "name": "Global Standard", "tag": "GA", "summary": "Pay-as-you-go. Microsoft advises starting here: it launches first when a new model releases, has the lowest price and the broadest region coverage [[r5]].", "pros": ["No commitment and the highest quota", "Newest models first"], "cons": ["Prompts may be processed in any region, though data at rest stays in the chosen geography", "Shared capacity, so latency varies at large steady volume"], "bestWhen": "Small or spiky traffic, flexible residency, the newest model.", "avoidWhen": "A strict processing boundary or a tight p95 on large steady volume.", "meta": [{ "k": "SKU", "v": "GlobalStandard" }, { "k": "Commitment", "v": "none" }] },
+      { "name": "Priority processing", "tag": "GA", "summary": "A pay-as-you-go tier with a latency target stated as p50 per 5-minute window, for example 99% above 80 tokens per second for gpt-5.6-sol and gpt-6-sol, 70 for gpt-5.6-terra, 50 for gpt-5.5 and 100 for gpt-5.4-mini. Set on the deployment or per request with `service_tier` (`auto`, `default`, `priority`) [[r10]].", "pros": ["Latency help without a commitment", "Uses the same quota as standard"], "cons": ["A p50 target per window, not a per-request guarantee", "Carries a price premium. Check the price sheet", "Offered on Global Standard or Data Zone Standard US"], "bestWhen": "Bursty or business-hour interactive traffic that needs steadier latency.", "avoidWhen": "Work nobody waits for, or a need for a contractual latency guarantee.", "meta": [{ "k": "Field", "v": "service_tier: priority" }] },
+      { "name": "Provisioned (PTU) with spillover", "tag": "GA", "summary": "Reserved capacity billed per PTU per hour, or through 1-month or 1-year Azure Reservations. Overflow that returns a non-200 such as 429 can spill to a standard deployment in the same resource [[r6]] [[r7]].", "pros": ["Stable latency at sustained volume", "Cached tokens do not consume PTU capacity, so a high cache rate lowers the PTUs you need"], "cons": ["Capacity is held and billed whether or not requests arrive", "Quota and reservations do not guarantee capacity", "PTU-M deployments keep caching but have no cache breakpoints and no `cache_write_tokens`"], "bestWhen": "Predictable, high, sustained volume with a latency target.", "avoidWhen": "Small or spiky traffic, where idle capacity costs more than pay-as-you-go.", "meta": [{ "k": "Spillover", "v": "x-ms-spillover-deployment per request" }, { "k": "Not for", "v": "Azure DeepSeek and Meta Llama spillover" }] },
+      { "name": "Batch", "tag": "GA", "summary": "Azure Global Batch and Data Zone Batch cost 50% less than Global Standard, with a 24-hour target, a separate enqueued-token quota and no real-time SLA. OpenAI's Batch API is also 50% off with a `.jsonl` file, one model per file and a 200 MB upload limit [[r5]] [[r12]].", "pros": ["Half price", "A separate quota keeps it from competing with live traffic"], "cons": ["Not interactive at all", "Results arrive within a 24-hour window, so downstream steps must be asynchronous"], "bestWhen": "Evaluation, enrichment, embeddings and classification where 24 hours is fine.", "avoidWhen": "Anything a user is waiting for.", "meta": [{ "k": "SKU", "v": "GlobalBatch, DataZoneBatch" }] },
+      { "name": "Flex processing", "tag": "Preview", "summary": "Per-request `service_tier: \"flex\"` on Azure Global Standard at 50% off, with cached-token discounts also applying. It has no latency or service SLA, shares quota with Standard and does not fall back to Standard on its own [[r11]].", "pros": ["Batch-like price with a synchronous API shape"], "cons": ["Capacity is preemptible, so 429 can mean no capacity", "408 means raise the timeout (the docs use 900 s)", "From 2026-09-25 unsupported models return 400"], "bestWhen": "Delay-tolerant work that still wants synchronous calls.", "avoidWhen": "You cannot tolerate 429 or 408, or the model lacks Flex support.", "meta": [{ "k": "Status", "v": "Preview, checked 2026-10-13" }] }
+    ] },
+    { "t": "table", "caption": "Deployment types and where prompts are processed [[r5]]", "head": ["Family", "SKUs", "Processing boundary"], "rows": [
+      ["**Global**", "`GlobalStandard`, `GlobalProvisionedManaged`, `GlobalBatch`", "Any region. Data at rest stays in the designated geography"],
+      ["**Data Zone**", "`DataZoneStandard`, `DataZoneProvisionedManaged`, `DataZoneBatch`", "Inside the US, EU or APAC data zone"],
+      ["**Regional**", "`Standard`, `ProvisionedManaged` (Regional Provisioned)", "Inside the chosen geography"]
+    ], "highlightCol": 0 },
+    { "t": "formula", "title": "PTU sizing", "expr": "Normalized TPM = peak RPM x prompt tokens x (1 - cache rate) + output_input_ratio x peak RPM x response tokens;  PTUs = Normalized TPM / input TPM per PTU, rounded up to the model's increment", "vars": [
+      { "k": "output_input_ratio", "v": "how many input-token equivalents one output token costs, a model constant" },
+      { "k": "input TPM per PTU", "v": "model-specific throughput per PTU. Minimum PTUs and ratios vary by model" },
+      { "k": "cache rate", "v": "share of prompt tokens served from cache. Cached tokens do not consume PTU capacity" }
+    ], "example": "The documented example (Data Zone Provisioned, 3,400 input TPM per PTU, ratio 8, increment 5): 1,000 RPM with a 200-token prompt and a 20-token response gives 1,000 x 200 + 8 x 1,000 x 20 = 360,000, so 105.88, rounded up to **110 PTUs**. At a 50% cache rate it is 260,000, so 76.47, rounded up to **80 PTUs** [[r7]]." },
+    { "t": "stats", "items": [
+      { "label": "Doc example, no cache", "value": "110 PTUs", "note": "105.88 rounded up to an increment of 5" },
+      { "label": "Doc example, 50% cache", "value": "80 PTUs", "note": "76.47 rounded up" },
+      { "label": "Raw PTU reduction", "value": "about 28%", "note": "105.88 to 76.47, derived" },
+      { "label": "Batch and Flex discount", "value": "50%", "note": "Batch has a 24-hour target. Flex is preview" }
+    ] },
+    { "t": "dials", "id": "w16-l3-capacity", "title": "Choose a capacity model", "prompt": "Flip the traffic shape, the latency need and the residency boundary.", "dials": [
+      { "id": "traffic", "label": "Traffic shape", "values": [{ "id": "steady", "label": "Steady and high" }, { "id": "spiky", "label": "Spiky or bursty" }, { "id": "small", "label": "Small and sporadic" }] },
+      { "id": "latency", "label": "Latency need", "values": [{ "id": "live", "label": "Interactive, steady p95" }, { "id": "late", "label": "Tolerant, hours are fine" }] },
+      { "id": "bound", "label": "Residency", "values": [{ "id": "global", "label": "Global processing is fine" }, { "id": "zone", "label": "Must stay in a zone or geography" }] }
+    ], "options": [
+      { "id": "gs", "name": "Global Standard", "summary": "Pay as you go, global processing." },
+      { "id": "dzs", "name": "Data Zone Standard", "summary": "Pay as you go inside a data zone." },
+      { "id": "ptu", "name": "Provisioned with spillover", "summary": "Reserved capacity, overflow to standard." },
+      { "id": "pri", "name": "Priority processing", "summary": "Pay-as-you-go with a latency target." },
+      { "id": "bat", "name": "Batch or Flex", "summary": "Half price, delay tolerant." }
+    ], "scores": {
+      "gs": {
+        "traffic": { "steady": { "s": 0, "why": "Fine, but latency can vary at large steady volume." }, "spiky": { "s": 1, "why": "You pay only for use and draw on large shared quota." }, "small": { "s": 1, "why": "No commitment and the lowest price." } },
+        "latency": { "live": { "s": 0, "why": "Shared capacity gives variable latency." }, "late": { "s": 0, "why": "Works, but Batch is cheaper for delay-tolerant work." } },
+        "bound": { "global": { "s": 2, "why": "Highest quota, lowest price and newest models first." }, "zone": { "s": -2, "why": "Prompts can be processed outside the zone." } }
+      },
+      "dzs": {
+        "traffic": { "steady": { "s": 0, "why": "Same shape as Global Standard." }, "spiky": { "s": 1, "why": "Pay only for use." }, "small": { "s": 1, "why": "No commitment." } },
+        "latency": { "live": { "s": 0, "why": "Shared capacity, variable latency." }, "late": { "s": 0, "why": "Works, but Batch is cheaper." } },
+        "bound": { "global": { "s": -1, "why": "You accept a boundary you do not need." }, "zone": { "s": 2, "why": "Processing stays inside the US, EU or APAC zone." } }
+      },
+      "ptu": {
+        "traffic": { "steady": { "s": 2, "why": "High utilization makes held capacity pay off." }, "spiky": { "s": -2, "why": "Idle capacity is billed, and the peak overflows." }, "small": { "s": -2, "why": "Minimum PTUs exceed what you need." } },
+        "latency": { "live": { "s": 2, "why": "Stable latency is the main benefit." }, "late": { "s": -1, "why": "Reserved capacity sits idle for work that could wait." } },
+        "bound": { "global": { "s": 1, "why": "A global provisioned type exists." }, "zone": { "s": 1, "why": "Data Zone and Regional provisioned types exist, but capacity may be unavailable." } }
+      },
+      "pri": {
+        "traffic": { "steady": { "s": 1, "why": "Works, but a premium on all volume may cost more than PTU." }, "spiky": { "s": 2, "why": "You pay the premium only when traffic arrives." }, "small": { "s": 0, "why": "No commitment, but the premium adds up per token." } },
+        "latency": { "live": { "s": 2, "why": "A p50 target per 5-minute window, not a per-request guarantee." }, "late": { "s": -2, "why": "A premium for latency nobody needs." } },
+        "bound": { "global": { "s": 1, "why": "Available on Global Standard." }, "zone": { "s": 0, "why": "Data Zone Standard US only, so check your zone." } }
+      },
+      "bat": {
+        "traffic": { "steady": { "s": 1, "why": "Large jobs fit a queue." }, "spiky": { "s": 1, "why": "The queue absorbs bursts." }, "small": { "s": 1, "why": "Half price on only what you use." } },
+        "latency": { "live": { "s": -2, "why": "A 24-hour target and no real-time SLA." }, "late": { "s": 2, "why": "50% off for work nobody waits for." } },
+        "bound": { "global": { "s": 1, "why": "Global Batch is available." }, "zone": { "s": 1, "why": "Data Zone Batch exists." } }
+      }
+    }, "takeaway": "There is no best mode in the abstract. Steady and interactive favors PTU, bursty and interactive favors Priority, delay-tolerant favors Batch, and a boundary favors the zone or regional types." },
+    { "t": "failure", "title": "Capacity mistakes and how you would notice", "items": [
+      { "symptom": "A 1-year reservation is purchased and the deployment will not create", "cause": "Reservations and quota do not guarantee capacity", "fix": "Create the deployment first, confirm capacity, then buy the reservation" },
+      { "symptom": "High PTU bill with low utilization", "cause": "Spiky or small traffic leaves held capacity idle", "fix": "Size PTUs for the steady baseline and let spillover or pay-as-you-go absorb peaks. Watch `AzureOpenAIProvisionedManagedUtilizationV2`" },
+      { "symptom": "429s on a provisioned deployment at peak", "cause": "Peak exceeds provisioned capacity and no spillover is configured", "fix": "Configure spillover to a standard deployment in the same resource, globally or per request. It does not support Azure DeepSeek or Meta Llama" },
+      { "symptom": "Flex requests start failing with 400 after a model change", "cause": "From 2026-09-25 unsupported models return 400, and Flex never falls back to Standard on its own", "fix": "Check Flex support per model, handle 400, 408 and 429 explicitly and use a long client timeout" }
+    ] },
+    { "t": "callout", "kind": "preview", "title": "Preview and price notes, checked 2026-10-13", "md": "Flex processing is preview on Azure and beta at OpenAI. The Foundry unified model API and AI gateway in Foundry are preview. Price levels are not quoted here because they change. The break-even against pay-as-you-go is PTUs x hourly PTU price x hours versus expected tokens x token price. Reservations only lower the left side and do not guarantee capacity [[r6]] [[r11]]." }
+  ],
+  "quiz": [
+    { "id": "w16-l3-q1", "type": "numeric", "tag": "numeric", "q": "A workload peaks at 600 requests per minute with 500-token prompts and 50-token responses and no caching. The model's output-to-input ratio is 4, input TPM per PTU is 2,500 and the PTU increment is 5. How many PTUs do you provision?", "answer": 170, "tolerancePct": 1, "unit": "PTUs", "hint": "Normalized TPM / input TPM per PTU, rounded up to the increment", "explain": "Normalized TPM = 600 x 500 + 4 x 600 x 50 = 300,000 + 120,000 = 420,000. Divided by 2,500 gives 168, and rounding up to the next multiple of 5 gives 170. A 40% cache rate would cut the input term to 180,000 and the result to 120 PTUs.", "difficulty": 2, "ref": "r7" },
+    { "id": "w16-l3-q2", "type": "single", "tag": "flip", "q": "Interactive traffic is steady all day but spikes to 10 times normal for 20 minutes daily. Which capacity plan fits best?", "options": ["Buy PTUs for the full 10x peak so latency stays stable all day, even while capacity sits idle", "Move all interactive traffic to Batch, because the daily peak is short and the discount is 50%", "Size PTUs for the steady baseline and spill the peak over to a standard deployment", "Use Flex for the interactive traffic, because it costs half as much and answers synchronously"], "answer": 2, "explain": "Sizing for the baseline keeps utilization high and spillover handles the short peak at pay-as-you-go prices. A peak-sized PTU purchase leaves most capacity idle. Batch has no real-time SLA. Flex is preemptible with no SLA, so it is wrong for users who are waiting.", "difficulty": 2, "ref": "r6" },
+    { "id": "w16-l3-q3", "type": "multi", "tag": "concept", "q": "Select every true statement about provisioned throughput (PTU).", "options": ["Capacity is held and billed whether or not requests arrive", "Cached tokens do not consume PTU capacity", "A reservation guarantees capacity in the region", "Quota guarantees capacity", "PTU quota is per subscription, region and deployment type"], "answers": [0, 1, 4], "explain": "Held billing, cached tokens and the quota scope are documented. Neither reservations nor quota guarantee capacity. That is why you create the deployment before buying a reservation.", "difficulty": 2, "ref": "r6" },
+    { "id": "w16-l3-q4", "type": "match", "tag": "concept", "q": "Match each mode to its contract.", "pairs": [
+      { "l": "Priority processing", "r": "Latency target stated as p50 per 5-minute window, billed pay-as-you-go" },
+      { "l": "Batch", "r": "24-hour target, separate enqueued-token quota and 50% less" },
+      { "l": "Flex (preview)", "r": "Preemptible with no SLA, so 429 can mean no capacity" },
+      { "l": "Provisioned", "r": "Capacity held for you and billed hourly or through a reservation" }
+    ], "explain": "Each mode sells a different promise. Priority sells steadier latency without commitment, Batch sells a price for delay, Flex sells batch pricing on a synchronous API without guarantees, and PTU sells held capacity.", "difficulty": 1, "ref": "r5" }
+  ],
+  "defend": null,
+  "refs": ["r5", "r6", "r7", "r10", "r11", "r12", "r13", "r23"],
+  "takeaways": [
+    "Start from the traffic shape: steady favors PTU, bursty favors Priority, delay-tolerant favors Batch",
+    "PTU sizing is a formula. A higher cache rate lowers the PTUs you need",
+    "Quota and reservations do not guarantee capacity, so create the deployment first",
+    "Spillover turns a provisioned primary plus standard overflow into one plan",
+    "Label Flex and the Foundry gateway items as preview, with the date you checked"
+  ]
+}

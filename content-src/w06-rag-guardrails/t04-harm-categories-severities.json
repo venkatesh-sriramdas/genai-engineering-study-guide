@@ -1,0 +1,115 @@
+{
+  "id": "w06-t04",
+  "order": 4,
+  "group": "Azure AI Content Safety",
+  "title": "Harm categories and severities",
+  "minutes": 7,
+  "difficulty": "core",
+  "summary": "Azure AI Content Safety classifies text and images into four harm categories with severity levels. A guardrail control compares the severity to a threshold you choose, so the threshold is your false-positive dial.",
+  "useIf": "You need a managed first line of defence for hate, sexual, violence and self-harm content in prompts and completions.",
+  "avoidIf": "Your risk is a custom policy (for example investment advice) or prompt injection: these categories do not cover them.",
+  "explain": [
+    { "t": "p", "md": "The four categories are **hate and fairness, sexual, violence and self-harm**, for text and images [[r6]]. In Foundry guardrails each category has four severity levels. **Safe** is annotated but never filtered and is not configurable. **Low** is mild material (prejudiced views, mild depictions in fictional contexts, personal experiences). **Medium** is moderate (graphic depictions, bullying, content promoting harmful acts). **High** is severe (extremist content, explicit depictions, content endorsing serious harm) [[r6]]." },
+    { "t": "table", "caption": "Threshold behaviour in a Foundry guardrail control", "head": ["Threshold", "What it flags", "Effect on users"], "rows": [["Low", "Low severity and above", "Flags the most content, more false positives"], ["Medium", "Medium severity and above", "Default balance"], ["High", "Only the most severe content", "Flags the least, more misses"], ["Off", "Nothing", "Only for customers approved for modified guardrails"]] },
+    { "t": "p", "md": "New model deployments get the default guardrail `Microsoft.DefaultV2`: hate, violence, sexual and self-harm at Medium on prompts and completions, plus other controls. It applies to all Foundry Models sold by Azure except audio transcription models. A request over a threshold is blocked with an error that names the category [[r2]]. The standalone service returns a 0 to 7 scale for text, or on request the trimmed scale 0, 2, 4, 6, where each pair maps to one level ([0,1] to 0, [2,3] to 2, [4,5] to 4, [6,7] to 6). The image model returns only 0, 2, 4 and 6 [[r6]]." },
+    { "t": "callout", "kind": "gotcha", "title": "Read the behaviour column, not the adjectives", "md": "The documentation calls Low the least restrictive setting and High the most restrictive, yet Low flags the most content. Decide by what each threshold flags, as in the table above [[r6]]." },
+    { "t": "stats", "items": [
+      { "label": "Text analyze input", "value": "10K chars", "note": "Content Safety limit [[r10]]" },
+      { "label": "Image", "value": "4 MB", "note": "50x50 to 7200x7200 pixels" },
+      { "label": "Multimodal text", "value": "1K chars", "note": "Per request" },
+      { "label": "Tested languages", "value": "8", "note": "Other languages may differ in accuracy and false positives" }
+    ] }
+  ],
+  "whereToUse": [
+    "Consumer chat assistants that must refuse hateful, sexual, violent or self-harm content",
+    "Education and youth products where thresholds should be strict",
+    "Professional tools where clinical or legal text uses graphic vocabulary and needs looser settings",
+    "Image-capable assistants that moderate uploads and generated images",
+    "Audit evidence: annotations record category and severity per request"
+  ],
+  "whenToUse": {
+    "use": [
+      "Use the default Medium threshold as the starting point and measure",
+      "Use Low thresholds where the audience is vulnerable and over-blocking is cheaper than harm",
+      "Use High thresholds with extra controls where professional text would be over-blocked",
+      "Use annotations to log severities even when you do not block"
+    ],
+    "avoid": [
+      "Avoid expecting these categories to catch prompt injection, protected text or custom policy",
+      "Avoid assuming equal accuracy in every language: eight were trained and tested",
+      "Avoid switching a category Off without approval and a replacement control"
+    ],
+    "flips": [
+      "Audience becomes children: lower thresholds to Low and add human review",
+      "Users become verified professionals: raise thresholds for the categories their work involves",
+      "Policy is custom (domain rules): add custom controls or an LLM or classifier you evaluate"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Foundry guardrail harm controls", "Standard harm categories, managed service", "Custom taxonomy or unsupported languages", "Threshold tuning, English-centred tests"],
+      ["Standalone Content Safety API", "You need raw 0 to 7 scores in your own logic", "You want managed block behaviour", "You build the action layer"],
+      ["Custom categories (Content Safety)", "Emerging or domain-specific harms", "You rely on the standard model", "Standard is retired or retiring per its page, rapid is preview"],
+      ["Llama Guard or an LLM classifier", "Self-hosting and rewritable categories", "You lack GPUs or evaluation data", "Operations and calibration"],
+      ["Deterministic lists and rules", "Exact banned terms or formats", "Paraphrase and context matter", "Easy to evade, many false negatives"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A medical assistant blocks legitimate clinical questions", "cause": "The default Medium threshold flags graphic but professional vocabulary", "fix": "Raise the threshold for the affected categories for verified users and add other controls" },
+    { "symptom": "Non-English users report more wrongful blocks", "cause": "Detection accuracy and false positive rates can vary outside the eight tested languages", "fix": "Build a per-language evaluation set and tune per language" },
+    { "symptom": "A long prompt is not fully moderated", "cause": "Documentation mentions moderation of the first 1,000 characters in some scenarios and limits differ by API (wording unclear, UNVERIFIED)", "fix": "Test with long prompts and chunk inputs yourself" },
+    { "symptom": "Team confused about which threshold is stricter", "cause": "The docs call Low least restrictive although it flags the most", "fix": "Document thresholds by what they flag" }
+  ],
+  "scenarios": [
+    {
+      "id": "w06-t04-s1",
+      "title": "Homework helper for children",
+      "situation": "A learning assistant is used by children aged 8 to 12 through a school. Parents expect strict filtering. Refusing a harmless question is a minor annoyance.",
+      "constraints": ["Young audience", "Over-blocking is cheap", "Text and image uploads", "Teachers can review flagged items"],
+      "unknowns": ["Which languages are used?", "Who reviews appeals?"],
+      "question": "How do you set the harm controls?",
+      "options": [
+        { "name": "Low thresholds on all four categories for input and output, with a human review route", "verdict": "best", "why": "Low flags the most content, which suits an audience where harm is costly and false positives are cheap.", "tradeoff": "More wrongful blocks and review load." },
+        { "name": "Default Medium thresholds plus a topic allow list", "verdict": "good", "why": "Balanced, with the allow list narrowing scope.", "tradeoff": "Mild but unsuitable content may pass." },
+        { "name": "High thresholds to reduce annoyance", "verdict": "poor", "why": "High flags only the most severe content, letting mild material through to children.", "tradeoff": "Right for a professional tool with legitimate graphic content." }
+      ],
+      "flips": [
+        { "if": "The product becomes adult general-purpose", "then": "Return to Medium and measure false positives." },
+        { "if": "Non-English traffic grows", "then": "Add per-language tests before trusting thresholds." }
+      ],
+      "takeaway": "Set thresholds by who is harmed and what over-blocking costs."
+    },
+    {
+      "id": "w06-t04-s2",
+      "title": "Clinical documentation assistant",
+      "situation": "Clinicians use an assistant to draft notes that discuss self-harm, violence and injury in clinical terms. The default guardrail blocks many legitimate drafts. Users are authenticated staff.",
+      "constraints": ["Authenticated professionals", "Clinical vocabulary is legitimate", "Blocking disrupts care documentation", "Audit trail required"],
+      "unknowns": ["Is modified-guardrails approval obtainable?", "Which categories cause most blocks?"],
+      "question": "How do you tune the controls?",
+      "options": [
+        { "name": "Raise thresholds on the affected categories, annotate and log, and add output review for risky patterns", "verdict": "best", "why": "It removes wrongful blocks while keeping the most severe content flagged and logged.", "tradeoff": "More misses on moderate content, covered by review." },
+        { "name": "Apply for modified guardrails and turn categories Off", "verdict": "good", "why": "Removes blocking entirely where it is approved.", "tradeoff": "Approval is required and you lose the safety net." },
+        { "name": "Keep the default Medium thresholds", "verdict": "poor", "why": "It keeps blocking legitimate clinical text.", "tradeoff": "Right for a public consumer product." }
+      ],
+      "flips": [
+        { "if": "The tool opens to the public", "then": "Return to Medium or Low thresholds." },
+        { "if": "Blocks come from one category only", "then": "Tune that category only." }
+      ],
+      "takeaway": "Tune per category and audience, and keep logging even when you loosen."
+    }
+  ],
+  "quiz": [
+    { "id": "w06-t04-q1", "type": "numeric", "tag": "numeric", "q": "The text model is asked for the trimmed scale (0, 2, 4, 6). A text has a full-scale severity of 5. What trimmed value is returned?", "answer": 4, "tolerancePct": 0, "explain": "Each pair maps to one level: [4,5] maps to 4. So severity 5 becomes 4.", "ref": "r6" },
+    { "id": "w06-t04-q2", "type": "single", "tag": "flip", "q": "Which threshold in a Foundry control flags the most content?", "options": ["High", "Medium", "Low", "Off"], "answer": 2, "explain": "Low flags severity low and above. High flags only the most severe, Medium sits between and Off disables detection. The docs' adjectives can mislead, so read what each flags.", "ref": "r6" },
+    { "id": "w06-t04-q3", "type": "multi", "tag": "concept", "q": "Which statements about the default guardrail are correct?", "options": ["It is named `Microsoft.DefaultV2`", "It sets hate, violence, sexual and self-harm to Medium", "It applies to audio transcription models", "A request over threshold is blocked with an error naming the category"], "answers": [0, 1, 3], "explain": "The default guardrail uses Medium for the four categories and blocks with a named category. It does not apply to audio transcription models.", "ref": "r2" }
+  ],
+  "flashcards": [
+    { "front": "Four harm categories in Azure AI Content Safety?", "back": "Hate and fairness, sexual, violence and self-harm, for text and images." },
+    { "front": "Standalone severity scales?", "back": "Text 0 to 7 (or trimmed 0, 2, 4, 6 with pairs merged). Image model returns only 0, 2, 4, 6." },
+    { "front": "What does the default guardrail do?", "back": "`Microsoft.DefaultV2` sets the four harm categories to Medium on prompts and completions, and blocks with an error naming the category." }
+  ],
+  "related": ["w06-t05", "w06-t07", "w06-t10", "w06-l3", "w14-t13"],
+  "refs": ["r2", "r6", "r7", "r10"]
+}

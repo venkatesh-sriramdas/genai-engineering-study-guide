@@ -1,0 +1,95 @@
+{
+  "id": "w05-t10",
+  "order": 10,
+  "group": "Query transformation",
+  "title": "Decomposition and multi-hop retrieval",
+  "minutes": 8,
+  "difficulty": "advanced",
+  "summary": "Decomposition splits a compound question into sub-questions. Multi-hop retrieval chains searches, where each hop depends on what the last one found. Both need stop conditions.",
+  "useIf": "A question has several parts, or its answer needs a fact that you can only look up after finding another fact.",
+  "avoidIf": "Questions are single-fact lookups, or you cannot bound hops, tokens and time.",
+  "explain": [
+    { "t": "p", "md": "One embedding of one question cannot cover 'compare notice periods for contractors and employees in the UK and Germany'. **Decomposition** asks a model to split it into focused sub-questions. If they are independent, run them **in parallel** and merge the evidence. If they depend on each other ('Who manages the owner of service X?'), you need **multi-hop**: retrieve, read, form the next query, retrieve again. IRCoT interleaves retrieval with chain-of-thought sentences, so what to retrieve depends on what has been derived. With GPT-3 it improved retrieval by up to 21 points and downstream QA by up to 15 points on four multi-step datasets [[tr3]]." },
+    { "t": "diagram", "id": "w05-t10-d1", "title": "Iterative retrieval with stop conditions", "alt": "A question is planned into sub-queries, retrieved, checked for sufficiency, and either answered or sent around again until a limit is reached.", "src": "stateDiagram-v2\n  [*] --> Plan\n  Plan --> Retrieve\n  Retrieve --> Check\n  Check --> Answer: enough evidence\n  Check --> Plan: gap found and budget left\n  Check --> Abstain: budget spent\n  Answer --> [*]\n  Abstain --> [*]" },
+    { "t": "p", "md": "**Platform version.** Azure AI Search agentic retrieval plans focused subqueries from the query and chat history, runs all subqueries in parallel and semantically reranks each. At `medium` effort it adds a semantic classifier and one retry with a revised plan [[r5]]. That is a bounded loop. `maxRuntimeInSeconds` has a minimum of 10, a default of 90 and a maximum of 600 (the 600 applies to the Search retrieve request only) [[r38]]. Most of this is preview, as of 2026-10-13 [[r4]]." },
+    { "t": "p", "md": "**Stop conditions are the design.** Combine: a maximum number of hops, a token or time budget, a sufficiency check ('does the evidence answer the question?'), and a no-progress rule (the new query retrieves nothing new). Without them a loop wastes money on unanswerable questions." },
+    { "t": "callout", "kind": "gotcha", "title": "Errors compound across hops", "md": "A wrong first-hop answer poisons every later query. Log each sub-question, its evidence and the decision. Prefer parallel decomposition when sub-questions are independent, since serial hops add their latencies." }
+  ],
+  "whereToUse": [
+    "Comparison questions across entities, regions or time periods",
+    "Chain questions such as 'which team owns the service that failed?'",
+    "Research assistants that must gather evidence from several documents before answering",
+    "Agentic retrieval layers that plan subqueries over multiple knowledge sources"
+  ],
+  "whenToUse": {
+    "use": ["Questions have separable parts", "Later queries depend on earlier findings", "You can bound loops by hops, time and tokens", "Single-shot recall is demonstrably low on the multi-part slice"],
+    "avoid": ["Most questions are simple lookups", "You cannot afford several model and search calls per question", "There is no sufficiency check or stop rule"],
+    "flips": ["Sub-questions are independent: run them in parallel rather than serially", "Only a slice of traffic is multi-part: route that slice and keep single-shot for the rest", "Latency is capped: limit to one plan pass, as the `low` effort does with one planning pass [[r5]]"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Parallel decomposition", "Independent sub-questions", "Dependent chains", "Several searches, merge logic"],
+      ["Iterative multi-hop (IRCoT style)", "Each step depends on the last", "Tight latency", "Serial latency, error propagation [[tr3]]"],
+      ["Agentic retrieval service", "You want managed planning and activity logs", "GA-only rules", "Preview, planning model billing [[r4]]"],
+      ["Single query with large k", "Question is simple", "Compound questions", "Cheap, misses parts"],
+      ["Graph or tree index", "Whole-corpus or entity-link questions", "Fast-changing corpora", "Heavy indexing"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A loop keeps searching on an unanswerable question", "cause": "No hop, token or no-progress limit", "fix": "Set max hops and a time budget, and abstain when budget is spent" },
+    { "symptom": "Final answer ignores one part of the question", "cause": "The decomposition dropped a sub-question or the merge lost its evidence", "fix": "Log sub-questions and check that every one has evidence before answering" },
+    { "symptom": "Latency is several times higher than single-shot", "cause": "Independent sub-questions were run in series", "fix": "Run independent sub-questions in parallel and reserve serial hops for dependent ones" }
+  ],
+  "scenarios": [
+    {
+      "id": "w05-t10-s1",
+      "title": "Compare two jurisdictions",
+      "situation": "An HR assistant gets questions such as 'compare notice periods for contractors and employees in the UK and in Germany'. Single-shot retrieval returns UK employee pages only.",
+      "constraints": ["Four independent facts per question", "Latency budget of four seconds", "Stable policy corpus"],
+      "unknowns": ["What share of traffic is compound?", "Is a planner model available?"],
+      "question": "How do you retrieve?",
+      "options": [
+        { "name": "Decompose into four sub-questions, retrieve in parallel, merge and answer with a check that all four have evidence", "verdict": "best", "why": "The parts are independent, so parallel retrieval keeps latency near one search plus planning.", "tradeoff": "A planning call and four searches per compound question." },
+        { "name": "Raise k to 100 on the original query", "verdict": "poor", "why": "One embedding favours the dominant sub-topic, and more chunks flood the context.", "tradeoff": "Fine for a single-topic question with scattered answers." },
+        { "name": "Serial multi-hop, one sub-question at a time", "verdict": "good", "why": "Works but is slower.", "tradeoff": "Latency adds up for no benefit when parts are independent." }
+      ],
+      "flips": [
+        { "if": "One answer determines the next query", "then": "Use iterative hops for that chain." },
+        { "if": "Most questions have one or two facts and latency is tight", "then": "Skip decomposition and use one hybrid query, reserving decomposition for detected multi-part questions." }
+      ],
+      "takeaway": "Independent parts run in parallel."
+    },
+    {
+      "id": "w05-t10-s2",
+      "title": "Ownership chain across tickets",
+      "situation": "Engineers ask 'Which on-call group owns the dependency that caused ticket 5512?'. The ticket names a service, the service page names a dependency and the dependency page names a group.",
+      "constraints": ["Three dependent hops", "Cost matters", "Unanswerable queries exist"],
+      "unknowns": ["How deep can chains go?", "What should happen when the chain breaks?"],
+      "question": "What stop design do you use?",
+      "options": [
+        { "name": "Iterative retrieval with a cap of three or four hops, a sufficiency check and abstention on budget exhaustion", "verdict": "best", "why": "Each hop depends on the last, so serial steps are required, and the caps bound cost.", "tradeoff": "Serial latency and error propagation." },
+        { "name": "Unlimited loop until the model says it is sure", "verdict": "poor", "why": "Unanswerable queries loop forever and spend tokens.", "tradeoff": "Only acceptable with a strict external budget." },
+        { "name": "One-shot retrieval with the ticket text", "verdict": "good", "why": "Cheapest and fast.", "tradeoff": "Rarely finds the group page, since the answer needs the chain." }
+      ],
+      "flips": [
+        { "if": "The ownership data lives in a structured table", "then": "Use a tool or lookup for the chain instead of text retrieval." },
+        { "if": "Cost no longer matters and recall on deep chains is critical", "then": "Raise the hop cap modestly, but keep the sufficiency check and a hard ceiling." }
+      ],
+      "takeaway": "Every loop needs a ceiling."
+    }
+  ],
+  "quiz": [
+    { "id": "w05-t10-q1", "type": "single", "tag": "tradeoff", "q": "Which question suits parallel decomposition?", "options": ["Who manages the owner of service X?", "Define latency", "Compare refund rules in three countries", "What did the last answer say?"], "answer": 2, "explain": "The three countries are independent sub-questions. The first is a dependent chain, the third a lookup and the fourth a follow-up." },
+    { "id": "w05-t10-q2", "type": "multi", "tag": "concept", "q": "Select good stop conditions for an iterative retrieval loop.", "options": ["Maximum hops", "Token or time budget", "A sufficiency check on the evidence", "Keep going until the model is confident"], "answers": [0, 1, 2], "explain": "Hop, budget and sufficiency limits bound the loop. Model confidence alone can run forever on unanswerable questions." },
+    { "id": "w05-t10-q3", "type": "single", "tag": "concept", "q": "What does Azure's `medium` reasoning effort add compared with `low`?", "options": ["A semantic classifier and one retry with a revised plan", "Unlimited loops", "Removal of reranking", "A non-LLM planner"], "answer": 0, "explain": "At `medium` the service adds a semantic classifier and one retry with a revised plan. It is a bounded retry, not an unlimited loop, and reranking stays [[r5]]." }
+  ],
+  "flashcards": [
+    { "front": "Decomposition versus multi-hop?", "back": "Decomposition splits independent sub-questions that can run in parallel. Multi-hop chains searches where each depends on the last." },
+    { "front": "What does IRCoT do?", "back": "It interleaves retrieval with chain-of-thought steps so each retrieval depends on what has been derived so far." },
+    { "front": "List four stop conditions for a retrieval loop.", "back": "Maximum hops, token or time budget, sufficiency check, and no-new-evidence rule." }
+  ],
+  "related": ["w05-t09", "w05-t13", "w05-t14", "w05-l5", "w10-t01"],
+  "refs": ["tr3", "r4", "r5", "r38"]
+}

@@ -1,0 +1,123 @@
+{
+  "id": "w13-t01",
+  "order": 1,
+  "group": "Foundations",
+  "title": "Modalities landscape and choosing a modality",
+  "minutes": 7,
+  "difficulty": "core",
+  "summary": "A modality is a form of data (text, image, audio, video, document) that a model reads or produces. The design question is which representation should carry the evidence for each task.",
+  "useIf": "Inputs arrive as photos, scans, calls or clips and you must decide what to keep as pixels or sound and what to turn into text.",
+  "avoidIf": "Every input is already clean text. Adding a modality only adds cost, failure modes and safety surface.",
+  "explain": [
+    { "t": "p", "md": "A **modality** is a form of data a model can take in or put out: text, images, audio, video, and documents (pages that mix text, tables and figures). Real systems are rarely one multimodal feature. They are a chain of choices about **which representation carries the evidence**. A photo of a shipping label is an image, but if the question is about the serial number, the useful representation is text. A call is audio, but if you must audit it, the useful representation is a transcript." },
+    { "t": "p", "md": "The working rule is to keep pixels or sound only while the answer depends on something text would lose, such as layout, a chart, tone or timing. Otherwise convert to the cheapest representation that keeps the evidence, and write down what you dropped. Each modality has its own cost unit, so the same request can differ by an order of magnitude between paths [[r1]] [[r5]]." },
+    { "t": "table", "caption": "Where each modality goes and what it costs", "head": ["Modality", "Native paths", "Cost unit", "What flattening loses"], "rows": [
+      ["Image", "Vision chat model with a `detail` setting [[r1]]", "Image tokens (patch or tile), counted against TPM", "Exact coordinates, small text after resizing"],
+      ["Audio", "Transcription (file or live), speech-to-speech, text-to-speech [[tr1]] [[r3]]", "Per file, or audio tokens in realtime: 1 per 100 ms user, 1 per 50 ms assistant [[r5]]", "Tone, speaker identity, timing"],
+      ["Video", "Content Understanding analyzer, or your own frames plus a transcript [[r11]]", "About 1 frame per second at 512 x 512 px, speech only", "Fast events, fine on-screen text, music"],
+      ["Document", "Layout or read service, field models, vision LLM [[r10]]", "Service call per page, or image tokens", "Cross-page tables, chart meaning"],
+      ["Search over mixed content", "Text index, multimodal embeddings, page images [[r12]]", "Index-time LLM calls and vector storage", "Citations or visual similarity, depending on the path"]
+    ] },
+    { "t": "flow", "title": "Four questions before you pick a path", "direction": "h", "steps": [
+      { "title": "Where is the meaning?", "md": "In the words, or in layout, figures, tone or motion?" },
+      { "title": "Live or recorded?", "md": "Live needs streaming and low latency. Recorded can batch." },
+      { "title": "What evidence must the answer carry?", "md": "Citable text, bounding regions, a timestamp, or none." },
+      { "title": "What limits apply?", "md": "Cost per unit, data residency, and preview tolerance." }
+    ] },
+    { "t": "callout", "kind": "interview", "title": "Name the dials before the model", "md": "A strong answer starts with where the meaning lives, live versus recorded, evidence form and budget. Model names come last, and they change faster than these dials." }
+  ],
+  "whereToUse": [
+    "Intake pipelines for photos, screenshots and scanned forms",
+    "Voice front ends for support lines, kiosks and in-car assistants",
+    "Search over slide decks, manuals and media libraries with figures",
+    "Document automation where tables and signatures matter",
+    "Accessibility features such as captions, transcripts and image descriptions"
+  ],
+  "whenToUse": {
+    "use": [
+      "The answer depends on layout, a figure, tone or timing that text cannot carry",
+      "Users naturally speak or photograph instead of typing",
+      "A specialist service for the modality already exists and is cheaper than a general model call"
+    ],
+    "avoid": [
+      "The content is already clean text and a modality adds only cost",
+      "A downstream audit needs stable text and you have not planned a transcript or extraction step",
+      "You cannot test the modality against a labelled set, so quality is unknown"
+    ],
+    "flips": [
+      "Evidence must be cited as text: convert early (transcribe, OCR, caption) and index the text",
+      "Exact pixel positions matter, as in UI automation: keep the image and control its resizing",
+      "Recorded content with no live need: switch from streaming to batch and cut cost"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Approach", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Convert to text first (OCR, transcribe, caption)", "Meaning is in the words and you need citations or audit text", "Layout, tone or figures carry the answer", "Extraction errors are silent and propagate"],
+      ["Send the native modality to a multimodal model", "Few items, odd layouts, answers that need inference", "Volume is high or you need confidence scores", "Token cost, approximate counting and small-text errors [[r1]]"],
+      ["Specialist service (Speech, Document Intelligence, Content Understanding)", "Stable task, volume, grounding or on-premises needs [[r10]]", "The task is open ended or one-off", "Service limits, API versions and preview status"],
+      ["Hybrid: text plus selected pixels", "Most content is text but some regions are visual", "You cannot detect which regions are visual", "More moving parts to monitor"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Costs vary wildly between environments for the same workload", "cause": "Each modality and model family counts its own unit: patches, tiles, audio seconds, frames", "fix": "Compute the unit cost per modality from the deployed model's rules and log it per request." },
+    { "symptom": "Answers are fluent but wrong about figures or counts", "cause": "A modality was flattened or sent at a resolution that loses the detail, and nobody tested that stratum", "fix": "Build a golden set per modality and report each separately (see the vision failure modes topic)." },
+    { "symptom": "A voice or image feature ships and security finds new attack paths", "cause": "Text inside images and audio is untrusted input, but it was treated as trusted", "fix": "Treat extracted text as untrusted and apply the controls in the multimodal safety topic." }
+  ],
+  "scenarios": [
+    {
+      "id": "w13-t01-s1",
+      "title": "Archive of recorded calls",
+      "situation": "A team holds a large backlog of recorded customer calls. Reviewers want searchable text and a few quality metrics. Nobody is waiting on a live answer.",
+      "constraints": ["Content is recorded, not live", "Audit needs a stable text record", "Volume is large and budget is fixed"],
+      "unknowns": ["How many hours, and in how many languages?", "Do reviewers need speaker labels?", "Must the audio stay in a given region?"],
+      "question": "Which path handles the audio?",
+      "options": [
+        { "name": "Batch transcription, then text analysis", "verdict": "best", "why": "Recorded audio with no latency target fits asynchronous transcription, and the transcript is the audit record.", "tradeoff": "Tone and overlap are lost unless you add diarization or acoustic analysis." },
+        { "name": "Send each recording to a realtime speech-to-speech session", "verdict": "poor", "why": "Realtime is built for live conversation and bills audio tokens in a growing session. It leaves no stable transcript by default.", "tradeoff": "Right only when a caller is on the line and answers must be spoken back." },
+        { "name": "Send raw audio to a general multimodal model per call", "verdict": "good", "why": "Works for small sets and can capture tone.", "tradeoff": "Costs more per hour than a transcription service and gives no timestamps or speaker labels unless you ask." }
+      ],
+      "flips": [
+        { "if": "Reviewers need live agent assist during the call", "then": "Move to streaming transcription for the live part and keep batch for the archive." },
+        { "if": "Tone and sentiment are the product", "then": "Add an audio-native analysis path next to the transcript." }
+      ],
+      "takeaway": "Recorded and auditable audio becomes text first."
+    },
+    {
+      "id": "w13-t01-s2",
+      "title": "Photos of printed labels",
+      "situation": "Field staff photograph equipment labels. The system must read part and serial numbers exactly and feed them to an inventory system. A few thousand photos arrive per day.",
+      "constraints": ["Exact characters matter", "Photos are uneven: rotation, glare, small print", "Per-field confidence is needed for review queues"],
+      "unknowns": ["Are labels standard forms or free-form stickers?", "Is there an on-premises rule?", "What error rate is acceptable?"],
+      "question": "Keep the image or convert to text first?",
+      "options": [
+        { "name": "OCR or layout extraction first, then reason over the text", "verdict": "best", "why": "The meaning is characters, and an extraction service returns text with confidence you can threshold [[r10]].", "tradeoff": "Does not understand non-text context such as dents or colour." },
+        { "name": "Vision model at `original` detail", "verdict": "good", "why": "Reads small text better than low detail and needs no extra service [[r1]].", "tradeoff": "No confidence scores, and rotation and small text remain known weak spots." },
+        { "name": "Vision model at `low` detail with a short caption", "verdict": "poor", "why": "Low detail discards the characters you need.", "tradeoff": "Fine for coarse classification such as 'is this a label at all'." }
+      ],
+      "flips": [
+        { "if": "Labels are rare, odd and a few dozen per week", "then": "A direct vision call is simpler and the extraction service is not worth wiring." },
+        { "if": "Photos must also be checked for damage", "then": "Run both: extraction for the text and a vision call for the visual condition." }
+      ],
+      "takeaway": "When the evidence is characters, extract text and keep confidence."
+    }
+  ],
+  "quiz": [
+    { "id": "w13-t01-q1", "type": "single", "tag": "tradeoff", "q": "Recorded audio must be auditable and no one waits for an answer. Which representation should the pipeline produce first?", "options": ["A transcript, from batch transcription", "Audio tokens in a realtime session", "A caption per frame", "A multimodal embedding of the waveform"], "answer": 0, "explain": "A transcript is cheap, searchable and auditable, and recorded content can use asynchronous transcription. Realtime sessions are for live conversation. Frame captions are a video technique. An embedding gives similarity, not an audit record." },
+    { "id": "w13-t01-q2", "type": "multi", "tag": "flip", "q": "Which changes push a design toward keeping the image instead of converting it to text?", "options": ["Exact pixel coordinates matter for UI automation", "Meaning lives in a chart or layout", "The answer needs only the characters on a label", "You need citable plain text"], "answers": [0, 1], "explain": "Coordinates and layout or chart meaning are lost when you flatten to text. Characters-only tasks and citable text favour extraction first." },
+    { "id": "w13-t01-q3", "type": "match", "tag": "concept", "q": "Match each modality to what is typically lost when you flatten it to text.", "pairs": [
+      { "l": "Audio", "r": "Tone and timing" },
+      { "l": "Video", "r": "Fast events and fine on-screen text" },
+      { "l": "Document page", "r": "Chart meaning and cross-page tables" },
+      { "l": "Image", "r": "Exact coordinates" }
+    ], "explain": "Each modality has its own blind spot after flattening. Knowing it tells you when to keep the original." }
+  ],
+  "flashcards": [
+    { "front": "What is the working rule for choosing a modality representation?", "back": "Keep pixels or sound only while the answer depends on something text would lose. Otherwise convert to the cheapest representation that keeps the evidence, and note what you dropped." },
+    { "front": "Name four questions that choose a modality path.", "back": "Where does the meaning live? Live or recorded? What evidence form must the answer carry? What cost, residency and preview limits apply?" },
+    { "front": "Why can the same request cost very different amounts across modalities?", "back": "Each uses its own unit: image patches or tiles, audio seconds as tokens, video frames, document pages. Compute the unit from the deployed model's rules." }
+  ],
+  "related": ["w13-t02", "w13-t04", "w13-t08", "w13-t09", "w13-t12", "w13-l1", "w13-l6", "w00-t02"],
+  "refs": ["r1", "r3", "r5", "r10", "r11", "r12", "tr1"]
+}

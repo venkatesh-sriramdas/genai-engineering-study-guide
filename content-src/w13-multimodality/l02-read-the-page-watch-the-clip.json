@@ -1,0 +1,89 @@
+{
+  "id": "w13-l2",
+  "order": 2,
+  "title": "Read the page, watch the clip",
+  "kind": "problem",
+  "minutes": 18,
+  "brief": "Pages arrive as scans, forms, slide decks and videos. Layout complexity, volume, the need for grounded fields and where the code may run are all open. Choose how the content gets read.",
+  "blocks": [
+    { "t": "h", "text": "Four ways to read a document", "level": 2 },
+    { "t": "p", "md": "Microsoft's tool guide separates the choices [[r10]]. For OCR or layout only, use Content Understanding `prebuilt-read` or `prebuilt-layout`, which cost less and return richer layout. For standard forms (invoice, receipt, ID, tax, mortgage) use a Document Intelligence prebuilt model. For contracts and unstructured text use `prebuilt-contract` or a zero-shot custom analyzer. Build directly on a vision model only when you need full control of model and prompt. Each choice shifts work onto you: chunking, confidence and grounding." },
+    { "t": "compare", "title": "The real options", "intro": "Statuses checked on 2026-10-13.", "options": [
+      { "name": "Layout or read only", "tag": "GA 2025-11-01", "summary": "Content Understanding `prebuilt-read` or `prebuilt-layout` return text and structure.", "pros": ["Lower cost than field extraction", "Richer layout than plain OCR"], "cons": ["No typed fields", "You chunk and interpret the result"], "bestWhen": "You feed a search index and text plus structure is enough.", "avoidWhen": "You need typed fields with confidence." },
+      { "name": "Document Intelligence prebuilt or custom", "tag": "GA v4.0 2024-11-30", "summary": "Prebuilt models for standard forms, and custom models from as few as 5 labeled samples.", "pros": ["No forced migration to newer services", "Containers are the only on-premises or air-gapped option", "Confidence and grounding come with the output"], "cons": ["Labeling effort for custom models", "Poor fit for free-form contracts"], "bestWhen": "Stable forms at volume, or a no-cloud rule.", "avoidWhen": "Contracts and unstructured text with changing layouts." },
+      { "name": "Content Understanding analyzer", "tag": "GA 2025-11-01, preview features", "summary": "Analyzers for documents, images, audio and video, with `prebuilt-contract` and zero-shot custom analyzers.", "pros": ["Handles contracts and unstructured text", "One service across modalities"], "cons": ["The `2026-06-01-preview` version has no SLA", "Cloud only"], "bestWhen": "Mixed modalities or unstructured content that needs fields.", "avoidWhen": "Air-gapped sites, or stable forms that a prebuilt model already covers." },
+      { "name": "Vision LLM called directly", "summary": "Send page images to a vision model with your own prompt.", "pros": ["Reasons across prose and figures", "Full control of model and prompt"], "cons": ["You build chunking, confidence and grounding", "Weak on small text, rotation and non-Latin scripts"], "bestWhen": "Low volume, odd layouts or answers that need inference.", "avoidWhen": "Audit trails need confidence scores and bounding regions." }
+    ] },
+    { "t": "dials", "id": "w13-l2-pipeline", "title": "Pick a document pipeline", "prompt": "Change the layout, the volume, where it runs and whether you need grounding.",
+      "dials": [
+        { "id": "shape", "label": "Layout complexity", "values": [ { "id": "plain", "label": "Plain text, simple layout" }, { "id": "forms", "label": "Standard forms" }, { "id": "mixed", "label": "Contracts, tables and figures" } ] },
+        { "id": "volume", "label": "Volume and cost", "values": [ { "id": "low", "label": "Low volume, quality first" }, { "id": "high", "label": "High volume, cost first" } ] },
+        { "id": "deploy", "label": "Where it runs", "values": [ { "id": "cloud", "label": "Cloud is fine" }, { "id": "air", "label": "On premises or air-gapped" } ] },
+        { "id": "ground", "label": "Grounding", "values": [ { "id": "need", "label": "Confidence and regions needed" }, { "id": "free", "label": "Answers only, I validate" } ] }
+      ],
+      "options": [
+        { "id": "lib", "name": "Text extraction library", "summary": "Embedded text, no AI service." },
+        { "id": "layout", "name": "Layout or read service", "summary": "Content Understanding read or layout." },
+        { "id": "di", "name": "Document Intelligence", "summary": "Prebuilt or custom models." },
+        { "id": "cu", "name": "Content Understanding analyzer", "summary": "Contracts and unstructured content." },
+        { "id": "llm", "name": "Vision LLM direct", "summary": "Your prompt over page images." }
+      ],
+      "scores": {
+        "lib": {
+          "shape": { "plain": { "s": 2, "why": "Cheapest when text is embedded." }, "forms": { "s": -1, "why": "No field extraction." }, "mixed": { "s": -2, "why": "Tables and figures are lost." } },
+          "volume": { "low": { "s": 0, "why": "Neutral." }, "high": { "s": 1, "why": "Near-zero cost per page." } },
+          "deploy": { "cloud": { "s": 0, "why": "Neutral." }, "air": { "s": 1, "why": "Runs anywhere." } },
+          "ground": { "need": { "s": -1, "why": "No confidence or regions." }, "free": { "s": 0, "why": "Neutral." } }
+        },
+        "layout": {
+          "shape": { "plain": { "s": 1, "why": "Cheap and richer than raw text." }, "forms": { "s": -1, "why": "Layout without fields." }, "mixed": { "s": 1, "why": "Tables and structure, no fields." } },
+          "volume": { "low": { "s": 0, "why": "Neutral." }, "high": { "s": 2, "why": "Lower cost, richer layout." } },
+          "deploy": { "cloud": { "s": 1, "why": "A managed service." }, "air": { "s": -2, "why": "A cloud service." } },
+          "ground": { "need": { "s": 1, "why": "Structure for citations." }, "free": { "s": 0, "why": "Neutral." } }
+        },
+        "di": {
+          "shape": { "plain": { "s": -1, "why": "More than the job needs." }, "forms": { "s": 2, "why": "Prebuilt invoice, receipt, ID, tax, mortgage." }, "mixed": { "s": 0, "why": "Not built for free-form contracts." } },
+          "volume": { "low": { "s": 1, "why": "Fine at low volume." }, "high": { "s": 1, "why": "Stable forms scale well." } },
+          "deploy": { "cloud": { "s": 0, "why": "Neutral." }, "air": { "s": 2, "why": "Containers are the only on-premises option." } },
+          "ground": { "need": { "s": 2, "why": "Confidence and grounding come with it." }, "free": { "s": 0, "why": "Neutral." } }
+        },
+        "cu": {
+          "shape": { "plain": { "s": -1, "why": "Overkill." }, "forms": { "s": 0, "why": "Prebuilt DI is the closer fit." }, "mixed": { "s": 2, "why": "prebuilt-contract or a zero-shot analyzer." } },
+          "volume": { "low": { "s": 1, "why": "Quality first." }, "high": { "s": -1, "why": "Generative work adds cost (inference)." } },
+          "deploy": { "cloud": { "s": 1, "why": "A managed service." }, "air": { "s": -2, "why": "A cloud service." } },
+          "ground": { "need": { "s": 2, "why": "Grounded fields with confidence." }, "free": { "s": 0, "why": "Neutral." } }
+        },
+        "llm": {
+          "shape": { "plain": { "s": -2, "why": "Overkill and costly." }, "forms": { "s": -1, "why": "No templates or confidence." }, "mixed": { "s": 2, "why": "Reasons across prose and figures." } },
+          "volume": { "low": { "s": 1, "why": "Flexible at small scale." }, "high": { "s": -2, "why": "Image tokens add up." } },
+          "deploy": { "cloud": { "s": 0, "why": "Neutral." }, "air": { "s": -2, "why": "Needs a model endpoint." } },
+          "ground": { "need": { "s": -2, "why": "Confidence and grounding are yours to build." }, "free": { "s": 2, "why": "Flexible reasoning, you validate." } }
+        }
+      },
+      "takeaway": "The cheapest option that gives the evidence you need wins. A vision LLM leads only when you accept building grounding yourself." },
+    { "t": "diagram", "id": "w13-l2-d1", "title": "Document tool decision path", "alt": "A standard form goes to a Document Intelligence prebuilt model. Otherwise, if no fields or reasoning are needed use layout or read, and if they are needed use a Content Understanding analyzer.", "src": "flowchart TB\n  D[Document] --> Q{Standard form?}\n  Q -->|Yes| DI[Document Intelligence prebuilt]\n  Q -->|No| R{Fields or reasoning?}\n  R -->|No| L[Layout or read]\n  R -->|Yes| C[Content Understanding]", "caption": "On premises or air-gapped sites route to Document Intelligence containers first." },
+    { "t": "failure", "title": "Failure modes", "items": [
+      { "symptom": "A table splits at a page break and rows are lost", "cause": "Pages were parsed one by one", "fix": "Use the Content Understanding skill in AI Search, which handles cross-page tables [[r12]], or merge tables after layout extraction." },
+      { "symptom": "Small print and rotated scans come back wrong", "cause": "A vision LLM was used alone, and small text and rotation are known weak spots", "fix": "Run layout extraction first, or send the page at `original` detail after deskewing." },
+      { "symptom": "Cost jumps after video segmentation is enabled", "cause": "Segmentation spends generative model tokens even when no fields are defined", "fix": "Enable `enableSegment` only where scene segments are used." },
+      { "symptom": "Output shape changes after a service update", "cause": "Production calls `2026-06-01-preview`, which has no SLA", "fix": "Pin the GA version `2025-11-01` for production and test preview versions elsewhere." },
+      { "symptom": "A no-cloud requirement appears late in the project", "cause": "The design used cloud-only analyzers", "fix": "Ask about on-premises needs first. Document Intelligence containers are the only on-premises option among these tools." }
+    ] },
+    { "t": "accordion", "items": [
+      { "title": "Go deeper: video through Content Understanding", "blocks": [
+        { "t": "p", "md": "The video analyzer samples about one frame per second, resizes frames to 512 x 512 pixels and transcribes speech only, not music or ambient sound [[r11]]. It offers key frames, shot detection (`cameraShotTimesMs`) and custom segmentation (`enableSegment`). Fast events and small on-screen text are lost at that sampling. For slides or fine text, extract higher-resolution frames yourself and send them at `original` detail (inference from the documented limits)." }
+      ] },
+      { "title": "Go deeper: what the preview version adds", "blocks": [
+        { "t": "p", "md": "GA API `2025-11-01` is the production choice. `2026-06-01-preview` adds agentic mode, in-page segmentation, signature detection and document metadata, and is not covered by an SLA [[r10]]. Document Intelligence v4.0 is GA as `2024-11-30` and needs no forced migration." }
+      ] }
+    ] }
+  ],
+  "quiz": [
+    { "id": "w13-l2-q1", "type": "single", "tag": "tradeoff", "q": "Invoices with a stable layout must be processed in an air-gapped plant. Which choice fits the dials?", "options": ["A Content Understanding analyzer on the preview API, which adds agentic mode for stable invoice layouts", "Document Intelligence containers, the only on-premises option among these tools", "A vision LLM called directly, since it needs no templates", "Content Understanding `prebuilt-layout`, the lowest cost layout option"], "answer": 1, "explain": "On-premises and air-gapped sites can only use Document Intelligence containers among these tools. The analyzer and the layout service are cloud services. A vision LLM needs a model endpoint and gives no confidence scores for invoice fields.", "difficulty": 2, "ref": "r10" },
+    { "id": "w13-l2-q2", "type": "single", "tag": "diagnose", "q": "A production pipeline calls Content Understanding with the version below and its output shape changed after a service update. What is the right fix?", "code": { "lang": "text", "code": "api-version=2026-06-01-preview\nSLA=none" }, "options": ["Raise the vision model detail level to `original`", "Switch from Content Understanding to a vision LLM and accept the loss of field extraction", "Retry failed calls with exponential backoff", "Pin the GA version `2025-11-01` for production and test previews elsewhere"], "answer": 3, "explain": "The preview version is not covered by an SLA and can change. GA `2025-11-01` is the production choice. Detail levels, backoff and a different tool do not address a changing API contract.", "difficulty": 2, "ref": "r10" },
+    { "id": "w13-l2-q3", "type": "multi", "tag": "concept", "q": "Select every true statement about the Content Understanding video analyzer.", "options": ["It samples about one frame per second.", "Frames are resized to 512 x 512 pixels.", "It transcribes music and ambient sound.", "Segmentation spends generative tokens even when no fields are defined."], "answers": [0, 1, 3], "explain": "Sampling is about 1 fps at 512 x 512, and segmentation uses generative tokens even without fields. Only speech is transcribed, so music and ambient sound are not.", "difficulty": 2, "ref": "r11" }
+  ],
+  "defend": null,
+  "refs": ["r1", "r10", "r11", "r12"],
+  "takeaways": ["Pick the cheapest tool that returns the evidence you need: layout, form model, analyzer or vision LLM", "On-premises needs point to Document Intelligence containers", "Use the GA Content Understanding version for production", "Video sampling at about 1 fps and 512 x 512 loses fast events and fine text"]
+}

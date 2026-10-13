@@ -1,0 +1,118 @@
+{
+  "id": "w07-t18",
+  "order": 18,
+  "group": "Operations and defences",
+  "title": "Least privilege and output controls",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "Give each identity and tool the minimum it needs, treat model output as untrusted, and put a human in front of actions that are costly or irreversible. Limits on what an attack can do matter more than perfect detection.",
+  "useIf": "Your assistant calls tools, writes to systems or runs with a service identity.",
+  "avoidIf": "You are choosing the document ACL mechanism. Least privilege sits around it and does not replace it.",
+  "explain": [
+    { "t": "p", "md": "OWASP LLM06 Excessive Agency lists four mitigations: **minimise the extensions** the model can call, **minimise each extension's functions**, **avoid open-ended extensions** such as run-a-shell-command or fetch-a-URL, and **minimise the permissions** the extension holds, enforced through the identity it uses. Its example: an agent that recommends products needs read access to a products table, with no access to other tables and no insert, update or delete [[tr5]]." },
+    { "t": "table", "caption": "One identity per job", "head": ["Identity", "Holds", "Does not hold"], "rows": [
+      ["Query-time retrieval", "The caller's delegated token. In Azure AI Search the calling app needs Search Index Data Reader [[r12]]", "Write access to the index"],
+      ["Ingestion pipeline", "Read on sources and write on the index. SharePoint indexing needs application permissions [[r16]]", "Any role used at query time"],
+      ["Tool executor", "The minimum rights for one task, per user where possible", "A shared admin credential"],
+      ["Admin debugging", "A dedicated role for elevated read, which sees all documents [[r12]]", "Standing use by the application"]
+    ] },
+    { "t": "p", "md": "**Output controls** apply OWASP LLM05: encode, validate and apply a content security policy (see the exfiltration topic) [[tr4]]. Add citation hygiene: show titles and links only for documents the caller may open, since a title can leak. Scan for secrets and personal data where leaks are text patterns." },
+    { "t": "p", "md": "**Human review** belongs on actions that are irreversible, externally visible or sensitive. Microsoft Agent Framework has a built-in hook: in Python a `@tool` with `approval_mode=\"always_require\"`, with `user_input_requests` on the run result, and in .NET `ApprovalRequiredAIFunction`, which produces `ToolApprovalRequestContent` [[tr17]]. When untrusted input, private data and an external action all appear, require approval or remove a leg [[r10]]." },
+    { "t": "callout", "kind": "gotcha", "title": "Review is a control only if it works", "md": "Show the reviewer the evidence (sources, the filter used, the exact action), not only a yes or no button. A queue that reviewers approve in bulk adds delay and no safety." }
+  ],
+  "whereToUse": [
+    "Designing service identities for retrieval, ingestion and tools",
+    "Reviewing an agent whose tools include shell, fetch or database access",
+    "Choosing which actions get an approval gate and which get a sampled audit",
+    "Tightening an assistant after a security review finds a broad credential"
+  ],
+  "whenToUse": {
+    "use": ["The assistant can change state or contact outside systems", "A shared credential has more rights than any one user", "Actions differ widely in risk"],
+    "avoid": ["Approving every action at high volume", "Open-ended tools such as run any query or fetch any URL", "Using one admin key for query, ingest and debugging"],
+    "flips": ["Actions are reversible and high volume: sampled audit with an easy undo", "Actions are irreversible and rare: approval with evidence", "The tool can be replaced by a narrow, purpose-built function: do that first"]
+  },
+  "alternatives": {
+    "title": "Controls compared",
+    "head": ["Control", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Narrow tools and scoped identities", "You can name the task precisely", "The task is open-ended exploration", "Design effort, less flexibility"],
+      ["Approval gates", "Few, irreversible actions", "High volume", "Latency, reviewer fatigue"],
+      ["Sampled audit after the fact", "Reversible, high-volume actions", "Damage cannot be undone", "Late detection"],
+      ["Output filtering", "Leaks are patterns", "Data is paraphrased or encoded", "False positives, streaming delay"],
+      ["Prompt rules only", "Tone and format guidance", "Anything security related", "Overridable"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "An injected instruction deletes records", "cause": "The tool's database role has write rights it never needed", "fix": "Use a read-only role limited to the needed tables and enforce it in the database" },
+    { "symptom": "Citations reveal restricted titles", "cause": "Titles and links were returned without checking the caller's access", "fix": "Return citations only for documents the caller can open" },
+    { "symptom": "Reviewers approve everything", "cause": "A high-volume queue with no evidence on screen", "fix": "Tier by risk, show sources and the exact action, and sample the rest" },
+    { "symptom": "The application can read every document with its own key", "cause": "One admin credential serves query, ingestion and debugging", "fix": "Split identities and keep elevated read for a dedicated role" }
+  ],
+  "scenarios": [
+    {
+      "id": "w07-t18-s1",
+      "title": "One admin key in the application",
+      "situation": "A small team ships an assistant that uses the search service's admin key for queries, ingestion and debugging because it was quick. The assistant serves 300 employees.",
+      "constraints": ["Small team", "One key for everything", "Per-user permissions exist in the index"],
+      "unknowns": ["Where is the key stored?", "Does the app pass the user's token to the search service?"],
+      "question": "What do you change first?",
+      "options": [
+        { "name": "Leave it and add a prompt rule about confidential documents", "verdict": "poor", "why": "A prompt is not enforcement and the key reaches everything.", "tradeoff": "A tone rule helps only alongside real controls." },
+        { "name": "Split identities: query-time with the user's token and Search Index Data Reader, a separate ingestion identity, and a dedicated elevated-read role for debugging", "verdict": "best", "why": "Each identity holds only what its job needs, and ACL filters apply at query time [[r12]].", "tradeoff": "Token plumbing and role management." },
+        { "name": "Rotate the admin key monthly", "verdict": "good", "why": "Reduces exposure time.", "tradeoff": "The key still holds every right, so a leak is still total." }
+      ],
+      "flips": [
+        { "if": "Content is public and uniform", "then": "A single read-only identity is enough." },
+        { "if": "Native ACLs are not used", "then": "Build the filter server side and still split ingestion from query." }
+      ],
+      "takeaway": "One identity per job."
+    },
+    {
+      "id": "w07-t18-s2",
+      "title": "A run-any-SQL tool",
+      "situation": "An analytics assistant has a tool that runs SQL the model writes, using a credential that can read and write several schemas. Documents in the knowledge base are user-authored.",
+      "constraints": ["Open-ended tool", "Broad credential", "User-authored documents"],
+      "unknowns": ["Which tables does the task need?", "Can the credential be scoped?"],
+      "question": "How do you reduce the risk?",
+      "options": [
+        { "name": "Add a system prompt rule: never run destructive statements", "verdict": "poor", "why": "Injected text can override the rule, and the credential still allows damage.", "tradeoff": "A hint only." },
+        { "name": "Replace it with narrow, parameterised functions and a read-only database role limited to the needed tables", "verdict": "best", "why": "It applies minimise-functions and minimise-permissions from LLM06 and enforces them in the database [[tr5]].", "tradeoff": "Less flexibility for new questions, so add functions as needs appear." },
+        { "name": "Keep run-any-SQL but require approval for each statement", "verdict": "good", "why": "A human sees each query.", "tradeoff": "Reviewer fatigue and the credential stays broad." }
+      ],
+      "flips": [
+        { "if": "Only analysts use it in a sandbox copy", "then": "Open-ended SQL on a read-only replica may be acceptable." },
+        { "if": "Queries are always one of ten shapes", "then": "Expose those as named functions." }
+      ],
+      "takeaway": "Replace open-ended tools with narrow ones."
+    },
+    {
+      "id": "w07-t18-s3",
+      "title": "Four thousand drafts a day",
+      "situation": "An agent drafts customer replies, about 4,000 a day. Replies can contain account data. A reviewer team currently approves every draft and has started approving in bulk.",
+      "constraints": ["High volume", "Account data in replies", "Bulk approval"],
+      "unknowns": ["Which replies are irreversible or sensitive?", "Can low-risk replies be undone?"],
+      "question": "How do you redesign review?",
+      "options": [
+        { "name": "Approve every draft with a simple yes or no", "verdict": "poor", "why": "At this volume reviewers stop checking, so it adds delay and no safety.", "tradeoff": "Right for a small number of high-stakes actions." },
+        { "name": "Risk-tier: approval with evidence for replies that carry account data or external links, templated auto-send for low-risk replies and a sampled audit", "verdict": "best", "why": "Reviewer attention goes where harm is possible, and the audit measures the rest.", "tradeoff": "A tiering rule to maintain and some late detection on sampled items." },
+        { "name": "Remove human review and add an output filter", "verdict": "good", "why": "Scales.", "tradeoff": "Filters miss paraphrased or encoded data and nothing gates the action." }
+      ],
+      "flips": [
+        { "if": "Volume falls to a few dozen per day", "then": "Approve all with evidence on screen." },
+        { "if": "A regulator requires oversight for the class of decision", "then": "Design review to meet that duty, with an audit trail." }
+      ],
+      "takeaway": "Tier human review by risk and show evidence."
+    }
+  ],
+  "quiz": [
+    { "id": "w07-t18-q1", "type": "single", "tag": "security", "q": "Which role should the application hold for query-time calls to Azure AI Search with native ACLs, following least privilege?", "options": ["Search Index Data Contributor, so it can fix data", "Search Service Contributor, so it can manage indexes", "Search Index Data Reader, with the user's token in the header", "Owner on the subscription"], "answer": 2, "explain": "The caller needs Search Index Data Reader (or Contributor) and the user's token for ACL matching. Reader is the least privilege. Contributor, service contributor and owner grant write or management rights the query path never needs.", "ref": "r12" },
+    { "id": "w07-t18-q2", "type": "multi", "tag": "concept", "q": "Which are OWASP LLM06 Excessive Agency mitigations? Choose all that apply.", "options": ["Minimise the extensions an agent can call", "Avoid open-ended extensions such as running any shell command", "Give the agent a broad admin credential so it never fails", "Minimise the permissions extensions hold in other systems"], "answers": [0, 1, 3], "explain": "OWASP lists minimising extensions, their functions and their permissions, and avoiding open-ended extensions. A broad credential is the opposite of least privilege.", "ref": "tr5" }
+  ],
+  "flashcards": [
+    { "front": "What are the four LLM06 mitigations?", "back": "Minimise extensions, minimise their functions, avoid open-ended extensions (shell, fetch URL) and minimise their permissions, enforced through the identity they use." },
+    { "front": "Which identities should be separate in a RAG system?", "back": "Query-time retrieval (the user's token), ingestion (source read, index write), tool execution (task-specific) and admin debugging (dedicated elevated-read role)." },
+    { "front": "How does Agent Framework gate a tool call for approval?", "back": "Python: @tool with approval_mode always_require, with user_input_requests on the result. .NET: wrap in ApprovalRequiredAIFunction, which yields ToolApprovalRequestContent." }
+  ],
+  "related": ["w07-t13", "w07-t05", "w07-t17", "w17-t01", "w17-t02", "w08-t11"],
+  "refs": ["r10", "r12", "r16", "tr4", "tr5", "tr17"]
+}

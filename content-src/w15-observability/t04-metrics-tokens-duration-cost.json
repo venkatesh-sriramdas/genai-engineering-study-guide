@@ -1,0 +1,159 @@
+{
+  "id": "w15-t04",
+  "order": 4,
+  "group": "Standards",
+  "title": "Metrics: tokens, duration and cost",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "Metrics are unsampled aggregates. Use token usage counters for totals and cost, duration histograms for latency and agent metrics for loops, and keep dimensions low-cardinality so attribution does not break the backend.",
+  "useIf": "You need trustworthy totals for tokens, latency and cost, dashboards and alerts that sampling must not distort.",
+  "avoidIf": "You compute totals from sampled spans or per-operation histograms: both give wrong numbers.",
+  "explain": [
+    { "t": "p", "md": "The GenAI metrics in the new conventions repository split by job [[r5]] [[r2]]. **Counters** carry totals: `gen_ai.client.inference.usage.input_tokens` (includes cached tokens) and `.output_tokens` (includes reasoning tokens), with subset counters `.cache_read.input_tokens`, `.cache_write.input_tokens` and `.reasoning.output_tokens`, split by `gen_ai.token.modality`. **Histograms** describe distributions: `gen_ai.client.inference.duration`, `.time_to_first_chunk` (streaming only) and `.time_per_output_chunk` use unit seconds and explicit buckets from 0.01 doubling to 81.92 (14 boundaries). The per-operation token histograms `gen_ai.client.inference.operation.input_tokens` and `.output_tokens` are for percentiles and outliers and should not be used for total usage or cost." },
+    { "t": "p", "md": "Agent-level metrics include `gen_ai.invoke_agent.duration`, `gen_ai.invoke_agent.inference_calls`, `gen_ai.invoke_agent.tool_calls`, `gen_ai.invoke_workflow.duration` and `gen_ai.execute_tool.duration`. Agent Framework's docs list `gen_ai.client.operation.duration`, `gen_ai.client.token.usage` and `agent_framework.function.invocation.duration`, so confirm which names your build emits [[r10]]." },
+    { "t": "formula", "title": "Cost from counters", "expr": "cost = (input - cache_read) x p_in + cache_read x p_cache + output x p_out", "vars": [
+      { "k": "input", "v": "gen_ai.client.inference.usage.input_tokens (already includes cache reads)" },
+      { "k": "output", "v": "gen_ai.client.inference.usage.output_tokens (already includes reasoning tokens)" },
+      { "k": "p_*", "v": "Your price per token for uncached input, cached input and output" }
+    ], "example": "Illustrative prices: 2.00 per million uncached input, 0.50 per million cached input, 8.00 per million output. A day with 1,000,000 input tokens (600,000 cache reads) and 100,000 output tokens costs 0.80 + 0.30 + 0.80 = 1.90. Adding cache reads on top of input would report 1,600,000 input tokens and overstate cost." },
+    { "t": "p", "md": "To attribute cost at a shared gateway, API Management's `llm-emit-token-metric` policy sends token metrics to Application Insights with up to five custom dimensions. Azure Monitor allows 10 dimension keys per metric and 50,000 active time series per region per subscription (12 hours). API Management allows 100 unique values per dimension and 1,000 active time series per namespace and **drops the excess silently**. Interrupted streams give wrong counts and some OpenAI streams need `include_usage` set to true. Cached and reasoning categories are in preview [[r16]]." },
+    { "t": "callout", "kind": "gotcha", "title": "Do not use a user id as a dimension", "md": "A per-user dimension exceeds 100 unique values quickly, so series vanish without an error. Use team, agent, model or tier on metrics and keep user ids on spans." }
+  ],
+  "whereToUse": [
+    "A cost dashboard by team, agent and model built from token counters",
+    "Latency SLIs from duration histograms, including time to first chunk for streaming",
+    "Runaway detection from calls per run and tool calls per run",
+    "Gateway-level token metering for chargeback across teams",
+    "Cache effectiveness checks from cache-read counters"
+  ],
+  "whenToUse": {
+    "use": [
+      "Use counters for totals and cost, and alert on metrics because they are not sampled",
+      "Use duration histograms with the recommended bucket boundaries for percentiles",
+      "Use span attributes for per-request drill-down, not metric dimensions"
+    ],
+    "avoid": [
+      "Do not add cache or reasoning tokens on top of input and output totals",
+      "Do not compute cost from per-operation histograms or sampled spans",
+      "Do not put high-cardinality values such as user ids on metrics"
+    ],
+    "flips": [
+      "You need per-user cost: aggregate from unsampled logs or a billing export, not metric dimensions",
+      "Streams are interrupted often: compare gateway counts with provider usage before trusting them",
+      "Cached or reasoning categories are in preview in your backend: keep a fallback computed from span attributes"
+    ]
+  },
+  "alternatives": {
+    "title": "Where token and cost numbers come from",
+    "head": ["Source", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Client counters (`gen_ai.client.inference.usage.*`)", "Per agent and model totals", "Calls bypass your instrumented client", "Naming differs across builds [[r5]]"],
+      ["Gateway metric (`llm-emit-token-metric`)", "Many teams behind one gateway", "You need per-run detail", "Dimension limits drop series silently [[r16]]"],
+      ["Sampled span attributes", "Explaining one spike or run", "Computing totals", "Sampling distorts sums unless weighted by `itemCount` [[r15]]"],
+      ["Provider billing export", "Final invoice reconciliation", "Real-time alerting", "Delay and coarse attribution"]
+    ]
+  },
+  "pitfalls": [
+    {
+      "symptom": "The cost dashboard shows more tokens than the provider bill",
+      "cause": "Cache-read or reasoning tokens were added to input and output totals, but they are subsets",
+      "fix": "Compute uncached input as `input - cache_read` and treat reasoning as part of output [[r5]]"
+    },
+    {
+      "symptom": "A per-user cost metric loses series without any error",
+      "cause": "The dimension exceeded 100 unique values per dimension in API Management",
+      "fix": "Replace it with team or tier and keep user ids on spans [[r16]]"
+    },
+    {
+      "symptom": "Gateway token counts are low for streamed calls",
+      "cause": "Interrupted streams never delivered final usage, or the stream did not include usage",
+      "fix": "Set `include_usage` where required and reconcile with provider usage [[r16]]"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "w15-t04-s1",
+      "title": "Chargeback for twelve teams behind one gateway",
+      "situation": "Twelve teams share model deployments through an API gateway. Finance wants monthly cost per team and engineering wants per-agent token trends. Per-user cost is not required.",
+      "constraints": ["Shared gateway", "Per-team attribution", "Low-cardinality dimensions"],
+      "unknowns": ["Do all calls go through the gateway?", "Are streamed calls common?"],
+      "question": "How do you attribute tokens?",
+      "options": [
+        { "name": "Gateway token metric with team and agent dimensions, plus client counters for per-agent trends", "verdict": "best", "why": "Unsampled totals at the gateway cover every team, and low-cardinality dimensions stay within limits.", "tradeoff": "Gateway-only counts can be wrong for interrupted streams, so reconcile monthly." },
+        { "name": "Sum token attributes from sampled spans", "verdict": "poor", "why": "Sampling distorts totals and rare heavy runs are missed.", "tradeoff": "Fine for explaining a spike, not for chargeback." },
+        { "name": "Use the provider invoice only", "verdict": "good", "why": "Accurate in total.", "tradeoff": "No per-team split and a monthly delay." }
+      ],
+      "flips": [
+        { "if": "Per-user cost is required", "then": "Join gateway logs with identity in a warehouse, not metric dimensions." },
+        { "if": "Some calls bypass the gateway", "then": "Add client-side counters and reconcile both." }
+      ],
+      "takeaway": "Totals come from unsampled counters with low-cardinality labels."
+    },
+    {
+      "id": "w15-t04-s2",
+      "title": "A latency SLI for a streaming assistant",
+      "situation": "A streaming chat assistant needs a latency SLI that reflects what users feel. Replies stream for 5 to 30 seconds.",
+      "constraints": ["Streaming responses", "User-perceived latency matters", "Need percentiles"],
+      "unknowns": ["Is time to first token or full duration more important?", "Do tool calls precede the first chunk?"],
+      "question": "Which metric do you base the SLI on?",
+      "options": [
+        { "name": "`gen_ai.client.inference.time_to_first_chunk` p95, with total duration as a secondary SLI", "verdict": "best", "why": "First-chunk time is what users feel and it is a histogram with percentile-friendly buckets.", "tradeoff": "It exists only for streaming calls and ignores tool time before the first chunk." },
+        { "name": "Average total duration", "verdict": "poor", "why": "Averages hide the tail and total duration scales with answer length.", "tradeoff": "Fine for batch jobs." },
+        { "name": "Per-operation output token histogram", "verdict": "good", "why": "Reveals outliers in answer length.", "tradeoff": "It measures size, not latency." }
+      ],
+      "flips": [
+        { "if": "Tools run before the first chunk", "then": "Add agent-run duration and tool duration SLIs." },
+        { "if": "Responses are not streamed", "then": "Use inference duration percentiles." }
+      ],
+      "takeaway": "Measure the latency the user perceives, and use percentiles."
+    }
+  ],
+  "quiz": [
+    {
+      "id": "w15-t04-q1",
+      "type": "numeric",
+      "tag": "numeric",
+      "q": "With 8,000 input tokens reported, of which 6,000 are cache reads, how many input tokens were charged at the full uncached price?",
+      "answer": 2000,
+      "tolerancePct": 0,
+      "unit": "tokens",
+      "hint": "Cache reads are a subset of input tokens.",
+      "explain": "Uncached input is input minus cache reads: 8,000 - 6,000 = 2,000. Adding the cache reads would wrongly give 14,000."
+    },
+    {
+      "id": "w15-t04-q2",
+      "type": "multi",
+      "tag": "tradeoff",
+      "q": "Which are sound ways to get token totals for cost? Select all that apply.",
+      "options": [
+        "Token usage counters, which are not sampled",
+        "Summing token attributes over sampled spans without weighting",
+        "A gateway token metric with low-cardinality dimensions",
+        "Per-operation token histograms"
+      ],
+      "answers": [0, 2],
+      "explain": "Counters and gateway metrics are unsampled aggregates. Sampled spans distort totals, and per-operation histograms are for percentiles and outliers, not total usage or cost."
+    },
+    {
+      "id": "w15-t04-q3",
+      "type": "single",
+      "tag": "diagnose",
+      "q": "A per-user token metric in API Management loses series without errors. Why?",
+      "options": [
+        "Per-user metrics are not supported by Application Insights",
+        "Streaming disables metrics",
+        "The policy allows 100 unique values per dimension and drops the excess silently",
+        "The model deployment has no usage data"
+      ],
+      "answer": 2,
+      "explain": "API Management enforces 100 unique values per dimension and 1,000 active time series per namespace and drops the excess silently. The other options do not explain vanishing series."
+    }
+  ],
+  "flashcards": [
+    { "front": "Which metrics hold token totals, and which are for percentiles?", "back": "Counters `gen_ai.client.inference.usage.*` hold totals. Per-operation histograms are for percentiles and outliers, not totals or cost." },
+    { "front": "Are cache-read and reasoning tokens extra on top of input and output?", "back": "No. Cache reads are a subset of input tokens and reasoning tokens are a subset of output tokens." },
+    { "front": "What are the API Management token metric limits?", "back": "Up to 5 custom dimensions, 100 unique values per dimension and 1,000 active series per namespace. Excess is dropped silently." }
+  ],
+  "related": ["w15-t02", "w15-t07", "w15-t10", "w16-t01", "w16-t07"],
+  "refs": ["r2", "r5", "r10", "r16", "r15"]
+}

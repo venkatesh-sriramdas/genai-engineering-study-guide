@@ -1,0 +1,138 @@
+{
+  "id": "w07-t09",
+  "order": 9,
+  "group": "Access control options",
+  "title": "Tenant and user isolation: index per tenant, shared index, per-user namespaces",
+  "minutes": 9,
+  "difficulty": "core",
+  "summary": "Isolation can be physical (a service, index or namespace per tenant or user) or logical (a shared store with a mandatory filter). The choice depends on tenant count, size skew, contracts and service limits.",
+  "useIf": "Tenants or users must not see each other's data and you must choose the boundary: service, index, namespace or filter.",
+  "avoidIf": "Your question is who can read which document inside one tenant. That is the ACL options, not tenancy.",
+  "explain": [
+    { "t": "p", "md": "Azure AI Search documents three multitenant models: **one index per tenant, one service per tenant, or a mix** where big tenants get their own service [[r21]]. The Azure Architecture Center adds the trade-off for RAG: store-per-tenant gives data and performance isolation but costs more and can hit service limits, so avoid it for many small tenants. A shared store is cheaper but needs a tenant discriminator and a user-level filter on **every** retrieval, including those inside an agent loop, behind an API layer that other code cannot bypass [[r22]]." },
+    { "t": "table", "caption": "Isolation models compared (limits checked 2026-10-13)", "head": ["Model", "Isolation", "Offboarding", "Limit or cost"], "rows": [
+      ["Service per tenant", "Highest", "Delete the service", "Highest cost and operations [[r21]]"],
+      ["Index per tenant", "Strong, shared service resources", "Delete the index", "Indexes per service: S1 50, S2 and S3 200, S3 HD 1,000 per partition or 3,000 per service [[r20]]"],
+      ["Shared index and tenant filter", "Logical, depends on one filter", "Delete by tenant id", "A missed filter exposes all tenants"],
+      ["Namespace per tenant (Pinecone)", "Physical per the vendor, no noisy neighbours", "Delete the namespace", "100 (Starter) to 1,000,000 (Enterprise) per serverless index [[r34]]"],
+      ["Partition key per tenant (Cosmos DB)", "Data layout, not authorization", "Delete the partition data", "20 GB per logical partition, relaxed by hierarchical keys [[r33]]"],
+      ["Row-level security (SQL, PostgreSQL)", "Database enforced predicates", "Delete rows", "Needs a design around it. The Architecture Center says it is not typically used in multitenant RAG [[r22]]"]
+    ] },
+    { "t": "p", "md": "Two details decide whether a model actually isolates. In SQL Server and Azure SQL, a shared application login must set the user in `SESSION_CONTEXT`, or the predicate sees only the service identity [[r31]]. In PostgreSQL, superusers and roles with `BYPASSRLS` always bypass policies, and table owners bypass them unless `FORCE ROW LEVEL SECURITY` is set [[r32]]. Managed vector stores that take a caller-supplied filter, such as the `attribute_filter` on OpenAI vector stores, need the filter derived server side [[tr12]]." },
+    { "t": "callout", "kind": "note", "title": "Vendor claim, label it", "md": "Pinecone states that query cost follows namespace size, so metadata filtering in one large namespace costs more than separate namespaces [[r34]]. Treat it as the vendor's claim and test it on your data." }
+  ],
+  "whereToUse": [
+    "SaaS RAG products with many customers and a contractual separation requirement",
+    "Personal assistants where each user owns private documents",
+    "Regulated customers that need separate keys, audit boundaries or deletion dates",
+    "Platforms where one tenant is far larger than the rest"
+  ],
+  "whenToUse": {
+    "use": ["Tenant count and sizes are known and skewed or uniform", "Contracts state logical or physical separation", "You can route every query through one gateway"],
+    "avoid": ["An index per user when users number in the thousands, because of index caps", "Treating a partition key as an access control", "A shared index without a gateway that injects the filter"],
+    "flips": ["Tenants grow from dozens to thousands: move from index per tenant to a shared index with a mandatory filter", "One tenant becomes 100 times larger: give it a dedicated index or service", "A contract demands physical separation: shared indexes are out"]
+  },
+  "alternatives": {
+    "title": "Choosing the boundary",
+    "head": ["Boundary", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Service per tenant", "A few large, regulated tenants", "Hundreds of tenants", "Highest cost, operations load"],
+      ["Index per tenant", "Tens to hundreds of tenants, per-tenant lifecycle", "Thousands of tenants over service caps", "Shared resources, noisy neighbours"],
+      ["Shared index and filter", "Thousands of small tenants", "Contracts require physical separation", "One bug exposes every tenant"],
+      ["Namespace per tenant or user", "Store supports millions of namespaces", "Store has low namespace caps", "Vendor lock-in, vendor-specific limits"],
+      ["Row-level security", "Documents already live in SQL or PostgreSQL", "Documents live in a search index", "Bypass rules and shared logins weaken it"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Tenants see each other's rows in PostgreSQL despite RLS", "cause": "The app connects as the table owner or a BYPASSRLS role", "fix": "Use a non-owner role, or set FORCE ROW LEVEL SECURITY, and test as an ordinary tenant" },
+    { "symptom": "RLS in Azure SQL filters on the service account only", "cause": "A shared login hides the end user from the database", "fix": "Set the user in SESSION_CONTEXT on every connection and use it in the predicate" },
+    { "symptom": "Provisioning fails at tenant number 201", "cause": "Index per tenant hit the service index cap", "fix": "Check caps early, use S3 HD where suitable, or move small tenants to a shared index" },
+    { "symptom": "One tenant slows everyone", "cause": "A noisy neighbour on a shared index", "fix": "Move the large tenant to a dedicated index or service" }
+  ],
+  "scenarios": [
+    {
+      "id": "w07-t09-s1",
+      "title": "Private notes for 200,000 users",
+      "situation": "A personal assistant lets each of 200,000 users search their own notes, about 100 documents each. Cost per user must stay low and a user can delete their data at any time.",
+      "constraints": ["200,000 principals", "Tiny data per user", "Per-user deletion"],
+      "unknowns": ["Is physical separation a requirement?", "Does the vector store support very large namespace counts?"],
+      "question": "Which boundary do you choose?",
+      "options": [
+        { "name": "Index per user", "verdict": "poor", "why": "Index caps (200 on S2 and S3, 3,000 per service on S3 HD) rule it out and cost would be huge [[r20]].", "tradeoff": "Only works for a handful of principals." },
+        { "name": "Namespace per user in a store built for millions of namespaces", "verdict": "good", "why": "Physical separation and deletion by dropping the namespace [[r34]].", "tradeoff": "Vendor-specific limits and a second data platform." },
+        { "name": "Shared index with a mandatory user_id filter injected by a gateway", "verdict": "best", "why": "It scales to hundreds of thousands of users at low cost and deletion is a delete by user id.", "tradeoff": "One missed filter exposes users, so route all access through the gateway and test with a canary user." }
+      ],
+      "flips": [
+        { "if": "Contracts require physical separation per user", "then": "Namespaces or separate stores become mandatory." },
+        { "if": "Users number only a few hundred", "then": "Index per user becomes feasible and simple." }
+      ],
+      "takeaway": "Per-user data at scale favours a shared store with an enforced filter."
+    },
+    {
+      "id": "w07-t09-s2",
+      "title": "One tenant is 100 times larger",
+      "situation": "A platform has 600 tenants. One accounts for most of the traffic and 100 times the data of the median. Others complain about latency spikes during its ingestion.",
+      "constraints": ["600 tenants", "Heavily skewed sizes", "Noisy neighbour"],
+      "unknowns": ["Does the large tenant need its own keys or SLA?", "Can the router send traffic by tenant?"],
+      "question": "What do you change?",
+      "options": [
+        { "name": "A dedicated index or service for the large tenant, shared infrastructure for the rest", "verdict": "best", "why": "It is the documented mix and removes the neighbour without 600 indexes [[r21]].", "tradeoff": "Two operating models and routing by tenant." },
+        { "name": "Add replicas to the shared index", "verdict": "good", "why": "Absorbs query load.", "tradeoff": "Everyone pays for the large tenant, and ingestion contention remains." },
+        { "name": "A separate service for every tenant", "verdict": "poor", "why": "Six hundred services multiply cost for no benefit to small tenants.", "tradeoff": "Right when every tenant is large and regulated." }
+      ],
+      "flips": [
+        { "if": "Several tenants become large", "then": "Give each its own index or service on a size threshold." },
+        { "if": "The noise is only at ingest time", "then": "Schedule or throttle its ingestion first." }
+      ],
+      "takeaway": "Skewed tenants call for a mix, not one model for all."
+    },
+    {
+      "id": "w07-t09-s3",
+      "title": "Documents already in a relational database",
+      "situation": "Customer case notes live in Azure SQL. The app uses one shared login. Tenants must never see each other's rows, and the team wants the database to enforce it.",
+      "constraints": ["Data in Azure SQL", "Shared application login", "Database-enforced isolation"],
+      "unknowns": ["Can the app set a per-request context?", "Do admins need to bypass for support?"],
+      "question": "How do you enforce tenant isolation?",
+      "options": [
+        { "name": "Enable row-level security and rely on the shared login", "verdict": "poor", "why": "Without the user in the context, the predicate cannot tell tenants apart.", "tradeoff": "Fine only when each tenant has its own database user." },
+        { "name": "Row-level security with the tenant set in SESSION_CONTEXT on every request", "verdict": "best", "why": "The predicate then filters every read, update and delete for that tenant [[r31]].", "tradeoff": "Needs disciplined connection handling and tests for pooled connections." },
+        { "name": "Copy the data to a search index with a security filter", "verdict": "good", "why": "Enables vector search with filtering before ranking.", "tradeoff": "A second copy to sync and delete, and two places to get permissions wrong." }
+      ],
+      "flips": [
+        { "if": "Search over text needs vectors", "then": "Index a copy with a tenant filter and keep SQL as the source of truth." },
+        { "if": "Each tenant already has its own database user", "then": "RLS can key on the user directly." }
+      ],
+      "takeaway": "Database isolation works only when the database can see the tenant."
+    },
+    {
+      "id": "w07-t09-s4",
+      "title": "Managed file search with caller-supplied filters",
+      "situation": "A team uses a managed vector store whose search takes an attribute filter from the request. Their browser app currently sends the filter with the tenant attribute it was given at login.",
+      "constraints": ["Managed vector store", "Filter supplied with the request", "Browser holds the filter"],
+      "unknowns": ["Who builds the request today?", "Is there a backend in the call path?"],
+      "question": "How do you make this safe?",
+      "options": [
+        { "name": "Build the filter on the server from the authenticated session, and never accept it from the client", "verdict": "best", "why": "The managed store trusts whatever filter arrives, so the server must own it [[tr12]].", "tradeoff": "An extra backend hop and less client flexibility." },
+        { "name": "Sign the filter in the browser with a key shipped to the client", "verdict": "poor", "why": "Anything in the client can be extracted and replayed.", "tradeoff": "Signing works when the signer is a trusted server." },
+        { "name": "Create a separate store per tenant and still let the client send filters", "verdict": "good", "why": "Cross-tenant leaks need a wrong store id, not only a wrong filter.", "tradeoff": "More stores to manage, and in-tenant filters stay client controlled." }
+      ],
+      "flips": [
+        { "if": "Tenants have contractual separation", "then": "Use a store per tenant in addition to server-built filters." },
+        { "if": "Per-user rules apply inside a tenant", "then": "Derive those attributes server side too." }
+      ],
+      "takeaway": "The caller never supplies an authorization filter."
+    }
+  ],
+  "quiz": [
+    { "id": "w07-t09-q1", "type": "single", "tag": "bug", "q": "A PostgreSQL table has row level security enabled and a policy per tenant. The app connects as the table owner and tenants see each other's rows. What is the cause?", "options": ["Policies are combined with AND by default", "Table owners bypass row security unless FORCE ROW LEVEL SECURITY is set", "RLS only works for INSERT statements", "Row security needs an index on the tenant column"], "answer": 1, "explain": "PostgreSQL exempts table owners, superusers and BYPASSRLS roles from policies unless the table is forced. Permissive policies combine with OR, RLS covers reads too, and indexing is a performance concern only.", "ref": "r32" },
+    { "id": "w07-t09-q2", "type": "multi", "tag": "tradeoff", "q": "Which statements are supported by the sources? Choose all that apply.", "options": ["A Cosmos DB partition key is a data layout choice, not an authorization control", "Deleting the namespace is the documented offboarding path for a Pinecone namespace per tenant", "Azure AI Search S1 allows 1,000 indexes per service", "The Architecture Center says RLS is typically the main approach for multitenant RAG"], "answers": [0, 1], "explain": "The Cosmos DB page presents partition keys as layout, and Pinecone documents offboarding by deleting the namespace. S1 allows 50 indexes, and the Architecture Center says RLS is not typically used in multitenant designs.", "ref": "r20" }
+  ],
+  "flashcards": [
+    { "front": "What are Azure AI Search's three documented multitenant models?", "back": "Index per tenant, service per tenant, or a mix where large tenants get their own service. S3 HD targets many small indexes." },
+    { "front": "How many indexes can an S3 HD service hold?", "back": "1,000 per partition or 3,000 per service. S1 allows 50, and S2 and S3 allow 200." },
+    { "front": "What two RLS traps appear in SQL Server and PostgreSQL?", "back": "A shared login hides the user unless SESSION_CONTEXT is set (SQL). Owners, superusers and BYPASSRLS roles bypass policies unless the table is forced (PostgreSQL)." },
+    { "front": "Why must the server build the vector store filter?", "back": "Managed stores trust the filter in the request. A client-supplied filter lets a caller read another tenant's data." }
+  ],
+  "related": ["w07-t06", "w07-t04", "w07-t08", "w07-l3", "w04-t19"],
+  "refs": ["r20", "r21", "r22", "r31", "r32", "r33", "r34", "tr12"]
+}

@@ -1,0 +1,115 @@
+{
+  "id": "w12-t15",
+  "order": 15,
+  "group": "Identity and governance",
+  "title": "Entra Agent ID: blueprints, identities and agent users",
+  "minutes": 8,
+  "difficulty": "advanced",
+  "summary": "Entra Agent ID models an agent as a blueprint that holds credentials, agent identities that carry no credentials, and an optional agent user account. Sponsors and owners give each agent a named accountable human.",
+  "useIf": "You need to understand what an agent is in Entra, who owns it, and how credentials and lifecycle are controlled.",
+  "avoidIf": "You only call a model from an app and do not yet need a distinct identity for the agent.",
+  "explain": [
+    { "t": "p", "md": "Entra Agent ID has four objects: an **agent identity blueprint**, a **blueprint principal**, an **agent identity** and an optional **agent user** [[r17]]. The **agent identity** is a service principal with `servicePrincipalType` `ServiceIdentity` and `@odata.type` `#microsoft.graph.agentIdentity`, and it has **no credentials** [[r17]]. The **blueprint** holds the credentials (federated identity credentials, certificates or keys, or client secrets) and requests tokens for the identities it creates. It is a credential boundary and can federate to an Azure managed identity [[r17]]. Agent identities are single tenant, while blueprints can be multitenant [[r17]]." },
+    { "t": "diagram", "id": "w12-t15-d1", "title": "Object model", "alt": "A blueprint holds credentials and has a blueprint principal. It creates agent identities. Each agent identity may have one optional agent user account.", "src": "flowchart TB\n  BP[Blueprint: holds credentials] --> BPP[Blueprint principal]\n  BP --> AI1[Agent identity A]\n  BP --> AI2[Agent identity B]\n  AI1 --> AU1[Agent user, optional]" },
+    { "t": "p", "md": "The **agent user** is an optional second account: a user object marked as an AI agent, 1:1 with its agent identity. It can hold licenses, a mailbox and OneDrive and be reached through Teams, Outlook and Word comments. It is available only to tenants in the **Frontier preview program** [[r17]]. Foundry provisions a blueprint and identity automatically; in the agent application model unpublished agents share a project identity and publishing creates a dedicated one [[r27]]." },
+    { "t": "table", "caption": "Accountability roles on agents (checked 2026-10-13)", "head": ["Role", "Required?", "Can do", "Cannot do"], "rows": [
+      ["Sponsor", "At least one on every blueprint and agent identity", "Decide lifecycle, disable or soft-delete", "Edit auth settings, re-enable"],
+      ["Owner", "Optional", "Manage credentials, re-enable, hard-delete", "Be a group (users or service principals only)"],
+      ["Manager", "Optional", "Request access packages for agents", "Not stated as lifecycle authority"]
+    ] },
+    { "t": "callout", "kind": "gotcha", "title": "Blast radius and governance", "md": "Because the blueprint holds the credentials for every identity it creates, group only identities that can share credentials and a baseline of permissions [[r17]]. Agents have **no MFA**, so Conditional Access (evaluated when a token is issued or refreshed, plus Continuous Access Evaluation for some resources) is the control. It needs Microsoft 365 E7 or an Agent 365 license with at least Entra P1 or Microsoft 365 E3. Entra Agent ID itself is available to all Entra customers [[r15]]. Role-assignable groups and assigned security groups cannot be sponsors [[r18]]." }
+  ],
+  "whereToUse": [
+    "Giving each agent a distinct identity so access, logs and incidents trace to one agent",
+    "Setting sponsors and owners so every agent has a named human accountable for it",
+    "Applying Conditional Access and ID Governance access packages to agents instead of shared secrets",
+    "Deciding whether an agent needs a user account, for mailbox, Teams presence or licenses"
+  ],
+  "whenToUse": {
+    "use": [
+      "Use a separate agent identity per agent instance so permissions and audit stay scoped",
+      "Use sponsors for business accountability and owners for technical control",
+      "Add an agent user only when the agent must act as a team member in Microsoft 365"
+    ],
+    "avoid": [
+      "Do not put identities with different sensitivity under one blueprint, since credentials are shared at the blueprint",
+      "Do not use groups as sponsors that Entra disallows, or as owners",
+      "Do not plan on agent users in tenants outside Frontier preview"
+    ],
+    "flips": [
+      "Agent needs a mailbox or Teams presence: add an agent user (Frontier preview)",
+      "Different permission tiers: split blueprints by tier",
+      "Credentials must not be stored: federate the blueprint to an Azure managed identity"
+    ]
+  },
+  "alternatives": {
+    "title": "Identity options for an agent workload",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Agent identity (via blueprint)", "Per-agent scoping, Conditional Access, governance", "You need a user mailbox or licenses", "Blueprint credentials are a shared boundary [[r17]]"],
+      ["Agent identity plus agent user", "Agent acts as a coworker in Microsoft 365", "Tenant is not in Frontier preview", "Preview, 1:1 user per identity [[r17]]"],
+      ["Shared app registration and secret", "Quick prototype", "Any production agent", "No per-agent audit, hard to revoke one agent"],
+      ["Azure managed identity directly", "Plain Azure resource access from compute", "Entra agent governance and sponsors are required", "No sponsor model, different governance surface"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Auditors cannot tell which agent called a service", "cause": "Several agents run under one shared app registration or the project identity", "fix": "Give each agent its own agent identity and log by identity [[r27]]." },
+    { "symptom": "A disabled agent cannot be turned back on by its business owner", "cause": "Sponsors can disable or soft-delete but cannot re-enable or edit auth settings", "fix": "Assign an owner (user or service principal) who can re-enable [[r18]]." },
+    { "symptom": "Creating a sponsor with a group fails", "cause": "Role-assignable groups and assigned security groups cannot be sponsors", "fix": "Use users, or an allowed group type [[r18]]." }
+  ],
+  "scenarios": [
+    {
+      "id": "w12-t15-s1",
+      "title": "One sensitive agent among many routine ones",
+      "situation": "A platform team will register forty agents. Thirty-nine are low risk. One can read confidential records.",
+      "constraints": ["Blueprints hold the credentials of all their identities", "Audit must show per-agent actions", "One team administers all forty"],
+      "unknowns": ["Do the routine agents share a baseline of permissions?", "Who rotates the blueprint credentials?"],
+      "question": "How do you structure blueprints?",
+      "options": [
+        { "name": "A blueprint for the routine group and a separate blueprint for the sensitive agent", "verdict": "best", "why": "A compromise of one blueprint's credentials then does not expose the sensitive agent, and routine agents still share a baseline.", "tradeoff": "Two credential sets to rotate and monitor." },
+        { "name": "One blueprint for all forty", "verdict": "poor", "why": "The blueprint holds credentials for every identity it creates, so one compromise reaches the sensitive agent.", "tradeoff": "Right when all agents share trust level and permissions." },
+        { "name": "One blueprint per agent", "verdict": "good", "why": "Strongest isolation.", "tradeoff": "Forty credential sets and heavy operations." }
+      ],
+      "flips": [
+        { "if": "All forty are equally sensitive", "then": "One blueprint with strict federation and monitoring." },
+        { "if": "Each agent belongs to a different team", "then": "Blueprint per team." }
+      ],
+      "takeaway": "Group by shared credentials and baseline permissions, not by convenience."
+    },
+    {
+      "id": "w12-t15-s2",
+      "title": "Who answers for the agent",
+      "situation": "A business unit launches an agent. The product manager wants to be accountable, and a platform engineer manages credentials.",
+      "constraints": ["Every agent needs a named human", "Lifecycle decisions are business decisions", "Technical rotation is an engineering task"],
+      "unknowns": ["Will the PM change roles soon?", "Is there a service principal for automation?"],
+      "question": "How do you assign sponsors and owners?",
+      "options": [
+        { "name": "Sponsor: the product manager (user). Owner: the platform engineer (user or service principal)", "verdict": "best", "why": "Sponsors decide lifecycle and can disable. Owners manage credentials and can re-enable or hard-delete.", "tradeoff": "Two people to keep current when staff change." },
+        { "name": "Sponsor: a role-assignable group", "verdict": "poor", "why": "Role-assignable groups cannot be sponsors.", "tradeoff": "Some other group types may be allowed, so check type first." },
+        { "name": "Sponsor only, no owner", "verdict": "good", "why": "Meets the minimum of one sponsor.", "tradeoff": "No technical owner to manage credentials or re-enable after a disable." }
+      ],
+      "flips": [
+        { "if": "The sponsor leaves", "then": "Reassign a sponsor immediately, since at least one is required." },
+        { "if": "Credentials are fully federated", "then": "Owner duties shrink, but keep one for re-enable and delete." }
+      ],
+      "takeaway": "Sponsors carry accountability, owners carry control."
+    }
+  ],
+  "quiz": [
+    { "id": "w12-t15-q1", "type": "match", "tag": "concept", "q": "Match each Entra Agent ID object to its role.", "pairs": [
+      { "l": "Agent identity blueprint", "r": "Holds credentials and creates identities" },
+      { "l": "Agent identity", "r": "Service principal with no credentials" },
+      { "l": "Agent user", "r": "Optional user object for mailbox and licenses" },
+      { "l": "Sponsor", "r": "Required business accountability, no auth edits" }
+    ], "explain": "The blueprint is the credential boundary. The agent identity is a credential-less service principal. The agent user is optional and Frontier-only. Sponsors are required but cannot edit authentication settings.", "ref": "r17" },
+    { "id": "w12-t15-q2", "type": "single", "tag": "security", "q": "Why group only similar agents under one blueprint?", "options": ["Blueprints limit the number of tokens", "Agent identities cannot be multitenant otherwise", "MFA is enforced per blueprint", "The blueprint holds credentials for every identity it creates"], "answer": 3, "explain": "A compromised blueprint exposes all its identities. Agents have no MFA, and identities are single tenant regardless of blueprint choice.", "ref": "r17" },
+    { "id": "w12-t15-q3", "type": "multi", "tag": "diagnose", "q": "Which statements about owners and sponsors are supported by the docs?", "options": ["Sponsors are required, at least one per blueprint and agent identity", "Owners can be groups", "Owners can re-enable or hard-delete", "Sponsors can edit authentication settings"], "answers": [0, 2], "explain": "Sponsors are required and owners are optional technical admins who can re-enable or hard-delete. Owners are users or service principals, never groups, and sponsors cannot edit auth settings.", "ref": "r18" }
+  ],
+  "flashcards": [
+    { "front": "Where do an agent's credentials live in Entra Agent ID?", "back": "On the blueprint, not on the agent identity. The identity is a service principal of type ServiceIdentity with no credentials." },
+    { "front": "Sponsor vs owner?", "back": "Sponsor: required business accountability, can disable or soft-delete. Owner: optional technical admin (user or service principal), manages credentials and can re-enable or hard-delete." },
+    { "front": "Why Conditional Access for agents?", "back": "Agents have no MFA. Conditional Access is evaluated at token issuance or refresh, with Continuous Access Evaluation for some resources." }
+  ],
+  "related": ["w12-t16", "w12-t17", "w12-t18", "w17-t07", "w12-l5"],
+  "refs": ["r14", "r15", "r17", "r18", "r27"]
+}

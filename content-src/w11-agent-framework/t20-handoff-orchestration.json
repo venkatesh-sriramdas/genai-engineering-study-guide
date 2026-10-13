@@ -1,0 +1,113 @@
+{
+  "id": "w11-t20",
+  "order": 20,
+  "group": "Orchestrations",
+  "title": "Handoff orchestration",
+  "minutes": 9,
+  "difficulty": "core",
+  "summary": "Specialist agents transfer control to each other through handoff tool calls. There is no central orchestrator: the receiving agent owns the task. It is interactive by default and returns to the user when an agent does not hand off.",
+  "useIf": "A conversation should move between specialists (triage, billing, returns) and the current specialist should own the user until it decides to hand off.",
+  "avoidIf": "A primary agent should keep ownership and only borrow help (use agent-as-tool), or work is non-interactive and fixed (use sequential or a graph).",
+  "explain": [
+    { "t": "p", "md": "Build with `HandoffBuilder(name=..., participants=[...]).with_start_agent(triage).add_handoff(a, [b, c])` in Python or `AgentWorkflowBuilder.CreateHandoffBuilderWith(triage).WithHandoffs(triage, [math, history])` in .NET. A handoff is triggered by a **special tool call**. By default every agent can hand off to every other; `add_handoff` narrows which agent may take over next, but the topology remains a mesh because agents share context. Handoff supports only `Agent` with **local tool execution** [[tr25]]." },
+    { "t": "table", "caption": "Handoff vs agent-as-tool", "head": ["Aspect", "Handoff", "Agent as tool"], "rows": [
+      ["Control", "Passes to the receiving agent; no central authority", "Returns to the primary agent after the sub-task"],
+      ["Task ownership", "Receiver owns the task", "Primary keeps overall responsibility"],
+      ["Context", "Receiver has the full conversation", "Primary decides what to pass"],
+      ["Best for", "Specialist routing in a live conversation", "Bounded sub-tasks that the primary combines"]
+    ] },
+    { "t": "p", "md": "**Interactive by default.** When an agent answers without handing off, Python emits a `request_info` event with a `HandoffAgentUserRequest`; the user's reply (or `HandoffAgentUserRequest.terminate()`) resumes the run. **Autonomous mode** is experimental: when an agent does not hand off, the workflow feeds it a continuation prompt (`User did not respond. Continue assisting autonomously.`) until it hands off, a termination condition fires or the per-agent turn limit is reached (.NET default **50** autonomous turns per agent; `WithAutonomousMode(turnLimit, continuationPrompt)`; `with_autonomous_mode()` in Python) [[tr25]]." },
+    { "t": "p", "md": "**Context sync.** Agents do not share a session. Each participant broadcasts its responses and user inputs to all others. Tool-related content, including the handoff calls, is not broadcast: only user and agent messages are. In Python, text, inline data, URIs, hosted files and vector stores are kept for user messages while non-user messages keep text only. For approvals that arrive hours later, give the builder `checkpoint_storage` and resume with the checkpoint id then the responses [[tr25]]." },
+    { "t": "tabs", "tabs": [
+      { "label": "C#", "blocks": [ { "t": "code", "lang": "csharp", "code": "var workflow = AgentWorkflowBuilder.CreateHandoffBuilderWith(triage)\n    .WithHandoffs(triage, [refund, orders, returns])   // triage can route to all\n    .WithHandoffs([refund, orders, returns], triage)   // and they can return\n    .WithAutonomousMode(turnLimit: 10,\n        continuationPrompt: \"Continue assisting the user.\")   // experimental\n    .WithTerminationCondition(conv => conv.Any(m => m.Text?.Contains(\"RESOLVED\") == true))\n    .Build();" } ] },
+      { "label": "Python", "blocks": [ { "t": "code", "lang": "python", "code": "from agent_framework.orchestrations import HandoffBuilder, HandoffAgentUserRequest\n\nworkflow = (\n    HandoffBuilder(name='support', participants=[triage, orders, returns, refund],\n                   checkpoint_storage=storage)\n    .with_start_agent(triage)\n    .add_handoff(triage, [orders, returns])\n    .add_handoff(returns, [refund])                 # only returns may reach refund\n    .add_handoff(orders, [triage]).add_handoff(refund, [triage])\n    .build()\n)\nasync for ev in workflow.run('My order 1234 arrived damaged', stream=True):\n    if ev.type == 'request_info' and isinstance(ev.data, HandoffAgentUserRequest):\n        reply = input('You: ')\n        # resume: workflow.run(responses={ev.request_id:\n        #     HandoffAgentUserRequest.create_response(reply)}, stream=True)" } ] }
+    ] }
+  ],
+  "whereToUse": [
+    "Customer support: triage hands to orders, returns or refund specialists",
+    "Tutoring or advisory chats with subject specialists",
+    "Back-office flows where the owner of a case changes as the case evolves",
+    "Hours-long approvals with checkpointing, since tool approvals surface as request events"
+  ],
+  "whenToUse": {
+    "use": [
+      "The user talks to one specialist at a time and ownership should transfer",
+      "Specialists have different tools and instructions",
+      "A person is in the loop each turn (interactive default)"
+    ],
+    "avoid": [
+      "A primary agent must keep ownership: use agent-as-tool",
+      "Agents are remote or cannot run tools locally: handoff supports only `Agent` with local tool execution",
+      "Handoff loops are possible with no limit: bound autonomous mode and set termination"
+    ],
+    "flips": [
+      "You need no human between turns: autonomous mode, with a turn limit and a termination condition (experimental)",
+      "Routing must be centrally controlled and auditable: use a custom workflow or group chat with a manager"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Handoff", "Ownership moves between specialists", "A central plan is needed", "Mesh context broadcasting; handoff loops"],
+      ["Agent as tool", "Primary agent stays accountable", "The specialist should talk to the user", "Primary agent re-explains results"],
+      ["Group chat", "Debate and refinement under a manager", "One owner at a time", "Shared history grows with rounds"],
+      ["Router (conditional edge) plus agents", "Deterministic routing rules", "Routing needs conversation judgment", "Routing logic is yours"],
+      ["Magentic", "Dynamic plans over many steps", "Simple triage", "Planning cost, untested outside Magentic-One"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Agents ping-pong the user between each other", "cause": "Overlapping instructions and unconstrained handoff rules", "fix": "Narrow `add_handoff` edges, make specialist scopes disjoint, set a termination condition" },
+    { "symptom": "A specialist is unaware of tool results from another", "cause": "Tool content and handoff calls are not broadcast; only user and agent messages are", "fix": "Have agents state tool findings in their replies" },
+    { "symptom": "Handoff fails on a remote agent", "cause": "Handoff supports only `Agent` with local tool execution", "fix": "Wrap the remote agent as a tool, or restructure" }
+  ],
+  "scenarios": [
+    {
+      "id": "w11-t20-s1",
+      "title": "Support desk with specialists",
+      "situation": "A support desk has triage, order status, returns and refunds. A refund needs approval above a threshold. Chats are live. Refund requests only after a return is registered.",
+      "constraints": ["Live chat", "Ordering rule: refund only via returns", "Approval for big refunds"],
+      "unknowns": ["Can the user talk to several specialists in one chat?", "Is the chat checkpointed?", "Who approves?"],
+      "question": "How do you design it?",
+      "options": [
+        { "name": "Handoff with triage as start, `add_handoff` rules so only returns reaches refund, approval-required refund tool, checkpoint storage", "verdict": "best", "why": "Ownership moves with the case, the graph enforces who may take over, and approvals arrive as request events that survive restarts.", "tradeoff": "Mesh context broadcasting grows tokens, and routing quality depends on specialist prompts." },
+        { "name": "Triage agent with the other three as tools", "verdict": "good", "why": "Triage stays accountable and the design is simple.", "tradeoff": "Specialists never talk to the user directly; triage relays everything." },
+        { "name": "Group chat with a manager", "verdict": "poor", "why": "Adds rounds and a manager call for a conversation where one agent should own each turn.", "tradeoff": "Better for review loops than for live support." }
+      ],
+      "flips": [
+        { "if": "Routing is a simple lookup by customer tier", "then": "Use a conditional edge in a custom workflow." },
+        { "if": "No human is available overnight", "then": "Consider autonomous mode with a turn limit, still gated by approval-required tools." }
+      ],
+      "takeaway": "Handoff fits when the conversation owner should change."
+    },
+    {
+      "id": "w11-t20-s2",
+      "title": "Autonomous overnight triage",
+      "situation": "Tickets arrive overnight with no human. An agent should classify, enrich and resolve simple ones, handing complex ones to a specialist that works the case.",
+      "constraints": ["No user in the loop", "Experimental autonomous mode", "Cost cap per ticket"],
+      "unknowns": ["How many turns does a typical resolution take?", "What if the agents loop?", "Is the risk of an autonomous error acceptable?"],
+      "question": "Do you use autonomous handoff?",
+      "options": [
+        { "name": "Yes, with a low `turnLimit`, a termination condition, per-ticket budget alerts and approval-required write tools", "verdict": "best", "why": "It fits the shape (no user) and the limits bound loops and cost.", "tradeoff": "Experimental feature: expect API changes, and failures need alerting." },
+        { "name": "A custom workflow with explicit routing and one agent per stage", "verdict": "good", "why": "More predictable and auditable.", "tradeoff": "More design work and less flexibility for odd tickets." },
+        { "name": "Autonomous mode with the default 50-turn limit and no termination", "verdict": "poor", "why": "A stuck agent could spend up to 50 turns per ticket.", "tradeoff": "Acceptable only for experiments with a spend cap elsewhere." }
+      ],
+      "flips": [
+        { "if": "Tickets are high-risk", "then": "Keep a human gate and use the interactive default." },
+        { "if": "Policy forbids experimental features in production", "then": "Use a custom workflow." }
+      ],
+      "takeaway": "Autonomous means unattended: bound turns, terminate on a state and alert on spend."
+    }
+  ],
+  "quiz": [
+    { "id": "w11-t20-q1", "type": "single", "tag": "tradeoff", "q": "Which statement best distinguishes handoff from agent-as-tool?", "options": ["Handoff keeps the primary agent in charge", "In handoff the receiving agent owns the task and no central orchestrator exists; with agent-as-tool control returns to the primary agent", "Agent-as-tool transfers the full conversation", "They are the same pattern with different names"], "answer": 1, "explain": "The docs distinguish control flow, task ownership and context management: handoff transfers ownership, agent-as-tool keeps it with the primary.", "ref": "tr25" },
+    { "id": "w11-t20-q2", "type": "multi", "tag": "concept", "q": "Which are true for handoff? Select all.", "options": ["It supports only `Agent` with local tool execution", "Handoff tool calls are broadcast to every participant", "It is interactive by default", "Autonomous mode is experimental"], "answers": [0, 2, 3], "explain": "Tool content, including handoff calls, is not broadcast; only user and agent messages are synchronised.", "ref": "tr25" }
+  ],
+  "flashcards": [
+    { "front": "What triggers a handoff?", "back": "A special tool call by the current agent. The receiving agent then owns the task." },
+    { "front": "What does handoff do when an agent replies without handing off?", "back": "Interactive default: control returns to the user (a `request_info` event with `HandoffAgentUserRequest` in Python)." },
+    { "front": "What is the .NET autonomous handoff default?", "back": "50 autonomous turns per agent, with the continuation prompt 'User did not respond. Continue assisting autonomously.' Experimental." }
+  ],
+  "related": ["w11-t21", "w11-t23", "w11-t16", "w10-t13", "w09-t02"],
+  "refs": ["tr25"]
+}

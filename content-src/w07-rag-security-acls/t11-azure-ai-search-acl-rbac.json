@@ -1,0 +1,137 @@
+{
+  "id": "w07-t11",
+  "order": 11,
+  "group": "Access control options",
+  "title": "Azure AI Search ACL and RBAC scopes",
+  "minutes": 10,
+  "difficulty": "advanced",
+  "summary": "Preview as of 2026-10-13: permission fields on the index (userIds, groupIds, rbacScope) are enforced at query time from the user's Entra token, with Microsoft Graph expanding group membership.",
+  "useIf": "Content is in ADLS Gen2, Blob or SharePoint with Entra identities, preview is acceptable and you want to avoid writing group-expansion code.",
+  "avoidIf": "You need GA, a non-Entra identity system, deny rules or revocation faster than your sync can deliver.",
+  "explain": [
+    { "t": "callout", "kind": "preview", "title": "Preview, checked 2026-10-13", "md": "Native ACL and RBAC scope enforcement needs a preview REST API or SDK (latest preview `2026-08-01-preview`, latest stable `2026-04-01`) [[r18]]. Preview features carry no SLA and are not recommended for production by the docs [[r11]]." },
+    { "t": "p", "md": "The index sets `permissionFilterOption: enabled` and has up to one `filterable` field per permission type: `userIds`, `groupIds` and `rbacScope`. Use Entra object ids (GUIDs), not UPNs or emails. Special values are `\"all\"` for public and `\"none\"` [[r15]]. At query time the app sends the user's Entra token in the `x-ms-query-source-authorization` header. Two checks run: the calling app needs Search Index Data Reader (or Contributor), and the user's `oid` and group ids are matched against document ACLs. A document passes if **any** of userIds, groupIds or rbacScope matches [[r12]]." },
+    { "t": "diagram", "id": "w07-t11-d1", "title": "Query-time enforcement", "alt": "The app sends the query with the user's token. Search asks Microsoft Graph to expand group membership, filters documents by ACL, and returns only permitted results. If Graph is unavailable the service returns an error.", "src": "sequenceDiagram\n  participant U as User app\n  participant S as AI Search\n  participant G as Microsoft Graph\n  U->>S: Query plus x-ms-query-source-authorization\n  S->>G: Resolve groups, including nested\n  G-->>S: Membership\n  S-->>U: Permitted results only\n  G--xS: Unavailable gives 5xx, no partial result" },
+    { "t": "stats", "items": [
+      { "label": "Values per userIds or groupIds field", "value": "1,000", "note": "One field per type per index [[r15]]" },
+      { "label": "Distinct rbacScope values per index", "value": "5", "note": "No limit on documents sharing a value [[r15]]" },
+      { "label": "ADLS Gen2 ACL entries per file", "value": "32", "note": "Beyond the limit, entries might not be enforced [[r12]]" },
+      { "label": "SharePoint permission entries per file", "value": "1,000", "note": "Same warning [[r12]]" }
+    ] },
+    { "t": "p", "md": "Since `2025-11-01-preview`, ACL filters apply even with an API key or admin role, and omitting the token returns only public documents. Earlier previews returned everything, so re-test anything validated on them. To see all documents while debugging, send `x-ms-enable-elevated-read: true` (Search POST only, REST `2026-05-01-preview` or later, needs a role that allows elevated reads) [[r12]]. ACLs list allowed ids only, so there are no deny rules, unlike Graph external item ACLs [[tr14]]." }
+  ],
+  "whereToUse": [
+    "Pilots and internal tools over ADLS Gen2 or Blob data that carries POSIX-like ACLs",
+    "Assistants whose users are all Entra identities with nested group memberships",
+    "Teams that want the service, not their own code, to expand groups through Graph",
+    "Knowledge sources created with ingestionPermissionOptions in agentic retrieval [[r17]]"
+  ],
+  "whenToUse": {
+    "use": ["Identities are in Entra and groups nest", "A preview with no SLA is acceptable", "Allow lists are enough, with no deny rules"],
+    "avoid": ["Production workloads that need GA and an SLA", "Files with more than 32 ACL entries (ADLS Gen2) or 1,000 (SharePoint)", "More than five distinct rbacScope values"],
+    "flips": ["GA is required: use security filters and own the group resolution", "Revocation must be faster than your sync: push ACL changes or add a live check", "Identities are not in Entra: native enforcement does not apply"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Native ACL and RBAC scopes (preview)", "Entra identities, nested groups, lake data", "GA needed, non-Entra identity", "Preview, no SLA, entry limits"],
+      ["Security filters (GA)", "Any identity, GA required", "You do not want to write group expansion", "You own resolution and sync"],
+      ["SharePoint indexer ACLs (preview)", "Content is in SharePoint", "Guests, Anyone links or deny rules", "Unsupported link types"],
+      ["Delegate to the source", "Source has a permission-aware retrieval API", "You need your own ranking", "Quotas and licensing"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Results come back unfiltered for an indexed knowledge source", "cause": "The source was created without ingestionPermissionOptions, so no permission metadata exists and the header does nothing", "fix": "Set it at creation and test with a revoked canary user [[r17]]" },
+    { "symptom": "A developer with an admin key sees only public documents", "cause": "Since 2025-11-01-preview ACL filters apply to keys and admin roles, and a missing token returns public documents only", "fix": "Send the user token, or use elevated read for debugging on Search POST" },
+    { "symptom": "Some users miss documents they should see", "cause": "The source file has more ACL entries than the limit, so some entries are not enforced", "fix": "Flatten to groups at the source and stay under 32 (ADLS Gen2) or 1,000 (SharePoint)" },
+    { "symptom": "A revoked grant keeps working", "cause": "The index copy of the ACL is stale, since pull indexers run every 5 to 1,440 minutes", "fix": "Push ACL merges on change, or add a live check for restricted hits [[r19]]" }
+  ],
+  "scenarios": [
+    {
+      "id": "w07-t11-s1",
+      "title": "Internal pilot over a data lake",
+      "situation": "A team pilots an assistant over ADLS Gen2 files with POSIX-like ACLs. Users are in Entra with deeply nested groups. Preview is acceptable for the pilot and hours of revocation lag are fine.",
+      "constraints": ["Entra identities, nested groups", "Preview acceptable", "Revocation within hours"],
+      "unknowns": ["Do files stay within 32 ACL entries?", "Is the pilot meant to become production?"],
+      "question": "How do you enforce access?",
+      "options": [
+        { "name": "Native ACL filters with the user's token in x-ms-query-source-authorization", "verdict": "best", "why": "Graph expands nested groups at query time, the service fails closed and you write no group code [[r12]].", "tradeoff": "Preview, no SLA, and an upgrade path to plan." },
+        { "name": "Security filters with your own Graph membership code", "verdict": "good", "why": "GA and portable.", "tradeoff": "You write and test nested-group expansion and sync." },
+        { "name": "Post-filter each hit with a Graph membership call", "verdict": "poor", "why": "A small visible fraction starves top-k and adds a call per hit.", "tradeoff": "Fine when nearly all documents are visible." }
+      ],
+      "flips": [
+        { "if": "The pilot must go to production with an SLA", "then": "Move to security filters or accept the preview risk in writing." },
+        { "if": "Files carry more than 32 ACL entries", "then": "Flatten groups at the source first." }
+      ],
+      "takeaway": "Native ACLs suit Entra-based pilots that can tolerate preview."
+    },
+    {
+      "id": "w07-t11-s2",
+      "title": "Production workload with an SLA",
+      "situation": "A customer-facing assistant goes live in two months. The business demands a GA, supported feature set. Content sits in Blob storage, users are in Entra, and each holds about 50 groups. Revocation within one hour is fine.",
+      "constraints": ["GA and SLA required", "Entra identities", "About 50 groups per user", "Revocation within an hour"],
+      "unknowns": ["Who owns group resolution code?", "Is there a rollback if preview behaviour changes?"],
+      "question": "Which option do you ship?",
+      "options": [
+        { "name": "Native ACL filters in production", "verdict": "poor", "why": "They are preview with no SLA and the docs do not recommend them for production [[r11]].", "tradeoff": "A fit for pilots and non-critical tools." },
+        { "name": "Security filters with a group list from the token or Graph, ACLs pushed to the index", "verdict": "best", "why": "GA on any API version, and 50 groups is a small filter [[r13]].", "tradeoff": "You own group resolution and ACL sync." },
+        { "name": "Native ACLs behind a feature flag, with a security-filter fallback", "verdict": "good", "why": "Lets you adopt native ACLs when they reach GA.", "tradeoff": "Two code paths to test, and preview behaviour has already changed (2025-11-01-preview)." }
+      ],
+      "flips": [
+        { "if": "Native ACL enforcement reaches GA", "then": "Re-evaluate: it removes your expansion code." },
+        { "if": "Users hold thousands of groups", "then": "Compress the filter or use roles." }
+      ],
+      "takeaway": "An SLA requirement points to the GA pattern."
+    },
+    {
+      "id": "w07-t11-s3",
+      "title": "More permissions than the limits allow",
+      "situation": "Some files have 60 ACL entries and the corpus has 12 department scopes. The team plans to use ADLS Gen2 ACLs and rbacScope.",
+      "constraints": ["60 entries on some files", "12 department scopes", "Native ACL plan"],
+      "unknowns": ["Can entries be grouped at the source?", "Can scopes be modelled as groups?"],
+      "question": "What do you change?",
+      "options": [
+        { "name": "Trust the native ingestion and test later", "verdict": "poor", "why": "Entries beyond 32 might not be enforced and rbacScope allows five distinct values per index [[r15]] [[r12]].", "tradeoff": "Acceptable only if files stay within limits." },
+        { "name": "Replace per-user ACL entries with groups at the source, and model departments as groupIds", "verdict": "best", "why": "Fewer entries per file, and a groupIds field holds up to 1,000 values, so 12 departments fit.", "tradeoff": "Group hygiene work at the source." },
+        { "name": "Fall back to security filters with your own expansion", "verdict": "good", "why": "No native limits, and you control the sync.", "tradeoff": "More code to own." }
+      ],
+      "flips": [
+        { "if": "The source cannot be changed", "then": "Use security filters and compute principals yourself." },
+        { "if": "Departments fall to five or fewer", "then": "rbacScope fits." }
+      ],
+      "takeaway": "Check source limits before you commit to native ingestion."
+    },
+    {
+      "id": "w07-t11-s4",
+      "title": "Revocation within two minutes",
+      "situation": "Security wants a revoked user removed from results within two minutes. Content comes from ADLS Gen2 via an indexer on a schedule, with native ACL fields.",
+      "constraints": ["Revocation within 2 minutes", "Indexer-based ingestion", "Native ACL fields"],
+      "unknowns": ["Can the source emit change events?", "Is a live check on restricted hits acceptable?"],
+      "question": "What do you do?",
+      "options": [
+        { "name": "Set the indexer interval to one minute", "verdict": "poor", "why": "The schedule minimum is 5 minutes, so one minute is not available [[r19]].", "tradeoff": "A 5-minute interval fits only targets of five minutes or more." },
+        { "name": "Push ACL merges from change events, plus a live check on restricted hits", "verdict": "best", "why": "Push lets you update userIds or groupIds immediately with merge, and the check covers gaps [[r19]].", "tradeoff": "You own the change feed and the extra call." },
+        { "name": "Indexer every 5 minutes and accept the lag", "verdict": "good", "why": "Simple and close to target.", "tradeoff": "Misses two minutes by design, and token and Graph caches add more." }
+      ],
+      "flips": [
+        { "if": "The target relaxes to 15 minutes", "then": "A 5-minute indexer is enough." },
+        { "if": "Only a few documents are restricted", "then": "Apply the live check to those only." }
+      ],
+      "takeaway": "A pull indexer cannot beat its schedule floor."
+    }
+  ],
+  "quiz": [
+    { "id": "w07-t11-q1", "type": "single", "tag": "bug", "q": "A developer runs the same query with an admin API key and no user token and sees only a few public documents. On which API versions does this happen and why?", "options": ["Any version: ACLs never apply to keys", "Since 2025-11-01-preview: ACL filters apply even with a key, and no token returns only public documents", "Only before 2025-11-01-preview, when keys were blocked", "Only on stable 2026-04-01, which blocks previews"], "answer": 1, "explain": "From 2025-11-01-preview ACL filters apply to keys and admin roles, and a missing token yields public documents only. Earlier previews returned everything. Elevated read with a header is the debugging path.", "ref": "r12" },
+    { "id": "w07-t11-q2", "type": "multi", "tag": "concept", "q": "Which statements about native ACL enforcement are correct? Choose all that apply.", "options": ["A document passes if any of userIds, groupIds or rbacScope matches", "The service falls back to partial results if Microsoft Graph is down", "Group membership is resolved through Graph at query time, including nested groups", "Deny rules are supported in the ACL fields"], "answers": [0, 2], "explain": "Matching is an OR across the three types, and Graph resolves nested membership. If Graph is down the service returns a 5xx and no partial result, and the fields list allowed ids only.", "ref": "r12" },
+    { "id": "w07-t11-q3", "type": "order", "tag": "order", "q": "Order the steps of a native ACL query.", "items": ["The app sends the query with the user's Entra token in x-ms-query-source-authorization", "The service checks the calling app has Search Index Data Reader", "Graph resolves the user's groups, including nested ones", "Documents whose ACL matches the user oid, groups or rbacScope are returned"], "explain": "The token arrives with the query, the caller role is checked, membership is expanded and only matching documents come back.", "ref": "r12" }
+  ],
+  "flashcards": [
+    { "front": "Which header carries the user's token for native ACL queries?", "back": "x-ms-query-source-authorization. For retrieve calls the token scope is https://search.azure.com/.default. Elevated read for debugging uses x-ms-enable-elevated-read." },
+    { "front": "Native ACL limits to remember?", "back": "1,000 values per userIds or groupIds field, five distinct rbacScope values per index, 32 ADLS Gen2 ACL entries and 1,000 SharePoint entries per file." },
+    { "front": "What changed in 2025-11-01-preview?", "back": "ACL filters now apply even with an API key or admin role, and a missing user token returns only public documents. Earlier previews returned everything." },
+    { "front": "Is native ACL enforcement GA?", "back": "No. As of 2026-10-13 it is preview with no SLA. The stable API 2026-04-01 does not include it." }
+  ],
+  "related": ["w07-t08", "w07-t12", "w07-t14", "w07-t15", "w07-l5"],
+  "refs": ["r11", "r12", "r13", "r15", "r17", "r18", "r19", "tr14"]
+}

@@ -1,0 +1,109 @@
+{
+  "id": "w03-t08",
+  "order": 8,
+  "group": "Keeping it fresh",
+  "title": "Idempotency, dedupe and hashing",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "Idempotent ingestion gives the same index state however many times a change is delivered. It rests on stable ids, normalised content hashes and a deliberate rule for duplicates.",
+  "useIf": "Events, retries or replays can deliver the same document twice, or the same text exists in many copies.",
+  "avoidIf": "You build one-off loads that never rerun: key design still helps, but the dedupe machinery is overkill.",
+  "explain": [
+    { "t": "p", "md": "Delivery is at least once almost everywhere: Event Grid, Debezium and your own retries [[tr26]] [[tr25]]. The cure is at the sink. Push `mergeOrUpload` is the usual action for incremental updates, and `delete` on a missing key is safe, so a replayed batch is safe [[tr2]]. That only helps if the **key is stable**: build the document id from an immutable source id (a file id or primary key), never from a path that a rename changes, and never from a random value generated per attempt." },
+    { "t": "p", "md": "Chunk ids are a design choice. An ordinal id (`doc42-7`) is simple, but inserting a paragraph shifts every later chunk. An id based on the chunk's content hash stays stable for unchanged chunks, so you can reuse their embeddings and only embed the new ones. For per-document replacement, write the new set of chunks, then delete the chunks of that document that are not in the set. Index projections do part of this: projected keys carry a random hash that changes when the parent changes, so stale chunks are replaced, but children of a deleted parent are removed only when the data source has a deletion detection policy [[tr11]]." },
+    { "t": "table", "caption": "Ids and hashes and what each is for", "head": ["Value", "Built from", "Used for", "Trap"], "rows": [["Document id", "Immutable source id", "Stable upsert key", "A path-based id orphans chunks on rename"], ["Content hash", "Normalised document text", "Skip unchanged items", "Unnormalised whitespace changes the hash"], ["Chunk id", "Document id plus ordinal or chunk hash", "Per-chunk upsert and delete", "Ordinals shift after an insert"], ["Chunk hash", "Normalised chunk text", "Reuse stored embeddings", "Must include the embedding model version"], ["Near-duplicate signature", "Shingles or embeddings", "Find copies with small edits", "A fuzzy match can merge different documents"]] },
+    { "t": "p", "md": "**Normalise before hashing**: Unicode form, whitespace, line endings and volatile boilerplate such as a printed timestamp. **Dedupe with permissions in mind.** Two copies with identical text may carry different ACLs, and dropping one by hash can remove access or expose the wrong copy. Prefer tagging copies with a cluster id and collapsing them at query time, after security trimming." }
+  ],
+  "whereToUse": [
+    "Any ingestion path with retries, queues or event delivery",
+    "Wikis and drives where pages are edited often and renamed or moved",
+    "Corpora with many copies of the same policy, template or email thread",
+    "Re-embedding jobs that should reuse vectors for unchanged chunks",
+    "Backfills that must be safe to restart after a crash"
+  ],
+  "whenToUse": {
+    "use": [
+      "Use a stable key from an immutable source id for every document",
+      "Use `mergeOrUpload` so replays and retries land on the same document",
+      "Use a normalised content hash to skip unchanged items and detect duplicates",
+      "Use cluster ids, not deletion, when copies carry different permissions"
+    ],
+    "avoid": [
+      "Avoid path-based ids when folders get renamed",
+      "Avoid random GUIDs minted per attempt, which turn every retry into a duplicate",
+      "Avoid fuzzy near-duplicate deletion without human or rule-based review"
+    ],
+    "flips": [
+      "Documents rarely change and are small: ordinal chunk ids are fine, skip chunk-level hashing",
+      "Embedding cost dominates: add chunk-hash reuse so only new chunks are embedded",
+      "Copies carry different ACLs: keep every copy and collapse at query time"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Approach", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Stable id plus upsert", "Any pipeline with retries", "Source has no immutable id", "Needs a key convention agreed by all writers"],
+      ["Exact content hash", "Byte or text identical copies", "Copies differ by whitespace or a footer", "Misses near-duplicates unless normalised"],
+      ["Near-duplicate clustering", "Many lightly edited copies", "Different documents look alike", "False merges, tuning, compute"],
+      ["Chunk-hash embedding reuse", "Large pages with small edits", "Embedding model changed", "A hash store and version in the hash input"],
+      ["No dedupe", "Small corpus, copies are rare", "Top-k fills with identical chunks", "Wasted context and skewed answers"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Renaming a folder creates duplicate chunks", "cause": "The document id was built from the path", "fix": "Use an immutable source id and migrate existing keys once" },
+    { "symptom": "A one-line edit re-embeds an entire long page", "cause": "Chunk ids and embeddings depend on the ordinal position", "fix": "Hash chunk text and reuse stored vectors for chunks whose hash and model version match" },
+    { "symptom": "Unchanged files look changed after export", "cause": "Whitespace, line endings or a printed date alter the hash", "fix": "Normalise text and strip volatile boilerplate before hashing" },
+    { "symptom": "Top results are five copies of one policy", "cause": "No dedupe across departmental copies", "fix": "Cluster copies, collapse after security trimming and keep each copy's ACL" }
+  ],
+  "scenarios": [
+    {
+      "id": "w03-t08-s1",
+      "title": "Large wiki pages with frequent small edits",
+      "situation": "A wiki has pages of about 100 chunks. Editors change a sentence or add a paragraph near the top many times a day. Embedding spend is a concern and replays happen after failures.",
+      "constraints": ["Small edits, long pages", "Retries and replays occur", "Embedding cost matters", "Pages are renamed sometimes"],
+      "unknowns": ["Is an immutable page id available?", "How often is the embedding model changed?"],
+      "question": "How do you key and update chunks?",
+      "options": [
+        { "name": "Immutable page id for documents, chunk ids from chunk hashes, replace per page and reuse unchanged vectors", "verdict": "best", "why": "Edits embed only new chunks, renames do not orphan data and replays are safe.", "tradeoff": "A hash store, per-page replacement logic and the model version in the hash input." },
+        { "name": "Ordinal chunk ids, re-embed the whole page on any edit", "verdict": "good", "why": "Simple and correct.", "tradeoff": "Pays for about 100 embeddings on a one-word change." },
+        { "name": "Random GUID per chunk per run", "verdict": "poor", "why": "Every retry or replay adds new copies.", "tradeoff": "Only harmless for a single non-repeating load." }
+      ],
+      "flips": [
+        { "if": "Pages are short", "then": "Ordinal ids with full re-embed cost little." },
+        { "if": "The embedding model changes", "then": "Cached vectors are invalid, so rebuild into a new index." }
+      ],
+      "takeaway": "Stable ids make replays safe, and chunk hashes make edits cheap."
+    },
+    {
+      "id": "w03-t08-s2",
+      "title": "Twelve departmental copies of one policy",
+      "situation": "A shared drive holds identical or near-identical copies of a policy in twelve departments. Each copy has its own permissions. Answers keep citing five copies of the same text.",
+      "constraints": ["Per-document permissions", "Many near-identical copies", "Top-k is crowded by copies", "Wrongly hidden answers are unacceptable"],
+      "unknowns": ["Are the copies bit-identical or edited?", "Is a user allowed to see a copy that sits in another department?"],
+      "question": "How do you handle the duplicates?",
+      "options": [
+        { "name": "Keep each copy with its own ACL, add a cluster id and collapse at query time after trimming", "verdict": "best", "why": "Callers see one result per cluster from copies they may read, and no permission is lost.", "tradeoff": "More chunks stored and a collapse step in retrieval." },
+        { "name": "Exact-hash dedupe within the same ACL scope only", "verdict": "good", "why": "Removes true duplicates safely inside one permission group.", "tradeoff": "Cross-department copies still crowd results." },
+        { "name": "Global dedupe by hash keeping the first copy", "verdict": "poor", "why": "Users who cannot read the kept copy lose the answer, or the wrong ACL governs it.", "tradeoff": "Right only when all copies share one permission scope." }
+      ],
+      "flips": [
+        { "if": "Every copy has the same permissions", "then": "Global dedupe by normalised hash is simple and safe." },
+        { "if": "Copies differ materially", "then": "Treat them as distinct documents and rely on reranking." }
+      ],
+      "takeaway": "Dedupe is a retrieval and security decision, not only a storage one."
+    }
+  ],
+  "quiz": [
+    { "id": "w03-t08-q1", "type": "single", "tag": "bug", "q": "After a folder rename, search shows duplicate chunks for the same file. What is the most likely cause?", "options": ["Hybrid search is misconfigured", "The semantic ranker was enabled", "The embedding model changed", "Document ids were built from the file path"], "answer": 3, "explain": "A path-based id changes on rename, so the upsert creates a new document and the old one remains. The other options do not generate duplicate documents.", "ref": "tr2" },
+    { "id": "w03-t08-q2", "type": "multi", "tag": "concept", "q": "Which steps belong before computing a content hash used for change detection?", "options": ["Normalise Unicode and whitespace", "Strip volatile boilerplate such as a printed timestamp", "Add a random salt per run", "Use the same normalisation in every pipeline version"], "answers": [0, 1, 3], "explain": "Hashes only help if equal content gives equal hashes, so normalise, strip volatility and keep rules stable. A random salt makes every hash differ.", "ref": "tr2" },
+    { "id": "w03-t08-q3", "type": "single", "tag": "security", "q": "Two copies of a document have identical text but different ACLs. What is the safest dedupe approach?", "options": ["Delete the second copy by hash", "Merge both ACLs into the first copy", "Keep both with a cluster id and collapse at query time after security trimming", "Drop the ACL fields to save space"], "answer": 2, "explain": "Collapsing after trimming preserves each copy's permissions. Deleting or merging can hide answers or widen access, and dropping ACL fields breaks trimming.", "ref": "tr11" }
+  ],
+  "flashcards": [
+    { "front": "What makes a replayed push batch safe?", "back": "`mergeOrUpload` with stable keys, and `delete` on a missing key being safe. The same batch lands on the same documents." },
+    { "front": "Why use an immutable source id for the document key?", "back": "Paths change on rename or move, which would orphan old chunks and create duplicates." },
+    { "front": "Why include the embedding model version in a chunk-hash cache key?", "back": "A stored vector is only valid for its model. A different model needs new vectors even for identical text." }
+  ],
+  "related": ["w03-t06", "w03-t07", "w03-t09", "w03-t10", "w07-t15"],
+  "refs": ["tr2", "tr11", "tr25", "tr26"]
+}

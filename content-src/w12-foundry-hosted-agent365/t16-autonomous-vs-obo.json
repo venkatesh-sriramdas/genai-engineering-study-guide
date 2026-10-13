@@ -1,0 +1,132 @@
+{
+  "id": "w12-t16",
+  "order": 16,
+  "group": "Identity and governance",
+  "title": "Autonomous vs on-behalf-of agents",
+  "minutes": 8,
+  "difficulty": "advanced",
+  "summary": "An agent can act as itself (app permissions), on behalf of a signed-in user (delegated permissions) or as its own user account. Pick the mode first, then confirm permissions and consent, because the mode decides whose access bounds the data and who is accountable.",
+  "useIf": "You are deciding whose permissions an agent uses when it reads data or takes actions.",
+  "avoidIf": "The agent touches no protected resources, so identity mode has no effect.",
+  "explain": [
+    { "t": "p", "md": "Entra Agent ID defines three execution modes [[r17]]. In **S2S** (autonomous), the agent acts as itself with application permissions and the agent identity is the token subject. In **OBO** (on-behalf-of), the user is the token subject, the agent identity is the actor and permissions are delegated. In **Agentic-User**, the agent acts as its own user account, which needs the Frontier preview. The docs say to pick the mode first, then confirm permissions and consent [[r17]]. Hosted agents follow this pattern: with a user token the platform supports OAuth 2.0 OBO, without one the agent uses its own identity, and in both cases it keeps its dedicated Entra identity for authentication, authorization and auditability [[r2]]." },
+    { "t": "diagram", "id": "w12-t16-d1", "title": "Choosing the mode", "alt": "If a user is present and their access should bound the data, use OBO. If the work runs with no user, use S2S. If the agent must act as a team member with a mailbox or Teams presence, use the agent user mode.", "src": "flowchart TB\n  Q{Whose access bounds the data?} -->|The signed-in user| O[OBO: user subject, agent actor]\n  Q -->|The agent itself, no user| S[S2S: agent identity subject]\n  Q -->|A team member agent in M365| A[Agentic-User: needs Frontier preview]" },
+    { "t": "table", "caption": "Foundry agent types by identity (autopilot overview, checked 2026-10-13)", "head": ["Type", "Identity", "Acts", "Cannot"], "rows": [
+      ["Assistive", "Agent identity with signed-in user context", "On behalf of a user, within that user's permissions", "Act beyond the user's access"],
+      ["Background service", "Agent identity, app-only", "Autonomously as itself", "Perform Microsoft 365 actions"],
+      ["Autopilot", "Agent identity plus agent user account", "As itself in Microsoft 365, including group settings", "Be an autopilot without an agent user account: the distinction is binary"]
+    ] },
+    { "t": "p", "md": "**Why autopilots exist.** Without an agent user, Microsoft 365 actions happen only on behalf of a signed-in user. That fails when no user is in the loop, such as event triggers, and in group chats, where any chosen user's permissions would apply to the whole thread, so actions are misattributed and members can see content they cannot access [[r19]]. At the 2026-05-01 Agent 365 GA announcement, delegated agents and agents behind the scenes with their own access were GA, and agents in team workflows with their own access were public preview [[r20]]. The autopilot preview status itself is **UNVERIFIED** [[r19]]." },
+    { "t": "callout", "kind": "gotcha", "title": "Token audience", "md": "A token whose audience is the MCP server URL instead of the downstream resource ID (for example `https://storage.azure.com`) fails even with correct RBAC. Check the audience first when an OBO or S2S call returns 401 or 403 [[r4]]." }
+  ],
+  "whereToUse": [
+    "Chat assistants that read or write the signed-in user's own mail, files or calendar: OBO",
+    "Scheduled, event-driven and backend automation with no user present: S2S",
+    "Digital coworkers that join group chats and hold a role: agent user (autopilot, Frontier preview)",
+    "Reviewing least privilege per agent: decide mode, then application or delegated permissions, then consent"
+  ],
+  "whenToUse": {
+    "use": [
+      "OBO when access must follow the signed-in user and revocation of the user should revoke the agent's reach",
+      "S2S when there is no user, and permissions are scoped to the agent itself",
+      "Agentic-User when the agent must act as a team member and needs a mailbox or Teams presence"
+    ],
+    "avoid": [
+      "OBO in group chats or event triggers, where no single user is the right subject",
+      "S2S with broad application permissions for work that is really about one user's data",
+      "Agentic-User when the tenant is outside Frontier preview or preview is not allowed"
+    ],
+    "flips": [
+      "A user is present and the data is personal: OBO. The same workload run nightly: S2S",
+      "Chat moves from one-to-one to a group: reconsider and likely move to an agent user",
+      "Preview is not allowed: stay with OBO and S2S, which were GA at the 2026-05-01 announcement"
+    ]
+  },
+  "alternatives": {
+    "title": "Execution modes compared",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["OBO (delegated)", "Access must be bounded by the user", "No user, group chats", "Needs user token and consent; bounded by user permissions [[r17]]"],
+      ["S2S (application permissions)", "Background work with no user", "Data belongs to one user", "Over-broad app permissions expose all users' data"],
+      ["Agentic-User (autopilot)", "Coworker role in group settings", "Tenant outside Frontier preview", "Preview, license and mailbox management [[r19]]"],
+      ["Shared service account", "Nothing in production", "Always", "No per-agent audit and hard to revoke one agent"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A group-chat agent shows content that some members cannot access", "cause": "The agent acted on behalf of one user and that user's permissions applied to the whole thread", "fix": "Give the agent its own account (agent user) or remove it from group contexts [[r19]]." },
+    { "symptom": "A nightly job fails with consent errors under OBO", "cause": "There is no signed-in user to delegate", "fix": "Use S2S with application permissions scoped to the job, and review consent [[r17]]." },
+    { "symptom": "401 or 403 despite correct roles", "cause": "Wrong token audience", "fix": "Request the token for the downstream resource ID audience [[r4]]." }
+  ],
+  "scenarios": [
+    {
+      "id": "w12-t16-s1",
+      "title": "Nightly reconciliation job",
+      "situation": "At 2 a.m. an agent reads shared finance data, compares it with a ledger and posts a summary to a queue. No one is signed in.",
+      "constraints": ["No user present", "Data is shared, not personal", "No Microsoft 365 actions"],
+      "unknowns": ["Which resources need access?", "Who is the sponsor?"],
+      "question": "Which mode do you use?",
+      "options": [
+        { "name": "S2S with the agent identity and narrowly scoped application permissions", "verdict": "best", "why": "No user exists to delegate, and the agent identity is the token subject with an audit trail.", "tradeoff": "Application permissions are not bounded by any user, so scope them tightly." },
+        { "name": "OBO", "verdict": "poor", "why": "There is no signed-in user to act for.", "tradeoff": "Right for interactive assistants." },
+        { "name": "Agentic-User", "verdict": "good", "why": "Works if the agent also needs a mailbox.", "tradeoff": "Frontier preview and license overhead for no Microsoft 365 need." }
+      ],
+      "flips": [
+        { "if": "The job must send mail as the agent", "then": "Agentic-User." },
+        { "if": "A user triggers it and its output is personal", "then": "OBO." }
+      ],
+      "takeaway": "No user in the loop means the agent acts as itself."
+    },
+    {
+      "id": "w12-t16-s2",
+      "title": "Personal mailbox assistant",
+      "situation": "An assistant summarizes the signed-in user's inbox and drafts replies. Thousands of users, each with different access.",
+      "constraints": ["Access must match each user", "Interactive", "Revoking a user must stop access"],
+      "unknowns": ["Is consent granted by users or admins?", "Which scopes are needed?"],
+      "question": "How does the agent access mail?",
+      "options": [
+        { "name": "OBO with delegated permissions", "verdict": "best", "why": "The user is the token subject and the agent is the actor, so access follows each user.", "tradeoff": "Consent and token handling, and it fails when no user is present." },
+        { "name": "S2S with an application mail permission", "verdict": "poor", "why": "It would grant access to every mailbox in scope, far beyond the user in front of the agent.", "tradeoff": "Right for a compliance scanner with explicit approval." },
+        { "name": "Agentic-User", "verdict": "good", "why": "The agent has its own mailbox.", "tradeoff": "It would read its own mailbox, not the user's, so it does not meet the need." }
+      ],
+      "flips": [
+        { "if": "The task runs on a schedule with no user", "then": "S2S with per-resource scoping." },
+        { "if": "Many users share one conversation", "then": "Agent user." }
+      ],
+      "takeaway": "Personal data calls for delegated access."
+    },
+    {
+      "id": "w12-t16-s3",
+      "title": "Coworker in team chats",
+      "situation": "A release coordinator agent joins a group chat, answers questions, sends updates and reacts to events when nobody is online.",
+      "constraints": ["Group settings", "Event-triggered actions", "Frontier preview allowed"],
+      "unknowns": ["Who is its manager and sponsor?", "Which data may it see?"],
+      "question": "Which identity mode fits?",
+      "options": [
+        { "name": "Agentic-User (autopilot) with its own agent user account", "verdict": "best", "why": "It acts as itself, so it serves the whole team and responds without a user, with a named manager accountable.", "tradeoff": "Frontier preview and lifecycle for an extra account." },
+        { "name": "OBO restricted to one-to-one chats", "verdict": "good", "why": "Keeps access bounded by one user.", "tradeoff": "Loses group and event-driven use." },
+        { "name": "OBO inside the group chat", "verdict": "poor", "why": "One member's permissions would apply to everyone in the thread.", "tradeoff": "Right when the chat has one participant." }
+      ],
+      "flips": [
+        { "if": "Preview is not allowed", "then": "One-to-one OBO assistants, and keep group work out of scope." },
+        { "if": "The agent needs no Microsoft 365 actions", "then": "Background service with S2S." }
+      ],
+      "takeaway": "In groups there is no right user, so the agent needs its own."
+    }
+  ],
+  "quiz": [
+    { "id": "w12-t16-q1", "type": "match", "tag": "concept", "q": "Match each mode to its token subject or character.", "pairs": [
+      { "l": "S2S", "r": "Agent identity is the token subject" },
+      { "l": "OBO", "r": "User is the subject, agent identity is the actor" },
+      { "l": "Agentic-User", "r": "Agent acts as its own user account" },
+      { "l": "Background service agent", "r": "App-only, cannot do Microsoft 365 actions" }
+    ], "explain": "These follow the identity developer docs and the autopilot overview. Agentic-User needs the Frontier preview.", "ref": "r17" },
+    { "id": "w12-t16-q2", "type": "single", "tag": "flip", "q": "An assistant that worked one-to-one now joins group chats. What is the main risk of keeping OBO?", "options": ["Token expiry", "Loss of Conditional Access", "No audit logs", "One user's permissions apply to the whole thread"], "answer": 3, "explain": "In a group the agent has to guess a user, and that user's permissions apply to everyone. Expiry, Conditional Access and audit are not the documented problem.", "ref": "r19" },
+    { "id": "w12-t16-q3", "type": "single", "tag": "diagnose", "q": "A nightly OBO job returns consent errors. What is the correct fix?", "options": ["Ask users to sign in at night", "Add an agent user", "Remove Conditional Access", "Use S2S with scoped application permissions"], "answer": 3, "explain": "OBO needs a user token. A scheduled job has none, so S2S with the agent identity fits. An agent user is for Microsoft 365 presence, and removing Conditional Access weakens control.", "ref": "r17" }
+  ],
+  "flashcards": [
+    { "front": "OBO vs S2S token subjects?", "back": "OBO: the user is the subject, the agent identity is the actor, with delegated permissions. S2S: the agent identity is the subject, with application permissions." },
+    { "front": "What defines an autopilot?", "back": "Identity, not capabilities: an agent with its own agent user account (plus an agent identity). Without the account it is not an autopilot. Frontier preview." }
+  ],
+  "related": ["w12-t15", "w12-t17", "w07-t13", "w17-t01", "w12-l5"],
+  "refs": ["r2", "r4", "r17", "r19", "r20"]
+}

@@ -1,0 +1,109 @@
+{
+  "id": "w03-t11",
+  "order": 11,
+  "group": "Quality and failure",
+  "title": "Quality gates: PII, ACL capture and metadata",
+  "minutes": 9,
+  "difficulty": "advanced",
+  "summary": "Quality gates sit between parsing and indexing. They stop bad text, sensitive data and chunks with no permissions from entering the index, and they stamp each chunk with the metadata that retrieval and debugging need.",
+  "useIf": "The index holds personal data, per-document permissions or content you must trace back to a source, version and parser.",
+  "avoidIf": "The corpus is public, flat and low risk: keep the gates light and measure drift instead.",
+  "explain": [
+    { "t": "p", "md": "**PII before embedding.** Once personal data is turned into a vector and written to an index, removing it means rebuilding. The PII Detection skill returns masked text when `maskingMode` is `replace` (the default is `none`), with `maskingCharacter` defaulting to `*`. Other parameters are `minimumPrecision` (0.0 to 1.0, default 0.0, so low-confidence matches are included until you raise it), `domain` (`phi` or `none`) and `piiCategories` [[tr15]]. Azure AI Language PII has text, conversation and document-based modes, and no detector guarantees full coverage, so test your own formats [[tr40]]." },
+    { "t": "p", "md": "**ACLs at ingest.** Permissions must be captured when content is read and inherited by every chunk. Index projection mappings copy ACL fields such as `metadata_user_ids`, `metadata_group_ids` and `metadata_spo_site_url` onto each chunk [[tr14]]. Knowledge source `ingestionPermissionOptions` (for example `userIds`, `groupIds`) needs preview API `2026-08-01-preview`, and `2026-04-01` does not support it. ADLS Gen2 POSIX-like ACL and RBAC scope ingestion, SharePoint ACL ingestion and Purview label ingestion are previews [[tr14]] [[tr7]]. Security trimming itself belongs to the access-control chapter." },
+    { "t": "p", "md": "**Metadata and observability.** Stamp each chunk with source id, path, page or region, language, version, content hash, parser version, embedding model version and a sensitivity label. Then count items at every stage, measure lag from source change to searchable, watch dead-letter depth and run periodic reconciliation to detect drift between source and index. These practices are not vendor settings: define the thresholds from your own corpus." },
+    { "t": "diagram", "id": "w03-t11-d1", "title": "Gates between parser and index", "alt": "Parsed text passes a text quality gate, a PII policy gate and an ACL present gate, then gets metadata and is indexed. A failure at any gate sends the item to quarantine.", "src": "flowchart LR\n  P[Parsed text] --> G1{Text quality}\n  G1 --> G2{PII policy}\n  G2 --> G3{ACL present}\n  G3 --> M[Add metadata]\n  M --> I[(Index)]\n  G1 -->|fail| X[Quarantine]\n  G2 -->|fail| X\n  G3 -->|fail| X" }
+  ],
+  "whereToUse": [
+    "Support, HR and health content where personal data must not reach the index",
+    "Multi-department corpora where chunks inherit file or site permissions",
+    "Regulated corpora that need lineage from answer to source, version and parser",
+    "Large pipelines where drift between source and index must be measured",
+    "Any index that will later be filtered by language, type, date or sensitivity"
+  ],
+  "whenToUse": {
+    "use": [
+      "Mask or exclude PII before chunks are embedded, when answers do not need the value",
+      "Fail closed: quarantine any chunk that arrives without ACL fields",
+      "Store lineage metadata on every chunk, including parser and model versions",
+      "Track stage counts, lag and drift as ingestion metrics with alerts"
+    ],
+    "avoid": [
+      "Avoid redacting after embedding: vectors and stored text already carry the data",
+      "Avoid default ACLs such as everyone-can-read as a fallback",
+      "Avoid treating one PII detector as complete: it can miss formats and languages"
+    ],
+    "flips": [
+      "Answers must quote the sensitive value: keep it, encrypt and restrict access, and justify the legal basis",
+      "ACL ingestion for your source is preview and policy forbids preview: capture ACLs with your own reader and push them as fields",
+      "Permission churn is fast: add a re-sync path or a live source check, see the ACL sync topic"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Approach", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Redact PII before embedding", "Answers never need the value", "Users must read the real value", "Detector misses leak through, masks hide context"],
+      ["Tag PII and filter at query time", "Some callers may see it", "Index must hold no PII at all", "PII sits in the index and vectors"],
+      ["Exclude documents containing PII", "Low-value or risky documents", "Documents are essential", "Coverage gaps"],
+      ["Capture ACLs at ingest on each chunk", "Group-based, slowly changing permissions", "Revocation must be instant", "Sync lag, preview APIs for some sources"],
+      ["Query-time check against the source", "Fast-changing, per-document rights", "High query volume", "Latency and source load"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Users see documents they cannot open in the source", "cause": "Chunks were indexed without ACL fields, or the projection did not copy parent ACL fields", "fix": "Map ACL fields in the index projection and quarantine any chunk with empty ACLs" },
+    { "symptom": "Personal data appears in answers after masking was added", "cause": "Masking ran after embedding, or only on display text", "fix": "Mask before chunking and embedding, then rebuild old vectors" },
+    { "symptom": "Too much text is masked and answers lose context", "cause": "`minimumPrecision` is at its default of 0.0, which keeps low-confidence matches", "fix": "Raise `minimumPrecision`, restrict `piiCategories` and evaluate on labelled samples" },
+    { "symptom": "A revoked user still gets results", "cause": "ACLs were captured once and never re-synced", "fix": "Add a permission re-sync path and drift checks, and shorten cache lifetimes" }
+  ],
+  "scenarios": [
+    {
+      "id": "w03-t11-s1",
+      "title": "Support transcripts with customer details",
+      "situation": "Chat transcripts hold names, emails and account numbers. The assistant summarises issues and never needs those values. A privacy review will inspect the index.",
+      "constraints": ["Answers do not need the PII", "Privacy review of the index", "Transcripts are long", "Batch ingestion nightly"],
+      "unknowns": ["Which languages and entity types appear?", "Is there a labelled sample to measure misses?"],
+      "question": "Where do you handle PII?",
+      "options": [
+        { "name": "Detect and mask with the PII skill before chunking and embedding, with a tuned `minimumPrecision`", "verdict": "best", "why": "The index and the vectors never hold the values, so the review passes by design.", "tradeoff": "Detector misses still leak and masks reduce context." },
+        { "name": "Index raw text, tag PII and filter at query time", "verdict": "good", "why": "Keeps full text for authorised callers.", "tradeoff": "The index and vectors still contain personal data." },
+        { "name": "Keep raw text and rely on an output filter", "verdict": "poor", "why": "The data is stored, embedded and retrievable, and the filter is the only barrier.", "tradeoff": "Right only when callers need the values and access is tightly controlled." }
+      ],
+      "flips": [
+        { "if": "Agents must quote account numbers", "then": "Keep them in a restricted field with access control and logging." },
+        { "if": "The detector misses your custom ID format", "then": "Add custom rules and re-test before launch." }
+      ],
+      "takeaway": "Remove what you do not need before it becomes a vector."
+    },
+    {
+      "id": "w03-t11-s2",
+      "title": "ADLS folders with POSIX-style permissions",
+      "situation": "Documents sit in ADLS Gen2 folders with different permissions per team. Production starts in six weeks. Policy forbids preview features in production.",
+      "constraints": ["Per-folder permissions", "No preview features", "Group-based, changes weekly", "Revocation within a day is acceptable"],
+      "unknowns": ["How many groups does a user belong to?", "Can the reader access the folder ACLs?"],
+      "question": "How do you capture permissions?",
+      "options": [
+        { "name": "Read ACLs with your own reader, write group id fields on every chunk through the push API, and re-sync daily", "verdict": "best", "why": "It stays on GA surfaces, makes ACLs part of each chunk and meets the one day revocation target.", "tradeoff": "You build and run the reader and the sync." },
+        { "name": "Use the preview ACL ingestion for ADLS Gen2", "verdict": "good", "why": "Least code and native behaviour.", "tradeoff": "Breaks the no-preview rule and the API may change." },
+        { "name": "Index everything and filter by folder name in the application", "verdict": "poor", "why": "Folder names are not permissions and the filter is easy to bypass or get wrong.", "tradeoff": "Right never as a security boundary, only as a convenience facet." }
+      ],
+      "flips": [
+        { "if": "Policy allows preview", "then": "The native ADLS ACL ingestion cuts effort." },
+        { "if": "Revocation must be immediate", "then": "Add a live source check for sensitive hits." }
+      ],
+      "takeaway": "Capture permissions at ingest on a supported surface, and plan their refresh."
+    }
+  ],
+  "quiz": [
+    { "id": "w03-t11-q1", "type": "single", "tag": "concept", "q": "What is the default `maskingMode` of the PII Detection skill?", "options": ["`replace`", "`redact`", "`none`", "`hash`"], "answer": 2, "explain": "The default is `none`, so you must set `replace` to get `maskedText`. `redact` and `hash` are not documented values.", "ref": "tr15" },
+    { "id": "w03-t11-q2", "type": "match", "tag": "concept", "q": "Match each PII skill parameter with its effect.", "pairs": [{ "l": "`minimumPrecision`", "r": "Confidence threshold from 0.0 to 1.0, default 0.0" }, { "l": "`maskingMode`", "r": "Whether masked text is returned (`replace`) or not (`none`)" }, { "l": "`maskingCharacter`", "r": "The character used for masking, `*` by default" }, { "l": "`piiCategories`", "r": "Which entity categories to detect" }], "explain": "Each parameter controls one part of detection and masking. A default threshold of 0.0 keeps low-confidence matches, which causes over-masking.", "ref": "tr15" },
+    { "id": "w03-t11-q3", "type": "multi", "tag": "security", "q": "Which are correct about ACL capture at ingest?", "options": ["Index projection mappings must copy ACL fields onto every chunk", "`ingestionPermissionOptions` works on the `2026-04-01` stable API", "ADLS Gen2 POSIX-like ACL ingestion is preview", "A chunk with empty ACL fields should be quarantined"], "answers": [0, 2, 3], "explain": "Chunks must inherit ACL fields, ADLS ACL ingestion is preview and empty ACLs should fail closed. `ingestionPermissionOptions` requires `2026-08-01-preview`.", "ref": "tr14" }
+  ],
+  "flashcards": [
+    { "front": "Why must PII masking happen before embedding?", "back": "After embedding, the vector and stored text already carry the data. Removing it later means rebuilding the index." },
+    { "front": "Which settings does ACL ingestion need in Azure AI Search knowledge sources?", "back": "`ingestionPermissionOptions` (such as `userIds`, `groupIds`) on `2026-08-01-preview`, plus projection mappings copying ACL fields to every chunk." },
+    { "front": "Name four metadata fields worth stamping on each chunk.", "back": "Source id, page or region, content hash and parser or embedding model version. Also language, sensitivity label and chunk position." }
+  ],
+  "related": ["w03-t02", "w03-t09", "w03-t10", "w06-t09", "w07-t11", "w07-t15"],
+  "refs": ["tr7", "tr14", "tr15", "tr40"]
+}

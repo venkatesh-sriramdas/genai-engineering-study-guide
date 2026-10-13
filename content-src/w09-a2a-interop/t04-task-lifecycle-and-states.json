@@ -1,0 +1,152 @@
+{
+  "id": "w09-t04",
+  "order": 4,
+  "group": "Protocol",
+  "title": "Task lifecycle and states",
+  "minutes": 7,
+  "difficulty": "core",
+  "summary": "A Task is the stateful unit of work in A2A. It moves through defined states, ends in one of four terminal states or pauses in an interrupted state that waits for the client.",
+  "useIf": "A remote agent's work takes longer than one reply or may need input, so callers need a handle to track it.",
+  "avoidIf": "The agent only returns quick, self-contained answers: reply with a direct Message and skip task state.",
+  "explain": [
+    { "t": "p", "md": "When an agent receives a message it either replies with a stateless `Message` or starts a `Task` [[r5]]. A task has a server-generated `id`, a `contextId` that groups related tasks and messages, a `status` (state, optional message, timestamp), `artifacts` and `history` [[r1]]. Clients cannot choose a new `taskId`." },
+    { "t": "p", "md": "The spec lists nine `TaskState` values: `UNSPECIFIED`, `SUBMITTED`, `WORKING`, four **terminal** states (`COMPLETED`, `FAILED`, `CANCELED`, `REJECTED`) and two **interrupted** states (`INPUT_REQUIRED`, `AUTH_REQUIRED`) [[r1]]. A terminal task is immutable: it cannot restart, so a refinement starts a new task in the same `contextId`, optionally pointing at the old one with `referenceTaskIds` [[r5]]. An interrupted task waits: the client replies with a message carrying the same `taskId` and `contextId`, and mismatched ids are rejected [[r1]]." },
+    { "t": "diagram", "id": "w09-t04-d1", "title": "Task states and who moves them", "alt": "A task starts submitted, becomes working, may pause as input required or auth required and return to working, and ends as completed, failed or canceled. It can also be rejected at the start.", "src": "stateDiagram-v2\n  [*] --> SUBMITTED\n  SUBMITTED --> WORKING\n  SUBMITTED --> REJECTED\n  WORKING --> INPUT_REQUIRED\n  INPUT_REQUIRED --> WORKING: client replies\n  WORKING --> AUTH_REQUIRED\n  AUTH_REQUIRED --> WORKING: credential obtained\n  WORKING --> COMPLETED\n  WORKING --> FAILED\n  WORKING --> CANCELED\n  COMPLETED --> [*]" },
+    { "t": "p", "md": "`SendMessage` may return either a Task or a direct Message. Agents come in three styles: **message-only** (always replies with messages), **task-generating** (always a task, even for simple answers) and **hybrid** (messages to agree scope, then a task for committed work) [[r5]]. `CancelTask` on a task that is not cancelable returns `TaskNotCancelableError`, and sending a message to a terminal task returns `UnsupportedOperationError` [[r1]]." }
+  ],
+  "whereToUse": [
+    "A remote analyst agent whose jobs run from seconds to hours",
+    "A workflow step that may stop to ask a human a question before continuing",
+    "A client UI that must show progress, let users cancel and resume later",
+    "An orchestrator that tracks several parallel follow-up tasks inside one conversation context",
+    "Audit trails that need a clean mapping from each request to its result"
+  ],
+  "whenToUse": {
+    "use": [
+      "Use a Task when the work is long, trackable or may pause for input or authorization",
+      "Use a hybrid agent when simple questions should stay cheap but real work needs a handle",
+      "Use `referenceTaskIds` and a new task for refinements, never a restarted task"
+    ],
+    "avoid": [
+      "Do not return tasks for trivial one-shot answers if callers would rather get a Message",
+      "Do not send follow-up messages to a terminal task",
+      "Do not treat an interrupted state as failure or as completion"
+    ],
+    "flips": [
+      "Latency matters more than traceability for simple calls: a message-only agent avoids creating a task per request",
+      "Every call must be auditable and cancelable: a task-generating agent gives each one an id",
+      "Callers need conversational continuity across tasks: pass the same `contextId`"
+    ]
+  },
+  "alternatives": {
+    "title": "How an agent can respond",
+    "head": ["Style", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Message-only agent", "Quick answers, simple tools", "Work is long or needs input-required turns", "No handle to cancel, poll or audit"],
+      ["Task-generating agent", "Everything must be tracked and cancelable", "Most calls are trivial", "A completed task object for every simple call"],
+      ["Hybrid agent", "Quick questions plus occasional real jobs", "Clients cannot handle both reply types", "Callers must branch on Task or Message"]
+    ]
+  },
+  "pitfalls": [
+    {
+      "symptom": "A follow-up returns `UnsupportedOperationError`",
+      "cause": "The message targeted a task that is already terminal",
+      "fix": "Start a new task in the same `contextId` and set `referenceTaskIds` to the earlier task [[r5]]"
+    },
+    {
+      "symptom": "A polling loop never ends or the UI reports a failure while the agent waits",
+      "cause": "The client only watched for terminal states and ignored `INPUT_REQUIRED` and `AUTH_REQUIRED`",
+      "fix": "Treat interrupted states as a call to act: reply on the same `taskId` and `contextId`"
+    },
+    {
+      "symptom": "Requests with client-made task ids are rejected",
+      "cause": "Task ids are server-generated and client-provided ids for new tasks are not supported",
+      "fix": "Send a message without a `taskId` and use the id the server returns [[r1]]"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "w09-t04-s1",
+      "title": "Designing the reply style of a mixed workload agent",
+      "situation": "A remote agent answers many quick questions and occasionally runs 20-minute analyses that need clarifying questions. Callers include a chat UI and batch jobs.",
+      "constraints": ["Mixed short and long work", "Needs input-required turns", "Chat UI wants low overhead for short answers"],
+      "unknowns": ["Do callers handle both Task and Message replies?", "Must short calls be auditable too?"],
+      "question": "Which reply style do you implement?",
+      "options": [
+        { "name": "Hybrid: messages for scoping and quick answers, a task for committed work", "verdict": "best", "why": "Cheap short calls and a full lifecycle for the long jobs.", "tradeoff": "Callers must branch on Task versus Message." },
+        { "name": "Task-generating: always return a task", "verdict": "good", "why": "One uniform client path and every call is trackable.", "tradeoff": "Every quick question creates a completed task object." },
+        { "name": "Message-only", "verdict": "poor", "why": "There is no handle for the 20-minute work and no input-required state for clarifications.", "tradeoff": "Right for a plain Q and A agent with no long jobs." }
+      ],
+      "flips": [
+        { "if": "Auditors require a record for every call", "then": "Switch to task-generating." },
+        { "if": "The long jobs disappear", "then": "Message-only is simplest." }
+      ],
+      "takeaway": "Match the reply style to how much of the work needs a handle."
+    },
+    {
+      "id": "w09-t04-s2",
+      "title": "INPUT_REQUIRED and the human is away for two days",
+      "situation": "A task enters `INPUT_REQUIRED` asking which budget line to charge. The responsible person returns in two days. The remote agent keeps tasks for at least a week.",
+      "constraints": ["Interrupted state with a slow human", "Cost of a restart is high", "Wrong answer has financial impact"],
+      "unknowns": ["How long does the remote agent keep an interrupted task?", "Can the question be answered by a policy?"],
+      "question": "What does the client do?",
+      "options": [
+        { "name": "Surface the question, keep the task open and reply on the same `taskId` and `contextId`", "verdict": "best", "why": "It preserves the agent's progress and context and lets a human answer.", "tradeoff": "The client must persist task ids and handle retention limits." },
+        { "name": "Cancel and start a new task with the answer included later", "verdict": "good", "why": "Simple and avoids long-lived state.", "tradeoff": "Loses the agent's partial work and restarts costs." },
+        { "name": "Let an LLM guess the budget line", "verdict": "poor", "why": "A guess on a financial decision defeats the reason the agent asked.", "tradeoff": "Acceptable only where policy defines a safe default." }
+      ],
+      "flips": [
+        { "if": "Retention at the remote agent is shorter than the wait", "then": "Cancel and restart with the answer in the first message." },
+        { "if": "A written policy answers the question", "then": "Auto-reply from the policy and log it." }
+      ],
+      "takeaway": "An interrupted task is a pause, not an error."
+    }
+  ],
+  "quiz": [
+    {
+      "id": "w09-t04-q1",
+      "type": "numeric",
+      "tag": "numeric",
+      "q": "How many of the `TaskState` values in the v1.0 specification are terminal?",
+      "answer": 4,
+      "tolerancePct": 0,
+      "unit": "states",
+      "hint": "Count the states after which a task cannot restart.",
+      "explain": "The terminal states are `COMPLETED`, `FAILED`, `CANCELED` and `REJECTED`. `INPUT_REQUIRED` and `AUTH_REQUIRED` are interrupted, and `UNSPECIFIED`, `SUBMITTED` and `WORKING` are not terminal."
+    },
+    {
+      "id": "w09-t04-q2",
+      "type": "single",
+      "tag": "diagnose",
+      "q": "A client sends a refinement to a task that is `COMPLETED` and gets `UnsupportedOperationError`. What is the correct approach?",
+      "options": [
+        "Resend the message until the task reopens",
+        "Create a new task in the same `contextId` and set `referenceTaskIds` to the old task",
+        "Send the message with a new random `taskId`",
+        "Cancel the completed task first"
+      ],
+      "answer": 1,
+      "explain": "Terminal tasks are immutable, so refinements start new tasks in the same context. Retrying never reopens a task, client-made task ids are not supported, and a completed task cannot be canceled."
+    },
+    {
+      "id": "w09-t04-q3",
+      "type": "match",
+      "tag": "concept",
+      "q": "Match each state to what it means for the task.",
+      "pairs": [
+        { "l": "`COMPLETED`", "r": "Terminal: the task ended and cannot restart" },
+        { "l": "`INPUT_REQUIRED`", "r": "Interrupted: waits for the client's reply" },
+        { "l": "`WORKING`", "r": "In progress: the agent is processing" },
+        { "l": "`AUTH_REQUIRED`", "r": "Interrupted: waits for a credential" }
+      ],
+      "explain": "Terminal states end the task. Interrupted states wait for the client: `INPUT_REQUIRED` for a reply and `AUTH_REQUIRED` for a credential. `WORKING` is the active state between them."
+    }
+  ],
+  "flashcards": [
+    { "front": "Name the four terminal and two interrupted A2A task states.", "back": "Terminal: `COMPLETED`, `FAILED`, `CANCELED`, `REJECTED`. Interrupted: `INPUT_REQUIRED`, `AUTH_REQUIRED`." },
+    { "front": "How do you refine the result of a completed A2A task?", "back": "Start a new task in the same `contextId`, optionally with `referenceTaskIds` pointing at the earlier task. Terminal tasks cannot restart." },
+    { "front": "Who generates `taskId` and `contextId`?", "back": "The server. Clients echo them on follow-ups and cannot choose a new `taskId`. Mismatched ids are rejected." }
+  ],
+  "related": ["w09-t05", "w09-t07", "w09-t08", "w09-l03", "w11-t24"],
+  "refs": ["r1", "r5"]
+}

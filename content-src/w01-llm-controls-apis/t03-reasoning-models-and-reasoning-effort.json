@@ -1,0 +1,135 @@
+{
+  "id": "w01-t03",
+  "order": 3,
+  "group": "Model basics",
+  "title": "Reasoning models and reasoning effort",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "Reasoning models spend hidden thinking tokens before they answer. An effort setting trades quality against latency and cost, and some sampling parameters are rejected.",
+  "useIf": "You use a reasoning model, tune effort, or see 400 errors after switching models.",
+  "avoidIf": "The task is simple extraction or classification where a small non-reasoning model passes your evals.",
+  "explain": [
+    { "t": "p", "md": "A **reasoning model** generates internal thinking before the visible answer. Those **reasoning tokens** bill as output, share the context window, and appear in `output_tokens_details.reasoning_tokens` (Responses) or `completion_tokens_details.reasoning_tokens` (Chat Completions) [[r3]]. You cannot read the raw thinking. On OpenAI you receive a summary only if you ask for `reasoning.summary` (`auto`, `concise` or `detailed`)." },
+    { "t": "p", "md": "**Effort** controls how much the model thinks. OpenAI uses `reasoning.effort` in Responses and `reasoning_effort` in Chat Completions. Anthropic uses `output_config.effort`, which is GA, with `thinking: {\"type\": \"adaptive\"}` so the model decides how much to think [[r31]]. Higher effort costs output tokens and latency, so start low and raise it only when evals show a gain. Verbosity (`text.verbosity` or `verbosity`, values `low`, `medium`, `high`) is a separate control over answer length." },
+    { "t": "table", "caption": "Effort values on the check date 2026-10-13", "head": ["Model", "Accepted values", "Default", "Note"], "compact": true, "rows": [
+      ["OpenAI `gpt-6-astra`", "`low` to `max`", "Not recorded", "`none` returns HTTP 400"],
+      ["OpenAI `gpt-6.1-sol`", "`low` to `max`", "`medium`", "No `none` or `minimal`"],
+      ["OpenAI `gpt-6-sol`, `gpt-6-luna`", "`none` to `max`", "`medium`", "On GPT-6 use `low` where you used `minimal`"],
+      ["OpenAI `gpt-5.5`", "`none`, `low`, `medium`, `high`, `xhigh`", "`medium`", "Source: [[r3]]"],
+      ["OpenAI `gpt-5.4`", "Includes `none`", "`none`", "Chat Completions rejects tools when effort is not `none`"],
+      ["Claude (`output_config.effort`)", "`low`, `medium`, `high`, `xhigh`, `max`", "Per model", "Opus 5.5 cannot disable thinking [[r21]]"]
+    ] },
+    { "t": "callout", "kind": "gotcha", "title": "Sources disagree on rejected parameters", "md": "OpenAI says that when effort is not `none` you should remove `temperature`, `top_p` and `top_logprobs`, plus `logprobs` in Chat [[r2]]. The Azure page lists a longer rejected set for reasoning models, yet its GPT-6 table marks `temperature`, `top_p` and `logprobs` as supported on all four GPT-6 models [[r15]]. Test your own deployment." },
+    { "t": "p", "md": "Other reasoning controls: `reasoning.mode` is `standard` (default) or `pro` on GPT-5.6 and GPT-6, independent of effort. `reasoning.context` is `auto`, `current_turn` or `all_turns`, and GPT-5.6 defaults to `all_turns`. A `configuration_update` input item changes effort mid-conversation without changing the cached prefix [[r3]]." }
+  ],
+  "whereToUse": [
+    "Multi-step analysis, planning, math and code where a wrong first guess is costly",
+    "Agents that call tools in a loop and must recover from errors",
+    "Offline jobs where latency is irrelevant and accuracy pays, often through Batch or Flex",
+    "Interactive products at `low` effort when a small quality gain matters more than a few hundred milliseconds",
+    "Replacing complicated chain-of-thought prompts that the model handles internally"
+  ],
+  "whenToUse": {
+    "use": [
+      "The task fails often with a non-reasoning model on your evals",
+      "Errors are expensive and latency budget is generous",
+      "The task needs planning across tool results"
+    ],
+    "avoid": [
+      "Classification, extraction and formatting where a small model already passes",
+      "Strict latency targets such as a spoken reply, unless effort is `none` or `low`",
+      "Code that relies on `temperature`, `top_p` or `logprobs` for behaviour"
+    ],
+    "flips": [
+      "Evals show no gain from `high` over `low`: stay at `low`",
+      "The cap leaves no room for thinking: raise `max_output_tokens` before raising effort",
+      "You move to GPT-6 Astra or 6.1 Sol: stop sending `none`, use `low` and re-evaluate"
+    ]
+  },
+  "alternatives": {
+    "title": "Ways to buy more accuracy",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Small non-reasoning model", "Task is narrow and evals pass", "Multi-step reasoning is needed", "Cheapest and fastest, lowest ceiling"],
+      ["Small model at `low` effort", "A little planning helps", "Hard multi-step problems", "Modest extra tokens"],
+      ["Large model at `medium` or `high` effort", "Hard tasks and agent loops", "Tight latency or cost per task", "Hidden tokens, longer time to first visible text"],
+      ["`pro` mode", "Maximum quality on rare hard tasks", "Volume or cost sensitivity", "Highest cost and latency"],
+      ["Router that picks a model per request", "Traffic mixes easy and hard", "You lack evals per route", "See the routing topic"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "HTTP 400 after upgrading to GPT-6 Astra", "cause": "The code sends `reasoning.effort: none`, which Astra rejects", "fix": "Use `low` as the starting point and rerun evals" },
+    { "symptom": "400 for `temperature` or `top_p` on a reasoning call", "cause": "Sampling parameters are removed when effort is not `none`", "fix": "Drop them and steer with effort, verbosity, schemas and evals" },
+    { "symptom": "Code that prints thinking text shows nothing on Claude Fable 5", "cause": "`thinking.display` defaults to `omitted` on that model", "fix": "Set `thinking.display` to `summarized` if you need a summary" },
+    { "symptom": "Bills rise while answers look the same length", "cause": "Hidden reasoning tokens bill as output", "fix": "Track reasoning tokens per request and cap with `max_output_tokens`" }
+  ],
+  "scenarios": [
+    {
+      "id": "w01-t03-s1",
+      "title": "Live chat, easy intent routing",
+      "situation": "A customer chat widget routes each message to one of eight queues. The team wants a 3 second p95 and low cost at high volume.",
+      "constraints": ["p95 latency of 3 seconds", "High volume", "Eight fixed labels", "Wrong routes are cheap to fix"],
+      "unknowns": ["Accuracy of a small model on the labelled set", "Peak requests per second"],
+      "question": "Which setup do you start with?",
+      "options": [
+        { "name": "Large model at `xhigh` effort", "verdict": "poor", "why": "It adds seconds and large cost for a narrow task that does not need deep reasoning.", "tradeoff": "It is right for rare, hard, high-stakes tasks with a loose latency budget." },
+        { "name": "Small non-reasoning model, or a small model at `low` effort, chosen by evals", "verdict": "best", "why": "A narrow label task fits a small model, and low effort keeps latency inside the budget.", "tradeoff": "A harder edge case may fail and need an escalation path." },
+        { "name": "Large model at `low` effort", "verdict": "good", "why": "Higher quality ceiling at modest latency.", "tradeoff": "Costs more per request than a small model that already passes." }
+      ],
+      "flips": [
+        { "if": "Misroutes are costly, for example legal escalation", "then": "Add a cascade to a larger model for low-confidence cases." },
+        { "if": "The small model misses the accuracy bar", "then": "Raise effort or move up a model size and re-run evals." }
+      ],
+      "takeaway": "Match effort to difficulty and latency, and let evals justify any increase."
+    },
+    {
+      "id": "w01-t03-s2",
+      "title": "Overnight contract analysis",
+      "situation": "A legal team runs deep comparisons across contracts each night. Results are reviewed in the morning. Errors are costly and latency does not matter.",
+      "constraints": ["Offline, results needed by morning", "High stakes", "Moderate volume"],
+      "unknowns": ["Does `high` beat `medium` on a labelled set?", "Which service tier is allowed for this data?"],
+      "question": "How do you configure it?",
+      "options": [
+        { "name": "`high` effort with a generous output cap, run through Batch or Flex for the 50% discount", "verdict": "best", "why": "Quality matters and latency does not, and Batch and Flex run at 50% of Standard [[r37]] [[r38]].", "tradeoff": "Jobs can take up to 24 hours, and Flex is Beta and may be unavailable." },
+        { "name": "`low` effort synchronously to save money", "verdict": "poor", "why": "It saves tokens on the one workload where thinking pays, and stakes are high.", "tradeoff": "Low effort is right for latency-bound, easy tasks." },
+        { "name": "`high` effort synchronously at Standard price", "verdict": "good", "why": "Same quality, simpler to run.", "tradeoff": "Pays about twice the batch price for latency nobody needs." }
+      ],
+      "flips": [
+        { "if": "Data may not use Batch under your retention policy", "then": "Run synchronously and accept the price." },
+        { "if": "Evals show `medium` equals `high`", "then": "Use `medium` and save tokens." }
+      ],
+      "takeaway": "When latency is free, spend it on effort and take the batch discount."
+    },
+    {
+      "id": "w01-t03-s3",
+      "title": "400 after a model upgrade",
+      "situation": "A service sets `reasoning.effort: none` for speed and `temperature: 0.2`. After switching the deployment to GPT-6 Astra it returns HTTP 400.",
+      "constraints": ["The service must keep working this week", "Latency target is unchanged", "Responses API"],
+      "unknowns": ["Which parameter causes the 400?", "Does `low` effort meet the latency target?"],
+      "question": "What do you do?",
+      "options": [
+        { "name": "Retry the same request with a delay", "verdict": "poor", "why": "The error is deterministic. The request is invalid for that model.", "tradeoff": "Retries suit 429 and 5xx errors, not validation errors." },
+        { "name": "Remove `temperature`, replace `none` with `low`, then rerun evals and a latency check", "verdict": "good", "why": "It fixes both rules at once and keeps the test loop.", "tradeoff": "`low` adds some reasoning latency." },
+        { "name": "Route this task to a model that supports `none`, such as GPT-6 Sol or Luna, and keep the controls", "verdict": "best", "why": "The task wanted no reasoning, and those models accept `none`, so quality and latency stay stable [[r2]].", "tradeoff": "You depend on a different model and must still drop `temperature` when effort is above `none`." }
+      ],
+      "flips": [
+        { "if": "Astra quality is required", "then": "Use `low` on Astra and tune from there." },
+        { "if": "The deployment is on Azure", "then": "Test each rejected parameter, since the pages disagree." }
+      ],
+      "takeaway": "Treat a 400 as a contract change and read the model page."
+    }
+  ],
+  "quiz": [
+    { "id": "w01-t03-q1", "type": "single", "tag": "diagnose", "q": "A reasoning call returns `status: incomplete` with no visible text. What is the likeliest cause?", "options": ["The output cap was consumed by reasoning tokens", "Temperature was too high", "`store` was true", "The model refused"], "answer": 0, "explain": "Reasoning tokens count against `max_output_tokens`, so a low cap can end the response before any text. Temperature and `store` do not produce this result, and a refusal is a different signal." },
+    { "id": "w01-t03-q2", "type": "multi", "tag": "flip", "q": "Which changes can justify raising reasoning effort?", "options": ["Evals show a measurable gain on hard cases", "The task is multi-step with tool results", "You want a shorter answer", "Errors are expensive and latency is loose"], "answers": [0, 1, 3], "explain": "Gains on evals, multi-step tool tasks and costly errors justify more effort. A shorter answer is a verbosity setting, not an effort setting." },
+    { "id": "w01-t03-q3", "type": "single", "tag": "bug", "q": "Code sends `reasoning.effort: none` to GPT-6 Astra. What happens?", "options": ["It works and skips thinking", "The model silently uses `low`", "The model uses `max`", "HTTP 400"], "answer": 3, "explain": "Astra accepts `low` to `max`, and `none` returns HTTP 400 [[r2]]. It does not fall back to another value." }
+  ],
+  "flashcards": [
+    { "front": "Where do reasoning tokens show up in usage?", "back": "`output_tokens_details.reasoning_tokens` in Responses and `completion_tokens_details.reasoning_tokens` in Chat Completions. They bill as output." },
+    { "front": "Which GPT-6 models reject `reasoning.effort: none`?", "back": "GPT-6 Astra (HTTP 400) and GPT-6.1 Sol (no `none` or `minimal`). GPT-6 Sol and Luna accept `none` to `max`." },
+    { "front": "What do you start with when tuning effort?", "back": "Start low and raise only when evals show a gain, since effort adds output tokens and latency." },
+    { "front": "What does Claude use instead of `budget_tokens` on new models?", "back": "Adaptive thinking with `output_config.effort`. Manual `budget_tokens` is deprecated on Opus 4.6 and Sonnet 4.6 and not accepted on later models." }
+  ],
+  "related": ["w01-t02", "w01-t04", "w01-t09", "w01-t17", "w01-l3", "w18-t01"],
+  "refs": ["r2", "r3", "r15", "r31", "r21", "r37", "r38"]
+}

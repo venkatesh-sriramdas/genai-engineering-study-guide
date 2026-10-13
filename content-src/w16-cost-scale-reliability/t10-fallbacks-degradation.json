@@ -1,0 +1,119 @@
+{
+  "id": "w16-t10",
+  "order": 10,
+  "group": "Gateway and resilience",
+  "title": "Fallbacks and graceful degradation",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "When the best path fails or capacity runs out, step down a defined ladder: another deployment, a smaller model, fewer features, a cached or retrieval-only answer, then an honest error. Decide the rungs and what you tell users before the incident.",
+  "useIf": "A failing model, quota or region must not mean a dead product.",
+  "avoidIf": "A degraded answer would be wrong enough to harm users, in which case an honest refusal is the better rung.",
+  "explain": [
+    { "t": "p", "md": "A **fallback** replaces the failed component with another that does the same job. **Graceful degradation** keeps part of the function when parts fail. Azure's reliability guidance asks for failure detection that starts degraded mode automatically, and for a **degraded user experience that tells users what still works and what changed** [[tr6]]. Platform help is partial: PTU **spillover** sends non-200 overflow to a standard deployment in the same resource [[r7]], but Flex has no automatic fallback to Standard [[r11]], and Foundry provides no automatic failover to another region [[r15]]." },
+    { "t": "p", "md": "Design the **ladder** by cost of being wrong. A secondary deployment of the same model keeps behaviour. A smaller model keeps the feature but may break structured output, tool use or the context window. Reduced modes drop tools, shorten output, or answer only from retrieval with citations. The last rungs are a cached answer and a clear error with a retry time. Every rung needs an eval, a guardrail check, and a log tag so degraded traffic is counted, not hidden in success rates." },
+    { "t": "diagram", "id": "w16-t10-d1", "title": "A degradation ladder", "alt": "The request tries the primary model, then a secondary deployment, then a smaller model, then a retrieval-only or cached answer, then an honest error.", "src": "flowchart TB\n  A[Primary model] -->|fails| B[Secondary deployment]\n  B -->|fails| C[Smaller model]\n  C -->|fails| D[Retrieval only or cached answer]\n  D -->|fails| E[Honest error with retry time]" },
+    { "t": "table", "caption": "What each rung keeps and gives up", "head": ["Rung", "Keeps", "Gives up", "Tell the user?"], "rows": [
+      ["Secondary deployment", "Same model, same behaviour", "Cold cache, extra latency, maybe residency", "Usually no, log it"],
+      ["Smaller model", "The feature", "Quality, tool use, long context", "Yes if quality visibly changes"],
+      ["Reduced mode (no tools, short output)", "Core answers", "Actions and depth", "Yes"],
+      ["Retrieval only or cached answer", "Cited facts", "Synthesis and freshness", "Yes"],
+      ["Honest error", "Trust", "The task", "Yes, with when to retry"]
+    ] }
+  ],
+  "whereToUse": [
+    "Customer-facing assistants that must stay up through provider incidents",
+    "Agents with write tools, which can drop to read-only or propose-only mode",
+    "Regulated assistants, where the safe rung is retrieval with citations or a refusal",
+    "Pipelines that fall back from Flex to Standard",
+    "Capacity-exhausted peaks, shedding low-priority features first"
+  ],
+  "whenToUse": {
+    "use": ["A second path exists and passes the same evals and safety checks", "Failure rate or capacity pressure is detected automatically", "Users are told what changed", "Degraded traffic is measured separately"],
+    "avoid": ["Falling back to a model with weaker content filters after a policy block", "Silent quality drops on high-stakes answers", "Fallbacks across a residency boundary you are not allowed to cross"],
+    "flips": ["Wrong answers are costly: prefer refusal or retrieval only over a weaker model", "Free consumer tier: a smaller model with a banner is acceptable", "Agents act on the world: degrade to read-only before degrading quality"]
+  },
+  "alternatives": {
+    "title": "Failure strategies compared",
+    "head": ["Strategy", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Fail with an honest error", "Wrong answers are worse than none", "Users expect always-on", "Visible downtime"],
+      ["Model fallback", "A comparable model passes your evals", "Output formats, tools or context differ", "Prompts tuned for the primary may break"],
+      ["Reduced features", "Core value survives", "Actions are the product", "Needs a product decision on what to drop"],
+      ["Cached or retrieval-only answer", "Knowledge questions, citations suffice", "Synthesis or action required", "Stale content"],
+      ["Queue and retry later", "Asynchronous work", "A user is waiting", "Backlog growth"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Fallback calls fail with context or schema errors", "cause": "The secondary model has a smaller context window or different structured-output support", "fix": "Test the full ladder in CI with real prompts; keep prompts portable or branch per model" },
+    { "symptom": "A blocked prompt gets answered by the fallback", "cause": "The fallback path skips or loosens content filters after the primary rejected the request", "fix": "Never fall back on policy blocks; apply the same guardrails to every rung" },
+    { "symptom": "Users complain of worse answers, SLO dashboard is green", "cause": "Degraded responses count as success and are not tagged", "fix": "Tag degraded mode, track its share, and decide whether degraded counts toward the SLO" }
+  ],
+  "scenarios": [
+    {
+      "id": "w16-t10-s1",
+      "title": "A regulated assistant during an outage",
+      "situation": "An assistant gives policy answers to staff in a regulated setting. The primary model is rate limited for 30 minutes. A smaller model has not been evaluated on this corpus.",
+      "constraints": ["A wrong answer has compliance cost", "Citations are required", "Retrieval still works"],
+      "unknowns": ["Is the smaller model evaluated and approved?", "Can retrieval-only answers satisfy the user need?"],
+      "question": "What do you serve during the outage?",
+      "options": [
+        { "name": "Retrieval-only mode with citations and a clear banner, or a refusal with a retry time", "verdict": "best", "why": "It keeps verifiable facts and avoids unevaluated synthesis, and the banner tells users what changed.", "tradeoff": "Less helpful: no summarisation or reasoning." },
+        { "name": "Fallback to the unevaluated smaller model", "verdict": "poor", "why": "Unmeasured quality in a regulated context is the risk you are managing.", "tradeoff": "Right after it passes evals and approval, and for low-stakes tiers." },
+        { "name": "Secondary deployment of the same model in another region", "verdict": "good", "why": "Same behaviour, if residency allows.", "tradeoff": "Needs quota and a cold cache, and may cross a boundary." }
+      ],
+      "flips": [
+        { "if": "A second region is permitted and has quota", "then": "Fail over to it; this keeps behaviour intact." },
+        { "if": "The smaller model is approved", "then": "Use it for low-risk intents." }
+      ],
+      "takeaway": "In regulated work the safe rung is evidence, not a weaker model."
+    },
+    {
+      "id": "w16-t10-s2",
+      "title": "A free-tier consumer chat",
+      "situation": "A consumer chat feature has paying and free users. At peak, quota is exhausted and 429s appear.",
+      "constraints": ["Cost matters", "Wrong answers are low-stakes", "Paying users must be protected"],
+      "unknowns": ["Can traffic be classified by tier at the gateway?", "How much headroom does the smaller model have?"],
+      "question": "How do you degrade?",
+      "options": [
+        { "name": "Route free users to a smaller model and shorter outputs, keep paying users on the primary, show a banner", "verdict": "best", "why": "It sheds load where the value is lowest and tells users what changed.", "tradeoff": "Free-tier quality drops at peaks and needs tier-aware routing." },
+        { "name": "Return 429 to everyone and let clients retry", "verdict": "poor", "why": "Retries add load and paying users are hit equally.", "tradeoff": "Right only for non-interactive clients that can wait." },
+        { "name": "Queue everything and answer later", "verdict": "good", "why": "No load shed.", "tradeoff": "Chat users will not wait; the queue grows." }
+      ],
+      "flips": [
+        { "if": "Quota exhaustion is permanent", "then": "Buy capacity (PTU with spillover) rather than degrade daily." },
+        { "if": "Brand risk of weaker answers is high", "then": "Reduce features, not quality." }
+      ],
+      "takeaway": "Degrade by user value and say so."
+    },
+    {
+      "id": "w16-t10-s3",
+      "title": "An action-taking agent under failure",
+      "situation": "An agent that can update records and send emails loses its strongest model. A weaker model is available and is more error-prone on tool arguments.",
+      "constraints": ["Actions have external effects", "Some actions are irreversible", "Reads are safe"],
+      "unknowns": ["Which tools are irreversible?", "Is a human approval path available?"],
+      "question": "What does degraded mode look like?",
+      "options": [
+        { "name": "Read-only or propose-only mode: reads and drafts continue, writes wait for approval or recovery", "verdict": "best", "why": "Weaker argument quality is dangerous only when actions execute. Removing writes bounds the blast radius.", "tradeoff": "Users lose automation until recovery." },
+        { "name": "Weaker model with all tools enabled", "verdict": "poor", "why": "Wrong arguments could trigger irreversible actions.", "tradeoff": "Acceptable for reversible, low-value tools behind approval." },
+        { "name": "Stop all responses", "verdict": "good", "why": "Safe and simple.", "tradeoff": "Loses read-only value that was still safe." }
+      ],
+      "flips": [
+        { "if": "All tools are reversible and low-value", "then": "A weaker model may keep running with logging." },
+        { "if": "A human reviews every action anyway", "then": "Propose-only becomes the normal path." }
+      ],
+      "takeaway": "Degrade authority before you degrade intelligence."
+    }
+  ],
+  "quiz": [
+    { "id": "w16-t10-q1", "type": "single", "tag": "security", "q": "The primary model blocks a prompt with a content filter. What should the fallback path do?", "options": ["Send it to a model with fewer filters", "Apply the same guardrails and not retry the blocked request elsewhere", "Retry it with higher temperature"], "answer": 1, "explain": "A policy block is a decision, not a failure. Falling back to a looser path defeats the control. Temperature does not change policy.", "difficulty": 2 },
+    { "id": "w16-t10-q2", "type": "multi", "tag": "tradeoff", "q": "Which are sensible degradation rungs for a tool-using agent?", "options": ["Disable write tools and keep reads", "Shorten outputs", "Silently enable a model with weaker safety settings", "Show a banner explaining reduced features"], "answers": [0, 1, 3], "explain": "Reducing authority, shortening output and telling users are standard. Silently weakening safety is not a degradation but a control bypass [[tr6]].", "difficulty": 2 },
+    { "id": "w16-t10-q3", "type": "single", "tag": "diagnose", "q": "Flex calls returned 429 for an hour and the pipeline stalled. What was missing?", "options": ["More quota for Flex", "A longer max_tokens", "Your own fallback to Standard"], "answer": 2, "explain": "Azure Flex has no automatic fallback to Standard, so you must build it [[r11]]. Flex shares quota with Standard, and a larger max_tokens would not help.", "difficulty": 2 }
+  ],
+  "flashcards": [
+    { "front": "Fallback versus graceful degradation?", "back": "A fallback swaps in another component of the same kind. Degradation keeps a reduced function, such as read-only mode or retrieval-only answers." },
+    { "front": "What must users be told in degraded mode?", "back": "What still works and what changed. Azure's reliability guidance calls for a notification mechanism." },
+    { "front": "Why tag degraded responses?", "back": "So dashboards and SLOs count them separately. Otherwise a green success rate hides worse answers." }
+  ],
+  "related": ["w16-t03", "w16-t09", "w16-t11", "w16-l4", "w06-t10"],
+  "refs": ["r7", "r11", "r15", "tr6"]
+}

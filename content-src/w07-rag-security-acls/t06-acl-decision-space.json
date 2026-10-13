@@ -1,0 +1,160 @@
+{
+  "id": "w07-t06",
+  "order": 6,
+  "group": "Access control options",
+  "title": "The ACL decision space",
+  "minutes": 10,
+  "difficulty": "core",
+  "summary": "Five ways to keep unreadable chunks away from a caller: post-filter, pre-filter, physical isolation, live source check and delegation to the source. Four dials choose among them.",
+  "useIf": "You must pick where document permissions are enforced and want to see how the choice flips.",
+  "avoidIf": "You already know the mechanism and need its details. Open the topic for that option.",
+  "explain": [
+    { "t": "p", "md": "Every option answers two questions: **which component decides**, and **which stages see text the caller may not read**. A post-filter lets denied text reach your code, rerankers, logs and caches. A pre-filter keeps it inside the index. Four dials choose among the options: the **permission model** (one tag, groups, rich per-document rules), **revocation speed**, **tenancy** and **scale** (how much of the corpus a caller may see)." },
+    { "t": "table", "caption": "The options at a glance (checked 2026-10-13)", "head": ["Option", "Decision runs in", "Revocation floor", "Main limit"], "rows": [
+      ["Post-filter", "Your code, after top-k", "Age of the ACL data you read", "Top-k fills with denied hits when access is selective"],
+      ["Pre-filter: security filter (GA) or native ACL (preview)", "The search engine, before ranking", "Sync lag. Pull indexers run every 5 to 1,440 minutes [[r19]]", "ACLs must be copied into the index [[r13]] [[r11]]"],
+      ["Physical isolation", "The index or service boundary", "Fast for tenant offboarding, not per user", "Index caps: 50 on S1, 200 on S2 and S3, 1,000 per partition on S3 HD [[r20]]"],
+      ["Live source check", "The system of record, per hit", "Seconds, bounded by cache TTL", "Latency, source load, failure handling"],
+      ["Delegate to the source", "The source, with the caller's token", "Live", "Little control. Retrieval API: 200 requests per user per hour, 25 results [[r26]]"]
+    ] },
+    { "t": "p", "md": "Tier the data before you choose. Public and low-impact content can use the cheapest option, while a restricted tier may need a live check or a physical wall. Pick the option per tier, state the revocation target for each, and test it with a revoked canary user. Most real systems then combine two options: a pre-filter for the bulk of traffic and a live check on the top hits of restricted tiers. That pairing is design reasoning from the sources, not a vendor prescription." },
+    { "t": "dials", "id": "w07-t06-dials", "title": "Rank the ACL options", "prompt": "Flip the three dials. The ranking and the reason for each cell update.", "dials": [
+      { "id": "model", "label": "Permission model", "values": [ { "id": "tag", "label": "One tag (tenant)" }, { "id": "group", "label": "Groups" }, { "id": "rich", "label": "Rich rules (deny, links)" } ] },
+      { "id": "revoke", "label": "Revocation needed within", "values": [ { "id": "hours", "label": "Hours" }, { "id": "minutes", "label": "Minutes" }, { "id": "seconds", "label": "Seconds" } ] },
+      { "id": "scale", "label": "Tenancy and scale", "values": [ { "id": "few", "label": "A few big tenants" }, { "id": "many", "label": "Thousands of small tenants" }, { "id": "huge", "label": "One org, huge corpus" } ] }
+    ], "options": [
+      { "id": "post", "name": "Post-filter", "summary": "Retrieve top-k, then drop what the caller cannot read." },
+      { "id": "pre", "name": "Pre-filter in the index", "summary": "Security filter (GA) or native ACLs (preview), applied before ranking." },
+      { "id": "hybrid", "name": "Pre-filter plus live check", "summary": "Filter in the index, then verify the top hits at the source." },
+      { "id": "delegate", "name": "Delegate to the source", "summary": "The system of record retrieves with the caller's token." },
+      { "id": "wall", "name": "Physical wall", "summary": "Index or service per tenant." }
+    ], "scores": {
+      "post": {
+        "model": { "tag": { "s": -2, "why": "Top-k fills with denied hits." }, "group": { "s": -1, "why": "A few percent visible starves recall." }, "rich": { "s": 0, "why": "Any rule fits in code, top-k is still wasted." } },
+        "revoke": { "hours": { "s": 0, "why": "Same lag as any ACL copy." }, "minutes": { "s": 0, "why": "No fresher than the ACL data it reads." }, "seconds": { "s": -1, "why": "Needs a live lookup per hit." } },
+        "scale": { "few": { "s": -1, "why": "Thin slice of a big corpus." }, "many": { "s": -2, "why": "Ranks other tenants' text first." }, "huge": { "s": -1, "why": "Small visible share per user." } }
+      },
+      "pre": {
+        "model": { "tag": { "s": 2, "why": "One equality filter, exact." }, "group": { "s": 2, "why": "search.in over group ids, before ranking." }, "rich": { "s": -1, "why": "Deny rules must flatten to allow lists." } },
+        "revoke": { "hours": { "s": 2, "why": "Nightly or hourly sync fits." }, "minutes": { "s": 1, "why": "Needs frequent pushes or short runs." }, "seconds": { "s": -1, "why": "Only with push merge and an event feed." } },
+        "scale": { "few": { "s": 1, "why": "Works, big tenants may want a wall." }, "many": { "s": 2, "why": "Shared index, mandatory tenant filter." }, "huge": { "s": 1, "why": "Stable recall, but measure it." } }
+      },
+      "hybrid": {
+        "model": { "tag": { "s": 0, "why": "Nothing to verify beyond the tag." }, "group": { "s": 1, "why": "Check catches stale grants." }, "rich": { "s": 2, "why": "Source decides on the hits that matter." } },
+        "revoke": { "hours": { "s": 0, "why": "Latency for freshness you do not need." }, "minutes": { "s": 1, "why": "Checked hits live, the rest age." }, "seconds": { "s": 2, "why": "Live for what the user sees." } },
+        "scale": { "few": { "s": 1, "why": "A few parallel checks are affordable." }, "many": { "s": 1, "why": "Source load grows with queries." }, "huge": { "s": 1, "why": "Budget rate limits and the tail." } }
+      },
+      "delegate": {
+        "model": { "tag": { "s": 0, "why": "Your own index can filter a tag." }, "group": { "s": 1, "why": "Source expands nested groups." }, "rich": { "s": 2, "why": "Source applies its own rules." } },
+        "revoke": { "hours": { "s": 1, "why": "Live, though not needed." }, "minutes": { "s": 2, "why": "Results reflect the source now." }, "seconds": { "s": 2, "why": "Live, no copy to sync." } },
+        "scale": { "few": { "s": 1, "why": "Works per tenant and licence." }, "many": { "s": -1, "why": "Per-user quotas and licensing." }, "huge": { "s": 1, "why": "No copy, little ranking control." } }
+      },
+      "wall": {
+        "model": { "tag": { "s": 2, "why": "Physical boundary, no filter to forget." }, "group": { "s": -1, "why": "Nothing for groups inside a tenant." }, "rich": { "s": -2, "why": "Per-document rules still need a filter." } },
+        "revoke": { "hours": { "s": 0, "why": "Offboarding fast, per-user still syncs." }, "minutes": { "s": 0, "why": "Same as the filter inside the tenant." }, "seconds": { "s": -1, "why": "Does not solve within-tenant revocation." } },
+        "scale": { "few": { "s": 2, "why": "Isolation at acceptable cost." }, "many": { "s": -2, "why": "Index caps and operations cost." }, "huge": { "s": -2, "why": "No tenants to separate." } }
+      }
+    }, "takeaway": "No option wins every dial. Pre-filter wins the common group-based case, a live check buys seconds-level revocation, and a wall buys isolation at a cost in scale." },
+    { "t": "lab", "id": "acl-simulator", "intro": "Compare post-filter, pre-filter, pre-filter plus live check and a per-tenant index on recall, latency and leakage. Start with the group-based preset, then run the three guided experiments." },
+    { "t": "callout", "kind": "preview", "title": "Preview status, checked 2026-10-13", "md": "Only security filters are GA. Native ACL and RBAC scopes, Purview labels and SharePoint ACLs need a preview API, carry no SLA and are not recommended for production by the docs [[r11]]." }
+  ],
+  "whereToUse": [
+    "Design reviews where the first question is where permissions are enforced",
+    "Choosing between a shared index with a filter and an index per tenant",
+    "Interview answers that must show one option rarely fits every data tier",
+    "Setting a revocation target per sensitivity tier before picking a mechanism"
+  ],
+  "whenToUse": {
+    "use": ["You can state the permission model, revocation target and tenant count", "Different content tiers need different guarantees", "You want to compare options by which stage sees denied text"],
+    "avoid": ["Picking an option from a product demo before stating the dials", "Treating one mechanism as covering every tier of data", "Choosing by feature status alone: a preview option can still be the right fit for a pilot"],
+    "flips": ["Revocation tightens from hours to seconds: add a live check or delegate", "Tenants grow from dozens to thousands: move from a wall to a shared index with a filter", "The model moves from groups to deny rules and links: the source must decide"]
+  },
+  "alternatives": {
+    "title": "Combinations practitioners use",
+    "head": ["Combination", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Pre-filter only", "Group access, lag is acceptable", "Revocation in seconds", "Lag between source and index"],
+      ["Pre-filter plus live check on top hits", "Mixed tiers, some restricted", "Source cannot take the query volume", "Latency tail, failure handling"],
+      ["Delegate to the source", "Content lives in a permission-aware store", "You need your own ranking and control", "Rate limits, licensing, preview billing"],
+      ["Wall per big tenant, shared index for the rest", "Tenant sizes are skewed", "All tenants are small and alike", "Two operating models"],
+      ["Post-filter only", "Index cannot change, nearly all visible", "Access is selective", "Wasted top-k, wider leak surface"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Median users get one result instead of ten", "cause": "A post-filter starves top-k at a visible fraction of a few percent", "fix": "Filter inside the index, or over-fetch by about 1 divided by the visible fraction and monitor recall" },
+    { "symptom": "A revoked user still sees a document", "cause": "The ACL copy is older than the change, or a cache holds the answer", "fix": "State a target per tier, shorten sync for restricted data, scope caches by ACL" },
+    { "symptom": "One choice was made for the whole corpus", "cause": "Dials were not stated per sensitivity tier", "fix": "Tier the data, then pair a pre-filter with a live check for the restricted tier" }
+  ],
+  "scenarios": [
+    {
+      "id": "w07-t06-s1",
+      "title": "Broad wiki on a fixed search service",
+      "situation": "An assistant covers a wiki where about 90% of pages are visible to everyone. Another team manages the search service and it cannot store ACL fields. An entitlement service answers who may read a page. Hourly staleness is fine.",
+      "constraints": ["Visible fraction about 90%", "Index schema cannot change", "Hourly staleness is acceptable"],
+      "unknowns": ["How many pages per query need an entitlement lookup?", "Do candidates reach logs or a reranker first?"],
+      "question": "Where do you enforce permissions?",
+      "options": [
+        { "name": "Pre-filter after a re-ingest that adds ACL fields", "verdict": "good", "why": "It is the better long-term design.", "tradeoff": "Needs a schema change you do not control today." },
+        { "name": "Post-filter with about 1.3 times over-fetch, before reranking and logging, with a recall check", "verdict": "best", "why": "Almost everything is visible, so top-k barely shrinks and no schema change is needed.", "tradeoff": "Denied text still reaches your code, so keep it out of logs and caches." },
+        { "name": "One index per user", "verdict": "poor", "why": "Thousands of users exceed index caps (200 on S2 and S3) and multiply cost [[r20]].", "tradeoff": "Only sensible for a handful of principals." }
+      ],
+      "flips": [
+        { "if": "The visible fraction drops to 5% or lower", "then": "Post-filter starves top-k. Move the filter into the index." },
+        { "if": "The schema becomes changeable", "then": "Add a security filter and keep the entitlement check for sensitive pages." }
+      ],
+      "takeaway": "Post-filtering is acceptable when almost everything is visible and the index cannot filter."
+    },
+    {
+      "id": "w07-t06-s2",
+      "title": "Thousands of small tenants",
+      "situation": "A SaaS product serves 4,000 tenants, each with a few thousand documents. Contracts require logical separation and deletion within thirty days. Members of a tenant share one permission level.",
+      "constraints": ["4,000 small tenants", "Logical separation required", "One permission level per tenant"],
+      "unknowns": ["Is physical separation required by regulation?", "Can every query go through one gateway?"],
+      "question": "Which isolation model do you choose?",
+      "options": [
+        { "name": "Service per tenant", "verdict": "poor", "why": "Four thousand services multiply cost and operations.", "tradeoff": "Right for a few regulated tenants." },
+        { "name": "Index per tenant on a high-density tier", "verdict": "good", "why": "Cleaner deletion and per-tenant lifecycle.", "tradeoff": "S3 HD allows 1,000 indexes per partition or 3,000 per service, so 4,000 needs a second service [[r20]]." },
+        { "name": "Shared index, with a gateway injecting the tenant filter from the authenticated identity", "verdict": "best", "why": "It scales to thousands of tenants with one operating model [[r22]].", "tradeoff": "One missed filter exposes every tenant, so test with a canary tenant and block direct index access." }
+      ],
+      "flips": [
+        { "if": "Three tenants are 100 times larger and regulated", "then": "Give those their own service and keep the rest shared." },
+        { "if": "Contracts demand physical separation", "then": "A wall per tenant becomes mandatory and cost follows." }
+      ],
+      "takeaway": "Many small tenants favour a shared index with an enforced filter."
+    },
+    {
+      "id": "w07-t06-s3",
+      "title": "Per-document rules, seconds-level revocation",
+      "situation": "Content sits in a document system with per-item permissions, deny rules and sharing links. Security requires a revoked grant to stop working within seconds. Answers cite up to eight documents.",
+      "constraints": ["Rich per-document rules", "Revocation within seconds", "Up to 8 cited documents"],
+      "unknowns": ["What request rate and latency does the source API allow?", "What happens when the source is down?"],
+      "question": "Which design fits?",
+      "options": [
+        { "name": "Delegate retrieval to the source with the caller's token", "verdict": "good", "why": "Always current, and the source applies its own rules.", "tradeoff": "Little ranking control and quotas, such as 200 requests per user per hour for the Copilot Retrieval API [[r26]]." },
+        { "name": "Pre-filter only, with a nightly indexer", "verdict": "poor", "why": "Deny rules are hard to flatten and a nightly sync cannot meet seconds.", "tradeoff": "Right when permissions are groups and a day of lag is fine." },
+        { "name": "Pre-filter for recall, then a parallel live check on the top hits, failing closed on timeout", "verdict": "best", "why": "The source decides on the few documents the user will see, so revocation is live where it counts.", "tradeoff": "A latency tail and source load, and a slow source hides documents." }
+      ],
+      "flips": [
+        { "if": "Revocation relaxes to a few hours", "then": "Drop the live check and rely on the pre-filter." },
+        { "if": "The content already lives in a store with a permission-aware retrieval API", "then": "Delegation avoids owning a copy." }
+      ],
+      "takeaway": "Live checks buy seconds-level revocation for rich rules."
+    }
+  ],
+  "quiz": [
+    { "id": "w07-t06-q1", "type": "single", "tag": "flip", "q": "Revocation must take effect within seconds for per-document rules stored in a source system. Which option moves up?", "options": ["Pre-filter with a nightly indexer", "Post-filter reading the copied ACLs", "A live check on the top hits, or delegating retrieval to the source", "Index per user"], "answer": 2, "explain": "Only a live decision at the source reflects a change in seconds. A nightly sync and a post-filter over copied ACLs inherit the copy's age, and an index per user does not solve per-document rules.", "ref": "r19" },
+    { "id": "w07-t06-q2", "type": "match", "tag": "tradeoff", "q": "Match each option to its main limit.", "pairs": [
+      { "l": "Post-filter", "r": "Top-k fills with denied hits when access is selective" },
+      { "l": "Pre-filter", "r": "Lag between a source change and the index" },
+      { "l": "Index per tenant", "r": "Index caps and operations cost at thousands of tenants" },
+      { "l": "Delegate to the source", "r": "Little ranking control and per-user rate limits" }
+    ], "explain": "Each option fails where its mechanism is weakest: post-filtering at low visible fractions, a pre-filter at sync lag, a wall at tenant count, delegation at control and quota.", "ref": "r20" }
+  ],
+  "flashcards": [
+    { "front": "What two questions does every ACL option answer?", "back": "Which component decides, and which stages see text the caller may not read. Post-filters expose denied text to your code, logs and caches. Pre-filters keep it in the index." },
+    { "front": "Name the four dials that choose an ACL option.", "back": "Permission model, revocation speed, tenancy and scale (visible fraction, tenant count). Flip one and the ranking can change." },
+    { "front": "Which Azure AI Search document-level approaches are GA as of 2026-10-13?", "back": "Only security filters. Native ACL and RBAC scopes, Purview labels and SharePoint ACLs are preview with no SLA." }
+  ],
+  "related": ["w07-t07", "w07-t08", "w07-t09", "w07-t10", "w07-t11", "w07-l3", "w07-l4"],
+  "refs": ["r11", "r13", "r19", "r20", "r22", "r26"]
+}

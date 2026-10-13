@@ -1,0 +1,133 @@
+{
+  "id": "w02-t12",
+  "order": 12,
+  "group": "Prompt caching",
+  "title": "OpenAI and Azure OpenAI prompt caching",
+  "minutes": 10,
+  "difficulty": "advanced",
+  "summary": "OpenAI and Azure OpenAI cache prefixes automatically. GPT-5.6 and later add explicit breakpoints, a write charge, a 30 minute lifetime and prewarming. Older models keep the implicit, free-to-write behaviour.",
+  "useIf": "You call OpenAI or Azure OpenAI with a long, stable prefix and need to choose a mode, a retention setting and where to put breakpoints.",
+  "avoidIf": "You use another provider (see the Anthropic topic) or you run your own engine (see server-side prefix caching).",
+  "explain": [
+    { "t": "p", "md": "One caching model, two regimes, split at GPT-5.6. Neither the OpenAI nor the Azure page carries a preview label, and both were checked on 2026-10-13. The GPT-5.6 model version date is 2026-07-09. The date the caching change shipped is UNVERIFIED. Models before GPT-5.6 return a 400 error if you send `prompt_cache_options` or `prompt_cache_breakpoint`, so gate those fields by model [[r1]] [[r2]]." },
+    { "t": "stats", "items": [
+      { "label": "Minimum prefix", "value": "1,024 tokens", "note": "visible input tokens, GPT-5.6+" },
+      { "label": "Write and read", "value": "1.25x and 0.1x", "note": "0.05x read on GPT-6.1 Sol" },
+      { "label": "Default lifetime", "value": "30 min", "note": "ttl 30m is the only value. Eligible at least 30 minutes after the last write or reuse" },
+      { "label": "Writes per request", "value": "4", "note": "implicit mode uses one slot. A token is billed at one rate only" }
+    ] },
+    { "t": "tabs", "tabs": [
+      { "label": "Before GPT-5.6", "blocks": [
+        { "t": "list", "style": "ul", "items": [
+          "Implicit only, on by default, no separate write charge. Minimum 1,024 tokens, hits count in 128-token increments, and `cached_tokens` rounds down to a multiple of 128. GPT-5.5 places breakpoints every 2,048 tokens",
+          "`prompt_cache_retention` is `in_memory` (typically 5 to 10 minutes idle, up to one hour) or `24h`. OpenAI defaults to `24h` for organisations without Zero Data Retention and `in_memory` with it. On Azure, gpt-5.4 and older default to `in_memory` and gpt-5.5 enables extended retention, which offloads KV tensors to GPU-local storage",
+          "A stable `prompt_cache_key` per shared prefix improves routing. Aim for about 15 requests per minute per key and shard busier traffic"
+        ] }
+      ] },
+      { "label": "GPT-5.6 and later", "blocks": [
+        { "t": "table", "head": ["Setting", "Behaviour"], "rows": [
+          ["`prompt_cache_options.mode`", "`implicit` (default) puts a breakpoint at the end of the latest eligible message. `explicit` uses only yours. Explicit with none means no caching and no write charge"],
+          ["`prompt_cache_breakpoint`", "`{ \"mode\": \"explicit\" }` on a content block. Not allowed on top-level `instructions` or `additional_tools`. Up to 4 writes per request, and implicit mode uses one slot"],
+          ["`prewarm: true`", "Responses request that fills the cache without output. Written tokens are billed at the write rate"],
+          ["`prompt_cache_key`", "Optional. Gives per-customer cache accounting and blocks cache-hit probing"],
+          ["Azure only", "Usage adds `cache_write_tokens`. `prompt_cache_retention` is deprecated"]
+        ] },
+        { "t": "code", "lang": "json", "title": "Explicit breakpoint after the stable part (Responses shape)", "code": "{\n  \"model\": \"<gpt-5.6 or later deployment>\",\n  \"prompt_cache_options\": { \"mode\": \"explicit\", \"ttl\": \"30m\" },\n  \"input\": [\n    { \"role\": \"developer\", \"content\": [\n      { \"type\": \"input_text\", \"text\": \"<policy and reference text>\",\n        \"prompt_cache_breakpoint\": { \"mode\": \"explicit\" } } ] },\n    { \"role\": \"user\", \"content\": [ { \"type\": \"input_text\", \"text\": \"<the question>\" } ] }\n  ]\n}", "caption": "Field names follow the documentation. Check the API reference for the current schema." }
+      ] },
+      { "label": "Azure PTU-M", "blocks": [
+        { "t": "list", "style": "ul", "items": [
+          "Provisioned (PTU-M) deployments keep caching but, per the Azure prompt-caching page (updated 2026-08-11), have no breakpoints and no `cache_write_tokens`. The PTU sizing page (updated 2026-09-24) says GPT-6 Astra and GPT-6 Sol support breakpoints, so check your model [[tr20]]. Cache reads can be up to a 100% input discount",
+          "On models that deduct cached tokens in full, cached tokens do not consume PTU capacity [[tr11]], so a high cache rate lowers the PTU count: Normalized TPM = peak RPM x prompt tokens x (1 - cache rate) + output-to-input ratio x peak RPM x response tokens [[tr20]]. GPT-6 Astra, GPT-6 Sol and GPT-6.1 Sol use normalized token accounting instead, where cached input and cache writes consume PTU capacity at model-specific weights and the older rule does not apply [[tr20]]"
+        ] }
+      ] }
+    ] },
+    { "t": "p", "md": "**Scope.** Caches are not shared across organisations (OpenAI) or subscriptions (Azure), and not across regional processing boundaries. Extended caching on Azure stays inside the deployment type's data zone or region [[r1]] [[r2]]. OpenAI offers a Prompt Caching Dashboard and a Prompt Cache Diagnostics tool for finding why a prefix missed [[r1]]." }
+  ],
+  "whereToUse": [
+    "Azure or OpenAI assistants with a long policy, tool and reference prefix",
+    "Applications that need to avoid write charges on variable text, using explicit breakpoints",
+    "Interactive apps that prewarm shared instructions at startup to cut the first user's TTFT",
+    "Multi-customer platforms that want per-customer cache accounting through `prompt_cache_key`"
+  ],
+  "whenToUse": {
+    "use": [
+      "Implicit mode for append-only chat where each turn extends the last",
+      "Explicit mode when only part of the prompt is reused and the rest changes every call",
+      "Prewarm when the first request's latency matters and the prefix is known ahead"
+    ],
+    "avoid": [
+      "Implicit mode when each request ends with unique text that will never be read again",
+      "Sending new cache fields to models before GPT-5.6, which returns 400",
+      "Expecting breakpoints on PTU-M deployments, which do not support them"
+    ],
+    "flips": [
+      "Reuse is sparse (gaps over 30 minutes) on GPT-5.6+: use explicit mode with no breakpoints to switch caching off",
+      "One prefix exceeds about 15 requests per minute: spread across stable keys",
+      "Data residency rules apply: confirm that extended retention stays in your boundary"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with other configurations",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Implicit mode (default)", "Append-only history, stable prefix", "Each call ends in unique text", "Writes the unique tail at 1.25x"],
+      ["Explicit breakpoints", "Parts change at different rates", "You forget to place them", "Zero caching if none are set"],
+      ["Explicit mode, no breakpoints", "Caching would only add write charges", "Reuse is steady", "Gives up savings"],
+      ["Prewarm", "First-request TTFT matters", "Prefix is unknown until the first call", "Billed at the write rate"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "HTTP 400 after adding `prompt_cache_options` to shared client code", "cause": "The request is routed to a model before GPT-5.6", "fix": "Send the new fields only to GPT-5.6+ deployments [[r2]]" },
+    { "symptom": "Costs rise after moving to GPT-5.6 although reuse seems fine", "cause": "Implicit mode writes the variable tail of every request at 1.25x", "fix": "Switch to explicit mode with one breakpoint after the stable prefix [[r1]]" }
+  ],
+  "scenarios": [
+    {
+      "id": "w02-t12-s1",
+      "title": "Reused policy plus a different retrieved tail",
+      "situation": "On an Azure Standard GPT-5.6 deployment, each call sends a 9,000-token policy and tool block that never changes, then 3,000 tokens of freshly retrieved text that differs on every call, then a short question. Traffic is steady at 40 requests per minute.",
+      "constraints": ["Writes cost 1.25x", "Stable part is 75% of tokens", "The retrieved part is never reused"],
+      "unknowns": ["Is the stable block above the 1,024 token minimum?", "Does the retrieved text ever repeat across calls?"],
+      "question": "How do you set the cache mode?",
+      "options": [
+        { "name": "Implicit mode and nothing else", "verdict": "good", "why": "The stable block is cached after the first write and read at 0.1x.", "tradeoff": "The 3,000 unique tokens are written at 1.25x on every call and never read." },
+        { "name": "Explicit mode with one breakpoint after the stable block", "verdict": "best", "why": "Only the reused 9,000 tokens are written. The unique tail is billed at the normal rate and never pays a write premium.", "tradeoff": "You must place and maintain the breakpoint, and forgetting it turns caching off." },
+        { "name": "Turn caching off", "verdict": "poor", "why": "It forfeits a 90% discount on 9,000 tokens at 40 requests per minute.", "tradeoff": "Right when reuse is sparse or the prefix is under the minimum." }
+      ],
+      "flips": [
+        { "if": "Retrieved passages repeat often across calls", "then": "Add a second breakpoint after the most common passages." },
+        { "if": "The deployment is PTU-M", "then": "Breakpoints are not available. Keep the stable text first and size PTUs with the cache rate." }
+      ],
+      "takeaway": "Write only what you will read again."
+    },
+    {
+      "id": "w02-t12-s2",
+      "title": "Sizing a provisioned deployment",
+      "situation": "A team plans a PTU-M deployment for 1,000 requests per minute at peak, each with a 200-token prompt and a 20-token response. The model's input TPM per PTU is 3,400, the output-to-input ratio is 8 and the increment is 5. Most prompts share a long prefix.",
+      "constraints": ["PTU-M, no breakpoints", "A model that deducts cached tokens in full (the doc example uses gpt-5.2), not a GPT-6 normalized-token model", "Capacity is paid whether used or not"],
+      "unknowns": ["What cache rate can the prompts reach?", "Is capacity available in the region?"],
+      "question": "How do you size it?",
+      "options": [
+        { "name": "Size for the 0% cache rate and add a margin", "verdict": "poor", "why": "It gives about 106 PTUs, rounded to 110, and pays for capacity the cache would free up.", "tradeoff": "Right if the prefix is unstable and a measured cache rate is near zero." },
+        { "name": "Measure the real cache rate, size with it, and add a standard deployment as spillover", "verdict": "best", "why": "At 50% the formula gives 76.5 PTUs, rounded to 80, about 28% fewer than at 0%, and spillover covers a miss-rate surprise.", "tradeoff": "If hits fall, PTUs run hot and traffic spills to a pay-as-you-go deployment." },
+        { "name": "Move to Standard to get breakpoints", "verdict": "good", "why": "Explicit breakpoints give finer control.", "tradeoff": "You lose the stable latency and reserved capacity that justified PTU." }
+      ],
+      "flips": [
+        { "if": "Prefix stability is not yet proven", "then": "Size with a conservative cache rate and lower it as measurements come in." },
+        { "if": "Traffic is spiky and small", "then": "Pay-as-you-go may cost less than idle reserved capacity." }
+      ],
+      "takeaway": "On PTU the cache rate is a sizing input, so measure it."
+    }
+  ],
+  "quiz": [
+    { "id": "w02-t12-q1", "type": "numeric", "tag": "numeric", "q": "Using Normalized TPM = peak RPM x prompt tokens x (1 - cache rate) + ratio x peak RPM x response tokens, with 1,000 RPM, 200-token prompts, 20-token responses, ratio 8, 3,400 input TPM per PTU and a 50% cache rate, how many PTUs before rounding?", "answer": 76.47, "tolerancePct": 1, "unit": "PTUs", "hint": "Normalized TPM = 100,000 + 160,000", "explain": "1,000 x 200 x 0.5 = 100,000 plus 8 x 1,000 x 20 = 160,000 gives 260,000. Dividing by 3,400 gives 76.47, which rounds up to 80 with an increment of 5.", "difficulty": 3, "ref": "tr20" },
+    { "id": "w02-t12-q2", "type": "single", "tag": "bug", "q": "You add prompt_cache_options to a shared client and requests to a gpt-5.4 deployment start failing. Why?", "options": ["The cache lifetime is too short", "The request exceeds the 4 write limit", "Models before GPT-5.6 reject prompt_cache_options and breakpoints with a 400", "Azure disables caching on gpt-5.4"], "answer": 2, "explain": "The new fields exist only from GPT-5.6. Older models return 400, so gate them by model. Lifetime and write limits do not apply, and gpt-5.4 still caches implicitly.", "difficulty": 2, "ref": "r2" },
+    { "id": "w02-t12-q3", "type": "multi", "tag": "concept", "q": "Which statements about GPT-5.6 and later caching are correct?", "options": ["Explicit mode with no breakpoints means no caching and no write charge", "The only supported ttl is 30m", "Prewarmed tokens are billed at the write rate", "Breakpoints may be placed on the top-level instructions item"], "answers": [0, 1, 2], "explain": "Instructions and additional_tools cannot hold a breakpoint, so put a breakpoint on a developer message block instead. The other three statements are documented.", "difficulty": 2, "ref": "r1" }
+  ],
+  "flashcards": [
+    { "front": "What are the two prompt_cache_options modes on GPT-5.6 and later?", "back": "implicit (default) puts a breakpoint at the end of the latest eligible message. explicit uses only the breakpoints you mark." },
+    { "front": "How do you disable caching on a GPT-5.6+ Standard deployment?", "back": "Set mode to explicit and place no breakpoints. There is no caching and no write charge." },
+    { "front": "What changes for PTU-M deployments?", "back": "Caching continues without breakpoints or cache_write_tokens (per the Azure prompt-caching page). On models that deduct cached tokens in full, cached tokens do not consume PTU capacity, so a higher cache rate needs fewer PTUs. GPT-6 normalized-token models weigh cached input and writes instead." }
+  ],
+  "related": ["w02-t11", "w02-t13", "w02-t14", "w02-l4"],
+  "refs": ["r1", "r2", "tr11", "tr20"]
+}

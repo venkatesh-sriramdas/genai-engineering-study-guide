@@ -1,0 +1,95 @@
+{
+  "id": "w05-t09",
+  "order": 9,
+  "group": "Query transformation",
+  "title": "Multi-query and step-back",
+  "minutes": 7,
+  "difficulty": "advanced",
+  "summary": "Multi-query fans one question out into several variants, retrieves for each and fuses the results. Step-back adds a more general question so the retriever also finds background and principles.",
+  "useIf": "Recall is low because a single phrasing misses relevant chunks, or the answer depends on a general principle the specific question does not name.",
+  "avoidIf": "Precision is the problem, the question is multi-part (use decomposition), or each extra search is too costly.",
+  "explain": [
+    { "t": "p", "md": "**Multi-query.** A model writes N alternative phrasings or angles of the question. Each runs as its own search, and the ranked lists are merged, commonly with reciprocal rank fusion. RAG-Fusion packages this idea as multiple generated queries plus RRF. Its author found answers were more accurate and comprehensive, but some drifted off topic when generated queries were not relevant enough to the original [[tr4]]. Azure's preview `queryRewrites: \"generative|count-N\"` does the fan-out inside the service, with N from 1 to 10 [[r28]]." },
+    { "t": "p", "md": "**Step-back.** Step-back prompting asks the model to derive a higher-level concept or principle before reasoning. The paper reports gains on reasoning tasks: PaLM-2L improved about 7% on MMLU Physics and 11% on Chemistry, 27% on TimeQA and 7% on MuSiQue [[r15]]. Those numbers are for reasoning benchmarks, not retrieval. In RAG the practical use is to retrieve for both the specific question and its abstraction, so the model receives the details and the governing rule." },
+    { "t": "diagram", "id": "w05-t09-d1", "title": "Fan-out, fuse and dedupe", "alt": "A question is expanded into variants and a step-back question, each searched in parallel, then merged with fusion and duplicates removed before reranking.", "src": "flowchart LR\n  Q[Question] --> M[LLM expansion]\n  M --> V1[Variant 1]\n  M --> V2[Variant 2]\n  M --> SB[Step-back question]\n  Q --> O[Original query]\n  V1 --> F[Fuse and dedupe]\n  V2 --> F\n  SB --> F\n  O --> F\n  F --> R[Rerank]" },
+    { "t": "p", "md": "**Costs and controls.** N variants mean N searches (in Azure each extra query counts as another execution [[r1]]), one generation call before them, and many duplicate chunks. Dedupe by chunk id before reranking, keep the original query as one of the lists, cap N (3 to 5 is a common starting point, author suggestion) and let a reranker restore precision after the fusion." },
+    { "t": "callout", "kind": "gotcha", "title": "Variants widen recall and also noise", "md": "Every off-topic variant pulls off-topic chunks into the fusion. Measure precision at the cutoff, not only recall, and drop variants whose lists share nothing with the original." }
+  ],
+  "whereToUse": [
+    "Short or ambiguous questions where one phrasing misses documents",
+    "Corpora with varied vocabulary, such as support articles from several authors",
+    "Science and engineering questions where a general principle explains the answer",
+    "Pipelines already using RRF, where extra lists fit naturally"
+  ],
+  "whenToUse": {
+    "use": ["Recall at the shortlist is the weak point", "Questions are ambiguous or vocabulary varies", "A reranker follows the fusion", "You can afford N parallel searches"],
+    "avoid": ["The failure is a multi-part question, where sub-questions beat paraphrases", "Latency or search cost is strictly capped", "Identifiers dominate and variants drift away from them"],
+    "flips": ["Questions have independent sub-parts: switch to decomposition", "Variants add noise: reduce N or require overlap with the original list", "A background rule matters: add a step-back question beside the specific one"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Multi-query plus RRF", "Ambiguous query, vocabulary mismatch", "Precision-bound or multi-part questions", "N searches, dedupe, noise [[tr4]]"],
+      ["Step-back question", "A general principle supports the answer", "Pure lookups", "Extra retrieval and generation"],
+      ["Single rewrite", "One clear improvement exists", "Multiple plausible readings", "Drift"],
+      ["Decomposition", "Distinct sub-questions", "One ambiguous phrase", "Extra reasoning and serial hops"],
+      ["Bigger k, no transform", "Cheap recall gain", "Context budget is small", "More tokens to the reranker or model"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Answers wander into related but unasked topics", "cause": "Generated variants strayed from the original intent and fused noisy chunks [[tr4]]", "fix": "Keep the original list, cap N, and require agreement or rerank before the cutoff" },
+    { "symptom": "The same chunk appears many times in the context", "cause": "Variants retrieved overlapping results and no dedupe ran", "fix": "Deduplicate by chunk id after fusion and before reranking" },
+    { "symptom": "Costs and latency grew with no recall gain", "cause": "Variants were near-paraphrases of the same words", "fix": "Ask for diverse angles and measure list overlap. Reduce N when overlap is high" }
+  ],
+  "scenarios": [
+    {
+      "id": "w05-t09-s1",
+      "title": "Ambiguous short questions, recall is low",
+      "situation": "Users type three-word questions such as 'reset access token'. The corpus uses several terms for the same thing. Offline tests show the gold chunk appears at rank 12 on average.",
+      "constraints": ["Short ambiguous queries", "A reranker is in place", "A few extra searches are affordable"],
+      "unknowns": ["How many labelled queries exist?", "What is the latency budget?"],
+      "question": "What do you try?",
+      "options": [
+        { "name": "Multi-query with N of 3 plus the original, fuse with RRF, dedupe and rerank", "verdict": "best", "why": "Variants cover vocabulary variation, the original anchors intent and the reranker restores precision.", "tradeoff": "Three extra searches and one generation per query." },
+        { "name": "Increase chunk overlap", "verdict": "poor", "why": "It targets ingestion boundaries, not vocabulary mismatch.", "tradeoff": "Useful when answers straddle chunk boundaries." },
+        { "name": "Replace the query with one rewrite", "verdict": "good", "why": "Cheaper than fan-out.", "tradeoff": "One guess at the right wording and a drift risk." }
+      ],
+      "flips": [
+        { "if": "Precision at the cutoff drops after fan-out", "then": "Reduce N and require overlap with the original list." },
+        { "if": "No reranker exists and each extra search costs real money", "then": "Use a single rewrite or the original query alone, since fan-out without a reranker mostly adds noise." }
+      ],
+      "takeaway": "Fan out for recall, rerank for precision."
+    },
+    {
+      "id": "w05-t09-s2",
+      "title": "Physics tutor with specific problems",
+      "situation": "Students ask specific problems, for example about the pressure of a gas after heating. The answer needs the general law, and the textbook states laws in separate sections.",
+      "constraints": ["Specific questions, general explanations", "Latency of a few seconds", "Reasoning-style answers"],
+      "unknowns": ["Does the corpus label sections by principle?", "Can the model name the principle reliably?"],
+      "question": "Which transformation fits?",
+      "options": [
+        { "name": "Step-back: retrieve for the specific question and for the principle behind it, merge, then answer", "verdict": "best", "why": "Step-back showed its gains on physics and chemistry reasoning [[r15]], and the textbook stores principles separately from examples.", "tradeoff": "An extra generation and retrieval. The paper's numbers are for reasoning, not for retrieval metrics." },
+        { "name": "Multi-query paraphrases", "verdict": "good", "why": "Improves recall for the specific wording.", "tradeoff": "Does not add the general law." },
+        { "name": "HyDE with a hypothetical solution", "verdict": "poor", "why": "A wrong worked solution can pull in wrong examples.", "tradeoff": "Fits short factual queries where an answer-shaped passage helps." }
+      ],
+      "flips": [
+        { "if": "The question is a simple definition", "then": "Skip step-back and use a plain query." },
+        { "if": "Questions are short and ambiguous rather than specific", "then": "Prefer multi-query paraphrases, since there is no specific detail to abstract away from." }
+      ],
+      "takeaway": "Step-back retrieves the rule behind the example."
+    }
+  ],
+  "quiz": [
+    { "id": "w05-t09-q1", "type": "single", "tag": "diagnose", "q": "After adding multi-query, the context contains the same chunk four times and token cost rose. What step is missing?", "options": ["Deduplication by chunk id after fusion", "A larger embedding model", "A higher temperature", "A shorter `k`"], "answer": 0, "explain": "Variants retrieve overlapping chunks. Dedupe after fusion before reranking. The other options do not remove duplicates." },
+    { "id": "w05-t09-q2", "type": "single", "tag": "tradeoff", "q": "Which question shape is better served by decomposition than by multi-query?", "options": ["A three-word ambiguous query", "A query with a typo", "A question that compares two regions across two time periods", "A definition request"], "answer": 2, "explain": "Compound comparisons have distinct sub-questions that must each be answered. Paraphrases do not cover them. The other shapes suit rewriting or multi-query." },
+    { "id": "w05-t09-q3", "type": "multi", "tag": "concept", "q": "Select the statements consistent with the sources.", "options": ["RAG-Fusion generates multiple queries and fuses with RRF", "Step-back reported gains on reasoning tasks, not retrieval metrics", "Azure `queryRewrites` accepts N from 1 to 10 (preview)", "Multi-query never adds noise"], "answers": [0, 1, 2], "explain": "RAG-Fusion, the step-back paper and the Azure page support the first three. The RAG-Fusion study itself noted off-topic drift when generated queries strayed [[tr4]]." }
+  ],
+  "flashcards": [
+    { "front": "What is RAG-Fusion?", "back": "Generate multiple queries, retrieve for each and merge the lists with reciprocal rank fusion." },
+    { "front": "What is step-back prompting?", "back": "Ask for a higher-level concept or principle first, then reason. In RAG, retrieve for both the specific and the abstract question." },
+    { "front": "Name two controls that keep multi-query cheap and clean.", "back": "Cap N and dedupe by chunk id. Keep the original query as one list and rerank after fusion." }
+  ],
+  "related": ["w05-t07", "w05-t10", "w05-t04", "w05-l4"],
+  "refs": ["tr4", "r15", "r28", "r1"]
+}

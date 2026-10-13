@@ -1,0 +1,130 @@
+{
+  "id": "w18-t13",
+  "order": 13,
+  "group": "Pitfalls",
+  "title": "Hallucination taxonomy",
+  "minutes": 7,
+  "difficulty": "core",
+  "summary": "Hallucination is not one bug. Splitting it into factuality versus faithfulness, and intrinsic versus extrinsic, tells you which control to apply and how to detect it.",
+  "useIf": "You must diagnose a wrong answer, choose mitigations, or design evals that separate unsupported claims from false ones.",
+  "avoidIf": "You treat it as one defect to patch with a prompt line such as 'do not make things up'.",
+  "explain": [
+    { "t": "p", "md": "Huang et al. split LLM hallucination into **factuality** (output conflicts with real-world facts) and **faithfulness** (output is inconsistent with instructions, supplied context or its own logic), with causes in data, training and inference [[r43]]. The older natural-language-generation split is **intrinsic** (the output contradicts the source) versus **extrinsic** (the output cannot be verified from the source) [[r43]]. In a RAG system the source is the retrieved context, so these two views give you a decision path. Route fixes by type: missing knowledge points to grounding, ignored context points to faithfulness controls and fabricated support points to citation checks." },
+    { "t": "diagram", "id": "w18-t13-d1", "title": "Classify a suspicious claim", "alt": "A decision tree. If a claim contradicts the provided context it is intrinsic. If it is absent from the context and unverifiable it is extrinsic. If supported by context, check whether the source is true in the world.", "src": "flowchart TD\n  A[Claim in the answer] --> B{Supported by the provided context?}\n  B -->|Contradicts it| C[Intrinsic, faithfulness]\n  B -->|Not in it| D[Extrinsic, unverifiable]\n  B -->|Supported| E{True in the world?}\n  E -->|No| F[Source error]\n  E -->|Yes| G[Grounded]" },
+    { "t": "table", "caption": "Controls and detection by type", "head": ["Type", "Meaning", "Control", "How to detect"], "rows": [
+      ["Factuality", "Conflicts with real-world facts", "Ground in retrieval, allow abstention, cite sources", "Fact-check evals on a golden set with known answers"],
+      ["Faithfulness", "Inconsistent with instructions, context or its own logic", "Structured output, citation enforcement, NLI-style checks against context", "Groundedness and instruction-following evals"],
+      ["Intrinsic", "Contradicts the source", "Constrain to supplied evidence, verify claims against it", "Compare each claim with the retrieved passage"],
+      ["Extrinsic", "Cannot be verified from the source", "Require a citation per claim, strip uncited claims", "Flag claims with no supporting span"]
+    ] },
+    { "t": "p", "md": "**Why it persists.** The 2025-09 paper *Why Language Models Hallucinate* argues errors resemble binary classification mistakes, and that benchmarks that reward guessing over abstaining keep them alive [[r44]]. That makes hallucination partly an **incentive problem**. Your controls should include abstention paths, evals that score a confident error worse than 'I do not know', unanswerable questions in the test set and citation checks, not only a stronger model." }
+  ],
+  "whereToUse": [
+    "Triage of wrong answers: label each failure by type before picking a fix",
+    "Designing RAG evals that separate retrieval gaps, unsupported claims and false sources",
+    "Setting abstention and citation policies for assistants in regulated domains",
+    "Writing groundedness and fact-check judges with distinct rubrics",
+    "Interview answers that explain mitigations by cause, not by slogan"
+  ],
+  "whenToUse": {
+    "use": [
+      "Label failures as factuality, faithfulness, intrinsic or extrinsic before changing anything",
+      "Pair each type with its control and its detector",
+      "Include unanswerable questions in evals"
+    ],
+    "avoid": [
+      "Treating one prompt line as the mitigation",
+      "Scoring answers so that 'I do not know' always loses",
+      "Judging groundedness without the retrieved context in front of the judge"
+    ],
+    "flips": [
+      "No context is supplied (open chat): factuality dominates, so add retrieval or web grounding",
+      "Context is supplied: faithfulness dominates, so enforce citations and claim checks",
+      "Stakes rise: raise the abstention threshold and add human review"
+    ]
+  },
+  "alternatives": {
+    "title": "Mitigations compared",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Retrieval grounding", "Facts live in documents you control", "The source is wrong or missing", "Adds retrieval errors and latency"],
+      ["Citation per claim plus strip uncited", "Extrinsic claims are the issue", "Citations are fabricated or unchecked", "Needs claim-to-span verification"],
+      ["NLI or groundedness checks against context", "Intrinsic contradictions", "Latency is tight", "Extra model call, false positives"],
+      ["Abstention thresholds", "Wrong answers cost more than refusals", "Users need an answer every time", "More refusals, needs calibration"],
+      ["Bigger model or more reasoning", "Task difficulty drives errors", "Missing evidence drives errors", "Cost, with no fix for absent facts"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "The model gives a confident answer when evidence is missing", "cause": "Training and benchmarks reward guessing over abstaining", "fix": "Evaluate so abstention beats a confident error, include unanswerable questions and require citations." },
+    { "symptom": "An answer contradicts the supplied document", "cause": "A faithfulness failure: the context was overridden by prior knowledge or ignored", "fix": "Cite per claim, check claims against retrieved text and tighten instructions to answer only from context." },
+    { "symptom": "Citations look right but do not support the claim", "cause": "The model attached plausible links without verification", "fix": "Verify each claim against the cited span and treat unverifiable citations as failures." }
+  ],
+  "scenarios": [
+    {
+      "id": "w18-t13-s1",
+      "title": "RAG answer contradicts the policy document",
+      "situation": "A policy assistant retrieves the right passage but its answer says the opposite of what the passage states. Users trust it, and wrong answers carry moderate risk.",
+      "constraints": ["Correct passage is in context", "Moderate risk", "Latency budget allows one extra check"],
+      "unknowns": ["How often does it happen?", "Do prompts say to answer only from context?"],
+      "question": "Which fix first?",
+      "options": [
+        { "name": "Swap to a bigger model", "verdict": "poor", "why": "The failure is a context contradiction, not missing knowledge, and size does not guarantee faithfulness.", "tradeoff": "Right if a weak model cannot follow the context at all." },
+        { "name": "Add more retrieval documents", "verdict": "good", "why": "More evidence can help borderline cases.", "tradeoff": "The right passage was already present, so this adds noise and cost." },
+        { "name": "Require per-claim citations and run an NLI-style check of claims against the passage", "verdict": "best", "why": "It targets intrinsic faithfulness failures and gives you a detector for evals.", "tradeoff": "Extra latency and some false positives that need tuning." }
+      ],
+      "flips": [
+        { "if": "The check adds too much latency", "then": "Run it asynchronously on a sample and alert, and keep a sync check only for high-risk answers." },
+        { "if": "Stakes are high", "then": "Block or escalate answers that fail the check." }
+      ],
+      "takeaway": "Contradiction of supplied text calls for claim-level checks, not a bigger model."
+    },
+    {
+      "id": "w18-t13-s2",
+      "title": "Open-domain Q and A with no documents",
+      "situation": "A public assistant answers general questions with no retrieval. It sometimes states wrong dates and invents references.",
+      "constraints": ["No source context", "Public users", "Reference accuracy matters"],
+      "unknowns": ["Which topics fail most?", "Can the assistant call a search tool?"],
+      "question": "What is the best mitigation?",
+      "options": [
+        { "name": "Add 'do not hallucinate' to the system prompt", "verdict": "poor", "why": "The 2025 analysis frames hallucination as partly a training and incentive problem, and a sentence does not change what the model knows.", "tradeoff": "Fine as a minor hint beside real controls." },
+        { "name": "Add retrieval or web grounding, allow abstention and verify cited sources", "verdict": "best", "why": "It addresses factuality by supplying evidence and permits 'I do not know'.", "tradeoff": "Search latency and the need to vet sources." },
+        { "name": "Fine-tune on a set of correct facts", "verdict": "good", "why": "May fix specific known errors.", "tradeoff": "Does not cover unseen facts and becomes stale." }
+      ],
+      "flips": [
+        { "if": "Facts change daily", "then": "Prefer live grounding over fine-tuning." },
+        { "if": "Stakes are low and speed matters", "then": "Allow ungrounded answers with a visible confidence label." }
+      ],
+      "takeaway": "Factuality gaps need evidence and permission to abstain."
+    },
+    {
+      "id": "w18-t13-s3",
+      "title": "Evals that punish refusals",
+      "situation": "An internal eval gives full credit for any correct answer and zero for 'I do not know'. Teams tune prompts to avoid refusals and complain of confident errors in production.",
+      "constraints": ["Eval design is the lever", "Product wants fewer refusals", "Unanswerable questions exist in real traffic"],
+      "unknowns": ["What share of real questions is unanswerable?", "What does a wrong answer cost?"],
+      "question": "What do you change?",
+      "options": [
+        { "name": "Rescore so a confident error is worse than abstaining, and add unanswerable cases", "verdict": "best", "why": "The 2025 analysis says benchmarks that reward guessing keep hallucination alive, so fix the incentive in your own evals.", "tradeoff": "Refusal rates may rise at first and need calibration." },
+        { "name": "Remove the 'I do not know' option from the UX", "verdict": "poor", "why": "It forces guessing and makes confident errors more likely.", "tradeoff": "Only fine if a human always reviews the output." },
+        { "name": "Lower the temperature", "verdict": "good", "why": "Reduces random variation.", "tradeoff": "Does not change the incentive to guess, so confident errors remain." }
+      ],
+      "flips": [
+        { "if": "Wrong answers are cheap and refusals are costly", "then": "Weight abstention less." },
+        { "if": "Domain is regulated", "then": "Weight confident errors even more heavily." }
+      ],
+      "takeaway": "Hallucination is partly an evaluation incentive problem."
+    }
+  ],
+  "quiz": [
+    { "id": "w18-t13-q1", "type": "match", "tag": "concept", "q": "Match each term to its meaning.", "pairs": [{ "l": "Factuality", "r": "Output conflicts with real-world facts" }, { "l": "Faithfulness", "r": "Output is inconsistent with instructions or context" }, { "l": "Intrinsic", "r": "Output contradicts the source" }, { "l": "Extrinsic", "r": "Output cannot be verified from the source" }], "explain": "Huang et al. use factuality and faithfulness. The older NLG terms intrinsic and extrinsic describe contradiction versus unverifiable content relative to the source.", "ref": "r43" },
+    { "id": "w18-t13-q2", "type": "single", "tag": "diagnose", "q": "An answer includes a claim that appears nowhere in the retrieved passages and cannot be verified from them. Which type is it?", "options": ["Intrinsic hallucination", "Extrinsic hallucination", "A tokenization error", "A correct inference"], "answer": 1, "explain": "A claim that cannot be verified from the source is extrinsic. Intrinsic would contradict the passage. Tokenization is unrelated, and an unverifiable claim is not automatically a valid inference.", "ref": "r43" },
+    { "id": "w18-t13-q3", "type": "single", "tag": "flip", "q": "Which eval design keeps confident errors alive, according to the 2025-09 paper?", "options": ["Scoring that rewards guessing over abstaining", "Adding unanswerable questions to the test set", "Per-claim citation checks on each answer", "Penalizing confident errors more than abstentions"], "answer": 0, "explain": "The paper argues benchmarks that reward guessing over abstaining keep errors alive. The other options are mitigations.", "ref": "r44" }
+  ],
+  "flashcards": [
+    { "front": "Factuality versus faithfulness hallucination?", "back": "Factuality: output conflicts with real-world facts. Faithfulness: output is inconsistent with instructions, supplied context or its own logic." },
+    { "front": "Intrinsic versus extrinsic hallucination?", "back": "Intrinsic contradicts the source. Extrinsic cannot be verified from the source. Control extrinsic claims with a citation per claim." },
+    { "front": "Why do benchmarks keep hallucination alive?", "back": "They reward guessing over abstaining, so models learn to guess. Fix evals so a confident error scores worse than abstaining." }
+  ],
+  "related": ["w18-l6", "w06-t02", "w06-t06", "w14-t07", "w14-t09", "w01-t07"],
+  "refs": ["r43", "r44"]
+}

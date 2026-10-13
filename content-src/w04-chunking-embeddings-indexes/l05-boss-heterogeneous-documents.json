@@ -1,0 +1,95 @@
+{
+  "id": "w04-l5",
+  "order": 5,
+  "title": "Boss: one index, five kinds of document",
+  "kind": "boss",
+  "minutes": 20,
+  "brief": "An interviewer describes policies, scanned manuals, table-heavy contracts, support chats and source code in one assistant, with lookups, broad questions and tenant filters. No numbers are given. Design the chunking, embedding and index layers and defend them.",
+  "blocks": [
+    { "t": "h", "text": "Your four minutes", "level": 2 },
+    { "t": "scenario", "title": "What you are handed", "known": ["Five document classes with different shapes: headed policies, scanned manuals, contracts with big tables, chats and code", "Users ask exact lookups and broad questions, and some queries carry a tenant filter", "The interviewer will probe cost, memory, filters and how you would prove each choice"], "ask": ["What is the mix of lookups, identifiers and broad questions, and in which languages?", "How many documents and chunks, and how often do they change?", "How selective are the filters, and how many tenants are there?", "What are the latency and memory budgets, and may we run an LLM at ingest?", "Where does the operational data live, and who runs the store?"], "tension": "Each class wants a different cut, but one embedding space and one index keep operations simple. Spend on context only where measured failures justify it." },
+    { "t": "diagram", "id": "w04-l5-routing", "title": "A defensible pipeline, routed by document class", "alt": "Parsed documents are classified by shape. Headed text goes to structure-aware chunking with a section path. Tables go to row groups with a header and a summary. Chats go to message windows. Code goes to one chunk per symbol. All chunks are embedded with one model and written to a hybrid index behind an alias, with a metadata filter for tenant.", "src": "flowchart LR\n  D[Parsed document] --> C{Classify by shape}\n  C --> A[Headed text: section chunks]\n  C --> T[Tables: row groups and summary]\n  C --> M[Chats: message windows]\n  C --> S[Code: one chunk per symbol]\n  A --> E[One embedding model]\n  T --> E\n  M --> E\n  S --> E\n  E --> I[(Hybrid index behind alias)]", "caption": "Every box has a dial: remove the router if one splitter wins your labelled set, and add a context step only where lookups fail." }
+  ],
+  "quiz": [
+    { "id": "w04-l5-q1", "type": "order", "tag": "order", "difficulty": 2, "q": "Put the steps of an evidence-based chunking decision in order.", "items": ["Write labelled questions per document class, including exact lookups and broad questions", "Index a baseline: recursive or structure-aware splitting at about 512 tokens with 10 to 25% overlap", "Measure recall@k per class, token-level scores and end-to-end answer accuracy", "Change one dial at a time and re-measure", "Keep a change only when its gain beats its ingest and storage cost"], "explain": "You cannot judge a chunker without questions to score it against, and a baseline gives the comparison. Changing one dial at a time attributes the effect, and the last step stops you adopting semantic or context steps whose ingest cost exceeds their measured gain [[r1]] [[r4]] [[r7]]." },
+    { "id": "w04-l5-q2", "type": "single", "tag": "tradeoff", "difficulty": 3, "q": "Chroma's study scores chunkers by token-level IoU, precision and recall instead of document hit rate. Why is that more informative?", "options": ["A document-level hit credits any chunk from the right document, even one with little relevant text", "Token-level scores need no labelled passages, so they are cheaper to produce than a document-level hit rate", "A document-level hit rate cannot be computed once chunk sizes exceed 512 tokens", "Token-level scores measure the final answer quality, so they replace end-to-end tests"], "answer": 0, "explain": "A document hit rate rewards retrieving a chunk from the right document whatever it contains, so a chunker that returns mostly noise can score well. Token-level scores show how much of the relevant text was retrieved and how much was noise. They need labelled excerpts, so they cost more to produce, work at any chunk size, and still need end-to-end checks [[r4]]." },
+    { "id": "w04-l5-q3", "type": "multi", "tag": "flip", "difficulty": 3, "q": "Select the changes that force you to re-embed the whole corpus.", "options": ["Switching to a different embedding model", "Changing the chunk size or the splitter", "Adding a tenant field to each chunk's metadata", "Raising `efSearch` for better recall"], "answers": [0, 1], "explain": "Vectors from different models are not comparable, and a new chunk size or splitter changes the text that is embedded. A metadata field can be merged into existing documents, and `efSearch` is a query-time setting, so neither needs new vectors [[r13]] [[r23]]." },
+    { "id": "w04-l5-q4", "type": "numeric", "tag": "numeric", "difficulty": 3, "q": "The corpus has 30,000,000 chunks embedded at 1,536 dimensions in float32. Taking HNSW overhead as 20 percent on top of the raw vectors, how many gigabytes of memory does the index need?", "answer": 221, "tolerancePct": 3, "unit": "GB", "hint": "Raw bytes are vectors x dimensions x 4. Use 1 GB = 1,000,000,000 bytes.", "explain": "30,000,000 x 1,536 x 4 is about 184.3 GB raw, and 20 percent overhead brings it to about 221 GB. That is the top of the documented 1% to 20% range, so it is a safe planning number. int8 would cut the raw figure to about 46 GB, which is why compression is the first lever when the quota binds [[r21]] [[r36]]." }
+  ],
+  "defend": {
+    "prompt": "Our assistant covers policy documents with clear headings, scanned equipment manuals, contracts with large tables, support chats and a source code repository. Users ask exact lookups and broad questions, and some queries carry a tenant filter. Design the chunking, embedding and index layers, and defend each choice.",
+    "timebox": "4 min",
+    "clarify": [
+      "What share of questions are exact lookups, identifiers or broad questions, and in which languages?",
+      "How many documents and chunks do we have, and how often do they change?",
+      "How selective are the filters, and how many tenants are there?",
+      "What are the latency and memory budgets, and may an LLM run at ingest?",
+      "Where does the operational data live, and who runs the store?",
+      "Is there a labelled question set, or must we build one?"
+    ],
+    "options": [
+      { "name": "One recursive splitter at about 512 tokens for everything", "when": "There are no labels yet and the team is small. It is the baseline every other option must beat.", "tradeoff": "Tables, code and chats suffer, because their boundaries are not paragraphs." },
+      { "name": "Route by class: structure-aware text, row-group tables, message windows, code by symbol, plus parent-child", "when": "The classes differ in shape and questions mix lookups with broad ones.", "tradeoff": "More code paths and a layout-aware parser, and each class needs its own test slice." },
+      { "name": "Semantic or proposition chunking everywhere", "when": "A measured gain exists and the ingest budget is generous.", "tradeoff": "Compute on every edit. A 2024 study found semantic chunking's gains inconsistent, and propositions multiply the vector count." },
+      { "name": "Add contextual retrieval on top of the base chunks", "when": "Lookups fail on ambiguous chunks and documents rarely change.", "tradeoff": "An LLM call per chunk, regenerated after each edit, and the headline numbers come from a vendor study." }
+    ],
+    "modelAnswer": [
+      { "t": "p", "md": "**1. Clarify the dials.** I would ask for the mix of lookups, identifiers and broad questions, the languages, corpus size and change rate, filter selectivity and tenant count, latency and memory budgets, whether an LLM may run at ingest, and where the operational data lives. Then I would build a labelled question set per document class before choosing anything." },
+      { "t": "p", "md": "**2. List the options, including the boring one.** One recursive splitter at about 512 tokens is the baseline. Routing by class fits shapes better. Semantic or proposition chunking and contextual retrieval cost ingest compute and must earn their place." },
+      { "t": "p", "md": "**3. Pick for the stated dials.** I would route by class and keep one embedding space:" },
+      { "t": "list", "style": "ul", "items": [
+        "**Chunking:** structure-aware cutting for headed text with the section path in each chunk, tables as row groups with the header repeated plus a short summary and a parent id for the full table, chats as message windows, and code as one chunk per function or class. About 512 tokens and 10 to 25% overlap as the start, and parent-child so small chunks match and the parent explains.",
+        "**Context:** headers and parent-child first. Contextual retrieval only for classes where I measure ambiguity failures and documents rarely change.",
+        "**Embedding:** shortlist from MTEB and MIRACL, then test 3-small against 3-large on my own questions, with multilingual traffic favouring the large model. Apply any required prefixes, pin the version, put the model in the fingerprint and check the retirement date.",
+        "**Compression:** only if the memory quota binds: int8 first (4 times smaller), binary with oversampling and rescoring for vectors above 1,024 dimensions, and originals kept, measured against a float baseline.",
+        "**Index and store:** hybrid keyword plus vector so identifiers still match, HNSW at the service defaults until measurement says otherwise, pre-filtering for tenant filters, exhaustive search where a filter leaves a few hundred candidates, and an alias in front for a blue-green re-embed. I would choose Azure AI Search for hybrid, filters and a managed service, and move to the database that holds the operational data if data gravity dominates."
+      ] },
+      { "t": "p", "md": "**What would flip the choice.**" },
+      { "t": "list", "style": "ul", "items": [
+        "One splitter wins the labelled set: drop the router and keep the simpler pipeline.",
+        "Documents change daily: avoid per-chunk LLM context and summary trees.",
+        "Memory is the bottleneck: compress, truncate a Matryoshka model or move to DiskANN.",
+        "Filters are very selective or per tenant: partition, or search the filtered set exhaustively.",
+        "Questions turn corpus-wide: test summary trees or a graph approach, and count how many such questions exist first."
+      ] },
+      { "t": "p", "md": "**4. Failure modes and detection.**" },
+      { "t": "table", "head": ["Failure", "How I would detect it"], "rows": [
+        ["A table answer quotes the wrong cell", "Per-class table questions in the labelled set, with the chunk shown"],
+        ["Filtered queries return too few rows", "Result count against k, sliced by filter selectivity"],
+        ["Recall drops after compression or truncation", "Recall@k against an uncompressed baseline on the same queries"],
+        ["Stale context after an edit", "A regeneration check keyed on document version"],
+        ["Quality falls after a model change", "Run the labelled set on the new index before the alias switch"]
+      ] },
+      { "t": "p", "md": "**5. Metrics and rollout.** Offline: recall@k and token-level scores per document class, end-to-end answer accuracy, index size and memory, and ingest cost per changed document. Online: build the new index beside the old one, compare on the labelled set, canary the alias, and keep the old index for a rollback window." },
+      { "t": "callout", "kind": "tip", "title": "The line that earns marks", "md": "Say which chunking choice you would remove if the labelled set showed no gain, because that proves you treat every stage as a hypothesis." }
+    ],
+    "rubric": [
+      { "pt": "Asks about query mix, languages, scale, change rate, filters, budgets and where the data lives before naming components", "w": 3 },
+      { "pt": "Offers real options including the boring baseline, and says what each costs", "w": 2 },
+      { "pt": "Routes chunking by document class and gives a retrieval unit for tables, code and chats", "w": 3 },
+      { "pt": "Restores context cheaply first and prices contextual retrieval against the edit rate", "w": 2 },
+      { "pt": "Chooses and tests the embedding model on own data, with dimensions, prefixes and retirement in mind", "w": 2 },
+      { "pt": "Sizes memory, and compresses only when needed with rescoring and a float baseline", "w": 2 },
+      { "pt": "Handles filters explicitly: pre-filter, selectivity effects and exhaustive search for tiny sets", "w": 3 },
+      { "pt": "States flip conditions, failure signals and a measured rollout behind an alias", "w": 2 }
+    ],
+    "followUps": [
+      { "q": "A large share of questions turn out to be exact part numbers. What changes?", "a": "Dense retrieval blurs exact identifiers, so I would keep or add the keyword leg with hybrid search, put part numbers in their own field, and measure identifier recall as its own slice before touching the embedding model." },
+      { "q": "Memory use is double the quota. What do you do first?", "a": "Measure the baseline recall, then apply int8 scalar quantization for a 4 times cut with a small loss, keep originals for rescoring, and only then consider truncation or binary. Quantization needs a new field, so I would plan it like a re-index." },
+      { "q": "The tenant filter returns three results for a top-10 query on one tenant. Why?", "a": "The filter is probably applied after the approximate scan, so only the candidates that survive are returned. I would switch to pre-filtering, or iterative scans, partition per tenant, or search exhaustively when a tenant has only hundreds of chunks." }
+    ],
+    "redFlags": [
+      "Names a chunk size or a store before asking about the question types and the corpus",
+      "Picks semantic or proposition chunking because it sounds modern, with no baseline comparison",
+      "Compresses or truncates vectors without measuring recall against an uncompressed baseline",
+      "Ignores how filters interact with the approximate index, or assumes a model swap can happen in place"
+    ]
+  },
+  "refs": ["r1", "r4", "r7", "r13", "r21", "r23", "r36", "r39", "r40", "r41"],
+  "takeaways": [
+    "Clarify query mix, scale, change rate, filters and budgets, and build a labelled set per document class before choosing",
+    "Route chunking by document class, keep one embedding space, and restore context cheaply before paying for it",
+    "Measure recall against an uncompressed baseline whenever you truncate or quantize",
+    "Treat filters, the model and the chunker as dials with flip conditions, and roll out behind an alias"
+  ]
+}

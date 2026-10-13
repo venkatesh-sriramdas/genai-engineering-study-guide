@@ -1,0 +1,153 @@
+{
+  "id": "w19-l5",
+  "order": 5,
+  "title": "Trust under pressure: guardrails, a leak, evaluation and observability",
+  "kind": "boss",
+  "minutes": 25,
+  "brief": "A regulated assistant is live with guardrails, an evaluation gate and tracing, and a user reports a snippet from a document they cannot open. Contain it, find the path, prove the fix and keep your traces from becoming a second leak.",
+  "blocks": [
+    { "t": "h", "text": "The setup: someone else's snippet on your screen", "level": 2 },
+    { "t": "scenario", "title": "The interviewer's setup", "known": [
+      "A regulated RAG assistant is in production with input and output guards, an evaluation gate and tracing",
+      "A user reports an answer that quoted a document they are not allowed to open",
+      "Security wants the cause, legal wants the clock, and nobody wants the investigation to create a new leak"
+    ], "ask": [
+      "Which permission model sits behind retrieval, and how does the index learn about changes?",
+      "Is there a cache in front of retrieval, and how is it keyed?",
+      "Could the snippet have come from a link or image the answer rendered?",
+      "What do traces hold today, and who can read them?",
+      "Is this a high-risk system, and when does reporting start?"
+    ], "tension": "Containment pulls toward switching things off at once. Evidence pulls toward capturing everything. Privacy pulls toward capturing nothing." },
+    { "t": "h", "text": "Where the leak can hide", "level": 2 },
+    { "t": "diagram", "id": "w19-l5-leak-paths", "title": "Four places a forbidden snippet can enter an answer", "src": "flowchart LR\n  U[User question] --> C{Cache hit?}\n  C -->|hit| R[Answer served]\n  C -->|miss| F[ACL filter on index]\n  F --> M[Model with chunks]\n  M --> G[Output guard]\n  G --> R\n  M -.-> T[Trace spans]\n  F -.-> L[Retrieval log]", "alt": "A question reaches a cache. A hit serves the answer directly. A miss goes through the ACL filter, the model and the output guard before serving. The model and the filter also write to trace spans and the retrieval log.", "caption": "Stale ACLs sit at the filter, a shared cache skips it, injected text exits through the output, and the dotted paths are where an investigation can leak content again." },
+    { "t": "h", "text": "Flip the dials across four chapters", "level": 2 },
+    { "t": "dials", "id": "w19-l5-first-control", "title": "Contain the leak: which control first?", "prompt": "Flip the leak path, the revocation speed and what your traces hold. The ranking shows the control to ship first.", "dials": [
+      { "id": "path", "label": "Leak path", "values": [
+        { "id": "stale", "label": "Stale or wrong ACL in the index" },
+        { "id": "cache", "label": "A cache served another user's answer" },
+        { "id": "exfil", "label": "Injected text carried data out through rendered output" }
+      ] },
+      { "id": "fresh", "label": "Revocation must take effect", "values": [
+        { "id": "lag", "label": "After the next sync, hours are fine" },
+        { "id": "immediate", "label": "Immediately" }
+      ] },
+      { "id": "traces", "label": "What traces hold", "values": [
+        { "id": "refs", "label": "Content stored outside, referenced from spans" },
+        { "id": "none", "label": "No content recorded" }
+      ] }
+    ], "options": [
+      { "id": "prefilter", "name": "Fix the ACL filter and re-sync permissions", "summary": "Security filters on the index, fail closed, rebuild stale ACL fields." },
+      { "id": "live", "name": "Live permission check at read time", "summary": "Ask the source system before a chunk reaches the model." },
+      { "id": "cachescope", "name": "Scope every cache by tenant and user", "summary": "Partition keys so one user's entry is never another's hit." },
+      { "id": "outguard", "name": "Constrain the output", "summary": "Allow-list links and images, block data-carrying markdown, check groundedness." },
+      { "id": "replay", "name": "Replay from traces and add a CI test", "summary": "Turn the incident into a permanent regression case." }
+    ], "scores": {
+      "prefilter": {
+        "path": { "stale": { "s": 2, "why": "Fixes the filter or stale ACL fields that let the document through, then re-syncs." }, "cache": { "s": -2, "why": "A cache hit never reaches retrieval, so index filters cannot help." }, "exfil": { "s": -1, "why": "Access control was correct, so the filter is not what failed." } },
+        "fresh": { "lag": { "s": 1, "why": "Scheduled sync is enough when hours of lag are acceptable." }, "immediate": { "s": -2, "why": "Index copies lag: indexers run every 5 minutes at best and notifications can take up to 6 hours." } },
+        "traces": { "refs": { "s": 0, "why": "Does not depend on trace content." }, "none": { "s": 0, "why": "Does not depend on trace content." } }
+      },
+      "live": {
+        "path": { "stale": { "s": 2, "why": "Re-checking the source at read time ignores the stale copy." }, "cache": { "s": -2, "why": "A cached answer skips the live check as well." }, "exfil": { "s": -1, "why": "Access was granted correctly, so a fresh check changes nothing." } },
+        "fresh": { "lag": { "s": -1, "why": "Adds a source call per candidate for lag the dial allows." }, "immediate": { "s": 2, "why": "Revocation takes effect on the next read." } },
+        "traces": { "refs": { "s": 0, "why": "Does not depend on trace content." }, "none": { "s": 0, "why": "Does not depend on trace content." } }
+      },
+      "cachescope": {
+        "path": { "stale": { "s": -1, "why": "Does not touch an index that holds wrong ACLs." }, "cache": { "s": 2, "why": "Partition keys by tenant and user, for example vary-by on the API Management semantic cache." }, "exfil": { "s": -1, "why": "The leak is in the output, not the cache." } },
+        "fresh": { "lag": { "s": 0, "why": "Fine while entries expire within the lag the dial allows." }, "immediate": { "s": -1, "why": "A scoped entry still outlives a revocation until it expires or is purged." } },
+        "traces": { "refs": { "s": 0, "why": "Does not depend on trace content." }, "none": { "s": 0, "why": "Does not depend on trace content." } }
+      },
+      "outguard": {
+        "path": { "stale": { "s": -1, "why": "Groundedness checks do not know permissions, so a grounded answer from a forbidden document passes." }, "cache": { "s": -1, "why": "The cached answer is grounded, so the check passes it." }, "exfil": { "s": 2, "why": "Allow-list links and images and block markdown that carries data out." } },
+        "fresh": { "lag": { "s": 0, "why": "Independent of revocation speed." }, "immediate": { "s": 0, "why": "Independent of revocation speed." } },
+        "traces": { "refs": { "s": 0, "why": "Does not depend on trace content." }, "none": { "s": 0, "why": "Does not depend on trace content." } }
+      },
+      "replay": {
+        "path": { "stale": { "s": 1, "why": "Add a revoked-user case to the gate." }, "cache": { "s": 1, "why": "Add a two-user cache case to the gate." }, "exfil": { "s": 1, "why": "Add an injected-document case to the gate." } },
+        "fresh": { "lag": { "s": 0, "why": "Independent of revocation speed." }, "immediate": { "s": 0, "why": "Independent of revocation speed." } },
+        "traces": { "refs": { "s": 1, "why": "References on spans let you replay the failing request against ACL-protected content." }, "none": { "s": -1, "why": "Nothing to replay from, so you rebuild the case from the report." } }
+      }
+    }, "takeaway": "Contain on the path that failed, then turn it into a regression test. A guard never substitutes for the permission check, and a trace is only as safe as what you let it hold." },
+    { "t": "callout", "kind": "interview", "title": "What interviewers listen for", "md": "Containment first, evidence second, a named leak path third. Then the proof: seeded users, repeated trials and a gate. Say where the output guard stops being useful and why traces default to no content." }
+  ],
+  "quiz": [
+    { "id": "w19-l5-q1", "type": "single", "tag": "bug", "q": "Some users in a very large number of groups see every document, and nobody else does. What is wrong with this code?", "code": { "lang": "python", "code": "groups = token.get(\"groups\", [])\nflt = None\nif groups:\n    ids = \",\".join(groups)\n    flt = f\"group_ids/any(g: search.in(g, '{ids}'))\"\nresults = client.search(query, filter=flt)" }, "options": ["The search call must use the admin key, otherwise the service ignores the filter expression on every request", "A user in too many groups gets an overage indicator, not a groups claim, so the empty list drops the filter", "Group ids cannot be stored in a collection field, so the filter must be built from user principal names instead", "The filter must go in a request header, because a filter in the body is applied only to the first page of results"], "answer": 1, "explain": "A JWT carries at most 200 groups. Beyond that an overage indicator replaces the groups claim, so `token.get(\"groups\", [])` returns an empty list, `if groups` skips the filter and the query runs unfiltered: a fail-open bug. Detect overage, resolve membership through Microsoft Graph (transitive membership pages hold 100 by default and 999 at most) and fail closed, for example public documents only, when groups cannot be resolved. Nothing in the snippet depends on key type or filter syntax, so the other options describe problems that are not in the code.", "difficulty": 3 },
+    { "id": "w19-l5-q2", "type": "match", "tag": "concept", "q": "Match each guard to what it checks.", "pairs": [
+      { "l": "Prompt Shields user prompt attack", "r": "The user's message, for rule-changing, role-play and encoding attacks" },
+      { "l": "Prompt Shields document attack", "r": "Retrieved or uploaded content that carries hidden instructions" },
+      { "l": "Groundedness detection", "r": "The answer text, compared against its grounding sources" },
+      { "l": "Protected material detection", "r": "Completions that reproduce known text or code" },
+      { "l": "Spotlighting", "r": "Marking documents so the model can tell data from instructions" }
+    ], "explain": "Each guard watches a different edge. Prompt Shields has two shields, one for the user's message and one for documents (the standalone API takes one prompt and up to five documents). Groundedness compares the answer with its sources and says nothing about permissions. Protected material scans completions. Spotlighting tags documents, for example by base64 encoding, so the model treats them as data, at the cost of more tokens.", "difficulty": 2 },
+    { "id": "w19-l5-q3", "type": "numeric", "tag": "numeric", "q": "A permission test passes on 80 percent of single trials. The suite repeats each test 5 times and the gate needs all 5 to pass, with independent trials. What pass^5 should you expect, in percent?", "answer": 32.8, "tolerancePct": 2, "unit": "%", "hint": "pass^k is the chance that all k trials succeed.", "explain": "pass^k for a per-trial success p is p^k, so 0.8^5 = 0.32768, or about 32.8 percent. A test that looks 80 percent reliable fails a five-trial gate two times in three. That is why non-deterministic checks need a repeat count, a tolerance policy decided in advance and a fix for flaky tests rather than a lower bar.", "difficulty": 2 },
+    { "id": "w19-l5-q4", "type": "single", "tag": "diagnose", "q": "Content capture is off in both settings below, yet customer text appears in traces. What is the most likely cause?", "code": { "lang": "python", "code": "# environment\n# ENABLE_SENSITIVE_DATA=false\n# OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=false\n\n@trace_function\ndef lookup_customer(email: str, notes: str) -> dict:\n    ..." }, "options": ["The `@trace_function` decorator records parameters and return values whatever the content flag says", "Sampling at five traces per second keeps content-bearing spans even when the content flag is turned off", "Python instrumentation has been on by default since 1.6.0, and default-on instrumentation also turns content capture on", "Cached tokens are copied into span attributes, so the content flag cannot hide them from the trace"], "answer": 0, "explain": "The decorator always records parameters and return values, so `email` and `notes` land on the span whatever the flag says. Fix it by removing the decorator on tools that handle personal data, redacting at the exporter or wrapping with your own span. Sampling decides which traces are kept, not what they hold. Default-on instrumentation adds spans but not content, and cached tokens appear as counts only.", "difficulty": 3 },
+    { "id": "w19-l5-q5", "type": "order", "tag": "order", "q": "Order the response to the reported leak.", "items": ["Contain: switch off the suspect path within the first hour", "Preserve evidence through trace and retrieval-log references without widening content capture", "Expand the investigation over 24 hours: other users, tenants and paths", "Fix at the source over days or weeks: filter, cache key or output control", "Add the case to the CI gate and re-run the permission suite"], "explain": "Containment comes first because the leak is live. Evidence is preserved before anything is changed, and scope expands once the first path is closed. The fix belongs at the source, and the regression test makes sure the fix stays. Microsoft's incident guidance describes containment in the first hour, expansion in the first 24 hours and a fix at source over days or weeks.", "difficulty": 2 },
+    { "id": "w19-l5-q6", "type": "single", "tag": "tradeoff", "q": "A pairwise judge prefers whichever answer is shown first. You can afford one extra judge pass per item. Which spend reduces the bias most?", "options": ["Re-run the same order a second time at temperature 0 and average the two scores together", "Move to a larger judge model and keep a single pass in the original answer order", "Add a longer rubric to the judge prompt and keep a single pass in the original order", "Run each pair in both orders and count a win only when both verdicts agree"], "answer": 3, "explain": "Swapping the order cancels position bias, and disagreement flags unreliable items. In MT-Bench, consistency after swapping was 65.0 percent for GPT-4, 46.2 for GPT-3.5 and 23.8 for Claude-v1 [[r73]]. A separate study of order bias found that reordering let Vicuna-13B beat ChatGPT on 66 of 80 queries when ChatGPT judged. Repeating the same order repeats the bias. A larger judge helps but does not remove it. A rubric guides criteria, not position. The cost is double judge spend and more ties.", "difficulty": 2 }
+  ],
+  "defend": {
+    "prompt": "A user of our regulated RAG assistant says an answer quoted a document they are not allowed to open. We have guardrails, an evaluation gate and tracing. Walk me through the first hour, how you find the cause, how you prove the fix and how you keep traces from becoming a second leak.",
+    "timebox": "5 min",
+    "clarify": [
+      "Which permission model sits behind retrieval, and how does the index learn about changes?",
+      "Is there a cache in front of retrieval, and how is it keyed?",
+      "Could the snippet have come through a rendered link or image rather than retrieval?",
+      "How fast must a revoked permission take effect?",
+      "What do traces and retrieval logs hold today, and who can read them?",
+      "Is this a high-risk system under the EU AI Act, and what does legal need and by when?"
+    ],
+    "options": [
+      { "name": "Contain, trace, fix at the source, then gate", "when": "The path is unknown and could be a stale ACL, a cache or injected output.", "tradeoff": "Slower than a quick patch, and containment may switch a feature off for a day." },
+      { "name": "Add an output guard and move on", "when": "The cause is exfiltration through rendered output and access control was correct.", "tradeoff": "Groundedness and PII checks do not know permissions, so a grounded answer from a forbidden document passes." },
+      { "name": "Move to per-tenant or per-user indexes", "when": "The permission model is simple and stable and a cross-user leak would be severe.", "tradeoff": "Index count limits, sync cost and slower updates, and it fixes neither a shared cache nor the output path." }
+    ],
+    "modelAnswer": [
+      { "t": "p", "md": "**Clarify.** I would ask how permissions reach the index, whether a cache sits in front of retrieval, whether the snippet could have left through a link or image, how fast revocation must be, what traces hold and whether a reporting clock applies. The answers rank the suspects." },
+      { "t": "p", "md": "**Options.** Contain, trace and fix at the source is the boring option and the right default. An output guard alone is tempting but does not decide who may see a document. Per-tenant or per-user indexes fit simple, stable permission models and leave cache and output paths open." },
+      { "t": "p", "md": "**Pick and flip.** In the first hour I switch off the suspect path behind a flag, usually the cache or one connector, keep the assistant up for others and pull the retrieval log and trace ids for the request. Then I test four suspects in order of evidence: a stale ACL (compare the source ACL with the indexed copy), a groups overage that dropped the filter (a user in more than 200 groups loses the groups claim, and fail-open code returns everything), a cache hit served across users, and injected text leaving through a link or image. The fix is at retrieval: security filters on synced ACL fields, fail closed on overage with Graph resolution, tenant and user in every cache key and an allow-list for rendered links. Guards stay as defense in depth, because a groundedness check passes an answer drawn from a forbidden document." },
+      { "t": "list", "style": "ul", "items": [
+        "Flip to a live permission check when revocation must be immediate, because indexers run every 5 minutes at best and notifications can take up to 6 hours.",
+        "Flip to per-tenant indexes when tenants are few and a leak across them is unacceptable.",
+        "Flip the trace policy to external content with references on spans only for a narrow, approved cohort and a short retention."
+      ] },
+      { "t": "table", "head": ["Failure mode", "How I detect it"], "rows": [
+        ["A revoked user still retrieves the document", "Timed revocation drill: remove a test user, query repeatedly, record minutes until denied"],
+        ["Groups overage drops the filter", "CI user with 250 groups, log overage events, alert on any query run with no filter"],
+        ["A cache answers across users", "Two-user test on the same question, cache logs keyed by user and tenant"],
+        ["Injected text carries data out through a link or image", "Seeded poisoned document in the suite, alert on rendered URLs outside the allow-list"],
+        ["Traces hold customer text", "Weekly audit for spans carrying input or output messages, including decorated tool functions"],
+        ["The gate passes one lucky run", "Repeat each permission test k times and require all to pass"]
+      ] },
+      { "t": "p", "md": "**Metrics and rollout.** The hard gate is zero cross-user leaks on a versioned permission suite with a revoked user, a 250-group user, a cache pair and an injected document, run as repeated trials. I also track p95 time to revoke, overage fail-closed rate, guard block and false-positive rates, and the count of spans that carry content. The fix ships behind a flag, shadow-compares returned document ids against the old filter, then canaries before it widens. Legal gets the facts early: if the system is high-risk, Article 73 timers run from awareness, and Annex III obligations apply from 2027-12-02 under the Omnibus, so counsel confirms which regime applies." }
+    ],
+    "rubric": [
+      { "pt": "Asks about permission model, caches, evidence, revocation speed, trace policy and the legal clock", "w": 3 },
+      { "pt": "Contains first and preserves evidence before changing anything", "w": 2 },
+      { "pt": "Lists the leak paths and ties each to a detection step", "w": 3 },
+      { "pt": "Fixes at retrieval (pre-filter, fail closed on overage, optional live check) and explains why guards cannot substitute", "w": 3 },
+      { "pt": "Proves the fix with seeded users, repeated trials and a CI gate", "w": 3 },
+      { "pt": "Keeps traces safe: content off by default or stored outside with references, retention and access", "w": 2 },
+      { "pt": "Gives metrics and a staged rollout with shadow comparison", "w": 2 },
+      { "pt": "Names flips such as live check versus pre-filter by revocation speed", "w": 2 }
+    ],
+    "followUps": [
+      { "q": "The postmortem says the groundedness check passed the leaking answer. Is that a guard bug?", "a": "No. Groundedness compares an answer with its sources, and the forbidden document was a valid source. The control that decides which documents may be a source is the permission filter, so the fix belongs in retrieval." },
+      { "q": "Engineers want full prompt and answer capture on every span to investigate. Do you agree?", "a": "Not globally. The convention says instrumentations should not capture content by default and recommends external storage with references on spans for production. Use a narrow, time-boxed capture for the affected cohort with a named approver, short retention and the same ACLs as the source." },
+      { "q": "An auditor asks you to prove a revoked user cannot read the document. What do you show?", "a": "The permission suite: seeded revoked and many-group users, repeated trials in CI with zero tolerated leaks, the timed revocation drill and immutable retrieval logs." }
+    ],
+    "redFlags": [
+      "Answers with a stronger system prompt that says never reveal other users' documents",
+      "Treats a groundedness or PII guard as the access control",
+      "Switches on full content capture everywhere to investigate",
+      "Calls it fixed after one manual retest with no revoked or many-group user",
+      "Has no containment step, so the leak keeps running while the team debugs"
+    ]
+  },
+  "refs": ["r1", "r10", "r11", "r14", "r15", "r16", "r18", "r23", "r56", "r58", "r73", "r74", "r75", "r78", "r85", "r86"],
+  "takeaways": [
+    "Contain on the path that failed, then make it a regression test",
+    "Guards check content, not permissions: access control lives in retrieval and fails closed",
+    "A groups overage or a shared cache can bypass a correct filter, so test both with seeded users",
+    "Non-deterministic gates need repeated trials, and pairwise judges need both orders",
+    "Traces default to no content, and a decorator can override that default"
+  ]
+}

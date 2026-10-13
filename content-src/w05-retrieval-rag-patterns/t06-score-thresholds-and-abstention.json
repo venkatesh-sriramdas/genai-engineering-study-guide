@@ -1,0 +1,106 @@
+{
+  "id": "w05-t06",
+  "order": 6,
+  "group": "Ranking",
+  "title": "Score thresholds and abstention",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "A cutoff decides which retrieved chunks the model may see, and abstention is what the system does when nothing clears the bar. Both depend on scores that are not probabilities.",
+  "useIf": "Wrong answers cost more than missing answers, or your corpus cannot answer every question users ask.",
+  "avoidIf": "You would rely on a hard-coded score constant that nobody recalibrates, or you have no labelled unanswerable queries to test it on.",
+  "explain": [
+    { "t": "p", "md": "Retrieval always returns something. A **cutoff** drops weak chunks, and **abstention** turns an empty or weak shortlist into an honest answer such as 'not found', a clarifying question or a hand-off. The hard part is choosing the signal. Each score has its own scale and its own drift." },
+    { "t": "table", "caption": "Signals to cut on", "head": ["Signal", "Scale", "Caution"], "rows": [
+      ["Azure `@search.rerankerScore`", "0.00 to 4.00", "The distribution shifts with infrastructure and model updates, so use coarse cutoffs only [[r3]]"],
+      ["Vector `threshold` (preview, `2026-08-01-preview`)", "For example `{\"kind\":\"vectorSimilarity\",\"value\":0.8}`", "Drops weak matches before fusion, even when fewer than `k` remain. Specific to the embedding model [[r35]]"],
+      ["OpenAI `ranking_options.score_threshold`", "0.0 to 1.0", "Depends on the `ranker` choice [[r30]]"],
+      ["RRF score", "About 1/k per list", "Reflects rank agreement and list count, not relevance. Never cut on it [[r1]]"]
+    ], "highlightCol": 2 },
+    { "t": "flow", "title": "A confidence-aware gate", "direction": "h", "steps": [
+      { "title": "Shortlist", "md": "Reranked top chunks with scores." },
+      { "title": "Gate", "md": "Count chunks above the cutoff and compare the gap to the top score.", "tag": "decide" },
+      { "title": "Strong", "md": "Answer with citations." },
+      { "title": "Weak", "md": "Broaden: rewrite, more candidates or another source." },
+      { "title": "None", "md": "Abstain: say not found, ask a question or hand off." }
+    ] },
+    { "t": "p", "md": "**Calibration is a measurement, not a guess.** Build a golden set of answerable and unanswerable queries. For each cutoff, record how many answerable queries are still answered (coverage) and how many unanswerable queries are answered anyway (false answers). Pick the point that matches the cost of each error, and recheck after every model or service update. Relative signals such as the gap between the top score and the next, or the number of chunks above the cutoff, move less than absolute scores, though you must still calibrate them (author suggestion). Anthropic's guidance adds the generation side: give the model explicit permission to say it does not know [[r41]]. Corrective RAG goes further by scoring retrieval quality and triggering a different action when it is weak [[r19]]." },
+    { "t": "callout", "kind": "warn", "title": "Silent drift", "md": "A cutoff that worked at launch can quietly turn into 'always abstain' or 'never abstain' after a model update. Track the abstention rate and score percentiles as dashboards and alerts." }
+  ],
+  "whereToUse": [
+    "Medical, legal and financial assistants where a wrong answer is worse than no answer",
+    "Support bots that must hand off to a person when the knowledge base has no answer",
+    "Citation-required systems that refuse to answer without evidence",
+    "Pipelines that escalate to a broader retrieval or a web source when the local shortlist is weak"
+  ],
+  "whenToUse": {
+    "use": ["Unanswerable queries are common", "False answers are costly", "You can label a golden set that includes no-answer queries", "You can monitor abstention rate over time"],
+    "avoid": ["Queries are all answerable by construction, such as lookups from a known catalog", "You would cut on RRF scores or an uncalibrated constant", "A hard refusal frustrates users more than a hedged best-effort answer"],
+    "flips": ["Risk rises: tighten the cutoff and prefer abstention", "Users complain about too many refusals: add a 'closest matches' fallback instead of a bare refusal", "A service model update lands: recalibrate before trusting old thresholds"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Absolute score cutoff", "Stable model, labelled set, simple rule", "Scores drift across updates", "Silent miscalibration"],
+      ["Relative cutoff (gap, top n)", "Score scale is unstable", "A uniformly weak shortlist looks fine relative to itself", "Still needs calibration"],
+      ["Answerability classifier or LLM judge", "Subtle no-answer cases", "Tight latency", "Extra model call and its own errors"],
+      ["Corrective loop (retry or broaden)", "The corpus often has partial coverage", "Cost and latency limits", "More calls, risk of loops"],
+      ["No cutoff, rely on the prompt", "Low-risk assistants", "High-stakes domains", "Fabricated answers"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Abstention rate jumps overnight", "cause": "The service or embedding model changed and the score distribution shifted", "fix": "Alert on abstention rate and p10, p50, p90 scores. Recalibrate on the golden set" },
+    { "symptom": "The bot answers questions the corpus cannot answer", "cause": "No cutoff, or a threshold on RRF or a miscalibrated absolute score", "fix": "Cut on reranker or per-leg signals, add unanswerable queries to the golden set" },
+    { "symptom": "Users see bare refusals for answerable questions", "cause": "Cutoff is too strict or the first stage misses the gold chunk", "fix": "Check recall first, then loosen the cutoff and add a broaden step before abstaining" }
+  ],
+  "scenarios": [
+    {
+      "id": "w05-t06-s1",
+      "title": "Clinical guideline assistant",
+      "situation": "Clinicians ask about dosing and contraindications. The guideline corpus is incomplete, and a wrong dose is a serious risk.",
+      "constraints": ["High risk", "Corpus does not cover every drug", "Latency of a few seconds is fine"],
+      "unknowns": ["What false-answer rate is acceptable?", "Who handles abstentions?"],
+      "question": "How do you set the cutoff?",
+      "options": [
+        { "name": "Calibrate a strict cutoff on a golden set with unanswerable queries, abstain with a clear 'not in the guidelines' message and route to a human", "verdict": "best", "why": "The risk profile prefers missing answers to wrong ones, and the gate is measurable.", "tradeoff": "More abstentions and a human queue." },
+        { "name": "Answer from the top 3 chunks and rely on the prompt to hedge", "verdict": "poor", "why": "Hedging does not stop a confident wrong dose.", "tradeoff": "Acceptable for low-risk FAQ assistants." },
+        { "name": "Add an LLM judge as the only gate", "verdict": "good", "why": "Catches subtle mismatches.", "tradeoff": "Extra latency and its own error rate, so use it beside a score cutoff." }
+      ],
+      "flips": [
+        { "if": "Risk drops, such as a wellness FAQ", "then": "Loosen the cutoff and show closest matches." },
+        { "if": "The corpus later covers nearly every drug and golden-set coverage is high", "then": "Keep the strict cutoff but expect fewer abstentions, and keep routing the remaining misses to a human." }
+      ],
+      "takeaway": "The price of a false answer sets the cutoff."
+    },
+    {
+      "id": "w05-t06-s2",
+      "title": "Score drift after a service update",
+      "situation": "An absolute reranker cutoff of 2.0 worked for months. After a platform update the assistant abstains on queries that were answered before.",
+      "constraints": ["Cutoff is hard-coded", "A golden set exists", "No release has changed the app"],
+      "unknowns": ["Did the embedding model or index change?", "Are abstention dashboards available?"],
+      "question": "What is the best response?",
+      "options": [
+        { "name": "Re-run the golden set, recompute coverage and false answers by cutoff, set coarse bands and add drift alerts", "verdict": "best", "why": "Azure warns the reranker distribution shifts with updates, so calibration must be repeatable [[r3]].", "tradeoff": "Ongoing evaluation cost." },
+        { "name": "Lower the cutoff until abstentions stop", "verdict": "poor", "why": "It trades one miscalibration for another and may admit weak chunks.", "tradeoff": "Only a stopgap while the golden set runs." },
+        { "name": "Remove the cutoff", "verdict": "good", "why": "Stops refusals at once.", "tradeoff": "Brings back fabricated answers for unanswerable queries." }
+      ],
+      "flips": [
+        { "if": "Drift happens often", "then": "Add a relative cutoff or answerability check that moves less with the model." },
+        { "if": "There is no golden set to recalibrate on", "then": "Build a small labelled set of answerable and unanswerable queries first; until then, fail safe with a conservative cutoff and human review." }
+      ],
+      "takeaway": "Treat cutoffs as monitored configuration, not constants."
+    }
+  ],
+  "quiz": [
+    { "id": "w05-t06-q1", "type": "numeric", "tag": "numeric", "q": "At a cutoff, 170 of 200 answerable queries are answered, and 20 of 100 unanswerable queries are answered anyway. What percentage of all answers given are false?", "answer": 10.5, "tolerancePct": 3, "unit": "%", "hint": "False answers divided by all answers given.", "explain": "Answers given are 170 + 20 = 190. False answers are 20. 20 / 190 = 10.5%. Coverage on answerable queries is 85%, which is a different measure." },
+    { "id": "w05-t06-q2", "type": "single", "tag": "bug", "q": "A team cuts on the fused RRF score and abstains on any value below 0.02. Why is this unreliable?", "options": ["RRF is always below 0.02", "RRF reflects rank agreement and list count, not relevance", "RRF cannot be sorted", "The vector leg has no weight"], "answer": 1, "explain": "RRF sums 1/(k+rank) terms, so its range depends on the number of lists and `k`. It orders results but does not measure relevance." },
+    { "id": "w05-t06-q3", "type": "multi", "tag": "tradeoff", "q": "Select the actions that make a cutoff safer over time.", "options": ["Include unanswerable queries in the golden set", "Alert on abstention rate", "Hard-code the value once", "Recalibrate after model or service updates"], "answers": [0, 1, 3], "explain": "A cutoff needs evidence of both error types, monitoring and recalibration. A hard-coded constant silently decays when score distributions shift." }
+  ],
+  "flashcards": [
+    { "front": "Why avoid fine-grained cutoffs on the Azure reranker score?", "back": "The score distribution shifts with infrastructure and model updates, so use coarse bands, monitor and recalibrate." },
+    { "front": "What does the vector `threshold` parameter do?", "back": "It drops low-scoring vector matches before fusion, even if fewer than `k` remain. Preview in `2026-08-01-preview`." },
+    { "front": "How do you calibrate an abstention cutoff?", "back": "Measure coverage and false answers by cutoff on a golden set that includes unanswerable queries, then pick by error cost." }
+  ],
+  "related": ["w05-t05", "w05-t14", "w05-l3", "w06-t03", "w14-t06"],
+  "refs": ["r1", "r3", "r19", "r30", "r35", "r41"]
+}

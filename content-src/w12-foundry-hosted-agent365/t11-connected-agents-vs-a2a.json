@@ -1,0 +1,112 @@
+{
+  "id": "w12-t11",
+  "order": 11,
+  "group": "Tools and knowledge",
+  "title": "Connected agents vs A2A tool",
+  "minutes": 7,
+  "difficulty": "advanced",
+  "summary": "The classic Connected Agents tool is not available in the new Foundry Agent Service. Use the A2A tool for peer agents, Agent Framework orchestration inside hosted code, or Workflows (preview, retiring 2026-12-01).",
+  "useIf": "One Foundry agent must delegate to another agent, in or outside Foundry, and you are migrating off Connected Agents.",
+  "avoidIf": "The peer is a plain function or API: use a tool. Use A2A only when the peer is a real agent with its own reasoning.",
+  "explain": [
+    { "t": "p", "md": "The Connected Agents tool from the classic Agents API is **not available** in the new Foundry Agent Service. The docs name two replacements: the **A2A tool**, which connects to any A2A-compatible endpoint including another Foundry agent exposed as an A2A endpoint, and **Workflows**, which orchestrate Foundry agents declaratively [[r21]]. Workflows are preview and retire on 2026-12-01, and classic agents retire on 2027-03-31 [[r11]]. For new multi-agent work in code, the GA page points to Microsoft Agent Framework (see the Agent Framework chapter) [[r9]]." },
+    { "t": "p", "md": "The A2A tool has two tool types. `a2a` targets A2A protocol 1.0 and is **GA**. `a2a_preview` targets 0.3 and stays **preview** for existing integrations [[r21]]. When your agent calls a remote agent through the tool, the remote agent processes the request and your agent uses the response, then keeps managing the conversation [[r21]]. A2A v1.0.0 was released on 2026-03-12, with breaking changes from 0.3 such as renamed operations [[tr7]]. Store credentials in a project connection and consider adding the tool through a toolbox [[r21]]. Creating the A2A project connection needs Foundry Project Manager, and testing needs Foundry User [[r21]]." },
+    { "t": "diagram", "id": "w12-t11-d1", "title": "A2A tool call path", "alt": "A user asks a Foundry agent. The agent calls a remote A2A agent through the a2a tool. The remote agent responds and the Foundry agent answers the user and keeps the conversation.", "src": "sequenceDiagram\n  participant U as User\n  participant F as Foundry agent\n  participant R as Remote A2A agent\n  U->>F: Question\n  F->>R: Request through the a2a tool\n  R-->>F: Response\n  F-->>U: Answer, conversation stays with F" },
+    { "t": "table", "caption": "Calling a Foundry agent as an A2A endpoint: limits on 2026-10-13", "head": ["Aspect", "Documented behavior"], "rows": [
+      ["Version and binding", "A2A v1.0 over JSON-RPC only. With no version selector Foundry serves 0.3, so send `A2A-Version: 1.0`"],
+      ["Modality and streaming", "Text only, no streaming"],
+      ["Prerequisite", "The agent must use the Responses protocol"],
+      ["Authentication", "Entra only, caller needs the Foundry Agent Consumer role or higher"],
+      ["Retention", "Tasks and contexts are kept 60 days from last write"]
+    ] },
+    { "t": "callout", "kind": "note", "title": "Agent card path", "md": "For agents registered in Foundry Control Plane the default agent card path is `/.well-known/agent-card.json` [[r23]]." }
+  ],
+  "whereToUse": [
+    "A Foundry agent delegating a subtask to another team's agent in a separate runtime",
+    "Exposing a Foundry agent as an A2A endpoint so external agents can call it",
+    "Replacing Connected Agents calls when moving classic agents to the new service",
+    "Cross-vendor delegation where the peer's internals must stay opaque"
+  ],
+  "whenToUse": {
+    "use": [
+      "The peer is a separately owned agent that you cannot or should not embed",
+      "You want a standard protocol rather than a Foundry-only mechanism",
+      "You need the peer to keep its own state and reasoning"
+    ],
+    "avoid": [
+      "All agents live in one codebase and one team: orchestrate in-process with Agent Framework instead of network hops",
+      "New designs built on Workflows, which are preview and retire on 2026-12-01",
+      "The peer is a stateless function: expose it as an OpenAPI or MCP tool"
+    ],
+    "flips": [
+      "Peer needs streaming or non-text modalities: check whether the incoming A2A limits block you",
+      "Preview is not allowed: use `a2a` (GA, v1.0) and avoid `a2a_preview`",
+      "The pattern must be declarative and short-lived: Workflows work today but plan the retirement"
+    ]
+  },
+  "alternatives": {
+    "title": "Agent-to-agent options in Foundry",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["A2A tool (`a2a`, GA)", "Peer is a separate agent or another vendor", "Everything is in one process", "Network hop, version negotiation, auth setup [[r21]]"],
+      ["Agent Framework orchestration in hosted code", "One team, code-defined control flow", "Peers are external or opaque", "You write and test the orchestration"],
+      ["Foundry Workflows (preview)", "Declarative sequential or group-chat flows", "Anything long-lived", "Retire 2026-12-01 [[r11]]"],
+      ["Connected Agents (classic)", "Nothing new: it exists only in classic agents", "Always, in the new service", "Classic agents retire 2027-03-31 [[r11]]"],
+      ["MCP server that wraps an agent", "Peer should look like a tool", "You need task states and opaque reasoning", "Loses A2A task semantics"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Remote Foundry agent answers in an older protocol shape", "cause": "With no version selector Foundry serves A2A 0.3", "fix": "Send the `A2A-Version: 1.0` header [[tr12]]." },
+    { "symptom": "Caller gets 403 on a Foundry A2A endpoint", "cause": "The calling identity lacks the Foundry Agent Consumer role on the target project", "fix": "Grant Foundry Agent Consumer or higher and use Entra auth [[r21]]." },
+    { "symptom": "A new design depends on Workflows and the team plans a rewrite", "cause": "Workflows (preview) retire on 2026-12-01", "fix": "Pick Agent Framework code orchestration or A2A for new work [[r11]]." }
+  ],
+  "scenarios": [
+    {
+      "id": "w12-t11-s1",
+      "title": "A peer team owns the specialist agent",
+      "situation": "A Foundry agent needs a tax-rules specialist that another team runs in its own container and exposes over A2A. The specialist's internals are private.",
+      "constraints": ["Separate ownership and runtime", "Peer already exposes A2A", "GA features preferred"],
+      "unknowns": ["Which A2A version does the peer serve?", "How does the peer authenticate callers?"],
+      "question": "How do you connect them?",
+      "options": [
+        { "name": "A2A tool with the `a2a` (GA, v1.0) type and a project connection", "verdict": "best", "why": "Standard protocol, credentials in a connection, peer stays opaque.", "tradeoff": "You depend on the peer's version support and uptime." },
+        { "name": "Wrap the peer as an MCP tool", "verdict": "good", "why": "Easy to consume as a tool.", "tradeoff": "You lose A2A task semantics and an opaque agent looks like a function." },
+        { "name": "Copy the specialist's logic into your agent", "verdict": "poor", "why": "Duplicates ownership and goes stale.", "tradeoff": "Right only when the peer is retired and you inherit it." }
+      ],
+      "flips": [
+        { "if": "The peer only serves A2A 0.3", "then": "Use `a2a_preview` (preview) until it upgrades." },
+        { "if": "The peer is a plain REST API", "then": "OpenAPI tool instead." }
+      ],
+      "takeaway": "A2A fits separately owned agents."
+    },
+    {
+      "id": "w12-t11-s2",
+      "title": "Three agents, one team, one release",
+      "situation": "One team owns three Foundry agents that run in a fixed order with shared state and a single release train. They used Connected Agents in the classic service.",
+      "constraints": ["Same codebase and team", "Fixed control flow", "Long-lived, must outlive 2026-12-01"],
+      "unknowns": ["Do any steps need to run in parallel?", "Where does shared state live?"],
+      "question": "What replaces Connected Agents?",
+      "options": [
+        { "name": "Agent Framework orchestration inside one hosted agent", "verdict": "best", "why": "Code-defined control flow, no network hops, no retiring dependency.", "tradeoff": "You write and test the orchestration, and the hosted GA label is unconfirmed." },
+        { "name": "A2A tool between the three agents", "verdict": "good", "why": "Works and gives separation.", "tradeoff": "Extra hops, auth and version handling for agents the team already owns." },
+        { "name": "Foundry Workflows (preview)", "verdict": "poor", "why": "Retires on 2026-12-01 and the design must outlive it.", "tradeoff": "Fine for short-lived experiments before the retirement." }
+      ],
+      "flips": [
+        { "if": "The agents will be split among teams", "then": "A2A between them." },
+        { "if": "The flow is a short pilot", "then": "Workflows are acceptable until the retirement." }
+      ],
+      "takeaway": "Do not build long-lived designs on a preview feature with a retirement date."
+    }
+  ],
+  "quiz": [
+    { "id": "w12-t11-q1", "type": "single", "tag": "concept", "q": "Which tool type targets A2A protocol 1.0 and is GA in Foundry?", "options": ["`a2a_preview`", "`a2a`", "`connected_agent`", "`workflow`"], "answer": 1, "explain": "`a2a` is GA and targets 1.0. `a2a_preview` targets 0.3 and is preview. Connected Agents is not in the new service.", "ref": "r21" },
+    { "id": "w12-t11-q2", "type": "multi", "tag": "tradeoff", "q": "Which are documented limits of calling a Foundry agent as an A2A endpoint?", "options": ["Text modality only", "No streaming", "Requires the Responses protocol", "Supports gRPC and HTTP+JSON bindings"], "answers": [0, 1, 2], "explain": "The incoming A2A endpoint is v1.0 over JSON-RPC only, text only, without streaming, and needs the Responses protocol. gRPC and HTTP+JSON are not offered.", "ref": "tr12" },
+    { "id": "w12-t11-q3", "type": "single", "tag": "flip", "q": "A design must stay in service for years. Which option is a poor base because of a published retirement date?", "options": ["Agent Framework orchestration in hosted code", "A2A tool with `a2a`", "Foundry Workflows (preview)", "Direct tool calls to an OpenAPI service"], "answer": 2, "explain": "Workflows (preview) retire on 2026-12-01. The other options have no announced retirement in the sources checked on 2026-10-13.", "ref": "r11" }
+  ],
+  "flashcards": [
+    { "front": "What replaces Connected Agents in the new Foundry Agent Service?", "back": "The A2A tool (any A2A endpoint, including a Foundry agent exposed as one), Foundry Workflows (preview, retire 2026-12-01), or Agent Framework orchestration in your own code." },
+    { "front": "Which header makes a Foundry agent serve A2A 1.0?", "back": "`A2A-Version: 1.0`. With no version selector Foundry serves 0.3." }
+  ],
+  "related": ["w09-t02", "w09-t10", "w11-t23", "w12-t08", "w12-t19", "w12-l4"],
+  "refs": ["r9", "r11", "r21", "r23", "tr7", "tr12"]
+}

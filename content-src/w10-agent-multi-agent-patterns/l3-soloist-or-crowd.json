@@ -1,0 +1,101 @@
+{
+  "id": "w10-l3",
+  "order": 3,
+  "title": "Soloist or crowd? Topologies and the multi-agent bill",
+  "kind": "problem",
+  "minutes": 22,
+  "brief": "One agent is struggling, and someone proposes a team of agents. The coupling of the subtasks, the value per run, the trust boundaries and the latency budget are all undecided. Compare the topologies against the evidence before you split anything.",
+  "blocks": [
+    { "t": "h", "text": "Five ways to share the work, and what the evidence says", "level": 2 },
+    { "t": "compare", "title": "Multi-agent topologies", "intro": "Microsoft lists sequential, concurrent, group chat (including maker-checker loops), handoff and magentic orchestration [[r9]]. LangChain frames the same space as subagents, handoffs, skills, router and custom workflow [[r32]]. The key question is who owns the conversation after a delegation.", "options": [
+      { "name": "Supervisor with agents as tools", "summary": "A primary agent calls specialists like functions, keeps ownership and receives control back with each result.", "pros": ["The caller stays accountable for the final answer", "Workers can be read-only and hold least-privilege tools", "Parallel calls shorten wall-clock time"], "cons": ["Every hop passes through the supervisor", "The supervisor's window collects every result"], "bestWhen": "One agent must own the answer and combine several specialist results.", "avoidWhen": "A specialist should talk to the user directly for the rest of the conversation.", "meta": [{ "k": "Owner after delegation", "v": "caller" }, { "k": "Shape", "v": "hub and spoke" }] },
+      { "name": "Handoff mesh", "summary": "No central orchestrator: the receiving agent takes full ownership and the full context. In the OpenAI Agents SDK a handoff is exposed as a tool named transfer_to_<agent_name> by default [[r20]].", "pros": ["The right specialist talks to the user with no return hop", "Each specialist owns its tools, policy and owner"], "cons": ["Infinite handoff loops and bouncing are a documented risk [[r9]]", "Microsoft's handoff supports Agent only, and agents must support local tool execution [[r11]]"], "bestWhen": "Specialists should take over and own the rest of the conversation.", "avoidWhen": "The caller must combine several answers or stay accountable.", "meta": [{ "k": "Owner after delegation", "v": "receiver" }, { "k": "Shape", "v": "mesh" }] },
+      { "name": "Group chat and maker-checker", "summary": "Several agents take turns in a shared conversation, often one produces and another reviews.", "pros": ["Review loops raise quality when criteria are clear", "Everyone sees the same thread"], "cons": ["Turns multiply tokens", "Stalls and non-terminating chats need a stop rule"], "bestWhen": "A produce-and-review loop has a clear acceptance check.", "avoidWhen": "The path is deterministic or latency is tight.", "meta": [{ "k": "Owner after delegation", "v": "shared" }, { "k": "Needs", "v": "termination rule" }] },
+      { "name": "Magentic", "tag": "Preview", "summary": "A manager keeps shared context and a task ledger, tracks progress and re-plans. Built on the Magentic-One design [[r31]].", "pros": ["A visible, adjustable plan for open-ended work", "Re-plans when a step fails"], "cons": ["Slow and token heavy", "Microsoft says it is untested how well it performs outside the original Magentic-One design, and the C# types are experimental [[r10]]"], "bestWhen": "Open-ended work where a plan ledger is worth the cost and the wait.", "avoidWhen": "The task is time-sensitive or the path is deterministic.", "meta": [{ "k": "Owner after delegation", "v": "manager" }, { "k": "Status", "v": "C# types experimental, checked 2026-10-13" }] },
+      { "name": "Sequential or concurrent pipeline", "summary": "Fixed stages of specialists in order, or independent perspectives run in parallel and merged.", "pros": ["Predictable and easy to trace", "Concurrent runs add independent views"], "cons": ["No adaptation to surprises", "Sequential stages add latency"], "bestWhen": "The stages are known, or the perspectives are independent.", "avoidWhen": "What one stage finds should change the later stages.", "meta": [{ "k": "Owner after delegation", "v": "code" }, { "k": "Shape", "v": "pipeline" }] }
+    ] },
+    { "t": "diagram", "id": "w10-d3", "title": "Who owns the conversation", "alt": "Sequence showing an agent called as a tool returning control to the triage agent, and a handoff passing ownership to the billing agent.", "src": "sequenceDiagram\n  participant U as User\n  participant T as Triage agent\n  participant B as Billing agent\n  alt Agent as tool\n    U->>T: Question\n    T->>B: Call as tool\n    B-->>T: Result\n    T-->>U: Answer\n  else Handoff\n    U->>T: Question\n    T->>B: Handoff with context\n    B-->>U: Answer from the new owner\n  end", "caption": "Agent as tool returns control to the caller. A handoff moves ownership and the full context to the receiver." },
+    { "t": "table", "caption": "Single versus multi-agent matrix. Numbers are vendor-reported unless marked.", "head": ["Dimension", "Single agent with tools", "Orchestrator with read-only workers", "Parallel writers or free-form crowd"], "rows": [
+      ["Latency", "Fewest hops, but tool calls run one after another", "Parallel reads cut wall-clock time (Anthropic reports up to 90% on research), yet synchronous subagents became a bottleneck [[r2]]", "Hops, negotiation and re-plans add delay"],
+      ["Token cost", "About 4x chat tokens [[r2]]", "About 15x chat tokens, so value per task must pay for it [[r2]]", "Highest and least predictable when loops or stalls occur"],
+      ["Context isolation", "One window holds every result, so rot risk grows", "Each worker has a clean window and returns a short result [[r6]]", "Isolated, but decisions rest on partial views [[r3]]"],
+      ["Debuggability", "One linear trace", "A lead trace plus worker traces, which needs trace propagation", "Many interleaved traces. MAST catalogues 14 failure modes [[r5]]"],
+      ["Blast radius", "One identity and tool set, all or nothing", "Read-only workers cannot change state and can hold least privilege", "Every writer can corrupt shared state"],
+      ["Consistency", "One decision maker, consistent choices", "A single writer keeps decisions consistent [[r4]]", "Actions carry implicit decisions that conflict [[r3]]"]
+    ], "highlightCol": 2 },
+    { "t": "stats", "items": [
+      { "label": "Tokens vs chat, agent", "value": "about 4x", "note": "Anthropic, own traffic, vendor-reported" },
+      { "label": "Tokens vs chat, multi-agent", "value": "about 15x", "note": "Same source. Cost must be justified by value." },
+      { "label": "Gain over single-agent Opus 4", "value": "90.2%", "note": "Anthropic internal research eval, breadth-first queries, 2025-06-13" },
+      { "label": "Variance explained by token use", "value": "80%", "note": "BrowseComp. 95% with tool calls and model choice added." }
+    ] },
+    { "t": "dials", "id": "w10-l3-topology", "title": "Single agent, or which crowd?", "prompt": "Flip the dials. Parallel writers are not on the board because no setting rescues them.",
+      "dials": [
+        { "id": "coupling", "label": "Subtask coupling", "values": [ { "id": "reads", "label": "Independent reads or analysis" }, { "id": "writes", "label": "Coupled writes to one artifact" } ] },
+        { "id": "value", "label": "Value per run", "values": [ { "id": "low", "label": "Low, cost sensitive" }, { "id": "high", "label": "High, breadth pays" } ] },
+        { "id": "boundary", "label": "Ownership boundary", "values": [ { "id": "one", "label": "One team and trust zone" }, { "id": "split", "label": "Separate teams or trust zones" } ] },
+        { "id": "time", "label": "Latency budget", "values": [ { "id": "fast", "label": "Interactive" }, { "id": "slow", "label": "Background" } ] }
+      ],
+      "options": [
+        { "id": "single", "name": "Single agent with tools", "summary": "One loop, one window, one decision maker." },
+        { "id": "orch", "name": "Orchestrator with read-only workers", "summary": "Lead delegates reads and keeps the pen." },
+        { "id": "handoff", "name": "Handoff mesh", "summary": "Specialists take over the conversation." },
+        { "id": "chat", "name": "Group chat or maker-checker", "summary": "Agents take turns, often producer and reviewer." },
+        { "id": "magentic", "name": "Magentic planning manager", "summary": "Task ledger, progress tracking and re-planning." }
+      ],
+      "scores": {
+        "single": {
+          "coupling": { "reads": { "s": 0, "why": "One agent can read many sources in sequence." }, "writes": { "s": 2, "why": "One decision maker keeps writes consistent." } },
+          "value": { "low": { "s": 2, "why": "The cheapest rung that works." }, "high": { "s": -1, "why": "Leaves breadth and parallelism unused when value justifies the spend." } },
+          "boundary": { "one": { "s": 1, "why": "No reason to split." }, "split": { "s": -2, "why": "One identity and tool set spans zones that should stay separate." } },
+          "time": { "fast": { "s": 1, "why": "Fewest hops." }, "slow": { "s": 0, "why": "Fine, but long runs fill one window." } }
+        },
+        "orch": {
+          "coupling": { "reads": { "s": 2, "why": "Read-only workers run in parallel with clean windows." }, "writes": { "s": -2, "why": "Parallel workers writing one artifact is the failure Cognition describes. Keep one writer." } },
+          "value": { "low": { "s": -2, "why": "About 15x chat tokens is hard to repay on low-value runs." }, "high": { "s": 2, "why": "Breadth-first work repaid the cost in Anthropic's research eval." } },
+          "boundary": { "one": { "s": 0, "why": "Neutral." }, "split": { "s": 1, "why": "Workers can hold separate identities and tools." } },
+          "time": { "fast": { "s": 0, "why": "Parallel reads help, but planning and synthesis add calls." }, "slow": { "s": 1, "why": "Tolerates the wait." } }
+        },
+        "handoff": {
+          "coupling": { "reads": { "s": 0, "why": "Neutral." }, "writes": { "s": -1, "why": "Ownership moves, so context and decisions must travel with it." } },
+          "value": { "low": { "s": 0, "why": "Cost depends on how often agents hand off." }, "high": { "s": 0, "why": "Neutral." } },
+          "boundary": { "one": { "s": 0, "why": "Neutral." }, "split": { "s": 2, "why": "Each specialist can own its tools, policy and owner." } },
+          "time": { "fast": { "s": 1, "why": "The specialist answers the user directly, with no return hop." }, "slow": { "s": 0, "why": "Neutral." } }
+        },
+        "chat": {
+          "coupling": { "reads": { "s": 0, "why": "Neutral." }, "writes": { "s": 1, "why": "A checker can review while one agent writes." } },
+          "value": { "low": { "s": -2, "why": "Turns multiply tokens." }, "high": { "s": 1, "why": "Review loops can lift quality when criteria are clear." } },
+          "boundary": { "one": { "s": 0, "why": "Neutral." }, "split": { "s": 0, "why": "A shared thread exposes every message to every agent." } },
+          "time": { "fast": { "s": -2, "why": "Turn-taking and stalls add delay." }, "slow": { "s": 0, "why": "Neutral." } }
+        },
+        "magentic": {
+          "coupling": { "reads": { "s": 1, "why": "A task ledger tracks open-ended gathering." }, "writes": { "s": -1, "why": "The planner may assign writes to several agents at once." } },
+          "value": { "low": { "s": -2, "why": "Planning and re-planning are expensive." }, "high": { "s": 1, "why": "A plan ledger pays only on open-ended, high-value work." } },
+          "boundary": { "one": { "s": 0, "why": "Neutral." }, "split": { "s": 0, "why": "Neutral." } },
+          "time": { "fast": { "s": -2, "why": "Microsoft advises against it for time-sensitive work." }, "slow": { "s": 1, "why": "Open-ended runs tolerate re-planning." } }
+        }
+      },
+      "takeaway": "The single agent wins whenever writes are coupled and value is modest. Splitting needs a dial you can name: independent reads with high value, or a trust boundary." },
+    { "t": "failure", "title": "Multi-agent failure modes (MAST categories)", "items": [
+      { "symptom": "Two workers edit the same artifact and the result contradicts itself", "cause": "Parallel writers make implicit decisions without seeing each other's actions (Cognition, 2025-06-12) [[r3]]", "fix": "Single-threaded writes. Workers read and report, one agent writes, and traces are shared in full, not only summaries." },
+      { "symptom": "Requests bounce between specialists, or a group chat never ends", "cause": "Handoff loops or no termination rule. MAST files unawareness of termination conditions and step repetition under system design issues [[r5]]", "fix": "Hop cap, handoff allow-list and a termination condition owned by the orchestrator." },
+      { "symptom": "The run reports success and the output fails a spot check", "cause": "No agent verified the result, a task verification failure [[r5]]", "fix": "An independent checker with a clean context and an external check such as tests or a schema." },
+      { "symptom": "Run time equals the slowest subagent every time", "cause": "Subagents ran synchronously, which Anthropic found created bottlenecks [[r2]]", "fix": "Run workers in parallel with timeouts and let the lead continue with partial results." }
+    ] },
+    { "t": "callout", "kind": "why", "title": "Anthropic and Cognition fit together", "md": "Anthropic's gain came from breadth-first research reads. Cognition argued on 2025-06-12 against parallel agents that write [[r3]]. On 2026-04-22 it said that view still holds for parallel-writer swarms, that several agents can contribute while writes stay single-threaded, and that a review loop works best when the reviewer shares no context with the coder. It reports Devin Review catching on average 2 bugs per pull request, about 58% severe (vendor-reported) [[r4]]." }
+  ],
+  "quiz": [
+    { "id": "w10-l3-q1", "type": "single", "tag": "flip", "difficulty": 2, "q": "Which change in the situation flips the choice from a handoff to an agent-as-tool design?", "options": ["The specialist should own the rest of the conversation and talk to the user directly in every later turn", "The specialist needs the full conversation history to do its job", "Handoffs are unavailable in the framework you picked", "The caller must stay accountable for the final answer and combine several specialist results"], "answer": 3, "explain": "With agent-as-tool the primary agent keeps ownership and control returns to it, which is what accountability and result combination need. The first two describe reasons to hand off, and a handoff already passes the full context. Framework availability is a constraint, not a dial that changes the design.", "ref": "r11" },
+    { "id": "w10-l3-q2", "type": "multi", "tag": "tradeoff", "difficulty": 2, "q": "Select every signal that justifies splitting one agent into several.", "options": ["The prompt has grown many if-then-else branches that are hard to maintain", "Tool selection keeps failing after you clarified the tool descriptions", "Parts of the work must run under different identities, teams or trust zones", "The single agent looked slow in one demo", "A competitor announced a multi-agent product"], "answers": [0, 1, 2], "explain": "OpenAI advises maximizing a single agent first, then splitting when prompts hold many branches or tool selection fails after clearer descriptions. Separate trust boundaries can justify the extra cost on their own. One slow demo and a competitor's announcement are not engineering signals.", "ref": "r19" },
+    { "id": "w10-l3-q3", "type": "match", "tag": "concept", "difficulty": 2, "q": "Match each topology to the failure it is most associated with.", "pairs": [ { "l": "Handoff mesh", "r": "Bouncing between agents in an infinite handoff loop" }, { "l": "Group chat", "r": "A conversation that stalls or never terminates" }, { "l": "Magentic", "r": "Planning and re-planning cost on work that did not need it" }, { "l": "Parallel writers", "r": "Conflicting implicit decisions in one shared artifact" } ], "explain": "Each topology fails where its strength is overused: a mesh has no central stopper, a chat needs a stop rule, a planning manager spends tokens and time, and parallel writers cannot see each other's decisions.", "ref": "r5" },
+    { "id": "w10-l3-q4", "type": "numeric", "tag": "numeric", "difficulty": 1, "q": "A chat answer to a research question uses about 8,000 tokens. Using Anthropic's reported multiplier for multi-agent systems, roughly how many tokens would a multi-agent run on the same question use?", "answer": 120000, "tolerancePct": 5, "unit": "tokens", "hint": "Multi-agent systems used about 15x the tokens of chat.", "explain": "8,000 x 15 = 120,000 tokens. The multiplier is vendor-reported on Anthropic's own research traffic, so treat it as an order of magnitude and measure your own. Using the 4x agent multiplier instead would give only 32,000.", "ref": "r2" }
+  ],
+  "defend": null,
+  "refs": ["r9", "r2", "r3", "r4", "r5", "r11", "r10", "r19", "r20", "r32", "r31"],
+  "takeaways": [
+    "Ask who owns the conversation after a delegation: the caller (agent as tool) or the receiver (handoff).",
+    "Multi-agent systems used about 15x the tokens of chat in Anthropic's data, so they must be justified by value per run.",
+    "Reads parallelize safely, coupled writes do not. Keep a single writer and add read-only workers.",
+    "Handoff loops, stalled chats and unverified results are the named failures. Put hop caps, stop rules and an independent checker in the design."
+  ]
+}

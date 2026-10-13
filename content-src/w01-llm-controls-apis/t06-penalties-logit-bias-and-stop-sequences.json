@@ -1,0 +1,113 @@
+{
+  "id": "w01-t06",
+  "order": 6,
+  "group": "Sampling and decoding",
+  "title": "Penalties, logit_bias and stop sequences",
+  "minutes": 6,
+  "difficulty": "core",
+  "summary": "Penalties discourage repeated tokens, logit_bias shifts the odds of specific token ids, and stop sequences end generation at a delimiter. Availability differs by API.",
+  "useIf": "You fight repetition, must ban or favour specific tokens, or need generation to end at a known delimiter.",
+  "avoidIf": "A prompt change, a schema or a stop sequence would solve it. Penalties and bias are blunt and tokenizer specific.",
+  "explain": [
+    { "t": "p", "md": "On Chat Completions, **frequency_penalty** lowers a token's odds in proportion to how often it has already appeared, and **presence_penalty** lowers it once it has appeared at all. Both range from -2.0 to 2.0, and values between -1 and 1 are the usual range [[r5]]. Positive values discourage repetition, negative values encourage it. Penalties also hurt text where repeats are correct, such as code, JSON keys and names." },
+    { "t": "p", "md": "**logit_bias** maps a token id to a value from -100 to 100 that is added to that token's score. Large negative values act like a ban and large positive values like a force. Ids belong to a tokenizer, and variants of a word (leading space, capital letter, plural) are different tokens, so a bias on one id misses its siblings. **Stop sequences** end generation when the model emits a match. OpenAI Chat accepts up to 4 and does not support `stop` on o3 and o4-mini. Anthropic's `stop_sequences` is an array, and a match sets `stop_reason: \"stop_sequence\"` [[r19]]." },
+    { "t": "table", "caption": "Availability on the check date 2026-10-13", "head": ["Control", "OpenAI Chat", "OpenAI Responses", "Anthropic Messages"], "compact": true, "rows": [
+      ["`frequency_penalty`, `presence_penalty`", "Yes, -2.0 to 2.0", "No", "No"],
+      ["`logit_bias`", "Yes, -100 to 100", "No", "No"],
+      ["`stop`", "Yes, up to 4 sequences", "No", "`stop_sequences`"],
+      ["Via Anthropic's OpenAI compatibility layer", "Penalties and `logit_bias` ignored", "n/a", "Not for production [[r36]]"]
+    ] },
+    { "t": "callout", "kind": "tip", "title": "Design stop sequences that cannot occur by accident", "md": "A stop string that can appear in valid output truncates answers silently. Prefer unique delimiters such as a speaker label with a newline, pair the stop with a token cap, and check the stop reason in tests." }
+  ],
+  "whereToUse": [
+    "Long creative or marketing generation on a non-reasoning Chat model that loops on phrases",
+    "Dialogue prompts where the model may continue as the next speaker",
+    "Forcing a one-token label on a legacy classifier path, with the cost of tokenizer coupling",
+    "Banning a small set of unwanted tokens when a prompt cannot do it",
+    "Ending output at a delimiter in a custom template format"
+  ],
+  "whenToUse": {
+    "use": [
+      "Repetition persists after you fix the prompt, on a non-reasoning model",
+      "A delimiter reliably marks the end of the part you need",
+      "You can test the exact tokenizer behaviour of the biased tokens"
+    ],
+    "avoid": [
+      "Penalties on code, structured output or anything that needs repeated tokens",
+      "logit_bias across several vendors, since ids and support differ",
+      "Stop sequences that can occur inside valid answers"
+    ],
+    "flips": [
+      "You use Responses or Anthropic: penalties and bias do not exist, so use prompts and schemas",
+      "You need a label from a fixed set: use structured outputs with an enum instead of bias",
+      "You are on a reasoning model: expect rejected or ignored controls and test"
+    ]
+  },
+  "alternatives": {
+    "title": "Ways to shape generation",
+    "head": ["Approach", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Small frequency or presence penalty", "Prose that repeats itself", "Code, JSON, names", "Can distort wording, tune with evals"],
+      ["`logit_bias`", "A few known token ids to ban or favour", "Variants and multiple vendors", "Tokenizer coupling, easy to miss siblings"],
+      ["Stop sequence", "A clear delimiter ends the useful text", "The delimiter occurs in valid output", "Silent truncation"],
+      ["Strict schema or enum", "The output shape or label set is fixed", "Free-form prose", "Needs schema design"],
+      ["Prompt change", "Instructions are unclear", "The model ignores them anyway", "Cheapest first step"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Answers get stranger as the penalty grows", "cause": "High penalties push the model away from correct repeated words", "fix": "Stay within -1 to 1, try 0.2 to 0.5 first, and verify with evals" },
+    { "symptom": "A banned word still appears", "cause": "`logit_bias` covered one token id, but the word has variants with other ids", "fix": "Tokenize each variant with the right tokenizer or use a post-check" },
+    { "symptom": "Answers end mid-sentence", "cause": "A stop sequence occurs inside valid text", "fix": "Choose a rarer delimiter and check `finish_reason` or `stop_reason`" },
+    { "symptom": "Parameters have no effect after a port", "cause": "The target API or compatibility layer ignores them", "fix": "Check the body reference for the API and remove unsupported controls" }
+  ],
+  "scenarios": [
+    {
+      "id": "w01-t06-s1",
+      "title": "A long draft that keeps looping",
+      "situation": "A non-reasoning model on Chat Completions writes 800 word product descriptions. Some drafts repeat the same phrase many times.",
+      "constraints": ["Chat Completions", "Prose, no code or JSON", "A prompt rewrite has already been tried"],
+      "unknowns": ["Which phrases repeat?", "Does a token cap hide the loops?"],
+      "question": "What do you try first?",
+      "options": [
+        { "name": "Apply a small frequency penalty, cap tokens, and compare drafts on an eval set", "verdict": "best", "why": "Prose tolerates mild penalties, and a cap limits damage while you tune.", "tradeoff": "Too high a value changes word choice, so measure quality." },
+        { "name": "Set `logit_bias` of -100 on the token of the repeated word", "verdict": "good", "why": "Stops that word.", "tradeoff": "Variants of the word still loop, and the word may be needed elsewhere." },
+        { "name": "Set both penalties to 2.0", "verdict": "poor", "why": "The maximum values distort wording across the whole draft and can break grammar.", "tradeoff": "Strong penalties suit rare cases such as generating a list of unique items." }
+      ],
+      "flips": [
+        { "if": "The output is code or JSON", "then": "Avoid penalties and use schemas or a different model." },
+        { "if": "The target moves to the Responses API", "then": "Penalties are absent, so use prompt rules and a length cap." }
+      ],
+      "takeaway": "Use small penalties for prose and measure the effect."
+    },
+    {
+      "id": "w01-t06-s2",
+      "title": "A chatbot that writes the user's next line",
+      "situation": "A roleplay prompt uses a single block of text. The model sometimes continues with `User:` and invents the user's reply.",
+      "constraints": ["Free-form dialogue", "The label `User:` marks the next speaker", "Cost matters"],
+      "unknowns": ["Can the prompt use the chat message format instead?", "Does `User:` ever appear in valid replies?"],
+      "question": "How do you stop it?",
+      "options": [
+        { "name": "Cut the text after generation with a regex", "verdict": "good", "why": "It works on any API.", "tradeoff": "You still pay for and wait on the extra tokens." },
+        { "name": "Add `User:` as a stop sequence and cap output tokens", "verdict": "best", "why": "Generation ends at the delimiter, saving tokens and latency, and the cap bounds worst cases.", "tradeoff": "The delimiter must not occur in valid replies, so test the stop reason." },
+        { "name": "Set `logit_bias` of -100 on the token for `User`", "verdict": "poor", "why": "Token variants slip through and the model may need the word in valid answers.", "tradeoff": "Bias suits banning a few known tokens, not a speaker label." }
+      ],
+      "flips": [
+        { "if": "You can use proper chat roles", "then": "Use message roles and drop the label hack." },
+        { "if": "The target is Anthropic", "then": "Use `stop_sequences`, and check `stop_reason`." }
+      ],
+      "takeaway": "End generation at a unique delimiter and verify the stop reason."
+    }
+  ],
+  "quiz": [
+    { "id": "w01-t06-q1", "type": "single", "tag": "concept", "q": "What is the difference between frequency and presence penalty?", "options": ["Frequency scales with how often a token appeared, presence applies once it appeared", "Presence scales with count, frequency applies once", "They are the same parameter", "Frequency applies only to rare tokens"], "answer": 0, "explain": "Frequency penalty grows with the number of earlier occurrences, and presence penalty is a flat reduction after any occurrence. They are separate parameters." },
+    { "id": "w01-t06-q2", "type": "multi", "tag": "bug", "q": "Which are reasons a `logit_bias` ban can fail?", "options": ["Variants of the word have different token ids", "The target API does not support `logit_bias`", "The ids came from another vendor's tokenizer", "Bias values above 100 are required"], "answers": [0, 1, 2], "explain": "Token variants, unsupported APIs and mismatched tokenizers all defeat a ban. The valid range is -100 to 100, so values above 100 are not required." },
+    { "id": "w01-t06-q3", "type": "single", "tag": "diagnose", "q": "An answer ends abruptly and `stop_reason` is `stop_sequence`. What is the likely cause?", "options": ["The output cap was reached", "The model refused", "The context window was full", "A stop string occurred in the text"], "answer": 3, "explain": "A match sets `stop_reason` to `stop_sequence` on Anthropic. A cap gives a length-type reason, and a refusal or a full window show different signals." }
+  ],
+  "flashcards": [
+    { "front": "What range do the penalties and `logit_bias` accept?", "back": "Penalties -2.0 to 2.0, `logit_bias` -100 to 100. Values between -1 and 1 are the usual range for penalties." },
+    { "front": "How many stop sequences does OpenAI Chat accept?", "back": "Up to 4. `stop` is not supported on o3 and o4-mini, and the Responses API has no `stop`." },
+    { "front": "Why is `logit_bias` fragile across vendors?", "back": "It uses tokenizer-specific ids, word variants have different ids, and some APIs do not support it at all." }
+  ],
+  "related": ["w01-t04", "w01-t07", "w01-t08", "w01-t10"],
+  "refs": ["r5", "r19", "r36"]
+}

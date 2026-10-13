@@ -1,0 +1,113 @@
+{
+  "id": "w02-t15",
+  "order": 15,
+  "group": "Other caches and budgets",
+  "title": "Semantic cache",
+  "minutes": 9,
+  "difficulty": "advanced",
+  "summary": "A semantic cache embeds the prompt and returns a stored answer when a similar earlier prompt is close enough. It skips the whole model call, and it changes what the user sees, so it can be wrong, stale or leak across users.",
+  "useIf": "Many users ask paraphrases of the same questions, the answer is the same for everyone, and a slightly stale answer is acceptable.",
+  "avoidIf": "Answers depend on who asks, on live data or on high-stakes accuracy, or paraphrases rarely repeat.",
+  "explain": [
+    { "t": "p", "md": "Unlike a prompt cache, which reuses prefill state and leaves the answer unchanged, a **semantic cache** replaces the model's answer. The flow is: embed the new prompt, search a vector store partition for a close earlier prompt, return its stored answer on a hit, and on a miss call the model and store the result with a lifetime [[r16]] [[r17]]." },
+    { "t": "diagram", "id": "w02-t15-d1", "title": "Semantic cache request path", "alt": "A request is embedded and looked up in its partition. A hit returns the stored answer. A miss calls the model and stores the answer.", "src": "flowchart LR\n  R[Request] --> E[Embed]\n  E --> L{Hit in partition?}\n  L -->|yes| A[Return stored answer]\n  L -->|no| M[Call model]\n  M --> S[Store with TTL]\n  S --> B[Return answer]" },
+    { "t": "p", "md": "**In Azure API Management** the policies are `llm-semantic-cache-lookup` (inbound) and `llm-semantic-cache-store` (outbound), and they must be paired. Lookup takes `score-threshold` (0.0 to 1.0, lower is stricter), `embeddings-backend-id`, `ignore-system-messages` (recommended `true`) and `max-message-count`, with a `vary-by` child to partition the cache. Store takes `duration` in seconds. Microsoft suggests starting low, such as 0.05, and warns that values above 0.2 may cause mismatches and that results can be incorrect, outdated or unsafe. It recommends a `rate-limit` after lookup and `llm-content-safety` with Prompt Shields [[r16]]." },
+    { "t": "p", "md": "**In your own code** a semantic cache is an application or gateway pattern, not a managed Redis feature. RedisVL `SemanticCache` uses `distance_threshold` in cosine distance units from 0 to 2 (the tutorial sample is 0.15) and a `ttl` (sample 3,600 seconds). The APIM and RedisVL scales differ, so a number from one does not carry over [[r17]]. Partition by tenant, user, model ID, embedding model ID, prompt template version, tool configuration version and safety-policy version [[r17]]." },
+    { "t": "formula", "title": "Break-even hit rate", "expr": "net saving per request = h x C_model - C_lookup, so break-even h = C_lookup / C_model", "vars": [
+      { "k": "h", "v": "hit rate" },
+      { "k": "C_lookup", "v": "embedding plus vector lookup, paid on every request, hit or miss" },
+      { "k": "C_model", "v": "cost of the model call a hit avoids" }
+    ], "example": "Derived. If the embedding and lookup cost 6% of a model call, you need a hit rate above 6% to save money, and misses also add the lookup latency. A miss pays the embedding, the lookup and the normal call [[r17]]." },
+    { "t": "callout", "kind": "warn", "title": "A hit can be a wrong answer for someone else", "md": "Two prompts can be close in embedding space and still need different answers, for example order 123 and order 124. If the answer was built from one user's permissioned data, a hit hands it to another. Timing also shows whether a prompt was cached, and audits found cross-user cache sharing at several providers [[r12]]." }
+  ],
+  "whereToUse": [
+    "Public FAQ and product-help assistants where one answer serves everyone",
+    "Internal knowledge bots over a public or company-wide corpus with a refresh schedule",
+    "Gateway-level cost control in front of several apps (APIM or a custom proxy)",
+    "Repeated analytics questions asked in different words with a stable data snapshot",
+    "Demos and load tests where repeated questions need fast, cheap answers"
+  ],
+  "whenToUse": {
+    "use": [
+      "The same question arrives in many wordings and one answer is correct for all askers",
+      "Staleness of hours or days is acceptable and you can set a matching TTL",
+      "You can partition by model, template and policy versions and measure net savings"
+    ],
+    "avoid": [
+      "Answers depend on the user, role or live data",
+      "Wrong or unsafe answers are costly, as in regulated or high-risk domains",
+      "The traffic is a long tail of unique questions, where the lookup is pure overhead"
+    ],
+    "flips": [
+      "Answers built from permissioned data: add the authorization scope to the key, or skip the semantic cache",
+      "A prompt template, model or policy version changes: partition by version so old answers expire",
+      "Hit rate stays under the break-even rate: remove it and rely on prompt caching"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with other caches",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Semantic cache", "Paraphrased repeats, shared answer", "Personalised or live answers", "Wrong, stale or leaked answers, plus lookup cost on every miss"],
+      ["Exact response cache", "Identical inputs repeat", "Wording varies", "Low hit rate, stale answers"],
+      ["Prompt (prefix) cache", "Long stable prefix, varied questions", "Short prompts", "Answer unchanged, only cost and TTFT improve"],
+      ["Curated FAQ or answer library", "Top questions are known and reviewed", "Long tail of questions", "Editorial effort"],
+      ["No cache", "Unique, high-stakes questions", "High repetition", "Full cost and latency"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Users receive an answer to a slightly different question", "cause": "Threshold is too loose for the embedding model", "fix": "Start at a strict threshold (APIM 0.05), review mismatches on a sample and tighten before loosening [[r16]]" },
+    { "symptom": "One tenant sees an answer built from another tenant's data", "cause": "The cache was not partitioned by tenant or user", "fix": "Add tenant, user and authorization scope to `vary-by` or the key, or do not cache such answers [[r16]] [[r17]]" },
+    { "symptom": "Savings never appear", "cause": "Embedding and lookup cost exceeds the savings at the actual hit rate", "fix": "Compute break-even, measure hit rate, and remove the cache if it stays below it [[r17]]" }
+  ],
+  "scenarios": [
+    {
+      "id": "w02-t15-s1",
+      "title": "Public help bot, weekly content",
+      "situation": "A public help assistant answers product questions from documentation that changes weekly. Logs show about 35% of questions are paraphrases of 200 common ones. The answer is the same for every visitor.",
+      "constraints": ["Answer is identical for all users", "Content refreshes weekly", "A wrong answer is a nuisance, not a safety issue"],
+      "unknowns": ["How often do near-misses give wrong answers at a given threshold?", "What do embedding and lookup cost relative to a call?"],
+      "question": "How do you cache?",
+      "options": [
+        { "name": "Semantic cache with a strict threshold, a TTL under the weekly refresh and partitions by version and language", "verdict": "best", "why": "Paraphrase repeats are common and the answer is shared, so a strict threshold captures most hits with few mismatches.", "tradeoff": "Lookup cost on every request and a need to review mismatches." },
+        { "name": "Exact-match cache only", "verdict": "good", "why": "It is the safest and cheapest to run.", "tradeoff": "It misses the paraphrases, which is most of the repetition." },
+        { "name": "A loose threshold to maximise hits", "verdict": "poor", "why": "Near-miss questions get the wrong stored answer, and trust drops.", "tradeoff": "Reasonable only for low-stakes content where any nearby answer is acceptable." }
+      ],
+      "flips": [
+        { "if": "Documents change daily", "then": "Shorten the TTL or flush on publish." },
+        { "if": "The 200 common questions are stable and reviewed", "then": "A curated answer library may beat any cache." }
+      ],
+      "takeaway": "Shared answers and high repetition are the semantic cache sweet spot."
+    },
+    {
+      "id": "w02-t15-s2",
+      "title": "HR assistant over permissioned records",
+      "situation": "An HR assistant answers questions such as how many days of leave do I have. Answers come from each employee's records and from policy documents that vary by country. Leadership wants to cut costs with a semantic cache.",
+      "constraints": ["Answers depend on the asker", "Records are permissioned", "Wrong or leaked answers are a compliance issue"],
+      "unknowns": ["What share of questions are policy only?", "Can answers be keyed by user and country?"],
+      "question": "What do you recommend?",
+      "options": [
+        { "name": "A global semantic cache with no partitioning", "verdict": "poor", "why": "A close question from another employee would return the first employee's data.", "tradeoff": "Acceptable only for answers that carry no personal data and are identical for all." },
+        { "name": "Skip answer-level caching. Use prompt caching for the policy prefix and cache retrieval per user", "verdict": "best", "why": "It saves cost without storing personal answers for reuse, and each answer is computed with the caller's permissions.", "tradeoff": "Smaller saving than a whole-answer cache." },
+        { "name": "A semantic cache partitioned by user and country with a short TTL", "verdict": "good", "why": "Reuse is limited to one user's repeats, so no leak across users.", "tradeoff": "Low hit rate per user, plus work to keep the partition and permissions in sync." }
+      ],
+      "flips": [
+        { "if": "A policy-only question has no personal data", "then": "Cache it in a country-partitioned semantic cache." },
+        { "if": "Permissions change often", "then": "Shorten the TTL or avoid caching answers altogether." }
+      ],
+      "takeaway": "Put the authorization scope in the key, or do not cache the answer."
+    }
+  ],
+  "quiz": [
+    { "id": "w02-t15-q1", "type": "numeric", "tag": "numeric", "q": "Every request pays an embedding and vector lookup that costs 6% of one model call. A hit avoids the whole model call. What hit rate (in percent) breaks even?", "answer": 6, "tolerancePct": 5, "unit": "%", "hint": "h x C_model = C_lookup", "explain": "Net saving per request is h x C_model - C_lookup. It is zero when h = C_lookup / C_model = 0.06, which is 6%. Latency on misses is a further cost.", "difficulty": 2, "ref": "r17" },
+    { "id": "w02-t15-q2", "type": "multi", "tag": "security", "q": "Which belong in the partition key of a semantic cache that serves several tenants?", "options": ["Tenant or user and authorization scope", "Model ID and embedding model ID", "Prompt template, tool configuration and safety-policy versions", "The time of day of the request"], "answers": [0, 1, 2], "explain": "Scope prevents leaks, and the model, embedding and template or policy versions prevent a stale answer from an old configuration being reused. Time of day does not define an answer's validity.", "difficulty": 2, "ref": "r17" },
+    { "id": "w02-t15-q3", "type": "single", "tag": "concept", "q": "In APIM llm-semantic-cache-lookup, what does a lower score-threshold mean?", "options": ["More hits, looser matching", "A longer cache lifetime", "Fewer embeddings per request", "Stricter matching, so fewer but closer hits"], "answer": 3, "explain": "In APIM a lower score-threshold is stricter, and Microsoft suggests starting around 0.05. RedisVL uses a different scale, cosine distance from 0 to 2, so the numbers do not transfer.", "difficulty": 2, "ref": "r16" }
+  ],
+  "flashcards": [
+    { "front": "How does a semantic cache differ from a prompt cache?", "back": "A prompt cache reuses prefill state and leaves the answer unchanged. A semantic cache returns a stored answer, which can be wrong, stale or leaked." },
+    { "front": "What is the break-even hit rate for a semantic cache?", "back": "C_lookup divided by C_model. Embedding and lookup are paid on every request, and a hit saves the model call." },
+    { "front": "What threshold does Microsoft suggest for APIM semantic caching?", "back": "Start low, for example 0.05, where lower is stricter. Values above 0.2 may cause mismatches." }
+  ],
+  "related": ["w02-t11", "w02-t16", "w02-t17", "w02-l6"],
+  "refs": ["r16", "r17", "r12", "r26"]
+}

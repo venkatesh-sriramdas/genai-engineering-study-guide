@@ -1,0 +1,113 @@
+{
+  "id": "w10-t01",
+  "order": 1,
+  "group": "Workflow patterns",
+  "title": "Workflows vs agents: the autonomy dial",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "A workflow keeps the control flow in your code. An agent lets the model choose its own next step. Both are agentic systems, and the autonomy dial sets how much control the model gets.",
+  "useIf": "You are deciding how much control a model gets before you pick any framework: start at the left of the dial and climb only for a reason you can name.",
+  "avoidIf": "Do not give a free loop to a task whose steps are known, and do not script an open-ended task that needs the model to adapt.",
+  "explain": [
+    { "t": "p", "md": "Anthropic splits agentic systems in two [[r1]]. **Workflows** orchestrate LLMs and tools through predefined code paths. **Agents** are systems where the LLM dynamically directs its own process and tool use. Autonomy is a dial, not a switch: more autonomy buys flexibility on open-ended tasks and costs latency, tokens and predictability. Anthropic's advice is to find the simplest solution that works, because agentic systems trade latency and cost for task performance [[r1]]." },
+    { "t": "diagram", "id": "w10-t01-d1", "title": "The autonomy dial", "alt": "Four steps from a direct model call, through a workflow and a single agent, to multi-agent orchestration. Control moves from code to the model.", "src": "flowchart LR\n  A[Direct model call] --> B[Workflow: code owns the path]\n  B --> C[Single agent: model owns the path]\n  C --> D[Multi-agent orchestration]", "caption": "Each step right adds flexibility, latency, cost and failure modes." },
+    { "t": "p", "md": "The Azure Architecture Center uses the same ladder with three levels: direct model call, single agent with tools, multiagent orchestration. Its rule is to use the lowest level of complexity that reliably meets your requirements. It calls a single agent with tools often the right default for enterprise use cases and tells you to set iteration limits against infinite tool-call loops [[r9]]. OpenAI's guide agrees: maximize a single agent's capabilities first, then split [[r19]]." },
+    { "t": "h", "text": "Questions that place a task on the dial", "level": 3 },
+    { "t": "list", "style": "checks", "items": [
+      "Who decides the next step: your code or the model?",
+      "Are the steps known before the run starts?",
+      "What does a wrong action cost, and can it be undone?",
+      "What latency and token budget does one run get?",
+      "Can you evaluate the result well enough to trust a loop?"
+    ] },
+    { "t": "callout", "kind": "note", "title": "Read the date on the source", "md": "Anthropic's post is dated 2024-12-19. A later banner (checked 2026-10-13) says much of the tooling landscape has changed and points to Claude Managed Agents. The vocabulary still holds; do not copy its tool advice blindly [[r1]]." }
+  ],
+  "whereToUse": [
+    "First design review of any feature that needs more than one model call",
+    "Choosing between a hard-coded pipeline and an autonomous tool loop",
+    "Explaining to stakeholders why a feature ships as a workflow and not as an agent",
+    "Setting the review bar: more autonomy needs stronger evals, brakes and approvals",
+    "Hardening a prototype agent into a workflow once its paths stabilise"
+  ],
+  "whenToUse": {
+    "use": [
+      "Steps are known in advance: use a workflow",
+      "The next step depends on what tools return and cannot be listed up front: use an agent",
+      "Per-run value is high enough to pay for roughly 4x the tokens of chat that agents used in Anthropic's data [[r2]]"
+    ],
+    "avoid": [
+      "Picking an agent because it sounds modern when a three-step chain meets the requirement",
+      "Giving an agent write tools before you have brakes, approvals and an evaluation set",
+      "Building a workflow with dozens of branches that only a model could navigate"
+    ],
+    "flips": [
+      "The workflow keeps gaining branches: move that branch into a bounded agent loop",
+      "Agent traces follow the same order in almost every run: freeze that path as a workflow",
+      "Per-run stakes rise: add approvals or drop back toward the workflow end"
+    ]
+  },
+  "alternatives": {
+    "title": "Rungs of the dial",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Direct model call", "One pass can do it: classify, summarise, extract", "The task needs fresh data or dependent steps", "Lowest cost and latency"],
+      ["Workflow (chain, route, parallelise)", "Steps are known, volume is high, an audit trail is needed", "Inputs vary so much that branches explode", "Predictable and cheap to test, brittle on unplanned cases"],
+      ["Single agent with tools", "The path depends on tool results inside one domain", "Latency is tight or actions are costly to repeat", "About 4x chat tokens in Anthropic's data, loops need brakes [[r2]]"],
+      ["Multi-agent orchestration", "Breadth-first reads, parallel work, separate trust boundaries", "Subtasks are tightly coupled or value per run is low", "About 15x chat tokens [[r2]], coordination failures [[r5]]"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A prototype agent takes 40 seconds and costs several times the plan", "cause": "A fixed three-step task was given a free loop", "fix": "Replace the loop with a chain, keep one model call per step, and compare latency and tokens per run before and after." },
+    { "symptom": "The workflow needs a new branch every week", "cause": "The task is open-ended but was scripted", "fix": "Move the open-ended step into a bounded agent loop inside the workflow and keep the rest deterministic." },
+    { "symptom": "Nobody can say why a run did what it did", "cause": "Autonomy was added without traces or stop reasons", "fix": "Log every step, tool call and stop reason before you raise autonomy." }
+  ],
+  "scenarios": [
+    {
+      "id": "w10-t01-s1",
+      "title": "High volume, known steps",
+      "situation": "A team processes thousands of inbound requests a day. Every request passes the same four checks, and an auditor wants to see each step.",
+      "constraints": ["Steps are known and stable", "Volume is high and cost per run matters", "An audit trail is required"],
+      "unknowns": ["How often does a request need a step outside the four?", "What is the latency target per request?", "Can a failed check be retried on its own?"],
+      "question": "Which rung of the dial do you choose?",
+      "options": [
+        { "name": "Workflow with one model call per check", "verdict": "best", "why": "The path is known, so code owns it. Each step is testable, logged and cheap, which matches the audit need.", "tradeoff": "A request that needs a fifth check has to be added by a developer." },
+        { "name": "Single agent with the four checks as tools", "verdict": "good", "why": "It works and adapts to odd requests.", "tradeoff": "Order is no longer guaranteed, token use and latency rise, and the audit trail becomes a trace you must interpret." },
+        { "name": "Multi-agent team, one agent per check", "verdict": "poor", "why": "It multiplies tokens and adds coordination for steps that never need a decision.", "tradeoff": "Right only when each check needs its own tools, owner or trust boundary." }
+      ],
+      "flips": [
+        { "if": "Twenty percent of requests need ad hoc investigation", "then": "Keep the workflow and add a bounded agent branch for the odd cases." },
+        { "if": "Volume drops to a few per day and each is high value", "then": "A single agent becomes affordable and the flexibility pays." }
+      ],
+      "takeaway": "Known steps belong in code. Spend autonomy where the path is unknown."
+    },
+    {
+      "id": "w10-t01-s2",
+      "title": "Unpredictable tools, low volume",
+      "situation": "An internal assistant answers occasional hard questions by combining search, a database and a calculator. Which tool comes next depends on what the last one returned. Each run saves an expert time.",
+      "constraints": ["The path depends on tool results", "A few hundred runs a day with high value per run", "Tools are read-only, so a wrong step is cheap"],
+      "unknowns": ["Is there a latency target, or may a run take a minute?", "Can you evaluate answers against a golden set?"],
+      "question": "Which rung do you choose, and what do you add to it?",
+      "options": [
+        { "name": "Single agent with tools plus a step cap and budget", "verdict": "best", "why": "The model has to choose the next tool from results, and the value per run covers the extra tokens. Read-only tools keep the blast radius small.", "tradeoff": "Latency and cost vary per run, and you must evaluate trajectories, not only final answers." },
+        { "name": "Fixed workflow with a branch per tool order", "verdict": "good", "why": "Predictable and testable for the orders you listed.", "tradeoff": "Branches multiply and unlisted orders fail. It becomes right once the paths settle into a few stable ones." },
+        { "name": "Multi-agent crew with a planner and three workers", "verdict": "poor", "why": "Nothing shows the single agent fails, and the crew costs far more tokens and adds handoff faults.", "tradeoff": "Right when one agent's tool list overloads it or the work splits into independent reads." }
+      ],
+      "flips": [
+        { "if": "Tools gain write access to production data", "then": "Add approval gates, or move the writing steps into a workflow." },
+        { "if": "A voice interface sets a two second latency target", "then": "Pre-fetch with a workflow and keep the agent loop off the hot path." }
+      ],
+      "takeaway": "Climb one rung at a time and name the dial that justified the climb."
+    }
+  ],
+  "quiz": [
+    { "id": "w10-t01-q1", "type": "single", "tag": "concept", "q": "Which statement matches the workflow versus agent split in Anthropic's definitions?", "options": ["A workflow uses one model call and an agent uses several", "Workflows use tools and agents do not", "An agent is a workflow that runs longer than 60 seconds", "In a workflow, code paths are predefined, and in an agent the LLM directs its own process and tool use"], "answer": 3, "explain": "The split is about who owns the control flow, not call count, tool use or duration. A workflow can call a model many times and use tools; an agent can finish in one call. [[r1]]", "ref": "r1", "difficulty": 1 },
+    { "id": "w10-t01-q2", "type": "multi", "tag": "flip", "q": "Which two observations justify moving a design up from a workflow toward an agent?", "options": ["The next step depends on what the previous tool returned and cannot be listed in advance", "The team wants the system to look more advanced", "The workflow gains a new branch every week for inputs nobody predicted", "Volume has doubled and cost per run matters more"], "answers": [0, 2], "explain": "Unpredictable paths and endless new branches are the dials that favour a model-owned path. Appearance is not a dial, and higher volume with tighter cost pushes the other way, toward the workflow end. [[r9]]", "ref": "r9", "difficulty": 2 }
+  ],
+  "flashcards": [
+    { "front": "Workflow vs agent in one line each?", "back": "Workflow: LLMs and tools run through predefined code paths. Agent: the LLM dynamically directs its own process and tool use [[r1]]." },
+    { "front": "What does Microsoft's rule for complexity say?", "back": "Use the lowest level of complexity that reliably meets your requirements. A single agent with tools is often the right enterprise default [[r9]]." },
+    { "front": "What do agents and multi-agent systems cost in tokens, per Anthropic?", "back": "About 4x chat for agents and about 15x for multi-agent systems, vendor-reported in Anthropic's own traffic [[r2]]." }
+  ],
+  "related": ["w10-l1", "w10-t02", "w10-t07", "w10-t11"],
+  "refs": ["r1", "r9", "r19", "r2", "r5"]
+}

@@ -1,0 +1,95 @@
+{
+  "id": "w05-t08",
+  "order": 8,
+  "group": "Query transformation",
+  "title": "HyDE (hypothetical document embeddings)",
+  "minutes": 7,
+  "difficulty": "advanced",
+  "summary": "HyDE asks a model to write a hypothetical answer, embeds that answer instead of the question, and retrieves the real documents nearest to it.",
+  "useIf": "Queries are short or phrased unlike the documents, you have no relevance labels to fine-tune with, and the model knows the domain.",
+  "avoidIf": "The domain is proprietary or full of identifiers the model would invent, or the latency budget cannot absorb a generation before retrieval.",
+  "explain": [
+    { "t": "p", "md": "A short question and a long answer passage often land far apart in embedding space. **HyDE** closes the gap. An instruction-following model writes a **hypothetical document** that answers the query. This text may contain false details. A contrastive encoder embeds it, and the nearest real documents are retrieved. The encoder acts as a filter, because its compressed representation drops fabricated specifics and keeps the topical shape. The method works zero-shot, without relevance labels [[r14]]." },
+    { "t": "diagram", "id": "w05-t08-d1", "title": "HyDE request path", "alt": "The user query goes to a model that writes a hypothetical answer, which is embedded and used to search the index, returning real documents.", "src": "sequenceDiagram\n  participant U as User\n  participant L as LLM\n  participant E as Encoder\n  participant I as Vector index\n  U->>L: Question\n  L->>E: Hypothetical answer\n  E->>I: Answer vector\n  I-->>U: Real documents" },
+    { "t": "p", "md": "**When it helps.** Short or vague queries over a domain the model understands, where documents are explanatory prose and the retriever has not been fine-tuned. **When it misleads.** If the model lacks domain knowledge, the hypothetical answer describes the wrong thing and retrieval confidently follows it. For identifiers, SKUs or internal names the model will invent plausible but wrong strings, and a dense encoder will chase them. The Azure Architecture Center names HyDE among query translation methods, next to rewriting and decomposition [[r8]]." },
+    { "t": "p", "md": "**Cost.** It adds a serial generation, of a paragraph, before any retrieval. In practice teams limit the hypothetical text to a short length (author suggestion) and keep the original query on the keyword leg, so a hallucinated hypothetical only affects the vector leg. Evaluate against a baseline of the plain query embedding and a baseline of the plain query plus a rewrite." },
+    { "t": "callout", "kind": "why", "title": "Why the fake answer is useful", "md": "The goal is not a correct answer. It is a vector that sits where relevant documents sit. Answer-shaped text is closer to answer passages than a question is, even when its facts are wrong [[r14]]." }
+  ],
+  "whereToUse": [
+    "Zero-shot retrieval over a new corpus with no labelled queries",
+    "Scientific or public-domain explanatory content that the model already knows",
+    "Short, underspecified questions where the embedding of the question alone is poor",
+    "Experiments to estimate headroom before investing in a fine-tuned retriever"
+  ],
+  "whenToUse": {
+    "use": ["No relevance labels exist for fine-tuning", "Queries are short and documents are long explanatory prose", "The model knows the subject area", "Latency allows an extra generation before search"],
+    "avoid": ["Exact identifiers, SKUs or internal terms dominate", "The model has never seen the domain", "Retrieval latency is tight", "You have not compared it to a plain-query baseline"],
+    "flips": ["The corpus is proprietary: ground the hypothetical text with a first-pass retrieval or skip HyDE", "Identifier queries appear: run the original query on a BM25 leg and fuse", "Labelled data arrives: fine-tune or adapt the retriever instead of generating on every query"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["HyDE", "Short queries, zero-shot, domain the model knows", "Proprietary jargon, identifiers", "Serial generation, hallucinated seeds"],
+      ["Plain query embedding", "Queries already look like the documents", "Query and passage styles differ", "Cheapest"],
+      ["Query rewrite or expansion", "Vocabulary mismatch", "The model cannot add useful terms", "Drift risk, serial call"],
+      ["Multi-query fusion", "Ambiguous queries", "One strong query would do", "N retrievals"],
+      ["Fine-tuned embeddings", "Labelled data and stable domain", "No data", "Training and re-embedding"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Retrieval follows an invented product name", "cause": "The hypothetical document contained a plausible but wrong entity and the encoder matched it", "fix": "Keep the original query on a keyword leg, or skip HyDE for identifier-shaped queries" },
+    { "symptom": "Results are on the wrong topic for niche questions", "cause": "The model misunderstood the domain, so the hypothetical answer points elsewhere", "fix": "Add retrieved context to the hypothesis prompt, or use a rewrite instead" },
+    { "symptom": "Latency doubled for little gain", "cause": "Every query pays for a generation, including those the plain embedding handles", "fix": "Route only short or low-confidence queries through HyDE" }
+  ],
+  "scenarios": [
+    {
+      "id": "w05-t08-s1",
+      "title": "Zero-shot search over a public science corpus",
+      "situation": "A team indexes open-access review articles. Users ask short questions such as 'why do vaccines need boosters'. There are no labelled queries and no budget to fine-tune.",
+      "constraints": ["No labels", "General-domain content the model knows", "A few seconds of latency is fine"],
+      "unknowns": ["How long are the articles?", "Can you test on a small labelled sample?"],
+      "question": "How do you improve retrieval?",
+      "options": [
+        { "name": "Try HyDE for the vector leg, keep the original on BM25 and compare recall on a small hand-labelled sample", "verdict": "best", "why": "Short queries against explanatory prose are HyDE's target, the model knows the domain and the keyword leg guards against bad hypotheticals.", "tradeoff": "An extra generation per query and a sample you must label." },
+        { "name": "Fine-tune an embedding model", "verdict": "poor", "why": "There are no labelled pairs and the budget is small.", "tradeoff": "Right once you have thousands of labelled pairs in a stable domain." },
+        { "name": "Ship plain query embeddings", "verdict": "good", "why": "Zero added cost and a fair baseline.", "tradeoff": "Short questions embed poorly against long passages." }
+      ],
+      "flips": [
+        { "if": "HyDE shows no recall lift on the sample", "then": "Keep the plain embedding and drop the generation cost." },
+        { "if": "The domain is niche and the model often writes confident but wrong hypothetical answers", "then": "Skip HyDE: a wrong draft pulls retrieval toward wrong passages, so use plain embeddings or a fine-tuned embedder." }
+      ],
+      "takeaway": "HyDE shines on short queries in domains the model knows."
+    },
+    {
+      "id": "w05-t08-s2",
+      "title": "Internal engineering knowledge base",
+      "situation": "Queries mention internal service names and ticket ids. The model has never seen these services.",
+      "constraints": ["Proprietary vocabulary", "Identifier-heavy traffic", "Latency under a second for retrieval"],
+      "unknowns": ["Is a labelled set available?", "How often do queries lack identifiers?"],
+      "question": "Is HyDE a good fit?",
+      "options": [
+        { "name": "No. Use hybrid retrieval and rewrite only conversational follow-ups", "verdict": "best", "why": "The model would invent plausible service behaviour, and exact names belong on a keyword leg.", "tradeoff": "Pure paraphrase questions get less help." },
+        { "name": "HyDE on every query", "verdict": "poor", "why": "It adds latency and hallucinated seeds around unknown names.", "tradeoff": "Fits public-domain, explanatory content." },
+        { "name": "HyDE seeded with retrieved snippets", "verdict": "good", "why": "Grounding reduces invention.", "tradeoff": "It needs a first retrieval, so latency and complexity rise." }
+      ],
+      "flips": [
+        { "if": "Queries become long natural-language descriptions with few names", "then": "Test HyDE again on that slice." },
+        { "if": "The retrieval latency budget loosens to several seconds", "then": "A generation step becomes affordable, but still gate HyDE on measured recall for the vector leg only." }
+      ],
+      "takeaway": "Unknown vocabulary breaks the hypothetical document."
+    }
+  ],
+  "quiz": [
+    { "id": "w05-t08-q1", "type": "single", "tag": "concept", "q": "In HyDE, what is embedded and used to search the index?", "options": ["The original question", "The top retrieved document", "A model-written hypothetical answer", "The chat history"], "answer": 2, "explain": "HyDE embeds a generated hypothetical document. The encoder discards fabricated details, and the nearest real documents are returned [[r14]]. The other options are different techniques." },
+    { "id": "w05-t08-q2", "type": "single", "tag": "flip", "q": "Which change most clearly argues against HyDE?", "options": ["Queries get shorter", "The corpus is in English", "You have no labels", "The corpus uses internal service names the model has never seen"], "answer": 3, "explain": "Unknown vocabulary leads the model to invent specifics, and the encoder chases them. No labels and short queries actually favour HyDE." },
+    { "id": "w05-t08-q3", "type": "multi", "tag": "tradeoff", "q": "Select the costs or risks of HyDE.", "options": ["A serial generation before retrieval", "Hypothetical text may contain false details", "It requires relevance labels", "It can mislead if the model lacks domain knowledge"], "answers": [0, 1, 3], "explain": "HyDE adds generation latency, may invent details and misleads when the model lacks the domain. It is zero-shot, so it needs no labels [[r14]]." }
+  ],
+  "flashcards": [
+    { "front": "What does HyDE embed?", "back": "A hypothetical answer written by a model, not the question. Nearest real documents are then retrieved." },
+    { "front": "Why can a false hypothetical document still retrieve well?", "back": "The encoder compresses the text and drops fabricated specifics, keeping a vector near relevant passages." },
+    { "front": "Name a safe way to use HyDE next to identifiers.", "back": "Use the hypothetical text only on the vector leg and keep the original query on the BM25 leg." }
+  ],
+  "related": ["w05-t07", "w05-t09", "w05-l4", "w04-t12"],
+  "refs": ["r14", "r8"]
+}

@@ -1,0 +1,115 @@
+{
+  "id": "w05-t04",
+  "order": 4,
+  "group": "Baseline",
+  "title": "Hybrid search and RRF",
+  "minutes": 9,
+  "difficulty": "core",
+  "summary": "Hybrid search runs keyword and vector retrieval in parallel and merges the ranked lists. Reciprocal rank fusion (RRF) merges by rank, so incomparable scores never need normalising.",
+  "useIf": "Query traffic mixes exact identifiers with paraphrases, and you want one ranked list without tuning score scales.",
+  "avoidIf": "All queries are of one kind, or you have labelled data and a tuned convex combination measurably beats RRF.",
+  "explain": [
+    { "t": "p", "md": "BM25 scores have no upper limit. Cosine similarity in Azure sits between 0.333 and 1.00. Adding them directly would let one retriever dominate by scale alone. **RRF** sidesteps the problem: each list gives a document `1 / (rank + k)`, and the contributions are summed. Azure applies it whenever two or more queries run in parallel: a text query plus one vector query is two executions, and a text query plus two vector queries over five vector fields is eleven [[r1]]." },
+    { "t": "formula", "title": "Reciprocal rank fusion with weights", "expr": "RRF(d) = sum over lists i of  w_i / (k + rank_i(d))", "vars": [{ "k": "k", "v": "fusion constant, 60 in the original paper. Not the neighbour count `k` of a vector query" }, { "k": "w_i", "v": "list weight, default 1.0. In Azure it is `vectorQueries[].weight`" }], "example": "At `k = 60`, rank 1 gives 1/61 = 0.0164 and rank 50 gives 1/110 = 0.0091. Rank 3 in both lists gives 2/63 = 0.0317. Two lists top out at 0.0328 [[r9]]." },
+    { "t": "lab", "id": "rrf-playground", "intro": "Fuse a keyword list and a vector list yourself. Try the identifier preset first, change `k` and weights, and watch which document wins and why." },
+    { "t": "p", "md": "**What is documented.** Cormack et al. fixed `k = 60` in a pilot on TREC collections, found it near-optimal but 'not critical', and RRF beat Condorcet Fuse, CombMNZ and several learning-to-rank methods in their runs [[r9]]. Azure calls `k` a constant and mentions a small value such as 60, but does not state the exact value it uses or a request parameter to change it (UNVERIFIED on 2026-10-13) [[r1]]. Elasticsearch exposes `rank_constant` with default 60 [[r32]]." },
+    { "t": "p", "md": "**Azure dials.** `vectorQueries[].weight` scales a query's contribution. `maxTextRecallSize` (default 1,000, preview in `2026-08-01-preview`) bounds the text side. Without paging a hybrid query returns the top 50 fused results, and the docs suggest starting with `k` 30 to 50 and `top` 10 to 20. If the semantic ranker follows, make `k` and `maxTextRecallSize` sum to at least 50 [[r2]]." },
+    { "t": "callout", "kind": "gotcha", "title": "RRF is not tuning-free", "md": "Bruch et al. found a convex combination of normalised scores beat RRF in and out of domain, found RRF sensitive to its parameters, and needed only a small labelled set [[r10]]. RRF is a strong default when you have no labels. With labels, test both." }
+  ],
+  "whereToUse": [
+    "Enterprise search where users type part numbers, names and natural-language questions in one box",
+    "RAG retrieval ahead of a semantic ranker or cross-encoder",
+    "Multi-field vector indexes where title and body embeddings are queried together",
+    "Search stacks that already expose hybrid fusion, such as Azure AI Search, Elasticsearch and OpenAI file search"
+  ],
+  "whenToUse": {
+    "use": ["Query traffic is mixed", "Scores from the retrievers are not comparable", "You have no labelled data to tune a weighted score", "You want a default that rarely needs tuning"],
+    "avoid": ["Every query is an identifier, where BM25 alone is cheaper", "You need a calibrated confidence from the fused score, which RRF cannot give", "Latency allows only one retrieval"],
+    "flips": ["Labelled queries are available: compare a tuned convex combination against RRF [[r10]]", "One retriever clearly dominates: raise its weight, as `weight` allows", "You need abstention: threshold the reranker score or each leg, never the fused RRF score"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["RRF", "No labels, incomparable scores, several lists", "Score magnitude carries signal you want to keep", "Ignores confidence, parameter sensitivity [[r10]]"],
+      ["Convex combination of normalised scores", "A small labelled set exists", "Scores are unstable or you cannot normalise them", "Needs normalisation and tuning"],
+      ["Learned ranker over features", "Large labelled data and many signals", "Little data", "Training, serving and drift"],
+      ["Single retriever", "One query type dominates", "Mixed traffic", "Blind spots remain"],
+      ["Semantic reranker only on one list", "Shortlist recall is already high", "Relevant chunks are missed by that retriever", "Cannot find new documents [[r3]]"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Hybrid results look almost identical to BM25 alone", "cause": "The vector leg has a tiny `k`, a very low weight or is returning weak neighbours", "fix": "Inspect per-leg ranks, raise vector `k` and check weights" },
+    { "symptom": "A strongly relevant exact match sinks below mediocre agreement hits", "cause": "RRF ignores score magnitude, so a runaway rank 1 in one list counts like any rank 1", "fix": "Weight that list up, or route identifier queries to BM25 first" },
+    { "symptom": "A cutoff on the fused score gives random abstentions", "cause": "RRF score is bounded by about 1/k per list and depends on the number of lists, not relevance", "fix": "Threshold each leg or the reranker score. Use RRF for order only [[r1]]" }
+  ],
+  "scenarios": [
+    {
+      "id": "w05-t04-s1",
+      "title": "Mixed traffic, no labels",
+      "situation": "A new internal assistant launches next month. Users paste error codes and also ask policy questions in plain language. There is no evaluation set yet.",
+      "constraints": ["No labelled queries", "Azure AI Search available", "Latency budget allows two parallel searches and a reranker"],
+      "unknowns": ["What share of queries are identifiers?", "Can you collect a labelled set during the pilot?"],
+      "question": "How do you fuse the lists?",
+      "options": [
+        { "name": "Hybrid query with RRF at default weights, then a semantic ranker, and log queries for later tuning", "verdict": "best", "why": "RRF needs no normalisation or labels, and hybrid plus semantic ranking is the documented default for mixed traffic [[r43]].", "tradeoff": "You give up score-magnitude information and a possible gain from tuning." },
+        { "name": "Normalise both scores and tune a convex combination", "verdict": "poor", "why": "Without labels you cannot choose the mix or trust the normalisation.", "tradeoff": "Right once you have a labelled set, where it can beat RRF [[r10]]." },
+        { "name": "BM25 only until the pilot ends", "verdict": "good", "why": "Cheap and handles the identifiers.", "tradeoff": "Paraphrase questions miss, and you never see hybrid data." }
+      ],
+      "flips": [
+        { "if": "You collect a few hundred labelled queries", "then": "Compare weighted RRF and a convex combination on recall@k and nDCG." },
+        { "if": "The latency budget allows only one search call", "then": "Run vector-only or BM25-only based on the observed query mix, and add hybrid once a second parallel call fits." }
+      ],
+      "takeaway": "RRF is the label-free default."
+    },
+    {
+      "id": "w05-t04-s2",
+      "title": "Labelled set, one retriever dominates",
+      "situation": "A team has 800 labelled queries. Offline tests show the vector leg finds the gold chunk far more often than BM25, except for identifier queries.",
+      "constraints": ["Labelled set available", "Weights are exposed on vector queries", "Evaluation runs in CI"],
+      "unknowns": ["Is the gap stable across query types?", "Is a query router affordable?"],
+      "question": "What do you change?",
+      "options": [
+        { "name": "Tune weights and `k` against the labelled set, and compare with a convex combination", "verdict": "best", "why": "You have the data that makes tuning meaningful, and the fusion function study found tuned convex combinations strong [[r10]].", "tradeoff": "Tuned values can drift when the corpus or models change, so keep the CI check." },
+        { "name": "Keep RRF defaults because RRF needs no tuning", "verdict": "poor", "why": "Equal weights waste a known advantage, and RRF is parameter sensitive.", "tradeoff": "Fine when no labels exist." },
+        { "name": "Drop the keyword leg", "verdict": "good", "why": "Simplest if identifier queries are rare.", "tradeoff": "Identifier queries then fail." }
+      ],
+      "flips": [
+        { "if": "Identifier queries are easy to detect", "then": "Route them to BM25 and keep hybrid for the rest." },
+        { "if": "The labelled set shrinks to a few dozen queries", "then": "Keep RRF defaults: weights tuned on so few queries overfit, so wait for more labels." }
+      ],
+      "takeaway": "Labels turn tuning from guesswork into measurement."
+    },
+    {
+      "id": "w05-t04-s3",
+      "title": "Weak neighbours on no-answer queries",
+      "situation": "Hybrid retrieval returns 50 fused results for every query, including questions the corpus cannot answer. The team wants a cutoff.",
+      "constraints": ["Semantic ranker is enabled", "Wrong answers carry moderate risk", "A golden set with unanswerable queries exists"],
+      "unknowns": ["How stable is the reranker score across updates?", "What false-answer rate is tolerable?"],
+      "question": "Where do you put the cutoff?",
+      "options": [
+        { "name": "Coarse cutoff on the reranker score plus a vector threshold on the vector leg, calibrated on the golden set", "verdict": "best", "why": "These signals relate to relevance. Azure warns against granular reranker cutoffs because the distribution shifts with model updates, so keep it coarse and monitor [[r3]].", "tradeoff": "Needs recalibration after service updates." },
+        { "name": "Threshold on the fused RRF score", "verdict": "poor", "why": "RRF values depend on the number of lists and `k`, not on relevance.", "tradeoff": "Fine for ordering only." },
+        { "name": "Always answer from the top 5", "verdict": "good", "why": "Simple, and acceptable for low-risk assistants.", "tradeoff": "No-answer queries get fabricated answers." }
+      ],
+      "flips": [
+        { "if": "The service model updates and abstention rate jumps", "then": "Recalibrate on the golden set and keep the bands coarse." },
+        { "if": "The semantic ranker is not enabled", "then": "Cut on the vector leg's own similarity threshold and a minimum fused rank, since RRF scores carry no absolute meaning." }
+      ],
+      "takeaway": "Order with RRF, decide with relevance signals."
+    }
+  ],
+  "quiz": [
+    { "id": "w05-t04-q1", "type": "numeric", "tag": "numeric", "q": "With `k = 60` and equal weights, a document is rank 3 in the keyword list and rank 3 in the vector list. What is its RRF score?", "answer": 0.0317, "tolerancePct": 1, "unit": "RRF points", "hint": "Sum 1/(60+rank) over both lists.", "explain": "Each list gives 1/63 = 0.015873. Two lists give 0.031746, about 0.0317. A document found in only one list at rank 3 would score half of that." },
+    { "id": "w05-t04-q2", "type": "single", "tag": "diagnose", "q": "A team thresholds on the fused RRF score and abstention looks random. Why?", "options": ["RRF scores are probabilities", "The semantic ranker overwrote it", "Vector `k` was too large", "The score depends on `k` and the number of lists, not on relevance"], "answer": 3, "explain": "RRF adds `1/(k+rank)` terms, so values reflect rank agreement and list count. They are not probabilities, and the semantic ranker reports a separate score." },
+    { "id": "w05-t04-q3", "type": "multi", "tag": "tradeoff", "q": "Select the situations in which a tuned convex combination is worth testing against RRF.", "options": ["You have a few hundred labelled queries", "One retriever is clearly stronger", "You have zero evaluation data", "Scores can be normalised reliably"], "answers": [0, 1, 3], "explain": "Labels, a dominant retriever and normalisable scores favour a tuned combination [[r10]]. With no evaluation data you cannot tune it, so RRF is the safer default." }
+  ],
+  "flashcards": [
+    { "front": "What does RRF compute for a document?", "back": "The sum over lists of `weight / (k + rank)`, with ranks from 1. Missing documents add nothing." },
+    { "front": "Why can you not threshold on an RRF score?", "back": "It is bounded by about 1/k per list and depends on the number of lists, so it orders results but does not measure relevance." },
+    { "front": "How does hybrid search feed the Azure semantic ranker?", "back": "Only the top 50 results go to the ranker, so vector `k` plus `maxTextRecallSize` should sum to at least 50." },
+    { "front": "Which paper argues RRF is not tuning-free?", "back": "Bruch et al. 2022: a convex combination beat RRF and RRF was sensitive to its parameters." }
+  ],
+  "related": ["w05-l2", "w05-t05", "w05-t06", "w05-t02", "w05-t03", "w04-t18"],
+  "refs": ["r1", "r2", "r3", "r9", "r10", "r32", "r43"]
+}

@@ -1,0 +1,179 @@
+{
+  "id": "w15-t06",
+  "order": 6,
+  "group": "Privacy and volume",
+  "title": "Content capture, redaction and privacy",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "Prompts, outputs and tool payloads are the best debugging evidence and the riskiest telemetry. The GenAI conventions make content capture opt-in, and production setups usually keep it off spans, in a governed store, referenced from the trace.",
+  "useIf": "You decide whether and how telemetry may hold prompts, retrieved text and tool results.",
+  "avoidIf": "You flip one global content flag in production without redaction, retention and access rules.",
+  "explain": [
+    { "t": "p", "md": "The conventions say instrumentations SHOULD NOT capture content by default. The opt-in attributes are `gen_ai.system_instructions`, `gen_ai.input.messages`, `gen_ai.output.messages`, `gen_ai.tool.definitions`, `gen_ai.tool.call.arguments` and `gen_ai.tool.call.result`. They describe three patterns: (1) record nothing, the default; (2) record content on spans, suited to pre-production or telemetry that meets your privacy rules; (3) store content externally and put **references** on spans, recommended for production. An in-process upload hook runs regardless of the span sampling decision and independent of the opt-in flags, and the spec still lists TODO for a common reference format [[r4]]." },
+    { "t": "p", "md": "Agent Framework's switch is `ENABLE_SENSITIVE_DATA` (default false) in Python and `EnableSensitiveData` in .NET. Sensitive data means prompts, responses, tool arguments and tool results. In workflows it also controls `executor.input`, `executor.output` and `message.content` [[r10]] [[r11]]. Foundry and the Azure SDKs use `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true`, and the older classic page used `AZURE_TRACING_GEN_AI_CONTENT_RECORDING_ENABLED`. The `@trace_function` decorator always records parameters and return values regardless of that flag [[r13]]." },
+    { "t": "dials", "id": "w15-t06-policy", "title": "Choose a content capture policy", "prompt": "Flip the constraints. The ranking and the reasons update.",
+      "dials": [
+        { "id": "sens", "label": "Data sensitivity", "values": [ { "id": "low", "label": "Synthetic or public" }, { "id": "pii", "label": "Personal data" }, { "id": "reg", "label": "Regulated or confidential" } ] },
+        { "id": "need", "label": "Debugging need", "values": [ { "id": "meta", "label": "Run shape is enough" }, { "id": "text", "label": "Must read the text" } ] }
+      ],
+      "options": [
+        { "id": "none", "name": "Metadata only", "summary": "Default: no content in telemetry." },
+        { "id": "spans", "name": "Content on spans", "summary": "Prompts and outputs as span attributes." },
+        { "id": "ext", "name": "External store with references", "summary": "Content in a governed store, ids on spans." },
+        { "id": "redact", "name": "Redacted content on spans", "summary": "Scrub patterns before export." }
+      ],
+      "scores": {
+        "none": {
+          "sens": { "low": { "s": 0, "why": "Safe but gives up easy evidence." }, "pii": { "s": 1, "why": "Avoids storing personal data." }, "reg": { "s": 2, "why": "Strongest default for regulated data." } },
+          "need": { "meta": { "s": 2, "why": "Shape answers the question at no risk." }, "text": { "s": -2, "why": "Cannot reproduce a wrong answer." } }
+        },
+        "spans": {
+          "sens": { "low": { "s": 2, "why": "No privacy cost and the simplest debugging." }, "pii": { "s": -1, "why": "Personal data lands in the general telemetry store." }, "reg": { "s": -2, "why": "Telemetry rarely meets regulated-data controls." } },
+          "need": { "meta": { "s": -1, "why": "Adds volume and risk for no benefit." }, "text": { "s": 2, "why": "Content sits next to timing in one trace." } }
+        },
+        "ext": {
+          "sens": { "low": { "s": 0, "why": "Works but is more machinery than needed." }, "pii": { "s": 2, "why": "Separate access, retention and deletion." }, "reg": { "s": 2, "why": "Content lives under data controls, traces carry only ids." } },
+          "need": { "meta": { "s": -1, "why": "Overbuilt if shape is enough." }, "text": { "s": 2, "why": "Content is retrievable by authorized people." } }
+        },
+        "redact": {
+          "sens": { "low": { "s": 1, "why": "Harmless but unnecessary." }, "pii": { "s": 1, "why": "Helps, but pattern scrubbing misses cases." }, "reg": { "s": 0, "why": "Redaction is not a guarantee for regulated data." } },
+          "need": { "meta": { "s": -1, "why": "Extra processing with no need." }, "text": { "s": 1, "why": "Readable text with known identifiers removed." } }
+        }
+      },
+      "takeaway": "Default to shape only. Move content to a governed store when you must read it, and capture on spans only for data you may freely keep." }
+  ],
+  "whereToUse": [
+    "Pre-production debugging with synthetic prompts and full content on spans",
+    "Production assistants over personal or confidential data, where content is stored by reference",
+    "Evaluation pipelines that score sampled conversations and need the text under controls",
+    "Incident review where a restricted group may open a specific conversation",
+    "Policy documents that state what telemetry may hold and for how long"
+  ],
+  "whenToUse": {
+    "use": [
+      "Keep content off by default and enable it per environment and per purpose",
+      "Store production content externally with references on spans, short retention and role-based access",
+      "Redact known identifiers before anything leaves the process, and test the redaction"
+    ],
+    "avoid": [
+      "Do not enable content capture globally in production because it was needed once",
+      "Do not forget that decorators such as `@trace_function` record arguments regardless of the flag",
+      "Do not let operations staff and data owners share one access role"
+    ],
+    "flips": [
+      "Regulation forbids storing content: keep shape only and reproduce issues with synthetic inputs",
+      "Support must reproduce wrong answers: add a break-glass path that retrieves the stored conversation for one ticket",
+      "You use a hosted backend you do not control: assume content on spans is visible to the vendor and decide accordingly"
+    ]
+  },
+  "alternatives": {
+    "title": "Content capture patterns",
+    "head": ["Pattern", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Record nothing (default)", "Regulated data, most production traffic", "You must read the text to debug", "Hard to reproduce quality issues"],
+      ["Content on spans", "Development and synthetic data", "Personal or confidential data", "Attribute size limits and wide access to content"],
+      ["External store with references", "Production with controls", "A tiny team with no storage owner", "Another system to secure, retain and delete from [[r4]]"],
+      ["Redacted content on spans", "Moderate sensitivity with a tested scrubber", "Regulated data", "Imperfect redaction and processing cost"]
+    ]
+  },
+  "pitfalls": [
+    {
+      "symptom": "Prompts show up in Application Insights although sensitive data is off",
+      "cause": "A `@trace_function` decorated function records its parameters and return values regardless of the flag",
+      "fix": "Remove the decorator from sensitive paths or redact arguments before the call [[r13]]"
+    },
+    {
+      "symptom": "Prompts and outputs appear twice on parent and child spans in .NET",
+      "cause": "Both the chat client and the agent were instrumented with sensitive data on",
+      "fix": "Instrument one layer only [[r10]]"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "w15-t06-s1",
+      "title": "A pre-production agent with synthetic data",
+      "situation": "A team builds an agent and tests it with synthetic prompts. They want to read full prompts and tool results while tuning behavior. Telemetry goes to a development backend.",
+      "constraints": ["Synthetic data only", "Development backend", "Debugging need is high"],
+      "unknowns": ["Could real data reach this environment later?", "Who can read the dev backend?"],
+      "question": "What content policy do you set?",
+      "options": [
+        { "name": "Content on spans, enabled only in the development environment", "verdict": "best", "why": "No privacy cost and the fastest debugging.", "tradeoff": "The setting must not be copied to production." },
+        { "name": "Metadata only", "verdict": "good", "why": "Safe everywhere.", "tradeoff": "Slows tuning because you cannot read prompts." },
+        { "name": "External store with references", "verdict": "poor", "why": "It adds a storage system and access flow with no data sensitivity to justify it.", "tradeoff": "Right once real user data appears." }
+      ],
+      "flips": [
+        { "if": "Real user prompts reach the environment", "then": "Move to external storage or metadata only." },
+        { "if": "The dev backend is shared widely", "then": "Restrict who can read content attributes." }
+      ],
+      "takeaway": "Capture freely only where the data is yours to share."
+    },
+    {
+      "id": "w15-t06-s2",
+      "title": "Production over regulated records with a support team",
+      "situation": "A production assistant handles confidential case records. Support needs to reproduce a wrong answer for a specific ticket. Auditors require retention limits and access logs.",
+      "constraints": ["Regulated, confidential data", "Per-ticket reproduction needed", "Retention and access logging required"],
+      "unknowns": ["Who may open a stored conversation?", "How long must content be retained?"],
+      "question": "How do you capture content?",
+      "options": [
+        { "name": "External content store with references on spans, short retention, role-based access and audit logs", "verdict": "best", "why": "Traces carry ids only, and authorized people retrieve content for one ticket under logged access.", "tradeoff": "You build and run another governed store." },
+        { "name": "Content on spans in the shared telemetry backend", "verdict": "poor", "why": "Many engineers can read it and retention follows the telemetry store, not the data rules.", "tradeoff": "Acceptable only for non-sensitive data." },
+        { "name": "Metadata only and ask users to resend inputs", "verdict": "good", "why": "No stored content.", "tradeoff": "Slow, unreliable reproduction and poor user experience." }
+      ],
+      "flips": [
+        { "if": "No content may be stored at all", "then": "Use metadata only and synthetic reproduction." },
+        { "if": "Only a few conversations per month need review", "then": "Capture content only for flagged or failed runs." }
+      ],
+      "takeaway": "Separate who sees run shape from who sees user content."
+    }
+  ],
+  "quiz": [
+    {
+      "id": "w15-t06-q1",
+      "type": "single",
+      "tag": "concept",
+      "q": "Which pattern do the GenAI conventions recommend for production?",
+      "options": [
+        "Record content on every span",
+        "Store content externally and put references on spans",
+        "Record content only on the root span",
+        "Never record anything, including references"
+      ],
+      "answer": 1,
+      "explain": "The conventions list three patterns and recommend external storage with references for production. Content on spans suits pre-production or telemetry that meets privacy rules."
+    },
+    {
+      "id": "w15-t06-q2",
+      "type": "match",
+      "tag": "concept",
+      "q": "Match each switch to the layer it controls.",
+      "pairs": [
+        { "l": "`ENABLE_SENSITIVE_DATA`", "r": "Agent Framework telemetry content" },
+        { "l": "`OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT`", "r": "OTel and Azure SDK message content" },
+        { "l": "`AZURE_TRACING_GEN_AI_CONTENT_RECORDING_ENABLED`", "r": "Older classic Foundry content recording" },
+        { "l": "`@trace_function`", "r": "Always records parameters and return values" }
+      ],
+      "explain": "Three similar flags exist for three layers, and the decorator records arguments regardless of any of them."
+    },
+    {
+      "id": "w15-t06-q3",
+      "type": "single",
+      "tag": "security",
+      "q": "Sensitive data is off in Agent Framework, but a tool argument containing a customer id appears in traces. What is the likeliest cause?",
+      "options": [
+        "The backend ignores the flag",
+        "Sampling is set too high",
+        "A `@trace_function` decorator on that function records parameters and returns regardless of the flag",
+        "The model logs its own prompts"
+      ],
+      "answer": 2,
+      "explain": "The decorator always records parameters and return values. The backend cannot change what the process exports, sampling affects volume not content, and the model does not write your telemetry."
+    }
+  ],
+  "flashcards": [
+    { "front": "What is the default for content capture in the GenAI conventions?", "back": "Off. Instrumentations SHOULD NOT capture content by default. The content attributes are opt-in." },
+    { "front": "Which content pattern is recommended for production?", "back": "Store content externally and record references on spans. Content on spans suits pre-production or data you may freely keep." },
+    { "front": "What does `@trace_function` ignore?", "back": "The sensitive-data flag. It always records parameters and return values." }
+  ],
+  "related": ["w15-t01", "w15-t07", "w15-t09", "w07-t16", "w17-t03"],
+  "refs": ["r4", "r10", "r11", "r12", "r13"]
+}

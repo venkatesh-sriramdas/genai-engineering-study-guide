@@ -1,0 +1,108 @@
+{
+  "id": "w11-t21",
+  "order": 21,
+  "group": "Orchestrations",
+  "title": "Group chat orchestration",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "A star topology: an orchestrator picks which agent speaks next, every agent sees the shared conversation, and rounds repeat until a termination condition or round limit stops the chat.",
+  "useIf": "Several roles should iterate on one artifact (writer and reviewer, analyst and critic) under a controlled turn order.",
+  "avoidIf": "Roles are independent (concurrent), steps are strictly ordered (sequential) or ownership should transfer (handoff). Rounds multiply tokens.",
+  "explain": [
+    { "t": "p", "md": "A group chat has an **orchestrator** in the centre and **participants** around it. After each turn the orchestrator broadcasts the response so all participants share the latest history, then chooses the next speaker. Speaker selection strategies: round-robin, a **selector function** (Python `selection_func(state: GroupChatState) -> str`), an **agent-based orchestrator** (`orchestrator_agent=...`, a full `Agent` with tools and observability) or a custom orchestrator. In .NET use `AgentWorkflowBuilder.CreateGroupChatBuilderWith(agents => new RoundRobinGroupChatManager(agents) { MaximumIterationCount = 5 })` and subclass the manager to override `ShouldTerminateAsync` [[tr26]]." },
+    { "t": "p", "md": "**Bounds.** Python takes a `termination_condition` (a function over the conversation) and a round limit; .NET uses `MaximumIterationCount`. If you supply a custom `BaseGroupChatOrchestrator`, all of its properties must be set, including `participant_registry`, `max_rounds` and `termination_condition`, and the builder's values are ignored. Terminal output is an `AgentResponse` containing the orchestrator's completion message; pass `intermediate_output_from=[...]` to stream each participant [[tr26]]." },
+    { "t": "p", "md": "**Context and privacy.** Agents do not share one session: the orchestrator synchronises each agent's session with the conversation before every turn. Python keeps user text, inline data, URIs, hosted files and vector stores in the shared history and keeps only text for non-user messages; function calls, results and approval payloads are filtered before broadcast. To redact or withhold participant text before it reaches others, filter inside a custom `GroupChatOrchestrator` response handler: filtering events from `workflow.run()` is too late, because the original is already stored and broadcast [[tr26]]." },
+    { "t": "diagram", "id": "w11-t21-d1", "title": "Group chat star", "alt": "An orchestrator in the centre selects the next speaker among a researcher, a writer and a reviewer and broadcasts each reply to all participants.", "src": "flowchart TB\n  O[Orchestrator: select speaker and stop] --> R[Researcher]\n  O --> W[Writer]\n  O --> V[Reviewer]\n  R -->|reply broadcast| O\n  W -->|reply broadcast| O\n  V -->|reply broadcast| O" },
+    { "t": "tabs", "tabs": [
+      { "label": "C#", "blocks": [ { "t": "code", "lang": "csharp", "code": "public class ApprovalManager(IReadOnlyList<AIAgent> agents, string approver)\n    : RoundRobinGroupChatManager(agents)\n{\n    protected override ValueTask<bool> ShouldTerminateAsync(\n        IReadOnlyList<ChatMessage> history, CancellationToken ct = default)\n    {\n        var last = history.LastOrDefault();\n        return ValueTask.FromResult(last?.AuthorName == approver &&\n            last.Text?.Contains(\"approve\", StringComparison.OrdinalIgnoreCase) == true);\n    }\n}\n\nvar workflow = AgentWorkflowBuilder\n    .CreateGroupChatBuilderWith(a => new ApprovalManager(a, \"Reviewer\") { MaximumIterationCount = 10 })\n    .AddParticipants(writer, reviewer)\n    .Build();" } ] },
+      { "label": "Python", "blocks": [ { "t": "code", "lang": "python", "code": "from agent_framework.orchestrations import GroupChatBuilder, GroupChatState\n\ndef selector(state: GroupChatState) -> str:\n    names = list(state.participants.keys())\n    return names[state.current_round % len(names)]       # round-robin\n\nworkflow = GroupChatBuilder(\n    participants=[researcher, writer],\n    selection_func=selector,\n    termination_condition=lambda conv: len(conv) >= 4,\n    intermediate_output_from=[researcher, writer],\n).build()\n\n# or let an agent choose the speaker\nworkflow = GroupChatBuilder(\n    participants=[researcher, writer],\n    orchestrator_agent=orchestrator_agent,\n    termination_condition=lambda m: sum(1 for x in m if x.role == 'assistant') >= 4,\n).build()" } ] }
+    ] }
+  ],
+  "whereToUse": [
+    "Writer and reviewer loops that stop when the reviewer approves",
+    "Multi-perspective analysis with a moderator choosing who speaks",
+    "Quality assurance: proposer, critic and fact checker iterating on an answer",
+    "Content creation where several roles must see everything said so far"
+  ],
+  "whenToUse": {
+    "use": [
+      "Iterative refinement across roles is the point",
+      "You want one place to control turn order and stopping",
+      "All participants may see the whole conversation"
+    ],
+    "avoid": [
+      "Participants must not see each other's content: shared history is the default",
+      "A fixed order is enough: sequential is cheaper",
+      "No hard bound: always set a termination condition and a round limit"
+    ],
+    "flips": [
+      "Selection needs judgment: use an agent-based orchestrator, which adds a model call per turn",
+      "Participants hold sensitive data: add a filtering orchestrator handler, or avoid group chat"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Group chat", "Iterative multi-role refinement", "One-shot or fixed-order work", "Tokens grow with rounds x participants (full shared history)"],
+      ["Sequential", "Fixed pipeline", "Back-and-forth is needed", "No iteration"],
+      ["Concurrent", "Independent opinions", "Agents should react to each other", "No interaction"],
+      ["Handoff", "Ownership moves to a specialist", "Central control is needed", "Mesh, loops possible"],
+      ["Magentic", "Dynamic planning, progress ledger", "Simple review loops", "Planning calls and stall handling"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "The chat runs to the maximum and the answer is poor", "cause": "Termination relies on a phrase the agents never say", "fix": "Combine a content condition with a hard round limit, and test termination in evals" },
+    { "symptom": "Redaction did not stop a secret from reaching other agents", "cause": "Filtering was applied to events returned by `workflow.run()`, after broadcast", "fix": "Filter in a custom orchestrator participant-response handler, before shared history is updated" },
+    { "symptom": "Custom orchestrator ignores `max_rounds` set on the builder", "cause": "With a custom `BaseGroupChatOrchestrator` the builder's `max_rounds` and `termination_condition` are ignored", "fix": "Set all properties on the orchestrator itself" }
+  ],
+  "scenarios": [
+    {
+      "id": "w11-t21-s1",
+      "title": "Draft and review until approved",
+      "situation": "A writer drafts a policy summary and a reviewer critiques it. Typically two to four rounds are needed. Each turn costs about 0.05. Output goes to staff.",
+      "constraints": ["Two roles", "Stop when approved", "Budget under 0.50 per summary"],
+      "unknowns": ["Is the approval phrase reliable?", "What happens at the cap?", "Does the reviewer see the sources?"],
+      "question": "How do you configure the chat?",
+      "options": [
+        { "name": "Group chat with round-robin selection, a termination condition on the reviewer's approval, and a hard cap of 8 turns", "verdict": "best", "why": "Deterministic turns, approval-based stop and a worst case of 8 x 0.05 = 0.40 under the budget.", "tradeoff": "Cost still scales with shared history growth; budget assumes flat per-turn cost." },
+        { "name": "Agent-based orchestrator choosing speakers", "verdict": "poor", "why": "Adds a model call per turn for a two-role loop where round-robin is exact.", "tradeoff": "Right when three or more roles need judgment on who speaks." },
+        { "name": "Sequential writer, reviewer, writer", "verdict": "good", "why": "Cheaper, fixed at three turns.", "tradeoff": "No loop when the reviewer rejects the second draft." }
+      ],
+      "flips": [
+        { "if": "Reviewers become three specialists", "then": "Switch to selector or orchestrator-agent speaker selection." },
+        { "if": "Approval is subjective", "then": "Add a human approval request after the loop." }
+      ],
+      "takeaway": "Use the simplest selector that fits and a hard cap sized from the budget."
+    },
+    {
+      "id": "w11-t21-s2",
+      "title": "Agents with different data clearances",
+      "situation": "A group chat includes a finance agent with access to restricted figures and a marketing agent without. Both see the shared history by default.",
+      "constraints": ["Different clearances", "Shared history is default", "Audit requirement"],
+      "unknowns": ["Which fields are restricted?", "Can finance output be summarised?"],
+      "question": "What do you do?",
+      "options": [
+        { "name": "Do not mix clearances in one chat, or filter finance output in a custom orchestrator handler before it enters shared history", "verdict": "best", "why": "Shared history is broadcast to all participants, so protection must happen at the boundary before storage and broadcast.", "tradeoff": "Custom orchestrator code and tests; the sender's own session still holds the original." },
+        { "name": "Tell the marketing agent not to use restricted numbers", "verdict": "poor", "why": "It has already received them; a prompt is no access control.", "tradeoff": "Only fine when data is not restricted." },
+        { "name": "Filter the events printed by the caller", "verdict": "poor", "why": "Too late: the content is stored and broadcast.", "tradeoff": "Useful only for UI display, not for protection." }
+      ],
+      "flips": [
+        { "if": "Marketing needs only aggregate numbers", "then": "Have finance emit a sanitised summary as its visible reply." },
+        { "if": "Clearances differ widely", "then": "Use separate workflows and pass approved summaries between them." }
+      ],
+      "takeaway": "Shared conversation means shared data: filter before the broadcast."
+    }
+  ],
+  "quiz": [
+    { "id": "w11-t21-q1", "type": "single", "tag": "security", "q": "You redact a secret from events returned by `workflow.run()` in a Python group chat. Other participants still see it. Why?", "options": ["Redaction was applied after the original response was stored and broadcast", "Group chat disables redaction", "Secrets are re-added by the orchestrator", "Streaming events bypass the history"], "answer": 0, "explain": "Filtering returned events is too late. Filter in a custom `GroupChatOrchestrator` participant-response handler, before shared history is updated.", "ref": "tr26" },
+    { "id": "w11-t21-q2", "type": "numeric", "tag": "numeric", "q": "A group chat is capped at 12 turns. Each turn costs 0.04 on average. What is the worst-case model cost per run, ignoring an agent-based orchestrator?", "answer": 0.48, "tolerancePct": 1, "unit": "currency units", "explain": "12 x 0.04 = 0.48. With an agent-based orchestrator add its call per turn; shared history growth would raise the per-turn cost.", "ref": "tr26" }
+  ],
+  "flashcards": [
+    { "front": "What topology does group chat use?", "back": "A star: an orchestrator picks the next speaker, participants share the synchronised conversation history." },
+    { "front": "Three ways to choose the speaker in Python?", "back": "`selection_func` (state to name), `orchestrator_agent` (an Agent decides), or a custom orchestrator." },
+    { "front": "What stops a group chat?", "back": "`termination_condition` plus a round limit (`max_rounds`, or `MaximumIterationCount` in .NET)." }
+  ],
+  "related": ["w11-t20", "w11-t22", "w11-t23", "w10-t14"],
+  "refs": ["tr26"]
+}

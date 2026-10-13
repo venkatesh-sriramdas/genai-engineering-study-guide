@@ -1,0 +1,114 @@
+{
+  "id": "w11-t17",
+  "order": 17,
+  "group": "Workflows",
+  "title": "Workflows as agents, sub-workflows and declarative workflows",
+  "minutes": 10,
+  "difficulty": "advanced",
+  "summary": "Three ways to compose and reuse workflows: expose one as an agent, nest one inside another as an executor, or define the graph in YAML instead of code.",
+  "useIf": "A graph must plug into agent-shaped hosts (A2A, Responses, AG-UI), a workflow is reusable inside larger ones, or non-developers should edit the flow.",
+  "avoidIf": "You expect middleware on the wrapper to protect inner agents, or you need complex custom logic that YAML actions cannot express.",
+  "explain": [
+    { "t": "p", "md": "**Workflow as agent.** Python `workflow.as_agent(name=...)`, .NET `workflow.AsAIAgent(id, name, description)`. The start executor must accept chat messages (agent-based executors do). It gets sessions: a serialized session contains the inner workflow checkpoint. Requests raised inside surface to the caller as function calls (Python name `WorkflowAgent.REQUEST_INFO_FUNCTION_NAME`), and you answer with a function result. Python 1.2.2 (2026-04-29) made orchestration output an `AgentResponse`, so `as_agent()` returns only the final answer [[tr20]] [[tr49]]." },
+    { "t": "callout", "kind": "gotcha", "title": "The wrapper does not carry policy", "md": "In Python, middleware configured on the wrapper agent does not run, and instructions, tools and chat or function middleware contributed by wrapper context providers do not flow into workflow executors. Configure required policy on the agents or clients inside the workflow. In .NET the `id` passed to `AsAIAgent` names only the outer agent: inner agents still need stable `ChatClientAgentOptions.Id` values for checkpoint resume [[tr20]]." },
+    { "t": "p", "md": "**Sub-workflows.** Python wraps a workflow in `WorkflowExecutor(workflow=inner, id=..., allow_direct_output=False, propagate_request=False)`; .NET uses `BindAsExecutor`. The inner workflow runs as one step of the parent with its own superstep loop and independent state, and the parent checkpoint carries inner state. With `propagate_request=False` requests from the inner graph arrive at parent executors as `SubWorkflowRequestMessage` (answer with `request.create_response(...)` and `target_id=request.executor_id`); with `True` they surface as ordinary request events to the caller. Nesting can be multi-level [[tr21]]." },
+    { "t": "p", "md": "**Declarative.** YAML defines actions instead of code. Python shape: `name`, `description`, `inputs`, `actions`; C#: `kind: Workflow` with `trigger.kind: OnConversationStart`, `trigger.id`, `trigger.actions`. Action families cover variables, control flow, agent and tool calls (`InvokeAzureAgent`, `InvokeFunctionTool`), HTTP and MCP, human input (`Question`, `RequestExternalInput`) and conversation control. The docs advise declarative for standard patterns and frequently changing flows, code for complex custom logic [[tr22]]. Python 1.7.0 (2026-05-28) removed Python-only actions and renamed alias kinds to the C# canonical names." },
+    { "t": "table", "caption": "Three composition tools at a glance", "head": ["Tool", "Direction", "State and requests", "Best for"], "rows": [
+      ["`as_agent()` / `AsAIAgent`", "Graph becomes an agent", "Session contains the inner checkpoint", "Hosting over A2A, Responses, AG-UI"],
+      ["`WorkflowExecutor` / `BindAsExecutor`", "Graph becomes a node", "Own superstep loop, requests routed by `propagate_request`", "Reusable inner pipelines"],
+      ["Declarative YAML", "Graph defined as data", "Actions and variables (`Local.*`, `Workflow.Inputs.*`)", "Standard, frequently edited flows"]
+    ] },
+    { "t": "tabs", "tabs": [
+      { "label": "C#", "blocks": [ { "t": "code", "lang": "csharp", "code": "var workflow = new WorkflowBuilder(researchAgent)\n    .AddEdge(researchAgent, writerAgent)\n    .AddEdge(writerAgent, reviewerAgent)\n    .Build();\n\nAIAgent pipeline = workflow.AsAIAgent(\n    id: \"content-pipeline\",\n    name: \"Content Pipeline Agent\",\n    description: \"Researches, writes and reviews content\");\n\nAgentSession s = await pipeline.CreateSessionAsync();\nawait foreach (var u in pipeline.RunStreamingAsync(messages, s)) Console.Write(u.Text);" } ] },
+      { "label": "Python", "blocks": [ { "t": "code", "lang": "python", "code": "inner = (WorkflowBuilder(start_executor=specialist1)\n         .add_edge(specialist1, specialist2).build())\nanalysis = WorkflowExecutor(workflow=inner, id='analysis-pipeline',\n                            propagate_request=True)\nparent = (WorkflowBuilder(start_executor=coordinator)\n          .add_edge(coordinator, analysis)\n          .add_edge(analysis, reviewer).build())\n\npipeline_agent = parent.as_agent(name='Content Pipeline Agent')\nresponse = await pipeline_agent.run('Write about AI trends')" } ] },
+      { "label": "Declarative YAML", "blocks": [ { "t": "code", "lang": "yaml", "code": "name: greeting-workflow\ndescription: Greets the user\ninputs:\n  name:\n    type: string\nactions:\n  - kind: SetVariable\n    id: build_message\n    variable: Local.message\n    value: =Concat(\"Hello, \", Workflow.Inputs.name, \"!\")\n  - kind: InvokeAzureAgent\n    id: call_assistant\n    agent:\n      name: AssistantAgent\n    input:\n      messages: =Local.message\n    output:\n      autoSend: true" } ] }
+    ] }
+  ],
+  "whereToUse": [
+    "Exposing an orchestration over A2A, AG-UI or an OpenAI-compatible endpoint, which speak the agent interface",
+    "Reusing a verified review pipeline as one step in several parent workflows",
+    "Letting analysts or product owners edit routing and prompts in YAML without a deploy of code",
+    "Hosting a workflow in a Foundry hosted agent (prefer native workflow hosting over `as_agent`)"
+  ],
+  "whenToUse": {
+    "use": [
+      "The consumer expects an agent (chat messages in, response out)",
+      "A graph is a reusable component with a clear input and output",
+      "The flow is a standard pattern that changes often"
+    ],
+    "avoid": [
+      "You need wrapper-level guardrails: put them inside the workflow's agents",
+      "Complex custom logic or integration with existing Python code: write the graph in code",
+      "Hosting a stateful `WorkflowAgent` for many users from one instance: it keeps workflow state in memory"
+    ],
+    "flips": [
+      "Requests inside the inner graph should reach a human directly: set `propagate_request=True`; to answer them in the parent, keep the default and add a handler",
+      "Foundry Responses hosting: host the workflow natively with `workflow=` and a request-aware factory instead of `agent=workflow.as_agent()` (deprecated)"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Workflow as agent", "Plug a graph into agent hosts", "You need wrapper policy", "Wrapper middleware does not run (Python)"],
+      ["Sub-workflow executor", "Reusable inner graph inside a parent", "A flat graph is simpler", "Nested ids, request routing and checkpoints to understand"],
+      ["Declarative YAML", "Standard flows edited by non-developers", "Custom logic", "Maturity differs by SDK; kind names changed in 2026"],
+      ["Programmatic graph", "Maximum control", "Frequent non-developer edits", "Code deploys for every change"],
+      ["Agent as a tool", "Primary agent retains the task", "You need graph checkpoints between steps", "No superstep boundaries"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A guardrail on the workflow agent never fires", "cause": "Middleware on the Python wrapper does not execute for inner agents", "fix": "Attach middleware to the agents or clients inside the workflow" },
+    { "symptom": "Resume of a serialized workflow-agent session fails in .NET", "cause": "Inner agents were recreated with different ids; the outer `AsAIAgent` id does not stabilise them", "fix": "Set stable `ChatClientAgentOptions.Id` (and unchanged `Name`) for every inner agent" },
+    { "symptom": "Old YAML stops loading after an upgrade", "cause": "Python 1.7.0 removed Python-only actions and renamed alias kinds; 1.0.0rc2 replaced `InvokeTool` with `InvokeFunctionTool`", "fix": "Rename kinds to the canonical names and test loading in CI" }
+  ],
+  "scenarios": [
+    {
+      "id": "w11-t17-s1",
+      "title": "Publish a review pipeline to other teams",
+      "situation": "A platform team has a workflow with draft, legal check and editor review. Five product teams want it as a tool for their own agents over A2A. Legal rules must always run.",
+      "constraints": ["Consumers are other agents", "Legal check mandatory", "Single deployed service"],
+      "unknowns": ["How many concurrent users per instance?", "Is the workflow stateful across calls?", "Which host: self-hosted or Foundry?"],
+      "question": "How do you expose it?",
+      "options": [
+        { "name": "Wrap with `as_agent()` or `AsAIAgent` for hosting, put legal guardrails on the inner agents, and use a per-request factory so no state is shared across users", "verdict": "best", "why": "The agent interface is what A2A and Responses hosts expect, inner policy always applies, and a factory avoids shared mutable state.", "tradeoff": "A fresh graph per request costs build time and needs stable ids for resume." },
+        { "name": "Wrap once and register one `WorkflowAgent` instance for all callers", "verdict": "poor", "why": "A `WorkflowAgent` keeps workflow state in memory between runs, so one instance must never serve different users.", "tradeoff": "Safe for a single-user tool." },
+        { "name": "Put the legal check in wrapper middleware", "verdict": "poor", "why": "Wrapper middleware does not run for inner agents in Python.", "tradeoff": "Right only for policies on the outer request that the inner graph does not need to see." }
+      ],
+      "flips": [
+        { "if": "You host on Foundry Responses in Python", "then": "Host the workflow natively with `workflow=` and `parse_response`; `agent=workflow.as_agent()` is deprecated." },
+        { "if": "Teams need to edit the legal text only", "then": "Move prompts into YAML or files, not graph code." }
+      ],
+      "takeaway": "Wrap for the host, enforce policy inside, and never share one stateful instance."
+    },
+    {
+      "id": "w11-t17-s2",
+      "title": "Business owners tweak a routing flow",
+      "situation": "A support routing flow changes weekly: new queues, new questions, different agent prompts. Business analysts own the content. Developers own deployment.",
+      "constraints": ["Weekly changes", "Non-developers edit", "Standard actions suffice"],
+      "unknowns": ["Do any steps need custom code?", "Is validation in CI possible?", "Which SDK?"],
+      "question": "Code or YAML?",
+      "options": [
+        { "name": "Declarative YAML for the flow, custom code only for steps YAML cannot express, with load tests in CI", "verdict": "best", "why": "The docs recommend declarative for standard patterns and frequently changing flows.", "tradeoff": "Action kinds changed during 2026, so pin versions and test loads on upgrade." },
+        { "name": "A programmatic graph in code", "verdict": "good", "why": "Maximum control and unit-testable.", "tradeoff": "Every change is a developer deploy." },
+        { "name": "One big agent with a long prompt listing queues", "verdict": "poor", "why": "Routing becomes non-deterministic and hard to audit.", "tradeoff": "Acceptable for a small, low-risk router." }
+      ],
+      "flips": [
+        { "if": "Routing needs complex logic or calls into existing Python services", "then": "Use a programmatic graph." },
+        { "if": "Changes need an approval gate", "then": "Keep YAML in version control with review." }
+      ],
+      "takeaway": "Declarative is for flows that change more often than the code around them."
+    }
+  ],
+  "quiz": [
+    { "id": "w11-t17-q1", "type": "single", "tag": "bug", "q": "A Python team adds a PII guardrail as middleware on `workflow.as_agent(...)` and finds inner agents still see raw PII. Why?", "options": ["Middleware on the wrapper does not run for the agents inside the workflow", "`as_agent` only supports function middleware", "PII filters require declarative workflows", "The session was not serialized"], "answer": 0, "explain": "The docs state that wrapper middleware does not execute and wrapper-provided middleware does not flow into executors. Configure policy on the inner agents or clients.", "ref": "tr20" },
+    { "id": "w11-t17-q2", "type": "match", "tag": "concept", "q": "Match each `WorkflowExecutor` option (Python) to its effect.", "pairs": [ { "l": "`allow_direct_output=True`", "r": "Sub-workflow outputs go to the parent's event stream" }, { "l": "`propagate_request=True`", "r": "Inner requests surface as ordinary request events to the caller" }, { "l": "`propagate_request=False` (default)", "r": "Inner requests are wrapped in `SubWorkflowRequestMessage` for parent executors" } ], "explain": "These parameters control where outputs and requests from the inner graph go.", "ref": "tr21" }
+  ],
+  "flashcards": [
+    { "front": "What must a workflow's start executor accept to become an agent?", "back": "Chat messages (`IEnumerable<ChatMessage>` or a list of messages). Agent-based executors satisfy this." },
+    { "front": "Which YAML shape does each SDK use?", "back": "Python: `name`, `description`, `inputs`, `actions`. C#: `kind: Workflow` with `trigger.kind: OnConversationStart`, `trigger.id`, `trigger.actions`." },
+    { "front": "Why avoid hosting one `WorkflowAgent` for many users?", "back": "It keeps workflow state in memory between runs. Use a per-request factory or native workflow hosting." }
+  ],
+  "related": ["w11-t14", "w11-t15", "w11-t25", "w11-t23", "w09-t10"],
+  "refs": ["tr20", "tr21", "tr22", "tr49"]
+}

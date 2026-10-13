@@ -1,0 +1,130 @@
+{
+  "id": "w13-t11",
+  "order": 11,
+  "group": "Multimodal retrieval",
+  "title": "ColPali and page-image retrieval",
+  "minutes": 8,
+  "difficulty": "advanced",
+  "summary": "ColPali embeds each page as an image into many vectors and scores queries by late interaction (MaxSim). It skips OCR and chunking and keeps layout and figures, at roughly 30 times the storage of a text vector per page.",
+  "useIf": "Pages are visually rich (charts, diagrams, tables, slides), parsing is brittle, and you can pay for a larger index.",
+  "avoidIf": "Content is mostly prose, the index budget is tight, or every answer must cite quoted text.",
+  "explain": [
+    { "t": "p", "md": "**ColPali** treats retrieval as a vision problem. Each page is rendered as an image and a vision-language model (PaliGemma-3B, 1,024 patches) turns it into one 128-dimension vector per patch. A query becomes token vectors. The score uses **late interaction**, as in ColBERT: for each query token take the best matching page vector, then sum. No OCR, layout parser or chunker is needed, so tables, figures and layout stay intact [[r14]]." },
+    { "t": "formula", "title": "MaxSim score", "expr": "score(q, p) = sum over query tokens i of ( max over page vectors j of q_i . p_j )", "vars": [{ "k": "q_i", "v": "query token vector" }, { "k": "p_j", "v": "page patch vector (128 dimensions)" }], "example": "A page of about 1,024 vectors x 128 values x 2 bytes (float16) is about 262 KB, in line with the paper's 257.5 KB." },
+    { "t": "diagram", "id": "w13-t11-d1", "title": "Index and query", "alt": "Pages become many patch vectors in an index. A query becomes token vectors, and MaxSim ranks pages.", "src": "flowchart LR\n  P[Page image] --> V[Vision language model]\n  V --> X[(Many 128-dim vectors)]\n  Q[Query] --> T[Query token vectors]\n  T --> S[MaxSim scoring]\n  X --> S\n  S --> R[Ranked pages]" },
+    { "t": "stats", "items": [
+      { "label": "Storage per page", "value": "257.5 KB", "note": "ColPali, from the paper" },
+      { "label": "BGE-M3 per page", "value": "8.6 KB", "note": "text baseline" },
+      { "label": "Ratio", "value": "about 30x", "note": "arithmetic from the two figures" },
+      { "label": "Query encoding", "value": "30 ms vs 22 ms", "note": "ColPali vs BGE-M3" }
+    ] },
+    { "t": "p", "md": "ColQwen2 caps patches at 768 and adds 5.3 nDCG@5 over ColPali on the **ViDoRe** benchmark [[r14]] (as summarised on 2026-10-13). Compression and token pooling cut storage. Your vector store must support multi-vector (late interaction) scoring, so check that before committing (practice). Evaluate on your own pages, since ViDoRe is not your corpus." },
+    { "t": "callout", "kind": "gotcha", "title": "No text to cite", "md": "The hit is a page image. For quotes you still need OCR or the generator's reading of the page, so plan citations as page numbers and highlighted regions." }
+  ],
+  "whereToUse": [
+    "Technical manuals and slide decks where diagrams carry the answer",
+    "Scanned reports and financial filings with charts and complex tables",
+    "Corpora where OCR and layout parsing fail often",
+    "A second retriever for figure-heavy pages next to a text index"
+  ],
+  "whenToUse": {
+    "use": [
+      "Meaning lives in figures and layout that parsing flattens",
+      "You can afford about 30 times the vectors per page, or you compress",
+      "Evaluation on your own pages shows a gain over the text pipeline"
+    ],
+    "avoid": [
+      "Mostly prose and simple tables: a text pipeline is cheaper and citable",
+      "Hard index budgets with no compression plan",
+      "Contracts and policies that need exact quoted text as evidence"
+    ],
+    "flips": [
+      "Only some pages are figure-heavy: index those pages with page images and the rest as text",
+      "Storage is the limit: apply compression or token pooling and re-measure",
+      "Citations must be text: add OCR or verbalization next to the page vectors"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Page-image multi-vector (ColPali family)", "Figure-heavy pages, brittle parsing", "Tight budget, text citations required", "About 257.5 KB per page, store must support late interaction"],
+      ["Parse then text-embed", "Prose and simple tables", "Charts and diagrams carry the answer", "About 8.6 KB per page with BGE-M3, parsing errors"],
+      ["Caption then embed", "Text citations and hybrid search", "Index-time LLM cost matters", "One LLM call per figure"],
+      ["Single-vector multimodal embedding", "Look-alike and image queries", "Fine-grained page questions", "No reasons or citation text"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Index storage balloons after adoption", "cause": "Multi-vector pages cost about 30 times a text vector", "fix": "Apply compression or token pooling, or restrict page images to figure-heavy pages." },
+    { "symptom": "Retrieval is good but answers cannot be quoted", "cause": "The index holds image vectors, not text", "fix": "Cite page and region, and add OCR or verbalization for quotes." },
+    { "symptom": "Benchmark wins do not reproduce", "cause": "ViDoRe pages differ from your documents", "fix": "Evaluate retrieval separately on a golden set drawn from your own pages." }
+  ],
+  "scenarios": [
+    {
+      "id": "w13-t11-s1",
+      "title": "Two million pages of manuals",
+      "situation": "A manufacturer has 2 million manual pages. About one in five is a diagram or exploded view. The vector store budget is fixed.",
+      "constraints": ["Large corpus", "Fixed storage budget", "Some pages are figure-heavy"],
+      "unknowns": ["Can figure-heavy pages be detected?", "Does the store support multi-vector search?"],
+      "question": "What do you index?",
+      "options": [
+        { "name": "Text pipeline for all pages, plus page-image vectors only for figure-heavy pages", "verdict": "best", "why": "Page images for all 2M pages would be about 515 GB against about 17 GB for text vectors (arithmetic from [[r14]]), so spend it where it pays.", "tradeoff": "You must classify pages and merge two result lists." },
+        { "name": "Page-image vectors for every page", "verdict": "good", "why": "Uniform and avoids parsing.", "tradeoff": "About 30 times the storage unless you compress." },
+        { "name": "Text-only OCR for all pages", "verdict": "poor", "why": "Diagrams lose their meaning in OCR.", "tradeoff": "Right when almost no page is figure-heavy." }
+      ],
+      "flips": [
+        { "if": "Budget doubles or compression halves storage", "then": "Extend page-image indexing to more pages." },
+        { "if": "Only 1 percent of pages are figures", "then": "Text only, plus captions for those pages." }
+      ],
+      "takeaway": "Spend the larger index only where figures carry meaning."
+    },
+    {
+      "id": "w13-t11-s2",
+      "title": "Contracts that must be quoted",
+      "situation": "A legal assistant answers questions from 300,000 pages of contracts. Every answer must quote the clause and cite page and clause number.",
+      "constraints": ["Prose heavy", "Exact quotes needed", "Cost sensitive"],
+      "unknowns": ["Are there scanned images or tables of fees?", "What recall is required?"],
+      "question": "Which retrieval?",
+      "options": [
+        { "name": "Parse then text-embed, with clause-aware chunks", "verdict": "best", "why": "Text gives exact quotes at about 8.6 KB per page, and contracts are prose.", "tradeoff": "Parsing errors on bad scans." },
+        { "name": "Page-image multi-vector only", "verdict": "poor", "why": "It returns pages, not quotable text, and costs about 30 times more storage.", "tradeoff": "Right for visually rich pages such as brochures." },
+        { "name": "Both: text index plus page images for scanned tables", "verdict": "good", "why": "Covers odd pages.", "tradeoff": "Doubles pipeline complexity for a small share of pages." }
+      ],
+      "flips": [
+        { "if": "Many pages are scanned forms with stamps and tables", "then": "Add page images for those pages." },
+        { "if": "Quotes are optional", "then": "Page-image retrieval becomes viable." }
+      ],
+      "takeaway": "Quote-heavy prose belongs in a text index."
+    },
+    {
+      "id": "w13-t11-s3",
+      "title": "Infographic archive",
+      "situation": "A think tank holds 20,000 infographic and chart pages. Parsers return noise. Accuracy matters more than index cost.",
+      "constraints": ["Small corpus", "Figure-dominated", "Quality first"],
+      "unknowns": ["Is the store multi-vector capable?", "How are answers cited?"],
+      "question": "How do you retrieve?",
+      "options": [
+        { "name": "ColQwen2 or ColPali page-image retrieval, citing page and region", "verdict": "best", "why": "At 257.5 KB per page, 20,000 pages is about 5 GB, which is trivial, and parsing is the weak point [[r14]].", "tradeoff": "No quotable text unless the generator reads the page." },
+        { "name": "Caption every figure and embed the text", "verdict": "good", "why": "Gives citable text and hybrid search.", "tradeoff": "One LLM call per figure and captions can be wrong." },
+        { "name": "OCR text embedding", "verdict": "poor", "why": "OCR of infographics is noisy.", "tradeoff": "Fine for text-heavy reports." }
+      ],
+      "flips": [
+        { "if": "Corpus grows to 20 million pages", "then": "Add compression or restrict to figure-heavy pages." },
+        { "if": "Users need text answers with quotes", "then": "Add captions or OCR alongside." }
+      ],
+      "takeaway": "Small, figure-driven corpora make page images affordable."
+    }
+  ],
+  "quiz": [
+    { "id": "w13-t11-q1", "type": "numeric", "tag": "numeric", "q": "At 257.5 KB per page, how many gigabytes of vectors does a 1 million page ColPali index need (decimal)?", "answer": 257.5, "tolerancePct": 2, "unit": "GB", "explain": "1,000,000 x 257.5 KB = 257,500,000 KB, which is 257.5 GB. The same corpus with BGE-M3 at 8.6 KB per page is 8.6 GB." },
+    { "id": "w13-t11-q2", "type": "single", "tag": "concept", "q": "How does late interaction score a page?", "options": ["One cosine between a single query vector and a single page vector", "For each query token take the best matching page vector, then sum", "Average all page vectors, then compare", "Rerank by OCR text overlap"], "answer": 1, "explain": "MaxSim takes the maximum similarity per query token over the page's vectors and sums. Single-vector cosine is the plain embedding path, averaging loses detail, and OCR overlap is a text method." },
+    { "id": "w13-t11-q3", "type": "multi", "tag": "tradeoff", "q": "Which are real costs of page-image multi-vector retrieval?", "options": ["Far more storage per page than a text vector", "A store that supports multi-vector scoring", "No quotable text in the index", "Mandatory OCR at index time"], "answers": [0, 1, 2], "explain": "ColPali avoids OCR and chunking, so the last statement is false. The other three are real costs." }
+  ],
+  "flashcards": [
+    { "front": "How does ColPali score a query against a page?", "back": "Late interaction (MaxSim): for each query token, take the maximum similarity over the page's patch vectors, then sum." },
+    { "front": "What is the storage cost of ColPali versus a text vector?", "back": "About 257.5 KB per page versus 8.6 KB for BGE-M3, roughly 30 times. Compression and token pooling cut it." },
+    { "front": "What is ViDoRe?", "back": "The benchmark introduced with ColPali for visually rich document retrieval. ColQwen2 caps patches at 768 and scores 5.3 nDCG@5 higher than ColPali." }
+  ],
+  "related": ["w13-t10", "w13-t12", "w13-l3", "w05-t05"],
+  "refs": ["r14", "r12", "r23"]
+}

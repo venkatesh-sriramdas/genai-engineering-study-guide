@@ -1,0 +1,109 @@
+{
+  "id": "w12-t13",
+  "order": 13,
+  "group": "Publish and operate",
+  "title": "Publishing: Teams, Microsoft 365 Copilot and the Entra Agent Registry",
+  "minutes": 7,
+  "difficulty": "core",
+  "summary": "Publishing exposes an agent's stable endpoint to Teams and Microsoft 365 Copilot through an Azure Bot Service resource. Scope decides who can see and call it, and you roll new versions behind the same endpoint.",
+  "useIf": "People should reach a Foundry agent from the tools where they already work, with an approval path and version control behind it.",
+  "avoidIf": "The agent is called only from your own application (no publish needed) or the data flows into Microsoft 365 and Teams are not approved.",
+  "explain": [
+    { "t": "p", "md": "When you publish to Microsoft Copilot and Teams, you publish the agent's **stable endpoint**, so users always meet one consistent agent while you roll out new versions behind it [[r5]]. You pick the **active version**: always use latest, or a specific version [[r5]]. Foundry validates your metadata (name, three-part publish version, descriptions), compiles a Teams app manifest `.zip`, submits it to the Copilot and Teams catalogs, enables the `activity` protocol and sets an authorization scheme based on scope [[r5]]. Publishing creates an **Azure Bot Service** resource, which needs the `Microsoft.BotService` resource provider [[r5]]." },
+    { "t": "diagram", "id": "w12-t13-d1", "title": "Publish path and scope", "alt": "A tested version is served by a stable endpoint. Publishing creates an Azure Bot Service resource. Individual scope is visible only to you with no approval. Organization scope needs admin approval and then appears under Built by your org.", "src": "flowchart LR\n  V[Tested version] --> E[Stable endpoint]\n  E --> B[Azure Bot Service resource]\n  B --> S{Publish scope}\n  S -->|Individual| I[Visible to you, no approval]\n  S -->|Organization| A[Admin approval]\n  A --> O[Built by your org]" },
+    { "t": "table", "caption": "Scopes (checked 2026-10-13)", "head": ["Scope", "REST value and scheme", "Who sees it", "Approval"], "rows": [
+      ["Individual (portal: you only)", "`publishScope` `Shared`, `BotServiceRbac`", "Only you. In a Teams chat, participants with the needed Foundry permissions on the project can use it", "None [[r5]]"],
+      ["Organization (portal: People in your organization)", "`publishScope` `Tenant`, `BotServiceTenant`", "Everyone in the tenant, under Built by your org", "Admin approval in the Microsoft 365 admin center [[r5]]"]
+    ] },
+    { "t": "p", "md": "You need permission to create the bot and configure its channels (`Microsoft.BotService/botServices/write` and `channels/write`). The **Azure Bot Service Contributor** role grants exactly these, Contributor or Owner also work, and Foundry roles do not grant them. You also need **Foundry User** on the project [[r5]]. For projects with public network access disabled, the portal cannot publish: use the REST API and enable the source-IP-filtered public Activity route with `enable_m365_public_endpoint` [[r5]]. The overview also lists the **Entra Agent Registry** as a place to share agents [[r1]]." },
+    { "t": "callout", "kind": "warn", "title": "Data and identity caveats", "md": "Microsoft 365 and Teams process and store data tied to publishing and to agent responses, under their own terms and residency commitments. Review before you publish [[r5]]. In the older agent application model, publishing creates a distinct identity and you must reassign RBAC, while the newer hosted model gives each agent its own identity at deploy. The docs say the publishing experience is changing, so confirm which model your project is on [[r4]]. Voice-based agents do not show the standard Teams card [[r1]]." }
+  ],
+  "whereToUse": [
+    "Pilots shared with a small group in Teams chats",
+    "Organization-wide assistants listed under Built by your org after approval",
+    "Teams where the agent must live in Microsoft 365 Copilot and Teams rather than a custom web UI",
+    "Rolling new agent versions behind a stable address without telling users"
+  ],
+  "whenToUse": {
+    "use": [
+      "People already work in Teams and Microsoft 365 and should not need a new app",
+      "You need an admin approval step and a catalog listing for org-wide reach",
+      "You want a stable endpoint that decouples users from version changes"
+    ],
+    "avoid": [
+      "A data residency or compliance review has not covered the Microsoft 365 and Teams data flows",
+      "The only client is your own application: programmatic access needs no publishing",
+      "A voice agent: the standard Teams card is not shown for it"
+    ],
+    "flips": [
+      "Project has public network access disabled: publish by REST with `enable_m365_public_endpoint`",
+      "Reach grows from a pilot to the tenant: change scope to Organization and go through approval",
+      "You need controlled rollouts: pin a specific active version instead of always using latest"
+    ]
+  },
+  "alternatives": {
+    "title": "Ways to put an agent in front of users",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Publish, Individual scope", "Pilot or personal use, no approval", "Broad discovery is needed", "Visible only to you in the stores [[r5]]"],
+      ["Publish, Organization scope", "Tenant-wide reach with approval", "You need a quick pilot", "Admin approval and wider data exposure"],
+      ["Call the endpoint from your own app", "Custom UI, existing product", "Users live in Teams", "You build and secure the client; publishing is not needed [[r2]]"],
+      ["Copilot Studio agent", "Makers and Microsoft 365 channels", "Code-level control", "Different authoring and governance surface [[tr4]]"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Publish fails with an authorization error although you are Foundry Owner", "cause": "Foundry roles do not grant Azure Bot Service write permissions", "fix": "Assign Azure Bot Service Contributor (or Contributor or Owner) in the resource group [[r5]]." },
+    { "symptom": "Publish fails because the bot resource cannot be created", "cause": "The `Microsoft.BotService` provider is not registered in the subscription", "fix": "Register it, for example with `az provider register --namespace Microsoft.BotService` [[r5]]." },
+    { "symptom": "Users see a half-tested version", "cause": "Active version is set to always use latest", "fix": "Pin a specific tested version and promote deliberately [[r5]]." },
+    { "symptom": "Agent works after publish but RBAC to downstream resources is gone", "cause": "In the older agent application model publishing creates a distinct identity", "fix": "Reassign RBAC to the new identity and confirm your project's model [[r4]]." }
+  ],
+  "scenarios": [
+    {
+      "id": "w12-t13-s1",
+      "title": "Pilot with a handful of colleagues",
+      "situation": "A team wants five colleagues to try an assistant in a Teams chat this week, before anyone signs off on wider release.",
+      "constraints": ["Five users", "No admin approval yet", "All five have Foundry permissions on the project"],
+      "unknowns": ["Is the data flow into Teams already reviewed?", "Is the project public network access enabled?"],
+      "question": "Which scope do you publish with?",
+      "options": [
+        { "name": "Individual scope and add the agent to a Teams chat", "verdict": "best", "why": "No admin approval, and chat participants with the needed Foundry permissions can use it.", "tradeoff": "Not discoverable by others, and participants need project permissions." },
+        { "name": "Organization scope", "verdict": "poor", "why": "It needs admin approval and exposes an untested agent to the whole tenant.", "tradeoff": "Right once the pilot passes and an admin approves the listing." },
+        { "name": "Skip publishing and share the Foundry endpoint", "verdict": "good", "why": "Programmatic access needs no publish.", "tradeoff": "Colleagues need a client, so Teams is not used." }
+      ],
+      "flips": [
+        { "if": "Pilot users lack Foundry permissions", "then": "Grant them or move to Organization scope after approval." },
+        { "if": "The pilot grows to the whole company", "then": "Organization scope with admin approval." }
+      ],
+      "takeaway": "Start narrow: scope controls both visibility and the call authorization scheme."
+    },
+    {
+      "id": "w12-t13-s2",
+      "title": "Org-wide release in a locked-down project",
+      "situation": "An approved assistant must be listed for all employees. The project has public network access disabled, and the security team asked for a version pin.",
+      "constraints": ["Public network access is off", "Tenant-wide listing", "Release is gated by a pinned version"],
+      "unknowns": ["Has the Microsoft 365 data flow been approved?", "Who approves in the admin center?"],
+      "question": "How do you publish?",
+      "options": [
+        { "name": "REST publish with Organization scope, `enable_m365_public_endpoint` and a pinned active version", "verdict": "best", "why": "The portal cannot publish from this project, Tenant scope gives org-wide listing after approval, and the pin keeps the release controlled.", "tradeoff": "You allow a source-IP-filtered public Activity route and manage the REST call yourself." },
+        { "name": "Portal publish", "verdict": "poor", "why": "Not supported for projects that disable public network access.", "tradeoff": "Right for projects with public access enabled." },
+        { "name": "Individual scope per employee", "verdict": "good", "why": "Avoids admin approval.", "tradeoff": "No tenant listing and per-user setup that does not scale." }
+      ],
+      "flips": [
+        { "if": "Security refuses any public route", "then": "Do not publish to Teams from this project. Use a private client." },
+        { "if": "Latest is trusted", "then": "Always use latest." }
+      ],
+      "takeaway": "Network posture decides the publish path, and scope decides the audience."
+    }
+  ],
+  "quiz": [
+    { "id": "w12-t13-q1", "type": "single", "tag": "concept", "q": "Which publish scope enables `BotServiceTenant` and needs admin approval in the Microsoft 365 admin center?", "options": ["Individual (`Shared`)", "Organization (`Tenant`)", "Project", "Preview"], "answer": 1, "explain": "Tenant scope enables `BotServiceTenant` and requires admin approval, after which the agent appears under Built by your org. Shared scope uses `BotServiceRbac` and needs no approval.", "ref": "r5" },
+    { "id": "w12-t13-q2", "type": "multi", "tag": "diagnose", "q": "Publishing fails. Which are documented prerequisites you should check?", "options": ["Azure Bot Service Contributor, Contributor or Owner in the resource group", "Foundry User on the project", "The `Microsoft.BotService` resource provider is registered", "Foundry Account Owner alone is sufficient"], "answers": [0, 1, 2], "explain": "Bot write permissions come from Azure roles, not Foundry roles, so Foundry Account Owner alone does not suffice. Foundry User and the provider registration are also required.", "ref": "r5" },
+    { "id": "w12-t13-q3", "type": "single", "tag": "flip", "q": "A project disables public network access. How must you publish to Teams?", "options": ["Use the portal as usual", "Switch the agent to a voice agent", "Publish is impossible", "Use the REST API with `enable_m365_public_endpoint`"], "answer": 3, "explain": "Portal publishing is unsupported for such projects. The REST route with the source-IP-filtered public Activity endpoint is the documented path. Voice agents do not show the standard Teams card.", "ref": "r5" }
+  ],
+  "flashcards": [
+    { "front": "What does Foundry publish to Teams and Microsoft 365 Copilot?", "back": "The agent's stable endpoint, through an Azure Bot Service resource. Versions roll behind the endpoint and you choose the active version." },
+    { "front": "Individual vs Organization scope?", "back": "Individual: `Shared`, `BotServiceRbac`, no approval, visible to you. Organization: `Tenant`, `BotServiceTenant`, admin approval, listed under Built by your org." }
+  ],
+  "related": ["w12-t04", "w12-t06", "w12-t18", "w12-t19", "w12-l3"],
+  "refs": ["r1", "r2", "r4", "r5", "tr4"]
+}

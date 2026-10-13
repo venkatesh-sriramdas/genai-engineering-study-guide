@@ -1,0 +1,89 @@
+{
+  "id": "w10-l4",
+  "order": 4,
+  "title": "Context is a budget, not a bucket",
+  "kind": "lab",
+  "minutes": 22,
+  "brief": "Every step of an agent adds tokens to a window that has a hard limit and a soft quality limit. The number of tool calls, whether dropped content can be restored and whether the work branches are all open. Learn what to clear, compact, offload or isolate.",
+  "blocks": [
+    { "t": "h", "text": "Spend the attention budget on purpose", "level": 2 },
+    { "t": "p", "md": "Anthropic frames context as a finite resource with diminishing returns: the model has an **attention budget**, and every added token competes with the others. The goal is the smallest set of high-signal tokens that makes the next step succeed. Its long-horizon toolkit is compaction, structured note-taking and multi-agent architectures, plus loading data on demand: keep lightweight identifiers such as paths, queries and links and fetch the content with tools [[r6]].\n\nThe pressure is real below the advertised window. Chroma tested 18 models and found non-uniform degradation as input grows, even on simple tasks, and noted that needle-in-a-haystack tests only measure lexical retrieval [[r8]]. Lost in the Middle (2023) found accuracy highest when the relevant text sits at the start or end of the input and lowest in the middle [[r39]]." },
+    { "t": "formula", "title": "The window budget", "expr": "used = system + tools + memory + history + retrieval + tool_results + reserved_output   (stay under window)", "vars": [ { "k": "tools", "v": "tool definitions, paid on every request" }, { "k": "history", "v": "turns kept in the conversation" }, { "k": "tool_results", "v": "outputs of tool calls still in context" }, { "k": "reserved_output", "v": "room kept free for the answer and any reasoning tokens" } ], "example": "The lab's Tool-heavy agent preset (illustrative sizes): 1,500 + 80 x 500 + 2,000 + 40 x 900 + 6 x 800 + 42,000 + 8,000 = **134,300** tokens in a 128,000 window. It overflows by 6,300 before the user says anything unusual." },
+    { "t": "lab", "id": "context-budget", "intro": "Illustrative planner, not a tokenizer. Segment sizes, windows and the cached-read discount are inputs you control, not vendor figures. Load the Tool-heavy agent preset and apply tool search. Then compare summarising with dropping on the Long-running research agent preset, and finish by switching to the cache-friendly order." },
+    { "t": "stats", "items": [
+      { "label": "Models tested, Chroma", "value": "18", "note": "All degraded as input grew, unevenly (July 2025)" },
+      { "label": "RULER", "value": "about half", "note": "Of 17 models kept satisfactory performance at 32K despite claiming 32K or more" },
+      { "label": "NoLiMa at 32K", "value": "11 of 13", "note": "Models claiming 128K or more fell below 50% of their short-context baseline" },
+      { "label": "GPT-4o in NoLiMa", "value": "99.3% to 69.7%", "note": "Short context to 32K" }
+    ] },
+    { "t": "dials", "id": "w10-l4-context", "title": "Pick a context strategy for a long run", "prompt": "Flip the dials. Short runs need none of this, so doing nothing is on the board.",
+      "dials": [
+        { "id": "calls", "label": "Tool calls per task", "values": [ { "id": "few", "label": "Under 10" }, { "id": "many", "label": "50 or more" } ] },
+        { "id": "restore", "label": "Source of dropped output", "values": [ { "id": "yes", "label": "Stable: path, URL or id re-fetches it" }, { "id": "no", "label": "Ephemeral: live or one-time output" } ] },
+        { "id": "shape", "label": "Task shape", "values": [ { "id": "seq", "label": "One sequential thread" }, { "id": "par", "label": "Independent branches" } ] },
+        { "id": "detail", "label": "Detail that must survive", "values": [ { "id": "exact", "label": "Exact ids, numbers and wording" }, { "id": "gist", "label": "The gist is enough" } ] }
+      ],
+      "options": [
+        { "id": "bigger", "name": "Bigger window, keep everything", "summary": "Do nothing clever and pay for the tokens." },
+        { "id": "clear", "name": "Clear stale tool results", "summary": "Drop old outputs, keep the call record and a pointer." },
+        { "id": "compact", "name": "Compaction (summarise history)", "summary": "Replace old turns with a model-written summary." },
+        { "id": "offload", "name": "Offload to files or notes", "summary": "Write state outside the window, load it on demand." },
+        { "id": "subagent", "name": "Sub-agent isolation", "summary": "Workers explore in clean windows and return short results." }
+      ],
+      "scores": {
+        "bigger": {
+          "calls": { "few": { "s": 2, "why": "A short run fits, so there is nothing to engineer." }, "many": { "s": -2, "why": "Cost, latency and rot grow with every step." } },
+          "restore": { "yes": { "s": 0, "why": "You could drop and re-fetch, but short runs do not need to." }, "no": { "s": 1, "why": "If dropped output is gone for good, keeping it is defensible." } },
+          "shape": { "seq": { "s": 0, "why": "Neutral." }, "par": { "s": -1, "why": "Branch noise crowds the lead's window." } },
+          "detail": { "exact": { "s": 1, "why": "Nothing is summarised away." }, "gist": { "s": 0, "why": "Neutral." } }
+        },
+        "clear": {
+          "calls": { "few": { "s": 0, "why": "Little to clear." }, "many": { "s": 2, "why": "Stale tool output dominates long runs." } },
+          "restore": { "yes": { "s": 1, "why": "A pointer lets you re-fetch what you cleared." }, "no": { "s": -2, "why": "Cleared output is gone for good." } },
+          "shape": { "seq": { "s": 1, "why": "Natural for a single thread." }, "par": { "s": 0, "why": "Neutral." } },
+          "detail": { "exact": { "s": 0, "why": "Keep identifiers and error text, clear only the bulk." }, "gist": { "s": 1, "why": "Used bulk output rarely matters again." } }
+        },
+        "compact": {
+          "calls": { "few": { "s": -1, "why": "An extra model call for little gain." }, "many": { "s": 1, "why": "Handles long histories when no pointers exist." } },
+          "restore": { "yes": { "s": 0, "why": "Neutral." }, "no": { "s": 1, "why": "Works without pointers, at a cost in detail." } },
+          "shape": { "seq": { "s": 1, "why": "One thread has one history to summarise." }, "par": { "s": 0, "why": "Neutral." } },
+          "detail": { "exact": { "s": -2, "why": "Summaries lose exact wording, numbers and rare constraints." }, "gist": { "s": 2, "why": "The gist is what a summary keeps." } }
+        },
+        "offload": {
+          "calls": { "few": { "s": -2, "why": "File tools and note discipline cost more than they save." }, "many": { "s": 2, "why": "Notes and files carry state across the window." } },
+          "restore": { "yes": { "s": 2, "why": "Paths and ids make dropped content restorable." }, "no": { "s": 1, "why": "Write the ephemeral output to a file first, then drop it from context." } },
+          "shape": { "seq": { "s": 1, "why": "A progress file lets a fresh window resume." }, "par": { "s": 1, "why": "Shared notes let branches coordinate." } },
+          "detail": { "exact": { "s": 1, "why": "Exact content stays in the file." }, "gist": { "s": 0, "why": "Neutral." } }
+        },
+        "subagent": {
+          "calls": { "few": { "s": -2, "why": "Spawning workers is overhead for a short run." }, "many": { "s": 1, "why": "Heavy exploration stays out of the lead's window." } },
+          "restore": { "yes": { "s": 0, "why": "Neutral." }, "no": { "s": 1, "why": "The worker absorbs ephemeral output and returns the facts that matter." } },
+          "shape": { "seq": { "s": -1, "why": "Sequential work gains little from isolation." }, "par": { "s": 2, "why": "Independent branches each get a clean window." } },
+          "detail": { "exact": { "s": -1, "why": "Returns are condensed unless the worker hands back artifacts by reference." }, "gist": { "s": 1, "why": "Condensed returns are enough." } }
+        }
+      },
+      "takeaway": "Order the techniques by how reversible they are: clear and offload first, compaction next, sub-agents when branches are independent. Doing nothing wins only on short runs." },
+    { "t": "failure", "title": "Context failure modes", "items": [
+      { "symptom": "Cache hit rate collapses after a release and cost per task jumps", "cause": "A timestamp or request id sits at the start of the system prompt, or tool definitions reorder between calls", "fix": "Keep the prefix stable and append-only, move volatile text to the end, serialise tools and JSON deterministically, and alert on hit rate per deployment [[r7]]." },
+      { "symptom": "The agent forgets an early user constraint after compaction", "cause": "The summary dropped a rare constraint", "fix": "Pin constraints outside the summarised region and test every compaction with a recall probe of facts that must survive." },
+      { "symptom": "A result needed at step 40 is gone", "cause": "Output was cleared with no pointer to its source", "fix": "Keep the path, URL or id when clearing, and write ephemeral output to a file before dropping it [[r7]]." },
+      { "symptom": "Answers degrade although the prompt fits the window", "cause": "Context rot: quality falls well below the advertised window [[r22]]", "fix": "Measure quality at your real input lengths, retrieve on demand and keep only high-signal tokens." },
+      { "symptom": "The model calls a tool that was removed mid-run, and the cache misses", "cause": "Tool definitions were added or removed dynamically", "fix": "Mask tool availability instead of removing definitions, as Manus recommends [[r7]]." }
+    ] },
+    { "t": "callout", "kind": "tip", "title": "Tool result clearing as the first step", "md": "Anthropic calls tool result clearing one of the safest, lightest forms of compaction [[r6]]. Its context editing feature is in beta as of 2026-10-13: header `context-management-2025-06-27`, strategies `clear_tool_uses_20250919` (with optional `clear_tool_inputs`) and `clear_thinking_20251015`. The page says server-side compaction is now the primary strategy [[r30]]. Manus calls KV-cache hit rate the single most important production metric of an agent, and quotes cached input at $0.30 per million tokens against $3 uncached on 2025-07-18 pricing, so check current prices [[r7]]." }
+  ],
+  "quiz": [
+    { "id": "w10-l4-q1", "type": "single", "tag": "tradeoff", "difficulty": 2, "q": "A tool-heavy agent overflows its window. Retrieval metrics are healthy, and most tokens are stale tool outputs from earlier steps whose sources can be re-fetched. Which step comes first?", "options": ["Summarise the entire conversation with a second model call and replace the whole history", "Clear stale tool results, keeping a pointer to each source", "Drop the oldest turns first, including the original task instructions, to free space quickly", "Move to a model with a larger context window and keep every tool result as it is"], "answer": 1, "explain": "Clearing stale outputs with a pointer is reversible, cheap and targets the bulk of the tokens. Summarising everything costs a model call and loses exact detail, dropping the oldest turns can delete the task itself, and a larger window keeps the cost and the rot.", "ref": "r6" },
+    { "id": "w10-l4-q2", "type": "single", "tag": "diagnose", "difficulty": 2, "q": "Cached-token share fell from about 80% to near zero after a deploy, with no change to model or traffic. What is the most likely cause?", "code": { "lang": "text", "code": "- system: \"You are a support agent.\"\n+ system: \"Current time: {timestamp}. You are a support agent.\"" }, "options": ["A timestamp leads the prompt, so no request shares an identical prefix", "The provider throttled cached reads for this account after the deploy raised the request rate", "The tool list grew past the cacheable limit", "Cache entries expire after a single request"], "answer": 0, "explain": "Prompt caches match an identical prefix, and a value that changes on every request at the very start invalidates everything after it. Moving the timestamp to the end restores hits. Throttling, a tool-list limit and single-request expiry are not what the diff shows.", "ref": "r7" },
+    { "id": "w10-l4-q3", "type": "order", "tag": "order", "difficulty": 2, "q": "Put the prompt segments in the cache-friendly order, most stable first.", "items": ["System instructions", "Tool definitions", "Memory", "Conversation history", "Retrieved chunks", "Tool results"], "explain": "Stable segments go first so the longest identical prefix stays cacheable. History grows only at the end, and retrieval and tool results change on every request, so they come last. This matches the lab's cache-friendly order.", "ref": "r7" },
+    { "id": "w10-l4-q4", "type": "numeric", "tag": "numeric", "difficulty": 2, "q": "A request carries system 1,500 tokens; 80 tool definitions at 500 each; memory 2,000; 40 history turns at 900 each; 6 retrieved chunks at 800 each; tool results 42,000; and 8,000 reserved for output. The window is 128,000. By how many tokens does it overflow?", "answer": 6300, "tolerancePct": 1, "unit": "tokens", "hint": "Sum every segment, including the reserved output, then subtract the window.", "explain": "Tools 40,000, history 36,000, retrieval 4,800. Total = 1,500 + 40,000 + 2,000 + 36,000 + 4,800 + 42,000 + 8,000 = 134,300. Minus 128,000 gives an overflow of 6,300. Forgetting the reserved output would give 126,300 and a false fit, so always include it.", "ref": "r6" }
+  ],
+  "defend": null,
+  "refs": ["r6", "r7", "r8", "r30", "r22", "r33", "r39"],
+  "takeaways": [
+    "Context is a finite attention budget. Aim for the smallest set of high-signal tokens, not the largest window.",
+    "Quality degrades below the advertised window, so measure at your real lengths.",
+    "Clear stale tool results first and keep a pointer, then offload, then compact, then isolate sub-agents.",
+    "Keep the prompt prefix stable and append-only. A volatile token at the start destroys cache hits."
+  ]
+}

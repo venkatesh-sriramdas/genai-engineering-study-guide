@@ -1,0 +1,104 @@
+{
+  "id": "w14-t01",
+  "order": 1,
+  "group": "Foundations",
+  "title": "Why LLM evaluation is different",
+  "minutes": 6,
+  "difficulty": "core",
+  "summary": "Classic tests assert one exact output. LLM features vary run to run, accept many valid answers and fail in stacked layers, so evaluation becomes measurement: a dataset, a scorer with known error, repeated trials and a decision rule.",
+  "useIf": "You are about to ship or change an LLM feature and must decide how you will know it works.",
+  "avoidIf": "The output is fully mechanical (a schema, a lookup, a regex) and a plain unit test already covers it.",
+  "explain": [
+    { "t": "p", "md": "A classic test asserts that one input gives one exact output. An LLM feature breaks that contract in three ways, and each break changes how you measure." },
+    { "t": "list", "style": "ul", "items": [
+      "**The output varies.** Sampling makes two runs differ. Lowering `temperature` narrows the spread but does not remove it, so one run is a sample, not a fact.",
+      "**Many outputs are valid.** An exact match fails a correct answer phrased differently. You need a scorer: code for what can be checked mechanically, a judge model for meaning and tone, a human for taste. Anthropic names these three grader types: code-based, model-based and human [[r17]].",
+      "**Failures stack in layers.** A wrong answer can come from retrieval, the prompt, the model, a tool call or the orchestration. One end-to-end score cannot say which."
+    ] },
+    { "t": "p", "md": "So evaluation is measurement. You need a dataset, a scorer whose error you have measured, enough repeated trials to see past noise, and a decision rule. Quality is also several numbers at once: correctness, groundedness, safety, latency and cost." },
+    { "t": "diagram", "id": "w14-t01-d1", "title": "The measurement loop", "alt": "A dataset is run through the system several times, scored by code, judge or human, aggregated with an interval, and a decision rule chooses to ship or to fix and add cases.", "src": "flowchart LR\n  D[Dataset] --> R[Run n trials]\n  R --> S[Score: code, judge, human]\n  S --> A[Aggregate with interval]\n  A --> X{Decision rule}\n  X -->|ship| P[Release]\n  X -->|fix| D" },
+    { "t": "p", "md": "Set the pass bar as a product decision. Hamel Husain notes that, unlike unit tests, you do not need a 100% pass rate: it depends on the failures you are willing to tolerate [[tr6]]. Anthropic separates capability evals, which start at a low pass rate, from regression evals, which should sit near 100% and protect what already works [[r17]]." },
+    { "t": "callout", "kind": "interview", "title": "One-line answer", "md": "LLM evals differ because the system is stochastic, the answer space is open and the faults are layered. So you score by layer, repeat trials and report an interval." }
+  ],
+  "whereToUse": [
+    "Before the first release of any LLM feature, to get a baseline",
+    "On every prompt, model, retriever or tool change as a regression check",
+    "When a vendor retires or updates a model version and you must prove parity",
+    "When product, risk and engineering disagree and need a shared number"
+  ],
+  "whenToUse": {
+    "use": ["The output is free text, a ranking, a plan or a tool sequence", "Several components can each cause a bad answer", "A wrong answer has a cost you can name", "You will change the system repeatedly"],
+    "avoid": ["The result is fully checkable by code and a unit test already exists", "The feature is a throwaway demo that no one will rely on", "A fixed, enumerable input set already has exact expected outputs that code can compare"],
+    "flips": ["Harm per wrong answer rises: add safety evaluators, red teaming and human review before launch", "A reference answer exists for every case: prefer code checks over a judge", "Traffic is large and labels are scarce: lean on online scoring of sampled traces"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Layered evaluation (this topic)", "Quality matters and the system changes often", "The output is fully mechanical", "Dataset upkeep and judge cost"],
+      ["Manual spot checks", "A prototype with one developer", "More than one person edits the system", "Not repeatable, memory based"],
+      ["Exact-match unit tests", "Structured outputs and tool arguments", "Free text with many valid phrasings", "False failures on correct answers"],
+      ["Public benchmark scores", "Shortlisting base models", "You need to know about your data and tasks", "Saturation and training-data leakage"],
+      ["Production monitoring only", "Low harm and instant rollback", "Harm is costly before you notice", "Users find the failures"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "The score rose 0.2 but users still complain", "cause": "The metric does not measure the failing behaviour, or an uncalibrated judge is scoring it", "fix": "Start from real failure cases, pick a scorer per failure and check judge agreement with a human sample" },
+    { "symptom": "The same commit passes on Monday and fails on Tuesday", "cause": "A single run of a stochastic system, compared with a fixed threshold", "fix": "Repeat trials, report an interval and compare paired against a baseline" },
+    { "symptom": "One blended quality score hides a safety regression", "cause": "Dimensions were averaged into a single number", "fix": "Gate each dimension separately and block on safety on its own" }
+  ],
+  "scenarios": [
+    {
+      "id": "w14-t01-s1",
+      "title": "Two-person prototype, no traffic",
+      "situation": "A two-person team has a working assistant that drafts support replies. A human reviews and sends every reply. There is no production traffic, and one domain expert can give two hours a week.",
+      "constraints": ["No traces exist", "Expert time is the scarce resource", "A human sends every reply, so errors are reversible"],
+      "unknowns": ["How many real failure examples already exist?", "Can the reviewers' edits be logged?", "What would a wrong reply cost the customer?"],
+      "question": "How do you start measuring?",
+      "options": [
+        { "name": "20 to 50 cases from real failures, code checks plus a pass/fail judge", "verdict": "best", "why": "It matches the expert budget and gives a regression baseline from day one. Anthropic calls 20 to 50 tasks drawn from real failures a great start [[r17]].", "tradeoff": "A small set cannot see small changes, and the judge needs calibrating against the expert." },
+        { "name": "Ship with human review and log the edits as the signal", "verdict": "good", "why": "Risk is low and reversible, and every edit is a free label.", "tradeoff": "There is no pre-release gate, so regressions appear after users meet them." },
+        { "name": "Track a public benchmark score", "verdict": "poor", "why": "It measures other tasks on other data and may be saturated or leaked.", "tradeoff": "It is right at the model selection stage, when you shortlist base models, never as proof for your product." }
+      ],
+      "flips": [
+        { "if": "Replies go out without human review", "then": "Harm is no longer reversible: add safety evaluators and red teaming before launch." },
+        { "if": "Thousands of real traces already exist", "then": "Mine them for the set instead of writing cases by hand." }
+      ],
+      "takeaway": "Start small from real failures, then grow with traces."
+    },
+    {
+      "id": "w14-t01-s2",
+      "title": "Regulated guidance, weekly releases",
+      "situation": "An assistant gives account guidance to retail customers from retrieved policy documents and one tool lookup. Wrong answers create regulatory exposure. Releases ship weekly and compliance wants evidence per release.",
+      "constraints": ["High harm per wrong answer", "Weekly release cadence", "Budget exists for judge calls", "Per-release evidence is required"],
+      "unknowns": ["Which layer changed in each release?", "Are labelled policy answers available?", "What failure rate is tolerable for each harm class?"],
+      "question": "What evaluation design do you propose?",
+      "options": [
+        { "name": "Layered suite: component checks, end-to-end golden set, safety evaluators, sampled human review", "verdict": "best", "why": "Each layer localises faults and the safety and human layers supply the evidence compliance asks for.", "tradeoff": "More upkeep and judge spend every week." },
+        { "name": "Platform content filters plus one manual red team before launch", "verdict": "good", "why": "It finds real harms early.", "tradeoff": "It is not repeatable for weekly releases and gives no regression signal." },
+        { "name": "One end-to-end LLM-judge score on a 1 to 5 scale", "verdict": "poor", "why": "It hides the failing layer, uses an uncalibrated scale and has no safety signal.", "tradeoff": "Acceptable for a low-stakes early prototype where speed matters more than evidence." }
+      ],
+      "flips": [
+        { "if": "Releases move to monthly", "then": "Heavier human review per release becomes affordable." },
+        { "if": "The assistant is internal only and advisory", "then": "A lighter safety layer is defensible." }
+      ],
+      "takeaway": "Raise the stakes and the layers multiply, with each dimension gated on its own."
+    }
+  ],
+  "quiz": [
+    { "id": "w14-t01-q1", "type": "single", "tag": "concept", "q": "Why do exact-match assertions fail for most LLM answers?", "options": ["Many different outputs can be correct, so one string cannot represent the expected result", "Tokenizers make string comparison unreliable", "Models cannot repeat any earlier output", "Exact match is slower than a judge"], "answer": 0, "explain": "Open-ended outputs have many valid phrasings. Tokenization does not affect string comparison, models can repeat output, and speed is not the issue." },
+    { "id": "w14-t01-q2", "type": "multi", "tag": "tradeoff", "q": "Which are real reasons one end-to-end score is not enough? Select all that apply.", "options": ["It cannot say which layer failed", "It can average away a safety or cost regression", "Scores from model graders are always wrong", "Run-to-run noise can hide a small change"], "answers": [0, 1, 3], "explain": "Layer blindness, averaging and noise are real. Model graders are imperfect but can be calibrated, so 'always wrong' is false." },
+    { "id": "w14-t01-q3", "type": "match", "tag": "concept", "q": "Match each grader type to the job it does best.", "pairs": [
+      { "l": "Code-based", "r": "Mechanical checks such as end state or a required tool call" },
+      { "l": "Model-based", "r": "Meaning and tone judged against a rubric" },
+      { "l": "Human", "r": "Calibrating the model grader and judging taste" }
+    ], "explain": "Use code where the answer is checkable, a judge model where meaning matters and humans to calibrate and to decide what good means." }
+  ],
+  "flashcards": [
+    { "front": "Which three classic-testing assumptions do LLM apps break?", "back": "Same input gives the same output, one expected output exists, and a failure points to one place. LLM apps vary run to run, accept many valid answers and fail in stacked layers." },
+    { "front": "Capability eval vs regression eval?", "back": "Capability evals ask whether it can do this at all and start at a low pass rate. Regression evals ask whether it still does what it did and should sit near 100%." },
+    { "front": "Name the three grader types.", "back": "Code-based for mechanical checks, model-based for meaning against a rubric, human for calibration and taste." }
+  ],
+  "related": ["w14-t02", "w14-t03", "w14-t12", "w14-l1", "w01-t05"],
+  "refs": ["r17", "tr6", "r1"]
+}

@@ -1,0 +1,120 @@
+{
+  "id": "w11-t26",
+  "order": 26,
+  "group": "Operate",
+  "title": "Built-in observability and evaluation hooks",
+  "minutes": 11,
+  "difficulty": "core",
+  "summary": "Agent Framework emits OpenTelemetry spans and metrics that follow the GenAI semantic conventions. You choose the exporter and whether prompts and tool arguments are recorded. Evaluation hooks score agents and workflows locally or with Foundry evaluators.",
+  "useIf": "You must debug agent runs, attribute tokens and cost, trace across MCP and services, or gate releases on quality scores.",
+  "avoidIf": "You plan to record raw prompts in production without a privacy and retention decision: content capture is off by default for a reason.",
+  "explain": [
+    { "t": "p", "md": "**Spans.** `invoke_agent <name>` (top level), `chat <model>` and `execute_tool <function>`. **Metrics:** `gen_ai.client.operation.duration` and `gen_ai.client.token.usage` (histograms) plus `agent_framework.function.invocation.duration`. Workflows add spans such as `workflow.build`, `workflow.run` (Python) or `workflow.session` (.NET and Go), `executor.process {executor_id}`, `edge_group.process` and `message.send`, with attributes like `executor.id` and `edge_group.delivery_status` [[tr36]] [[tr37]]. The OpenTelemetry GenAI conventions carry status Development and moved to `open-telemetry/semantic-conventions-genai` on 2026-05-05, so attribute and metric names can change; which build emits which name is UNVERIFIED, so check your backend before building dashboards [[tr45]]." },
+    { "t": "p", "md": "**Python.** Instrumentation has been **on by default since python-1.6.0 (2026-05-21)** but no exporter is installed: call `configure_otel_providers()` (reads standard `OTEL_EXPORTER_OTLP_*` variables) or `ENABLE_CONSOLE_EXPORTERS=true`; with your own SDK call `enable_instrumentation(enable_sensitive_data=False)`. Variables: `ENABLE_INSTRUMENTATION` (default true), `ENABLE_SENSITIVE_DATA` (default **false**), `OTEL_SERVICE_NAME` (default `agent_framework`). Sensitive data means prompts, responses, tool arguments and tool results. **.NET.** Spans appear only after you wrap the client or agent with `.AsBuilder().UseOpenTelemetry(sourceName, cfg => cfg.EnableSensitiveData = ...)`; the default source name is `Experimental.Microsoft.Agents.AI` and your tracer and meter providers must `AddSource` the same name. Instrument either the client or the agent, not both, or content is duplicated. The Harness instruments both layers for you (`OpenTelemetrySourceName`, `DisableOpenTelemetry`) [[tr36]]." },
+    { "t": "p", "md": "**Trace context across MCP.** With an active span, Python injects W3C trace context into `params._meta` of `tools/call` for MCP sessions the agent process opens (`MCPStreamableHTTPTool`, `MCPStdioTool`, `MCPWebsocketTool`), but not for hosted or provider-managed MCP tools or Foundry toolboxes, because the provider makes the call. .NET behaviour is UNVERIFIED [[tr36]]. **Foundry** server-side tracing (GA for prompt and hosted agents) is a separate pipeline from this client-side telemetry; both can land in one Application Insights resource [[tr50]]." },
+    { "t": "table", "caption": "Content capture flags (three similar names)", "head": ["Flag", "Layer", "Default"], "rows": [
+      ["`ENABLE_SENSITIVE_DATA` / `EnableSensitiveData`", "Agent Framework telemetry", "Off"],
+      ["`OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT`", "OpenTelemetry and Azure SDK, also honoured for the Harness", "Off"],
+      ["`AZURE_TRACING_GEN_AI_CONTENT_RECORDING_ENABLED`", "Older Foundry classic page", "Off"]
+    ] },
+    { "t": "tabs", "tabs": [
+      { "label": "C#", "blocks": [
+        { "t": "code", "lang": "csharp", "title": "Enable telemetry", "code": "const string Source = \"MyApp.Agents\";\nusing var tracer = Sdk.CreateTracerProviderBuilder()\n    .AddSource(Source)\n    .AddAzureMonitorTraceExporter(o => o.ConnectionString = appInsights)\n    .Build();\n\nAIAgent agent = new ChatClientAgent(chatClient, name: \"Demo\")\n    .AsBuilder()\n    .UseOpenTelemetry(sourceName: Source, cfg => cfg.EnableSensitiveData = false)\n    .Build();                       // agent layer only: no duplicate prompts\n\nAIAgent harness = chatClient.AsHarnessAgent(\n    new HarnessAgentOptions { OpenTelemetrySourceName = Source });" },
+        { "t": "code", "lang": "csharp", "title": "Evaluate an agent", "code": "var local = new LocalEvaluator(\n    EvalChecks.KeywordCheck(\"weather\"),\n    EvalChecks.ToolCalledCheck(\"get_weather\"));\nvar foundry = new FoundryEvals(chatConfiguration, FoundryEvals.Relevance);\n\nAgentEvaluationResults r = await agent.EvaluateAsync(\n    new[] { \"Weather in Seattle?\", \"Plan a trip to Portland\" },\n    foundry, numRepetitions: 3);\nr.AssertAllPassed();" } ] },
+      { "label": "Python", "blocks": [
+        { "t": "code", "lang": "python", "title": "Enable telemetry", "code": "from agent_framework.observability import configure_otel_providers\n\nconfigure_otel_providers(\n    service_name='support-agent',\n    otlp_endpoint='https://otel.example.com',\n    otlp_protocol='http/protobuf',   # Langfuse needs HTTP, the default is grpc\n)\n# ENABLE_SENSITIVE_DATA stays false unless you set it deliberately" },
+        { "t": "code", "lang": "python", "title": "Evaluate an agent", "code": "from agent_framework import evaluate_agent, LocalEvaluator, keyword_check, tool_called_check\nfrom agent_framework.foundry import FoundryEvals\n\nlocal = LocalEvaluator(keyword_check('weather'), tool_called_check('get_weather'))\nfoundry = FoundryEvals(project_client=project_client, model='gpt-4o',\n                       evaluators=[FoundryEvals.RELEVANCE, FoundryEvals.COHERENCE])\nresults = await evaluate_agent(agent=my_agent,\n    queries=['Weather in Seattle?', 'Plan a trip to Portland'],\n    evaluators=[local, foundry], num_repetitions=3)\nfor r in results:\n    r.raise_for_status()      # raises EvalNotPassedError on any failure" } ] }
+    ] }
+  ],
+  "whereToUse": [
+    "Per-run traces: see which tool or model call was slow or failed",
+    "Cost attribution: token metrics by agent, model and tenant (low-cardinality dimensions)",
+    "Cross-service tracing from agent through MCP servers into backend services",
+    "CI quality gates: run `evaluate_agent` or `evaluate_workflow` with repetitions on a fixed query set",
+    "Local development with the Aspire Dashboard (OTLP 4317, UI 18888)"
+  ],
+  "whenToUse": {
+    "use": [
+      "Always enable metadata telemetry in production; it contains no prompts by default",
+      "Record content only in development, or store it externally with references on spans, as the OTel guidance recommends for production",
+      "Run local evaluators in CI for cheap checks and Foundry evaluators for judged quality"
+    ],
+    "avoid": [
+      "Turning on `ENABLE_SENSITIVE_DATA` in production without retention and access controls",
+      "Instrumenting both the chat client and the agent in .NET with content on",
+      "Building dashboards on metric names without checking what your build emits"
+    ],
+    "flips": [
+      "Langfuse or another HTTP-only OTLP backend: set the exporter protocol to HTTP, since the Python default is gRPC",
+      "You need whole-trace debugging: sample traces with care, because metrics are not sampled but traces are"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["MAF built-in OpenTelemetry (client side)", "Any backend via OTLP, workflow spans", "You want zero-code server-side traces for hosted agents", "You own exporters, sampling and retention"],
+      ["Foundry tracing + Application Insights", "Agents hosted in Foundry, no code change", "Workflow, external and client-side tracing are preview", "GA only for prompt and hosted agents"],
+      ["Aspire Dashboard", "Local development", "Production", "Not a production backend"],
+      ["Langfuse, Phoenix, LangSmith via OTLP [[tr54]]", "LLM-specific UIs, prompt management", "Strict Azure-only data rules", "Protocol quirks, another system"],
+      ["Local evaluators [[tr38]]", "Fast CI checks (keywords, tool calls)", "Subjective quality", "Shallow signals"],
+      ["Foundry evaluators", "Judged relevance, task adherence, tool accuracy", "No project or deployment available", "Model cost, judge bias"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": ".NET shows no `gen_ai.*` spans", "cause": "The client or agent was never wrapped with `UseOpenTelemetry`, or `AddSource` used a different name than the default `Experimental.Microsoft.Agents.AI`", "fix": "Wrap once and match the source name in tracer and meter providers" },
+    { "symptom": "Prompts appear twice in traces", "cause": "Both client and agent were instrumented with sensitive data on", "fix": "Instrument one layer" },
+    { "symptom": "Traces stop at the agent for a hosted MCP tool", "cause": "The provider issues `tools/call`, so no `_meta` context is injected", "fix": "Use a client-opened MCP transport when end-to-end tracing is required" },
+    { "symptom": "Load tests look incomplete in Application Insights", "cause": "The distro samples at a default rate-limited 5 traces per second [[tr53]]", "fix": "Set fixed-ratio or lift the rate for the test; alert from metrics, which are not sampled" }
+  ],
+  "scenarios": [
+    {
+      "id": "w11-t26-s1",
+      "title": "Debug a slow agent without storing prompts",
+      "situation": "Users complain some runs take 40 seconds. Privacy rules forbid storing prompts and answers in telemetry. Traces go to Application Insights.",
+      "constraints": ["No prompt content in telemetry", "Need latency breakdown", "Low overhead"],
+      "unknowns": ["Is the time in model calls, tools or approvals?", "Is sampling dropping the slow traces?"],
+      "question": "How do you instrument?",
+      "options": [
+        { "name": "Metadata-only telemetry (default), look at `invoke_agent`, `chat` and `execute_tool` span durations and counts, with sampling tuned to keep slow traces", "verdict": "best", "why": "Spans show where time goes with no content, matching the default of no sensitive data.", "tradeoff": "You cannot see why the model chose a tool; add external content storage with references if allowed." },
+        { "name": "Turn on sensitive data in production to see prompts", "verdict": "poor", "why": "Violates the privacy rule and exposes tool arguments and results.", "tradeoff": "Fine in a development environment." },
+        { "name": "Add custom logs of every prompt to a database", "verdict": "poor", "why": "Same privacy problem and more code.", "tradeoff": "Only with consent and retention controls." }
+      ],
+      "flips": [
+        { "if": "Debugging needs content and rules permit it with controls", "then": "Store content in a separate access-controlled store and put references on spans." },
+        { "if": "Slow traces are dropped", "then": "Use tail sampling in a collector, or raise the rate for error and slow traces." }
+      ],
+      "takeaway": "Structure and timing are enough for most latency bugs; content is a separate decision."
+    },
+    {
+      "id": "w11-t26-s2",
+      "title": "Release gate for prompt changes",
+      "situation": "A team changes prompts weekly and wants a gate in CI. They have 60 test queries with expected tool calls. Judged quality must also be checked before major releases. Runs are non-deterministic.",
+      "constraints": ["60 queries", "CI time under 10 minutes", "Non-deterministic outputs"],
+      "unknowns": ["Which checks are deterministic?", "Is a Foundry project available in CI?", "How many repetitions are affordable?"],
+      "question": "What do you wire into CI?",
+      "options": [
+        { "name": "Local evaluators for tool calls and keywords on every change with `num_repetitions=3`, Foundry evaluators nightly or per release", "verdict": "best", "why": "Cheap deterministic checks gate every change, repetitions expose non-determinism, and judged scores run where cost is acceptable.", "tradeoff": "Local checks are shallow, and judged scores have their own bias and cost." },
+        { "name": "Foundry judge evaluators on every commit", "verdict": "good", "why": "Richer signal.", "tradeoff": "Slower and costlier per commit, with judge noise." },
+        { "name": "Manual spot checks", "verdict": "poor", "why": "No gate, no repeatability.", "tradeoff": "Fine for exploration before a test set exists." }
+      ],
+      "flips": [
+        { "if": "Tool-call correctness is the main risk", "then": "Use `tool_calls_present` and `tool_call_args_match` with expected tool calls." },
+        { "if": "The agent is a multi-agent workflow", "then": "Use `evaluate_workflow` for a per-agent breakdown." }
+      ],
+      "takeaway": "Put cheap deterministic checks in the inner loop and judged metrics at the gate."
+    }
+  ],
+  "quiz": [
+    { "id": "w11-t26-q1", "type": "multi", "tag": "concept", "q": "Which statements about Python telemetry defaults are true? Select all.", "options": ["Instrumentation has been on by default since python-1.6.0 (2026-05-21)", "No exporter is installed automatically", "`ENABLE_SENSITIVE_DATA` defaults to true", "Sensitive data means prompts, responses, tool arguments and tool results"], "answers": [0, 1, 3], "explain": "Sensitive data capture defaults to false, and nothing is exported until you configure an exporter.", "ref": "tr36" },
+    { "id": "w11-t26-q2", "type": "single", "tag": "diagnose", "q": "Your Python agent emits spans to a local collector, but a Langfuse backend receives nothing. What is the most likely cause?", "options": ["Langfuse needs `ENABLE_SENSITIVE_DATA`", "Langfuse accepts OTLP over HTTP, while the Python default exporter protocol is gRPC", "Spans are disabled in Python", "Langfuse rejects `gen_ai` attributes"], "answer": 1, "explain": "Langfuse takes OTLP over HTTP JSON or protobuf, not gRPC. Set the OTLP protocol to `http/protobuf`.", "ref": "tr36" },
+    { "id": "w11-t26-q3", "type": "single", "tag": "tradeoff", "q": "You need MCP server spans to be children of the agent span. Which tool setup achieves it in Python?", "options": ["A provider-hosted MCP tool", "A client-opened `MCPStreamableHTTPTool`", "A Foundry toolbox", "Any MCP tool, as injection is automatic everywhere"], "answer": 1, "explain": "The framework injects trace context only for MCP sessions the agent process opens. Provider-issued calls bypass it.", "ref": "tr36" }
+  ],
+  "flashcards": [
+    { "front": "Name the three core Agent Framework span names.", "back": "`invoke_agent <name>`, `chat <model>` and `execute_tool <function>`." },
+    { "front": "How do you enable .NET agent telemetry, and which source name must you add?", "back": "`.AsBuilder().UseOpenTelemetry(sourceName, ...)` on the client or agent. Default source `Experimental.Microsoft.Agents.AI`; `AddSource` must match." },
+    { "front": "What are the Python evaluation entry points?", "back": "`evaluate_agent()` and `evaluate_workflow()` with `LocalEvaluator`, `@evaluator` checks and `FoundryEvals`; `num_repetitions` measures consistency." }
+  ],
+  "related": ["w11-t04", "w11-t25", "w11-t24", "w15-t09", "w15-t06", "w14-t08", "w14-t11"],
+  "refs": ["tr36", "tr37", "tr38", "tr45", "tr50", "tr53", "tr54"]
+}

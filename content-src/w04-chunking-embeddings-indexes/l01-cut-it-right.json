@@ -1,0 +1,87 @@
+{
+  "id": "w04-l1",
+  "order": 1,
+  "title": "Cut it right",
+  "kind": "problem",
+  "minutes": 16,
+  "brief": "The text is parsed and in one piece. Policies with headings, tickets, contracts and wiki prose all need cutting into retrievable chunks, and nobody has told you the question types or the ingest budget. Choose a cutting rule and say how you would prove it.",
+  "blocks": [
+    { "t": "h", "text": "The retrieval unit is not the generation unit", "level": 2 },
+    { "t": "p", "md": "A chunk is what you match **and** usually what you paste into the prompt, so one number serves two jobs. Topics `w04-t01` to `w04-t05` explain why we chunk and how fixed, recursive, sentence, semantic and structure-aware splitting work. The evidence is mixed on purpose: one multi-dataset study found 64 to 128 tokens best for short factual answers and 512 to 1,024 for broader context [[r6]], while NVIDIA found page-level chunking best on average and 128 or 2,048 tokens generally weaker [[r5]]. A well-parametrised recursive splitter was competitive in Chroma's token-level study [[r4]], and a 2024 study found semantic chunking's extra compute not justified by consistent gains [[r7]]. So you measure." },
+    { "t": "dials", "id": "w04-l1-chunk", "title": "Pick a chunking strategy", "prompt": "Flip the constraints. The ranking and the reasons update.",
+      "dials": [
+        { "id": "shape", "label": "Document shape", "values": [ { "id": "prose", "label": "Flowing prose" }, { "id": "struct", "label": "Headings and tables" }, { "id": "records", "label": "Short messy records (chats, tickets)" } ] },
+        { "id": "query", "label": "Query type", "values": [ { "id": "fact", "label": "Factoid lookups" }, { "id": "broad", "label": "Broad or analytic questions" } ] },
+        { "id": "budget", "label": "Ingest budget", "values": [ { "id": "tight", "label": "Tight: no LLM or extra passes" }, { "id": "roomy", "label": "Roomy: extra passes, bigger index" } ] }
+      ],
+      "options": [
+        { "id": "fixed", "name": "Fixed size with overlap", "summary": "Cut every N tokens, repeating a slice at each boundary." },
+        { "id": "recursive", "name": "Recursive or sentence-based", "summary": "Split on sections, then paragraphs, then sentences until the pieces fit." },
+        { "id": "structure", "name": "Structure-aware", "summary": "Cut on headings and layout, and keep the section path as metadata." },
+        { "id": "semantic", "name": "Semantic breakpoints", "summary": "Embed sentences and cut where the similarity between neighbours drops." },
+        { "id": "parent", "name": "Parent-child (small to big)", "summary": "Match small chunks, then return the larger parent for context." }
+      ],
+      "scores": {
+        "fixed": {
+          "shape": { "prose": { "s": 1, "why": "A fair baseline: 512 tokens with 25% overlap is the documented starting point [[r1]]." }, "struct": { "s": -2, "why": "It cuts through headings and tables, so a row or a clause lands in two chunks." }, "records": { "s": -1, "why": "It splits a ticket or a conversation at arbitrary points." } },
+          "query": { "fact": { "s": 0, "why": "Works if the size is small enough, and you must test it [[r6]]." }, "broad": { "s": -1, "why": "A fixed window rarely lines up with a whole topic." } },
+          "budget": { "tight": { "s": 2, "why": "No model calls, no parser, trivial to run and re-run." }, "roomy": { "s": 0, "why": "Spending more buys nothing here." } }
+        },
+        "recursive": {
+          "shape": { "prose": { "s": 2, "why": "The separator order keeps paragraphs and sentences whole, and a well-parametrised recursive splitter was competitive in a token-level study [[r4]]." }, "struct": { "s": 0, "why": "It follows blank lines, but ignores heading levels and table boundaries." }, "records": { "s": 1, "why": "Line and message boundaries are natural separators for chats." } },
+          "query": { "fact": { "s": 1, "why": "Sentence-aligned chunks keep a fact together." }, "broad": { "s": 0, "why": "Paragraph-sized units do not carry whole-section meaning." } },
+          "budget": { "tight": { "s": 2, "why": "Rule based, so it costs nothing at ingest." }, "roomy": { "s": 0, "why": "No benefit from extra budget." } }
+        },
+        "structure": {
+          "shape": { "prose": { "s": 0, "why": "With no structure to follow it falls back to a size rule." }, "struct": { "s": 2, "why": "Headings and layout give real boundaries, and the section path can go into metadata [[r3]]." }, "records": { "s": 0, "why": "Little structure to use beyond the record boundary." } },
+          "query": { "fact": { "s": 1, "why": "A section-scoped chunk with its heading is easy to match and to cite." }, "broad": { "s": 1, "why": "Section-sized units suit questions about a whole topic." } },
+          "budget": { "tight": { "s": 1, "why": "No LLM, but it needs a parser that exposes layout (see `w03-l2`)." }, "roomy": { "s": 0, "why": "No added benefit from extra passes." } }
+        },
+        "semantic": {
+          "shape": { "prose": { "s": 1, "why": "Topic shifts inside long prose are where similarity breakpoints can help." }, "struct": { "s": -1, "why": "Headings already give better boundaries for free." }, "records": { "s": -1, "why": "Short messages give unstable similarity, so breakpoints jitter." } },
+          "query": { "fact": { "s": 0, "why": "No measured edge for lookups." }, "broad": { "s": 1, "why": "Topic-sized chunks suit broader questions, if the breakpoints are stable." } },
+          "budget": { "tight": { "s": -2, "why": "It embeds every sentence at ingest and again after each edit." }, "roomy": { "s": 0, "why": "A 2024 study found the extra compute not consistently justified, so measure before keeping it [[r7]]." } }
+        },
+        "parent": {
+          "shape": { "prose": { "s": 1, "why": "Small matches with a paragraph or section returned for context." }, "struct": { "s": 1, "why": "The section is a natural parent and the paragraph a natural child." }, "records": { "s": 0, "why": "A ticket is already small, so there is little to expand." } },
+          "query": { "fact": { "s": 2, "why": "Small chunks give precise matches and the parent supplies the surrounding text." }, "broad": { "s": 1, "why": "The parent helps, but not across documents." } },
+          "budget": { "tight": { "s": 0, "why": "No LLM calls, but an extra key and parent store to maintain." }, "roomy": { "s": 1, "why": "Extra storage and a second lookup are affordable." } }
+        }
+      },
+      "takeaway": "Start with recursive or structure-aware splitting at about 512 tokens, measure on your own questions, and add semantic or parent-child cutting only when the measured gain beats the ingest cost." },
+    { "t": "formula", "title": "Chunk count and the cost of overlap", "expr": "chunks = corpus_tokens / (chunk_size - overlap)     prompt_tokens = k x chunk_size", "vars": [
+      { "k": "corpus_tokens", "v": "total tokens after parsing" },
+      { "k": "chunk_size", "v": "tokens per chunk" },
+      { "k": "overlap", "v": "tokens shared with the previous chunk" },
+      { "k": "k", "v": "chunks pasted into the prompt" }
+    ], "example": "8,000,000 tokens with size 512 and overlap 128 gives 8,000,000 / 384, about **20,833** chunks. With no overlap it is 15,625, so overlap adds about 33% more vectors, and top-5 retrieval puts about 2,560 tokens in the prompt." },
+    { "t": "lab", "id": "chunk-visualizer", "intro": "Paste a policy page with headings and a table, then compare fixed, recursive, sentence and structure-aware boundaries. Watch where a table row or a clause is cut." },
+    { "t": "table", "caption": "The knobs you can actually set", "head": ["Setting", "Value", "Note"], "rows": [
+      ["Text Split `textSplitMode`", "`pages` or `sentences`", "`sentences` keeps sentence boundaries [[r2]]"],
+      ["Text Split `maximumPageLength`", "Default 5,000 characters, range 300 to 50,000", "About 1,250 tokens at 4 characters per token, above the 512-token advice, so set it on purpose [[r1]] [[r2]]"],
+      ["Text Split `pageOverlapLength`", "No overlap by default", "Must be set to get any overlap [[r2]]"],
+      ["Text Split `unit`", "`characters` (default) or `azureOpenAITokens` (preview)", "Tokenizer defaults to `cl100k_base`, and `o200k_base` (GPT-4o) is not supported [[r2]]"],
+      ["Microsoft starting point", "512 tokens (about 2,000 characters), 25% overlap", "The same page also shows about 600 characters with 10 to 15% overlap. Both are starting points to test [[r1]]"],
+      ["Unstructured defaults", "`max_characters` 500, `overlap` 0", "Small chunks with no overlap unless you tune them [[r43]]"]
+    ], "highlightCol": 1 },
+    { "t": "failure", "title": "Chunking failure modes", "items": [
+      { "symptom": "The right passage is retrieved but the answer is wrong, and the chunk starts mid-sentence or mid-table", "cause": "A fixed-size cut ignored the structure.", "fix": "Use recursive or structure-aware splitting, and inspect real chunks in the visualizer before indexing." },
+      { "symptom": "The same fact fills three of five prompt slots", "cause": "Heavy overlap makes neighbouring chunks both match.", "fix": "Lower overlap toward 10 to 15%, or merge adjacent hits at query time." },
+      { "symptom": "Chunks are tiny and context-free", "cause": "Library defaults: Unstructured gives 500 characters with no overlap [[r43]], and Chroma found default recursive splitter separators gave very short chunks [[r4]].", "fix": "Set size and separators explicitly, and score chunkers at token level, not by document hit rate." },
+      { "symptom": "Chunk sizes drift past the embedding limit", "cause": "Token mode is preview and counts with `cl100k_base` by default, so it does not match every model's tokenizer [[r2]].", "fix": "Leave headroom under the embedding model's input limit and count with the tokenizer that model uses." }
+    ] }
+  ],
+  "quiz": [
+    { "id": "w04-l1-q1", "type": "single", "tag": "diagnose", "difficulty": 2, "q": "Recall@5 is poor on short factual questions, and the chunks are 2,048 tokens. What do you test first?", "options": ["Raise the overlap to 50% so each fact appears in two chunks", "Chunks of 256 to 512 tokens, scored on your own questions", "Semantic chunking under the same 2,048-token ceiling, before measuring anything", "Raise top-k to 50 so the long chunks are retrieved more often"], "answer": 1, "explain": "Short factual answers did best with small chunks (64 to 128 tokens in one study, and 128 or 2,048 were generally weaker in another), so a smaller size is the cheap first test, and your own questions decide. More overlap and a higher top-k add duplicate tokens, and semantic chunking adds ingest cost without a measured reason [[r5]] [[r6]]." },
+    { "id": "w04-l1-q2", "type": "numeric", "tag": "numeric", "difficulty": 2, "q": "A corpus holds 8,000,000 tokens. You chunk at 512 tokens with 128 tokens of overlap. About how many chunks does that produce?", "answer": 20833, "tolerancePct": 3, "unit": "chunks", "hint": "Each chunk advances by size minus overlap.", "explain": "The step is 512 - 128 = 384 tokens, so 8,000,000 / 384 is about 20,833 chunks. With no overlap you would get 15,625, so the overlap costs about 33% more vectors and more repeated tokens in prompts [[r1]]." },
+    { "id": "w04-l1-q3", "type": "multi", "tag": "tradeoff", "difficulty": 3, "q": "A teammate wants semantic chunking for the whole corpus. Select the checks you should insist on before agreeing.", "options": ["None: a 2024 study found consistent gains over fixed-size chunking", "Compare it with a recursive baseline of the same size on labelled questions", "Count the extra embedding calls at ingest and after every edit", "Check how stable the boundaries are when a document changes"], "answers": [1, 2, 3], "explain": "The 2024 study found the extra compute was not justified by consistent gains, so the first option is false. A baseline comparison shows whether it helps you, the ingest cost recurs on every edit, and unstable boundaries mean many chunk ids change for a small edit [[r7]]." }
+  ],
+  "defend": null,
+  "refs": ["r1", "r2", "r3", "r4", "r5", "r6", "r7", "r43", "r39"],
+  "takeaways": [
+    "A chunk is both the matching unit and the prompt unit, so size trades precision against context",
+    "Evidence on size is mixed by question type, so start near 512 tokens and measure on your own questions",
+    "Overlap inflates the index and the prompt: 128 tokens on 512 means about 33% more chunks",
+    "Semantic chunking needs a measured gain to justify its ingest cost"
+  ]
+}

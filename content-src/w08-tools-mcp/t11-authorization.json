@@ -1,0 +1,94 @@
+{
+  "id": "w08-t11",
+  "order": 11,
+  "group": "Security",
+  "title": "MCP authorization: OAuth 2.1, PRM, CIMD vs DCR",
+  "minutes": 10,
+  "difficulty": "advanced",
+  "summary": "A protected MCP server is an OAuth 2.1 resource server. Clients find its authorization server through protected resource metadata, register with a client ID metadata document, run authorization code with PKCE and send an audience-bound token on every request.",
+  "useIf": "You expose or consume a remote MCP server that must know which user or application is calling.",
+  "avoidIf": "The server is a local stdio process. The spec says stdio servers SHOULD NOT follow this flow and should read credentials from the environment.",
+  "explain": [
+    { "t": "p", "md": "Authorization is optional. When an HTTP server uses it, the MCP server acts as an **OAuth 2.1 resource server** and the client as an OAuth 2.1 client. The spec cites the IETF draft `draft-ietf-oauth-v2-1-13`, not a published RFC, plus RFC 8414, RFC 8707, RFC 9728 and RFC 9207 [[r4]]." },
+    { "t": "diagram", "id": "w08-t11-d1", "title": "Discovery and token flow", "alt": "The client calls the MCP server without a token and gets 401 with resource_metadata. It reads protected resource metadata, fetches authorization server metadata, authorizes with PKCE and the resource parameter, then calls the server with a bearer token.", "src": "sequenceDiagram\n  participant C as Client\n  participant M as MCP server\n  participant A as Auth server\n  C->>M: request, no token\n  M-->>C: 401 resource_metadata\n  C->>M: GET protected resource metadata\n  M-->>C: authorization_servers\n  C->>A: GET server metadata\n  C->>A: authorize with PKCE S256 and resource\n  A-->>C: access token\n  C->>M: request, Authorization Bearer" },
+    { "t": "p", "md": "**Discovery.** Servers MUST implement RFC 9728 protected resource metadata with at least one `authorization_servers` entry. They advertise it with `resource_metadata` in the 401 `WWW-Authenticate` header or at `/.well-known/oauth-protected-resource`, and clients MUST support both. Authorization servers need RFC 8414 or OpenID Connect Discovery metadata [[tr10]] [[tr17]]." },
+    { "t": "p", "md": "**Rules that matter.** Clients MUST use PKCE with `S256` and refuse to proceed if `code_challenge_methods_supported` is absent. Redirect URIs MUST be `localhost` or HTTPS and matched exactly. Clients MUST send the RFC 8707 `resource` parameter (the canonical server URI) in authorization and token requests, and servers MUST validate that tokens were issued for them [[r34]] [[tr18]]. Authorization servers SHOULD return `iss` (RFC 9207) and clients MUST compare it exactly before redeeming the code [[tr20]]. A 403 with `insufficient_scope` triggers step-up, and clients treat the challenged scopes as authoritative." },
+    { "t": "callout", "kind": "note", "title": "Entra ID", "md": "With Entra the server is the protected resource and Entra is the authorization server. Entra matches `resource` to the app registration's Application ID URI, and the app must request v2 tokens (`requestedAccessTokenVersion: 2`). Whether Entra supports DCR or CIMD for arbitrary MCP clients is UNVERIFIED as of 2026-10-13, so assume pre-registration [[r18]]." }
+  ],
+  "whereToUse": [
+    "A remote SaaS server that acts on behalf of each user",
+    "An internal server fronted by Entra ID or another enterprise IdP",
+    "Hosts that connect to many third-party servers and must register with each authorization server",
+    "Machine-to-machine servers using the client credentials extension"
+  ],
+  "whenToUse": {
+    "use": ["Use per-user OAuth when a person is present and actions need their identity", "Use CIMD when the authorization server supports it and clients are not pre-registered", "Use pre-registered credentials when you control both sides", "Use the opt-in extensions for machine or enterprise-managed access"],
+    "avoid": ["Applying this flow to stdio servers", "Accepting tokens whose audience is not your server", "Writing token validation yourself where your IdP provides it"],
+    "flips": ["No user is present: use the client credentials extension", "A central IdP must decide which servers staff can reach: use enterprise-managed authorization"]
+  },
+  "alternatives": {
+    "title": "Client registration and flow options",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Pre-registered credentials (tried first)", "You control client and authorization server", "Open ecosystem of unknown servers", "Manual setup per server"],
+      ["Client ID Metadata Document (CIMD)", "Authorization server sets `client_id_metadata_document_supported`", "The server does not support it", "Document must be HTTPS with `client_id`, `client_name`, `redirect_uris`, and needs trust policy [[r35]]"],
+      ["Dynamic Client Registration (Deprecated)", "Fallback when `registration_endpoint` exists", "New designs, since it is Deprecated", "Registration sprawl and confused-deputy exposure"],
+      ["Client credentials extension", "Machine to machine, no user", "User-delegated access", "Opt-in, check client support"],
+      ["Enterprise-managed authorization", "Central IdP controls server access", "Small teams without such an IdP", "Opt-in and tracked in a separate client matrix [[tr19]]"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Clients fail at the first 401", "cause": "The server lacks protected resource metadata or `resource_metadata` in the challenge", "fix": "Serve RFC 9728 metadata at the well-known path and in `WWW-Authenticate`" },
+    { "symptom": "Token requests are rejected or tokens carry the wrong audience", "cause": "The `resource` value does not match the server's canonical URI or app registration", "fix": "Use the canonical URI consistently and, on Entra, request v2 tokens" },
+    { "symptom": "Registrations pile up at the authorization server", "cause": "Every client run registered dynamically", "fix": "Prefer CIMD or pre-registration, and reuse credentials bound to that authorization server" }
+  ],
+  "scenarios": [
+    {
+      "id": "w08-t11-s1",
+      "title": "A desktop host meeting unknown remote servers",
+      "situation": "A desktop assistant lets users add any remote MCP server. Each server has its own authorization server. A person is present for every sign-in.",
+      "constraints": ["Open set of servers", "Public client, cannot keep a secret", "User present"],
+      "unknowns": ["Does the authorization server advertise CIMD support?", "What trust policy applies to client metadata URLs?"],
+      "question": "How should the client identify itself?",
+      "options": [
+        { "name": "Client ID Metadata Document, with DCR as a fallback", "verdict": "best", "why": "It follows the spec's registration order and avoids a registration per run.", "tradeoff": "You host a metadata document and authorization servers must trust the URL." },
+        { "name": "Dynamic Client Registration only", "verdict": "good", "why": "Widely available and works where CIMD does not.", "tradeoff": "It is Deprecated and creates registration records on every server." },
+        { "name": "One shared client ID and secret embedded in the app", "verdict": "poor", "why": "A public client cannot protect a secret and every user shares one identity.", "tradeoff": "Pre-registered credentials are right when you control the servers." }
+      ],
+      "flips": [
+        { "if": "You operate both client and servers", "then": "Pre-register." },
+        { "if": "The authorization server supports neither CIMD nor DCR", "then": "Ask the user for credentials supplied by the server owner." }
+      ],
+      "takeaway": "Try pre-registration, then CIMD, then DCR."
+    },
+    {
+      "id": "w08-t11-s2",
+      "title": "A nightly agent with no user",
+      "situation": "A scheduled agent calls an internal MCP server at 2 a.m. to export reports. No person can approve a browser prompt.",
+      "constraints": ["Unattended", "Machine identity", "Internal server and IdP"],
+      "unknowns": ["Does the client support the client credentials extension?", "What scopes should the machine identity hold?"],
+      "question": "How does the agent authenticate?",
+      "options": [
+        { "name": "Client credentials extension with a scoped machine identity", "verdict": "best", "why": "Built for machine to machine access and needs no interactive consent.", "tradeoff": "Opt-in extension, so client and server support must be confirmed." },
+        { "name": "A subscription key checked at a gateway", "verdict": "good", "why": "Simple and supported by gateways.", "tradeoff": "Weaker identity and rotation story than OAuth tokens." },
+        { "name": "Authorization code flow with a browser", "verdict": "poor", "why": "Nobody is present to complete it.", "tradeoff": "Right when a user is present." }
+      ],
+      "flips": [
+        { "if": "The export must run as a specific user", "then": "Use delegated tokens with a stored refresh token under strict controls." },
+        { "if": "The client lacks the extension", "then": "Use the gateway key until support arrives." }
+      ],
+      "takeaway": "No user means a machine flow, not a browser."
+    }
+  ],
+  "quiz": [
+    { "id": "w08-t11-q1", "type": "order", "tag": "order", "q": "Order the first steps for a client reaching a protected remote MCP server.", "items": ["Send a request with no token", "Receive 401 with `resource_metadata` in `WWW-Authenticate`", "Fetch protected resource metadata and read `authorization_servers`", "Fetch authorization server metadata (RFC 8414 or OIDC)", "Authorize with PKCE `S256` and the `resource` parameter"], "explain": "The 401 points to protected resource metadata, which names the authorization servers. The client then reads their metadata and only then runs the authorization code flow with PKCE and the resource indicator." },
+    { "id": "w08-t11-q2", "type": "single", "tag": "security", "q": "Authorization server metadata does not list `code_challenge_methods_supported`. What must the client do?", "options": ["Proceed without PKCE", "Use the `plain` method", "Refuse to proceed", "Fall back to the implicit flow"], "answer": 2, "explain": "Clients MUST use PKCE with S256 and MUST refuse to proceed if the metadata lacks `code_challenge_methods_supported`. Skipping PKCE, using plain or the implicit flow all weaken code protection." }
+  ],
+  "flashcards": [
+    { "front": "What order should clients try for registration?", "back": "Pre-registered credentials, then Client ID Metadata Documents, then Dynamic Client Registration (Deprecated), then ask the user." },
+    { "front": "What does the `resource` parameter do?", "back": "It names the MCP server (canonical URI, RFC 8707) so the token is audience-bound. Servers MUST validate that tokens were issued for them." },
+    { "front": "How does a client find the authorization server?", "back": "Through RFC 9728 protected resource metadata, from `resource_metadata` in the 401 `WWW-Authenticate` header or the well-known URI." }
+  ],
+  "related": ["w08-t12", "w08-t16", "w08-t06", "w08-l05"],
+  "refs": ["r4", "r34", "r35", "r18", "tr10", "tr17", "tr18", "tr19", "tr20"]
+}

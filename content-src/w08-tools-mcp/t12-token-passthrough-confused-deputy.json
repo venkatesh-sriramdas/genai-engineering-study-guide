@@ -1,0 +1,94 @@
+{
+  "id": "w08-t12",
+  "order": 12,
+  "group": "Security",
+  "title": "Token passthrough and the confused deputy",
+  "minutes": 8,
+  "difficulty": "advanced",
+  "summary": "An MCP server must never accept or forward a token that was not issued for it. Proxies with a static client ID must also get per-client consent, or an attacker can use the user's earlier consent to steal an authorization code.",
+  "useIf": "Your MCP server calls downstream APIs, sits behind a gateway, or proxies a third-party OAuth provider.",
+  "avoidIf": "You are tempted to forward the caller's token downstream because 'it is all inside our network'.",
+  "explain": [
+    { "t": "p", "md": "**Token passthrough** is accepting a token from an MCP client without checking it was issued to your server, then passing it to a downstream API. The spec forbids it: servers MUST validate that tokens were issued for them as the audience, MUST NOT accept tokens issued for other resources and MUST NOT accept or transit any other tokens [[r4]] [[r5]]." },
+    { "t": "diagram", "id": "w08-t12-d1", "title": "Passthrough versus a separate downstream token", "alt": "A client sends a token whose audience is the MCP server. The server must not forward that token to the downstream API. It should obtain a separate token for the downstream API.", "src": "flowchart LR\n  C[Client] -->|token, audience MCP server| M[MCP server]\n  M -.->|forwarded as is: forbidden| D[Downstream API]\n  M -->|asks for a new token| T[Token exchange]\n  T -->|token, audience downstream| D" },
+    { "t": "table", "caption": "Why passthrough hurts", "head": ["Risk", "What goes wrong"], "rows": [["Control circumvention", "Rate limits and validation keyed to the token audience are bypassed"], ["Audit trail", "The server cannot tell clients apart and downstream logs show the wrong identity"], ["Trust boundary", "A token accepted by several services lets one compromise reach the rest"], ["Future compatibility", "A pure proxy today cannot add controls later without breaking callers"]] },
+    { "t": "p", "md": "The **confused deputy** attack targets an MCP proxy that talks to a third-party authorization server with one **static client ID**. It needs all of these: the proxy allows dynamic client registration, the third party sets a consent cookie after the first approval, and the proxy skips its own per-client consent. An attacker registers a client with a malicious `redirect_uri` and sends the user a link. The cookie skips the consent screen and the authorization code goes to the attacker [[r5]]." },
+    { "t": "p", "md": "**Required protections.** Keep a registry of approved `client_id` values per user and check it before the third-party flow. Show a consent page that names the client, the scopes and the redirect URI, with CSRF and clickjacking defences. Consent cookies MUST use the `__Host-` prefix, `Secure`, `HttpOnly`, `SameSite=Lax`, be signed and be bound to the `client_id`. Match redirect URIs exactly." },
+    { "t": "callout", "kind": "gotcha", "title": "Gateways can hide passthrough", "md": "API Management docs show forwarding the inbound `Authorization` header to a backend. That is passthrough unless the token's audience is that backend. The alternative is the credential manager (`get-authorization-context`) for a separate outbound credential [[r36]]." }
+  ],
+  "whereToUse": [
+    "Reviewing any MCP server or gateway that calls another API on the caller's behalf",
+    "Designing an MCP proxy in front of a third-party OAuth provider",
+    "Writing token validation middleware for a resource server",
+    "Security reviews of Foundry or API Management setups that forward headers"
+  ],
+  "whenToUse": {
+    "use": ["Validate audience on every request", "Get a separate downstream token for the server's own calls", "Require per-client consent in any proxy with a static client ID", "Key all state by verified user id"],
+    "avoid": ["Forwarding the inbound bearer token to another service", "Relying on the third party's consent cookie as your consent", "Wildcard or pattern-matched redirect URIs"],
+    "flips": ["The backend itself is the token's audience: forwarding the validated token to that backend is compliant", "You can pre-register every client: the dynamic-registration condition disappears"]
+  },
+  "alternatives": {
+    "title": "Ways to reach a downstream API",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Separate downstream token (exchange or on-behalf-of in your IdP)", "Downstream needs the user's identity", "The IdP offers no exchange", "Extra hop and IdP configuration. The exchange method is not defined by MCP"],
+      ["Gateway credential manager", "A gateway fronts the backend", "No gateway in the path", "Per-service connection setup"],
+      ["URL elicitation to the third party", "Third-party OAuth consent is needed", "The client lacks URL mode", "Server stores third-party tokens"],
+      ["Forward the inbound token", "Only if the token's audience is the backend", "Audience is the MCP server or another API", "Forbidden as passthrough otherwise"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Downstream audit logs show a gateway or one shared identity", "cause": "A shared service credential or forwarded token hides the real caller", "fix": "Propagate user identity through a proper exchange and log both identities" },
+    { "symptom": "A security test obtains an access token for the proxy without a consent screen", "cause": "The proxy relied on the third-party consent cookie for a static client ID", "fix": "Add per-client consent before the third-party redirect and bind the consent cookie to `client_id`" },
+    { "symptom": "Authorization codes reach an unexpected host", "cause": "Redirect URIs were matched by pattern", "fix": "Require exact string match against the registered URI" }
+  ],
+  "scenarios": [
+    {
+      "id": "w08-t12-s1",
+      "title": "A gateway in front of an internal MCP backend",
+      "situation": "A gateway validates Entra tokens and forwards requests to an internal MCP server. Both belong to the same team. The team wants minimal moving parts.",
+      "constraints": ["Same tenant and team", "Gateway validates inbound tokens", "Internal backend"],
+      "unknowns": ["What is the audience of the inbound token?", "Does the backend validate audience itself?"],
+      "question": "How should the gateway authenticate to the backend?",
+      "options": [
+        { "name": "Require tokens whose audience is the backend and forward them", "verdict": "best", "why": "The token was issued for the backend, so forwarding it is not passthrough and keeps the user identity.", "tradeoff": "Clients must request tokens for the backend's resource." },
+        { "name": "Use the gateway's credential manager for a separate outbound credential", "verdict": "good", "why": "Clean separation of inbound and outbound trust.", "tradeoff": "More configuration, and user identity must be passed another way." },
+        { "name": "Accept any valid tenant token and forward it, including tokens issued for other APIs", "verdict": "poor", "why": "That is token passthrough with the wrong audience.", "tradeoff": "Only acceptable when audience equals the backend." }
+      ],
+      "flips": [
+        { "if": "The backend cannot validate audience", "then": "Make the gateway enforce it before forwarding." },
+        { "if": "The backend needs a different identity than the caller", "then": "Use the credential manager." }
+      ],
+      "takeaway": "Forward a token only when the receiver is its audience."
+    },
+    {
+      "id": "w08-t12-s2",
+      "title": "A proxy to a SaaS provider without dynamic registration",
+      "situation": "A team builds an MCP server that fronts a SaaS API. The SaaS authorization server has one static client ID for the proxy. Many unknown MCP clients will register dynamically with the proxy.",
+      "constraints": ["Static client ID upstream", "Open ecosystem of clients", "Third party sets a consent cookie"],
+      "unknowns": ["Can the proxy keep a per-user registry of approved clients?", "Does the SaaS support per-client IDs?"],
+      "question": "How do you prevent a confused deputy?",
+      "options": [
+        { "name": "Per-client consent at the proxy, exact redirect URIs and a `__Host-` signed cookie bound to `client_id`", "verdict": "best", "why": "It removes the missing-consent condition so a cookie cannot skip approval.", "tradeoff": "You build and secure a consent page and storage." },
+        { "name": "Pre-register a small set of known clients and refuse dynamic registration", "verdict": "good", "why": "Removes the dynamic registration condition entirely.", "tradeoff": "Closed ecosystem and manual onboarding." },
+        { "name": "Rely on the SaaS consent screen only", "verdict": "poor", "why": "The consent cookie skips it for the static client ID.", "tradeoff": "Fine only if no dynamic clients can register." }
+      ],
+      "flips": [
+        { "if": "The SaaS supports one client ID per MCP client", "then": "Use them and drop the static ID." },
+        { "if": "Only your own client calls the proxy", "then": "Pre-register it." }
+      ],
+      "takeaway": "Consent must be per client, and it must be yours."
+    }
+  ],
+  "quiz": [
+    { "id": "w08-t12-q1", "type": "multi", "tag": "security", "q": "Which conditions together make the confused deputy attack possible?", "options": ["The proxy uses a static client ID with a third-party authorization server", "The proxy allows dynamic client registration", "The third party sets a consent cookie after first approval", "PKCE is enabled on the proxy", "The proxy skips its own per-client consent"], "answers": [0, 1, 2, 4], "explain": "All of the first, second, third and fifth conditions are needed. PKCE does not appear among the conditions and does not by itself stop a stolen consent decision." },
+    { "id": "w08-t12-q2", "type": "single", "tag": "diagnose", "q": "A team says forwarding the caller's token to the downstream API is safe because the network is private. What is the strongest objection?", "options": ["Private networks cannot carry bearer tokens", "TLS is unsupported between services", "The spec only forbids it for stdio", "It breaks audience binding, auditing and controls tied to the token"], "answer": 3, "explain": "The risks are control circumvention, a broken audit trail, trust boundary issues and future compatibility, regardless of network privacy. Bearer tokens work on private networks, TLS is available, and the rule is about token audience and not transport." }
+  ],
+  "flashcards": [
+    { "front": "What does the spec say about token passthrough?", "back": "It is forbidden. MCP servers MUST NOT accept tokens not issued for them and MUST NOT transit other tokens." },
+    { "front": "Which conditions enable the confused deputy attack on an MCP proxy?", "back": "A static client ID upstream, dynamic client registration, a third-party consent cookie and no per-client consent at the proxy." },
+    { "front": "What cookie attributes does the spec require for consent cookies?", "back": "`__Host-` prefix, `Secure`, `HttpOnly`, `SameSite=Lax`, signed or server-side, and bound to the `client_id`." }
+  ],
+  "related": ["w08-t11", "w08-t13", "w08-t16", "w08-l05"],
+  "refs": ["r4", "r5", "r36"]
+}

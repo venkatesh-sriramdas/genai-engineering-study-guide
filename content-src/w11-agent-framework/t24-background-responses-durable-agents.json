@@ -1,0 +1,120 @@
+{
+  "id": "w11-t24",
+  "order": 24,
+  "group": "Operate",
+  "title": "Background responses and durable agents",
+  "minutes": 10,
+  "difficulty": "advanced",
+  "summary": "Four different things get called long-running: provider background responses (a continuation token you poll), background agents (delegated child tasks), workflow checkpoints, and the Durable Extension (durable sessions and orchestrations that wait without compute).",
+  "useIf": "A request outlives one HTTP call, a stream may break, a human may take hours, or work must survive a restart and scale across workers.",
+  "avoidIf": "Runs finish in seconds and a retry is cheap: the extra mechanisms add state, storage and operational cost.",
+  "explain": [
+    { "t": "p", "md": "**Background responses.** Ask a provider to run a request in the background. The first call may finish at once (no token) or return a **continuation token**. Poll by passing the token back, or resume an interrupted stream with the token from the last update. A null token means done, failed, or unable to proceed (for example it needs user input). C#: `AllowBackgroundResponses = true` in `AgentRunOptions`; Python: `options={'background': True}`. Only agents on the OpenAI Responses API qualify in .NET (OpenAI and Azure OpenAI Responses); in Python the OpenAI Responses, Azure OpenAI Responses or Foundry clients qualify, and with `FoundryChatClient` you keep the same session while polling so local tool loops can continue [[tr28]]." },
+    { "t": "p", "md": "**Background agents** are different and experimental: a parent agent delegates tasks to named child agents with six tools (`background_agents_start_task`, `_wait_for_first_completion`, `_get_task_results`, `_get_all_tasks`, `_continue_task`, `_clear_completed_task`). Status is `running`, `completed`, `failed` or `lost`. There is **no cancel tool**, in-flight work does not survive a restart (it becomes `lost`) and child approvals are not proxied to the parent [[tr29]]." },
+    { "t": "p", "md": "**Durable Extension** (Beta in Python, preview in .NET, checked 2026-10-13). Two hosting models: **Azure Functions** or **bring your own compute** (containers, Kubernetes, workers), backed by Durable Task (Durable Task Scheduler recommended). It persists sessions, checkpoints graph workflows, resumes after failure, pauses for human input or events **without using compute or tokens**, streams reliably through a broker such as Redis, and cleans idle sessions with a session TTL. Flex Consumption can scale to thousands of instances or to zero. Inside orchestrations call agents through `context.GetAgent()` (.NET) or `app.get_agent(context, name)` (Python) so calls are replay-safe [[tr30]]." },
+    { "t": "table", "caption": "Which mechanism for which need", "head": ["Mechanism", "What survives", "Wait costs compute?", "Status (2026-10-13)"], "rows": [
+      ["Background response (continuation token)", "The provider holds the running response; you hold the token", "No, provider-side", "Provider-dependent"],
+      ["Background agents", "Task metadata in the session only; in-flight work is lost on restart", "Yes, in your process", "Experimental"],
+      ["Workflow checkpoints", "Executor state, pending messages and requests", "Only while your process runs", "Stable core, storage Beta"],
+      ["Durable Extension", "Sessions, workflow progress, external-event waits", "No, scale to zero while waiting", "Beta (Python), preview (.NET)"]
+    ] },
+    { "t": "tabs", "tabs": [
+      { "label": "C#", "blocks": [
+        { "t": "code", "lang": "csharp", "title": "Poll a background response", "code": "AgentRunOptions options = new() { AllowBackgroundResponses = true };\nAgentSession session = await agent.CreateSessionAsync();\nAgentResponse response = await agent.RunAsync(\"Write a very long report.\", session, options);\n\nwhile (response.ContinuationToken is not null)\n{\n    await Task.Delay(TimeSpan.FromSeconds(2));\n    options.ContinuationToken = response.ContinuationToken;\n    response = await agent.RunAsync(session, options);\n}\nConsole.WriteLine(response.Text);" },
+        { "t": "code", "lang": "csharp", "title": "Durable agents on Azure Functions", "code": "using IHost app = FunctionsApplication.CreateBuilder(args)\n    .ConfigureFunctionsWebApplication()\n    .ConfigureDurableAgents(o => o.AddAIAgent(agent))\n    .Build();\napp.Run();\n\n// in an orchestration: wait for a human, up to 24 hours\nDurableAIAgent writer = context.GetAgent(\"ContentGenerationAgent\");\nvar draft = await writer.RunAsync<GeneratedContent>(\"Write an article\");\nvar approval = await context.WaitForExternalEvent<HumanApprovalResponse>(\n    \"ApprovalDecision\", TimeSpan.FromHours(24));" } ] },
+      { "label": "Python", "blocks": [
+        { "t": "code", "lang": "python", "title": "Poll a background response", "code": "session = agent.create_session()\nresponse = await agent.run(messages='Write a very long report.', session=session,\n                           options={'background': True})\nwhile response.continuation_token is not None:\n    await asyncio.sleep(2)\n    response = await agent.run(session=session,\n        options={'continuation_token': response.continuation_token})\nprint(response.text)" },
+        { "t": "code", "lang": "python", "title": "Durable agents on Azure Functions", "code": "app = AgentFunctionApp(agents=[content_agent])\n\n@app.orchestration_trigger(context_name='context')\ndef content_approval(context: df.DurableOrchestrationContext):\n    writer = app.get_agent(context, 'ContentGenerationAgent')\n    draft = yield writer.run(messages=f'Write about {context.get_input()}')\n    approval = context.wait_for_external_event('ApprovalDecision')\n    timeout = context.create_timer(context.current_utc_datetime + timedelta(hours=24))\n    winner = yield context.task_any([approval, timeout])\n    if winner == approval:\n        timeout.cancel()\n        return (yield context.call_activity('publish', draft))\n    return (yield context.call_activity('escalate', draft))" } ] }
+    ] }
+  ],
+  "whereToUse": [
+    "Long reasoning requests where a browser call would time out: background responses",
+    "Streaming UIs that must reconnect after a drop: resume with the last continuation token",
+    "Approval flows that wait hours or days with no idle compute: Durable Extension",
+    "Agents that must keep conversations across process crashes and scale-out",
+    "MCP exposure of agents from Azure Functions via the MCP server trigger"
+  ],
+  "whenToUse": {
+    "use": [
+      "The request may exceed client or gateway timeouts",
+      "A person or event gates progress for hours or days",
+      "Workers are stateless and any worker must resume any run"
+    ],
+    "avoid": [
+      "Short, cheap runs: a simple retry is enough",
+      "You need cancellation of background-agent tasks: the provider has no cancel tool",
+      "Pre-release packages are banned and you cannot take the Beta or preview Durable packages",
+      "Assuming background responses work with every provider: support is provider-specific"
+    ],
+    "flips": [
+      "Waits are long and compute costs matter: use durable orchestrations with external events and timers",
+      "You only need to resume a graph in your own process: standard checkpoint storage may be enough"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Background responses", "One long provider call, client may disconnect", "Multi-step human gates", "Provider-specific; you poll"],
+      ["Background agents", "Parallel delegated subtasks", "Restarts or cancellation matter", "Experimental; tasks become `lost`"],
+      ["Workflow checkpoints (own host)", "Resume a graph, full control", "Scale-to-zero waits", "You run hosts and secure storage"],
+      ["Durable Extension (Functions)", "Days-long waits, scale to zero, durable sessions", "Package maturity limits you", "Beta and preview, different programming model"],
+      ["Foundry hosted agents with `background=true`", "Managed hosting of Responses work", "You need custom durable orchestrations", "Hosting packages are Beta and preview; service is GA"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Polling never ends or returns an empty response", "cause": "The token went null because the run needs user input or failed; null does not always mean success", "fix": "Check status, errors and user-input content, then continue with a new run" },
+    { "symptom": "Background child tasks show `lost` after a deploy", "cause": "In-process task handles and child sessions do not survive restarts", "fix": "Use durable orchestration or workflow checkpoints for work that must survive" },
+    { "symptom": "An orchestration replays and calls the model twice", "cause": "The agent was invoked outside `context.GetAgent()` or `app.get_agent()`, so the call is not replay-safe", "fix": "Call agents inside orchestrations only through the durable agent handle" }
+  ],
+  "scenarios": [
+    {
+      "id": "w11-t24-s1",
+      "title": "Reports that take ten minutes",
+      "situation": "A reasoning model takes up to 10 minutes per report. The web gateway times out at 60 seconds. Users should see progress and survive page refreshes. Volume is 500 reports a day.",
+      "constraints": ["Gateway 60 second timeout", "Reports 3 to 10 minutes", "Provider supports background responses"],
+      "unknowns": ["Do local tools need to run during the report?", "Is the provider on the supported list?", "Where is the token stored?"],
+      "question": "What mechanism do you use?",
+      "options": [
+        { "name": "Background responses: start with the background option, store the continuation token with the session, and poll or resume the stream from the web tier", "verdict": "best", "why": "The provider runs the work, the token survives refreshes, and no custom orchestration is needed.", "tradeoff": "Provider-specific, and you must store tokens and sessions safely." },
+        { "name": "Increase gateway timeouts to 15 minutes", "verdict": "poor", "why": "Fragile and holds connections; any network blip loses the run.", "tradeoff": "Acceptable for internal tools on stable networks." },
+        { "name": "Durable orchestration for every report", "verdict": "good", "why": "Fully durable and observable.", "tradeoff": "Heavier than needed for one provider call, on Beta or preview packages." }
+      ],
+      "flips": [
+        { "if": "Reports include human review steps lasting hours", "then": "Use durable orchestrations with external events." },
+        { "if": "The provider does not support background responses", "then": "Run the call in a worker and persist the result yourself." }
+      ],
+      "takeaway": "A single long provider call calls for a continuation token, not an orchestration."
+    },
+    {
+      "id": "w11-t24-s2",
+      "title": "Contract approvals lasting days",
+      "situation": "An agent drafts contract clauses, a lawyer approves within 1 to 5 days, then the agent files the result. 200 contracts a month. Compute cost while waiting must be near zero.",
+      "constraints": ["Waits of days", "Near-zero idle cost", "Audit trail"],
+      "unknowns": ["Can the team adopt Beta or preview packages?", "Where do approvals come from?", "What if the lawyer never answers?"],
+      "question": "What do you build on?",
+      "options": [
+        { "name": "Durable Extension on Azure Functions: orchestration with `wait_for_external_event`, a 5-day timer for escalation, session TTL cleanup", "verdict": "best", "why": "Waits consume no compute or tokens, scale to zero, and the orchestration resumes with full context.", "tradeoff": "Beta (Python) or preview (.NET) packages and the Durable programming model." },
+        { "name": "Workflow with a request port and Cosmos DB checkpoints on your own container host", "verdict": "good", "why": "Stable core and durable pending requests.", "tradeoff": "You keep a host running or restart it on demand, and wire timers and wake-ups yourself." },
+        { "name": "A background agent that sleeps until approval", "verdict": "poor", "why": "Holds compute and loses state on restart (status `lost`).", "tradeoff": "Fine for minutes, never for days." }
+      ],
+      "flips": [
+        { "if": "Pre-release packages are not allowed", "then": "Use the stable workflow checkpoint approach with your own timer and trigger." },
+        { "if": "Approval arrives within the same session", "then": "A tool approval with a persisted session is simpler." }
+      ],
+      "takeaway": "Days-long waits are a durable-runtime problem, not a prompt problem."
+    }
+  ],
+  "quiz": [
+    { "id": "w11-t24-q1", "type": "single", "tag": "diagnose", "q": "After a service restart, background-agent tasks report `lost`. What happened?", "options": ["The provider cancelled them", "In-process task handles and child sessions did not survive the restart", "The continuation token expired", "The Durable Task Scheduler purged them"], "answer": 1, "explain": "The docs say a task becomes lost when its in-process handle or child session is unavailable, such as after a restart or session restore. Only metadata remains.", "ref": "tr29" },
+    { "id": "w11-t24-q2", "type": "multi", "tag": "concept", "q": "Which statements about background responses are correct? Select all.", "options": ["A null continuation token can mean done, failed or waiting for user input", "They are enabled with `AllowBackgroundResponses` (.NET) or `options={'background': True}` (Python)", "They work with every agent type", "A broken stream can be resumed with the last update's token"], "answers": [0, 1, 3], "explain": "Support depends on the provider (OpenAI and Azure OpenAI Responses, plus Foundry in Python), not every agent type.", "ref": "tr28" },
+    { "id": "w11-t24-q3", "type": "single", "tag": "tradeoff", "q": "You need approvals that may wait five days, scale-to-zero cost while waiting and recovery after a crash. Which option is the best fit?", "options": ["A background response", "Background agents", "The Durable Extension with an external-event wait", "A longer HTTP timeout"], "answer": 2, "explain": "Durable orchestrations wait without compute and resume with context. Background responses cover one provider call, and background agents lose work on restart.", "ref": "tr30" }
+  ],
+  "flashcards": [
+    { "front": "What does a null continuation token mean?", "back": "The background operation is complete, failed, or cannot proceed (for example it needs user input)." },
+    { "front": "Background responses vs background agents?", "back": "Responses: one provider request you poll or resume with a token. Agents: a parent delegates tasks to child agents; experimental, no cancel tool, lost on restart." },
+    { "front": "Name two Durable Extension hosting models.", "back": "Azure Functions (serverless, scale to zero) and bring-your-own compute (containers, Kubernetes, workers) on Durable Task." }
+  ],
+  "related": ["w11-t15", "w11-t16", "w11-t25", "w10-t21", "w12-t05"],
+  "refs": ["tr28", "tr29", "tr30"]
+}

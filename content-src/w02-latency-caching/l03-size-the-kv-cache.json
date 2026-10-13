@@ -1,0 +1,53 @@
+{
+  "id": "w02-l3",
+  "order": 3,
+  "title": "Size the KV cache before it sizes you",
+  "kind": "lab",
+  "minutes": 20,
+  "brief": "A model must serve many long conversations on a fixed GPU. The architecture, KV precision, context length and concurrency are all open. Find which dial caps concurrency, and which of your options can still move.",
+  "blocks": [
+    { "t": "h", "text": "The formula that sizes everything", "level": 2 },
+    { "t": "formula", "title": "KV cache size", "expr": "kv_bytes = 2 x n_layers x n_kv_heads x head_dim x bytes_per_element x tokens x batch", "vars": [
+      { "k": "2", "v": "one key vector and one value vector per token" },
+      { "k": "n_kv_heads", "v": "KV heads, not query heads. This is where GQA and MQA save memory" },
+      { "k": "bytes_per_element", "v": "2 for fp16 or bf16, 1 for fp8, 0.5 for 4-bit" },
+      { "k": "tokens x batch", "v": "context length of each sequence times concurrent sequences" }
+    ], "example": "A Llama 3 8B shape (32 layers, 8 KV heads, head dim 128, bf16) stores 2 x 32 x 8 x 128 x 2 = **131,072 bytes, 128 KiB per token**, so 1 GiB at 8,192 tokens. A Llama 3 70B shape (80 layers, 8 KV heads, head dim 128) stores **320 KiB per token**, 2.5 GiB at 8,192 tokens. These sizes are arithmetic from the published configs [[r27]]. Every decode step reads this cache, so at long context KV bytes cap concurrency before the weights do." },
+    { "t": "lab", "id": "kv-cache", "intro": "Start with the 7B-class MHA preset, then switch to the GQA preset and compare KV per sequence. Lower KV precision, then stretch the context. Watch the three paging rows: contiguous reservation, paged blocks, and paged blocks with a shared prefix. The shapes are illustrative, not vendor models." },
+    { "t": "compare", "title": "Attention variants decide KV size at model selection", "intro": "You choose these when you pick a model, not later with a serving flag.", "options": [
+      { "name": "MHA", "tag": "Baseline", "summary": "One KV head per query head. The largest cache.", "pros": ["Highest quality reference", "Simple kernels everywhere"], "cons": ["KV memory and bandwidth scale with every head", "Concurrency collapses first at long context"], "bestWhen": "Small models or short contexts where KV is not the limit.", "avoidWhen": "Long context with high concurrency.", "meta": [{ "k": "KV vs MHA", "v": "1x" }] },
+      { "name": "MQA", "summary": "All query heads share a single KV head.", "pros": ["Smallest KV and least memory traffic", "Fast decode"], "cons": ["Minor quality loss reported in the GQA paper [[r10]]", "Hard to retrofit"], "bestWhen": "Decode speed and memory dominate and a small quality cost is acceptable.", "avoidWhen": "Quality-critical tasks where the loss shows up in your evals.", "meta": [{ "k": "KV vs MHA", "v": "1 / n_heads" }] },
+      { "name": "GQA", "tag": "Common choice", "summary": "A group of query heads shares each KV head, with more than one but fewer KV heads than query heads.", "pros": ["Quality near MHA at speed near MQA after uptraining with about 5% of pre-training compute [[r10]]", "KV shrinks by `heads / kv_heads`"], "cons": ["Still scales linearly with context and batch"], "bestWhen": "General serving of dense models. It is the usual default.", "avoidWhen": "You need the largest possible cut and can adopt a latent design.", "meta": [{ "k": "KV vs MHA", "v": "kv_heads / n_heads" }] },
+      { "name": "MLA", "tag": "Model design", "summary": "Compress keys and values into a latent vector and cache that instead.", "pros": ["DeepSeek-V2 reports a 93.3% smaller KV cache and 5.76x peak generation throughput versus DeepSeek 67B [[r11]]"], "cons": ["Chosen when the model is trained, not a serving flag", "Needs engine support for the attention variant"], "bestWhen": "You can select the model and KV memory is the binding limit.", "avoidWhen": "You must stay on an existing checkpoint with a different design.", "meta": [{ "k": "KV vs MHA", "v": "93.3% smaller (paper)" }] }
+    ] },
+    { "t": "h", "text": "Paging, sharing and quantization", "level": 2 },
+    { "t": "diagram", "id": "w02-l3-paged", "title": "Two requests sharing a prefix in paged memory", "alt": "Two block tables, one for request A and one for request B, both point to the same physical block holding the shared prefix. Each also points to its own private block. All blocks live in one GPU memory pool.", "src": "flowchart LR\n  A[Request A block table] --> S1[Block 1 shared prefix]\n  B[Request B block table] --> S1\n  A --> A2[Block 2 only A]\n  B --> B2[Block 2 only B]\n  S1 --> M[GPU block pool]\n  A2 --> M\n  B2 --> M", "caption": "Fixed-size blocks mean only the last block of a sequence can be partly empty, and identical prefix blocks are stored once [[r6]]." },
+    { "t": "table", "caption": "KV memory levers, where you set them and what limits them", "head": ["Lever", "Effect", "Set at", "Evidence and limits"], "rows": [
+      ["GQA or MLA model", "Fewer or compressed KV entries per token", "Model selection", "Shrinks by `heads / kv_heads`. MLA reported 93.3% [[r10]] [[r11]]"],
+      ["KV quantization", "Fewer bytes per element", "Serving config", "KIVI at 2 bits: tuning-free, 2.6x less peak memory, up to 4x batch, 2.35x to 3.47x throughput, near-equal quality. Validate on your own long-context evals [[r20]]"],
+      ["Paged blocks", "Near-zero waste from over-reservation", "Engine", "PagedAttention reported 2x to 4x throughput at equal latency versus 2023 systems [[r6]]"],
+      ["Prefix sharing", "Shared blocks stored once, prefill skipped", "Engine config", "vLLM caches only full blocks, hashed over tokens, parent hash and extras such as LoRA id and `cache_salt`. SGLang keeps a radix tree and reported up to 6.4x throughput on structured programs [[r7]] [[r8]]"],
+      ["Shorter or compacted context", "Fewer tokens per sequence", "Application", "Linear: half the tokens, half the KV"]
+    ], "highlightCol": 0 },
+    { "t": "failure", "title": "KV failure modes", "items": [
+      { "symptom": "Out of memory on long conversations although the weights loaded fine", "cause": "KV grows with context times concurrent sequences, and capacity was sized from short prompts", "fix": "Compute the KV budget as GPU memory minus reserve minus weights, then cap concurrency or context, or pick GQA or MLA, or quantize" },
+      { "symptom": "Capacity plan is off by 4x to 8x for a GQA model", "cause": "The estimate used query heads instead of KV heads", "fix": "Read `num_key_value_heads` from the model config, not `num_attention_heads`" },
+      { "symptom": "Throughput improved after KV quantization but long-document answers got worse", "cause": "Low-bit KV adds error that accumulates over long contexts", "fix": "Gate the change on long-context evals, keep 8-bit as the fallback, and watch quality by context length" },
+      { "symptom": "One tenant can infer another's prompts by timing responses on a shared prefix cache", "cause": "Prefix blocks are shared across tenants without isolation", "fix": "Set a per-request `cache_salt` in vLLM. Treat the faster `xxhash` option with care because the doc warns about collisions and cross-tenant leakage [[r7]]" }
+    ] }
+  ],
+  "quiz": [
+    { "id": "w02-l3-q1", "type": "numeric", "tag": "numeric", "q": "A model has 40 layers, 8 KV heads and head dimension 128, with fp16 KV. How many GiB of KV cache do 16 concurrent sequences of 8,192 tokens need?", "answer": 20, "tolerancePct": 2, "unit": "GiB", "hint": "bytes per token = 2 x layers x kv_heads x head_dim x bytes", "explain": "Per token: 2 x 40 x 8 x 128 x 2 = 163,840 bytes (160 KiB). Per sequence: 160 KiB x 8,192 = 1.25 GiB. For 16 sequences: 1.25 x 16 = 20 GiB. Using 32 query heads instead of 8 KV heads would give 80 GiB, a common mistake.", "difficulty": 2, "ref": "r27" },
+    { "id": "w02-l3-q2", "type": "single", "tag": "bug", "q": "What is wrong with this capacity estimate for a Llama-style GQA model with 80 layers, 64 query heads, 8 KV heads and head dimension 128?", "code": { "lang": "python", "code": "def kv_bytes(n_layers, n_heads, head_dim, tokens, batch, dtype_bytes=2):\n    return 2 * n_layers * n_heads * head_dim * dtype_bytes * tokens * batch\n\nprint(kv_bytes(80, 64, 128, tokens=8192, batch=8) / 2**30)" }, "options": ["Nothing is wrong, because the formula uses the head count the model reports", "dtype_bytes should be 4, because the KV cache is stored in fp32", "It multiplies by batch, but KV is shared across the whole batch", "It passes query heads, so it overestimates a GQA model by 64 / 8 = 8x"], "answer": 3, "explain": "KV size depends on KV heads. With 8 KV heads the answer is 20 GiB, but the code prints 160 GiB. The KV cache is usually fp16 or bf16, not fp32, and each sequence has its own KV so batch multiplies the total.", "difficulty": 2, "ref": "r10" },
+    { "id": "w02-l3-q3", "type": "multi", "tag": "concept", "q": "Select the changes that reduce the KV bytes stored per token of a single sequence.", "options": ["Use a model with 8 KV heads instead of 32", "Store KV in fp8 instead of fp16", "Switch the engine to PagedAttention blocks", "Cache a shared system prompt with prefix caching"], "answers": [0, 1], "explain": "Fewer KV heads and fewer bytes per element both shrink each token's entry. PagedAttention removes waste from over-reservation but each token still needs the same bytes. Prefix caching stores shared blocks once across sequences, which saves memory overall, but does not change the size of a token's entry.", "difficulty": 2, "ref": "r6" }
+  ],
+  "defend": null,
+  "refs": ["r6", "r7", "r8", "r10", "r11", "r20", "r24", "r27"],
+  "takeaways": [
+    "KV bytes per token = 2 x layers x KV heads x head dim x bytes. Use KV heads, not query heads",
+    "At long context the KV cache, not the weights, caps concurrency",
+    "GQA and MLA are model choices. Quantization, paging and prefix sharing are serving choices",
+    "KV quantization needs an eval gate because errors grow with context length",
+    "Shared prefix caches need per-tenant isolation or they leak through timing"
+  ]
+}

@@ -1,0 +1,131 @@
+{
+  "id": "w18-t05",
+  "order": 5,
+  "group": "Deployment",
+  "title": "Serving open models",
+  "minutes": 8,
+  "difficulty": "advanced",
+  "summary": "Running open-weight models yourself with a serving engine (vLLM, SGLang), a local runtime (Ollama, Foundry Local) or Kubernetes (KAITO on AKS), and knowing when a managed deployment is the better answer.",
+  "useIf": "You need custom or open weights, steady high volume, offline use, or control that managed deployments cannot give.",
+  "avoidIf": "Residency is the only driver and a data zone or regional deployment meets it, or you lack GPU operations skill and steady load.",
+  "explain": [
+    { "t": "p", "md": "A **serving engine** turns weights into an HTTP endpoint and keeps GPUs busy. **vLLM** (UC Berkeley origin) uses PagedAttention, continuous batching, chunked prefill, prefix caching, speculative decoding and many quantization formats. The 2023 paper reports 2 to 4x throughput at the same latency against prior systems [[r16]] [[r17]]. **SGLang** adds RadixAttention for KV reuse across requests with shared prefixes and compressed finite state machines for structured output, with up to 6.4x throughput reported [[r18]]. Both are vendor or author-reported numbers on their own benchmarks." },
+    { "t": "table", "caption": "Where each option fits, checked 2026-10-13", "head": ["Option", "Role", "Fits", "Limits to know"], "rows": [
+      ["vLLM, SGLang", "Server engines on your GPUs", "Many concurrent users, custom weights", "You run GPUs, scaling, upgrades and safety layers"],
+      ["Ollama", "Local and cloud models with OpenAI-compatible and Anthropic-compatible APIs [[r19]]", "Developer machines, small internal tools", "Not a fleet scheduler"],
+      ["Foundry Local", "On-device runtime and SDK on ONNX Runtime, about 20 MB added to an app, OpenAI-compatible API including Responses format, Windows, macOS (Apple silicon) and Linux, no Azure subscription [[r20]]", "Offline or single-user apps", "Not a server stack. Microsoft points to vLLM or Triton for multi-user serving"],
+      ["KAITO on AKS", "AKS add-on, a CNCF Sandbox project integrating vLLM [[r21]]", "Self-hosting on Kubernetes", "NVIDIA GPUs with compute capability 8.0 or later (no T4 or V100), Azure CLI 2.76.0 or later, no Windows node pools, public Azure regions only, add-on lags upstream by one release"],
+      ["Managed deployment", "Global, Data Zone or Regional types in Foundry [[r24]]", "Most teams, including residency", "Weights and tuning are the vendor's"]
+    ] },
+    { "t": "formula", "title": "Is self-hosting cheaper?", "expr": "cost per million tokens = GPU cost per hour / (million tokens per hour at full load x utilization)", "vars": [{ "k": "utilization", "v": "share of the hour the GPU does useful work" }], "example": "Illustrative numbers: a GPU at $6 per hour that can serve 3 million tokens per hour at full load costs $2 per million tokens at 100% utilization and $4 per million at 50%. Idle GPUs make self-hosting expensive." },
+    { "t": "p", "md": "Microsoft advises starting with Global Standard unless residency, reserved throughput or batch forces a change [[r24]]. Strict residency usually starts with Data Zone or Regional deployments before self-hosting. Pick the engine by workload: vLLM is a general-purpose engine, SGLang suits shared-prefix and structured-output work, and a local runtime suits one user on one device. Whatever you pick, you also take on safety layers, patching and capacity planning that a managed service handles." }
+  ],
+  "whereToUse": [
+    "Serving fine-tuned or open-weight models that a managed catalog does not host",
+    "High, steady request volume where GPU utilization stays high",
+    "Offline or edge apps that must run on a laptop or device",
+    "Structured-output or shared-prefix workloads that benefit from SGLang or vLLM prefix reuse",
+    "Kubernetes shops that want a managed add-on to deploy open models on AKS"
+  ],
+  "whenToUse": {
+    "use": [
+      "You need weights, tuning or network control a managed API cannot provide",
+      "Load is steady enough to keep GPUs busy",
+      "You have staff for GPU capacity, upgrades and monitoring"
+    ],
+    "avoid": [
+      "Bursty or low volume that leaves GPUs idle",
+      "Residency is the only requirement and a Data Zone or Regional deployment satisfies it",
+      "You expect Foundry Local to act as a multi-user server"
+    ],
+    "flips": [
+      "Utilization stays under about half: re-run the cost formula, since managed pricing may win",
+      "Offline or single-user need appears: on-device runtime beats a central server",
+      "GPU generation is older than compute capability 8.0: KAITO is not an option for that pool"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Managed Global deployment", "Default start, mixed workloads", "Strict residency or custom weights", "Data may be processed in any region"],
+      ["Managed Data Zone or Regional", "Residency inside a zone or geography", "Custom weights, tuning beyond catalog", "Capacity and region limits"],
+      ["vLLM or SGLang on your GPUs", "Steady load, open or tuned weights", "Spiky load, no ops skill", "GPU cost when idle, ops burden, safety layers are yours"],
+      ["KAITO on AKS", "Kubernetes team wants a managed path to vLLM", "Old GPUs, Windows pools, non-public regions", "Add-on lags upstream, stop and start not fully supported with active workspaces"],
+      ["Foundry Local or Ollama", "Offline, single user, developer machines", "Many concurrent users", "Not a server stack"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "GPU bill is high and latency is still poor", "cause": "Low utilization and no batching or prefix reuse", "fix": "Measure utilization, enable continuous batching and prefix caching and re-run the cost formula against managed pricing." },
+    { "symptom": "KAITO workspace does not schedule", "cause": "GPU SKU below compute capability 8.0, or an unsupported region or node pool type", "fix": "Check the prerequisites: NVIDIA compute capability 8.0 or later, Azure CLI 2.76.0 or later, Linux node pools, public Azure region." },
+    { "symptom": "Prototype on Foundry Local falls over with many users", "cause": "It is an on-device runtime, not a multi-user server", "fix": "Move to vLLM or Triton Inference Server for shared serving." }
+  ],
+  "scenarios": [
+    {
+      "id": "w18-t05-s1",
+      "title": "Residency with no GPU team",
+      "situation": "A team must keep inference inside the EU. Volume is moderate and spiky. No one on the team runs GPUs.",
+      "constraints": ["Inference must stay in the EU data zone", "Spiky load", "No GPU operations skill"],
+      "unknowns": ["Does the needed model exist as a Data Zone deployment?", "Is custom weight hosting required?"],
+      "question": "Where does the model run?",
+      "options": [
+        { "name": "Foundry Local on a server", "verdict": "poor", "why": "It is an on-device runtime and Microsoft points to vLLM or Triton for multi-user serving.", "tradeoff": "Right for an offline single-user app." },
+        { "name": "Managed Data Zone or Regional deployment", "verdict": "best", "why": "Meets residency without GPUs and handles spikes through capacity you rent.", "tradeoff": "You get the catalog's models and its quota limits." },
+        { "name": "Self-host vLLM on AKS with KAITO", "verdict": "good", "why": "Full control and inference in a region you pick.", "tradeoff": "GPU cost when idle, ops work and your own safety layers." }
+      ],
+      "flips": [
+        { "if": "The model you need is not offered in a Data Zone deployment", "then": "Self-hosting becomes the way to keep it in region." },
+        { "if": "Load becomes steady and high", "then": "Re-run the cost formula, since GPUs may beat per-token pricing." }
+      ],
+      "takeaway": "Residency usually starts with managed zones, not GPUs."
+    },
+    {
+      "id": "w18-t05-s2",
+      "title": "Field app with no connectivity",
+      "situation": "Technicians use a tablet app in places with no network. Each device serves one user. Data must not leave the device.",
+      "constraints": ["Offline", "One user per device", "Data stays on device"],
+      "unknowns": ["What device hardware is available?", "How large can the model be?"],
+      "question": "How do you serve the model?",
+      "options": [
+        { "name": "Call a managed API", "verdict": "poor", "why": "It needs connectivity and sends data off the device.", "tradeoff": "Right when users are online and policy allows cloud processing." },
+        { "name": "Embed an on-device runtime such as Foundry Local", "verdict": "best", "why": "It runs on ONNX Runtime, needs no Azure subscription and adds about 20 MB to the app.", "tradeoff": "Model size and speed are bounded by device hardware." },
+        { "name": "Central vLLM cluster with sync on reconnect", "verdict": "good", "why": "Strong models, centralized updates.", "tradeoff": "Does not work offline and adds sync complexity." }
+      ],
+      "flips": [
+        { "if": "Devices have a reliable link and policy allows cloud", "then": "A managed deployment is simpler and stronger." },
+        { "if": "Hardware is too weak for the model", "then": "Use a smaller or quantized model or a hybrid with deferred cloud calls." }
+      ],
+      "takeaway": "Offline and per-device privacy point to on-device runtimes."
+    },
+    {
+      "id": "w18-t05-s3",
+      "title": "High steady volume with tuned weights",
+      "situation": "A platform team serves a fine-tuned open model to many internal apps. Traffic is steady around the clock. The team already runs Kubernetes and has H100-class and T4 GPU pools.",
+      "constraints": ["Steady, high load", "Custom weights", "Kubernetes skills exist"],
+      "unknowns": ["What utilization do you expect per GPU?", "Which pools meet the compute capability rule?"],
+      "question": "How do you host it?",
+      "options": [
+        { "name": "vLLM through KAITO on AKS using GPUs with compute capability 8.0 or later", "verdict": "best", "why": "Custom weights need self-hosting, steady load keeps utilization high and KAITO integrates vLLM.", "tradeoff": "You run capacity, upgrades and safety layers, and the add-on lags upstream by one release." },
+        { "name": "KAITO on the T4 pool", "verdict": "poor", "why": "KAITO needs NVIDIA GPUs with compute capability 8.0 or later, so T4 and V100 are out.", "tradeoff": "T4 pools can still serve small workloads with other tooling." },
+        { "name": "Managed catalog model only", "verdict": "good", "why": "No ops burden.", "tradeoff": "Your fine-tuned weights cannot run there, so you lose the tuning." }
+      ],
+      "flips": [
+        { "if": "Utilization falls below about half", "then": "Re-evaluate managed pricing with the cost formula." },
+        { "if": "Upstream vLLM features are needed sooner", "then": "Run vLLM directly instead of the add-on." }
+      ],
+      "takeaway": "Custom weights plus steady load justify GPUs. Check the hardware rules first."
+    }
+  ],
+  "quiz": [
+    { "id": "w18-t05-q1", "type": "single", "tag": "tradeoff", "q": "Which is the right tool for multi-user serving according to Microsoft's Foundry Local docs?", "options": ["Foundry Local itself, running on the server", "A browser extension that proxies requests", "Ollama on a developer laptop", "vLLM or Triton Inference Server"], "answer": 3, "explain": "Foundry Local is an on-device runtime and Microsoft points to vLLM or Triton for multi-user serving. Ollama on a laptop is also a local tool.", "ref": "r20" },
+    { "id": "w18-t05-q2", "type": "numeric", "tag": "numeric", "q": "A GPU costs $6 per hour and can serve 3 million tokens per hour at full load. At 50% utilization, what is the cost per million tokens?", "answer": 4, "tolerancePct": 5, "unit": "USD per million tokens", "hint": "Effective throughput is full throughput times utilization.", "explain": "Effective throughput is 3 x 0.5 = 1.5 million tokens per hour. Cost is $6 / 1.5 = $4 per million tokens." },
+    { "id": "w18-t05-q3", "type": "multi", "tag": "diagnose", "q": "A KAITO workspace will not run. Which prerequisites should you check?", "options": ["NVIDIA GPU with compute capability 8.0 or later", "Azure CLI 2.76.0 or later", "A Windows node pool", "A T4 or V100 pool"], "answers": [0, 1], "explain": "KAITO needs compute capability 8.0 or later and Azure CLI 2.76.0 or later. It does not support Windows node pools, and T4 and V100 are below the capability rule.", "ref": "r21" }
+  ],
+  "flashcards": [
+    { "front": "What does PagedAttention do in vLLM?", "back": "It stores the KV cache in fixed-size blocks to cut memory waste and allow more concurrent requests. The paper reports 2 to 4x throughput at the same latency." },
+    { "front": "What is RadixAttention?", "back": "SGLang's KV cache reuse across requests that share a prefix, using a radix tree. SGLang also uses compressed finite state machines for structured output." },
+    { "front": "What GPU rule does KAITO on AKS impose?", "back": "NVIDIA GPUs with compute capability 8.0 or later, so no T4 or V100. It also needs Azure CLI 2.76.0 or later and public Azure regions." }
+  ],
+  "related": ["w18-l3", "w02-t03", "w02-t04", "w02-t08", "w02-t10", "w16-t05", "w18-t06"],
+  "refs": ["r16", "r17", "r18", "r19", "r20", "r21", "r24"]
+}

@@ -1,0 +1,99 @@
+{
+  "id": "w18-l3",
+  "order": 3,
+  "title": "Rent, host or carry the model",
+  "kind": "problem",
+  "minutes": 24,
+  "brief": "The model has to run somewhere, and a customer, regulator or security team will ask where prompts go and who holds the keys. Data control, traffic shape, GPU skills and the quality you need are open. Compare the places a model can run and map each data control to what it really covers.",
+  "blocks": [
+    { "t": "h", "text": "Four places to run a model, and the controls around them", "level": 2 },
+    { "t": "compare", "title": "Where the model runs", "intro": "Microsoft advises starting with Global Standard and moving only for a specific reason such as data residency, reserved throughput or batch [[r24]].", "options": [
+      { "name": "Managed API, Global deployment", "summary": "Inference may run in any Azure region. Data at rest stays in the designated geography [[r24]].", "pros": ["Nothing to operate", "New models launch here first, at the lowest price and the broadest region coverage"], "cons": ["Inference location is not fixed", "Default abuse monitoring is automated review with possible human review [[r22]]"], "bestWhen": "Standard terms are acceptable and the lowest operations load matters.", "avoidWhen": "Contracts or regulators name where inference may run.", "meta": [{ "k": "Inference", "v": "any region" }, { "k": "Ops", "v": "none" }] },
+      { "name": "Managed API, Data Zone or Regional", "summary": "Data Zone types process data only within the data zone (US, EU or APAC). Standard and Regional Provisioned types stay in the customer-specified geography [[r24]].", "pros": ["Residency without running GPUs", "Data Zone Batch gives a 50% discount with a 24-hour target turnaround"], "cons": ["Geography-based types launch last, with no guaranteed availability date", "Still a vendor-operated service"], "bestWhen": "A rule or contract names a zone or geography and you want managed operations.", "avoidWhen": "You need weights you control or an air gap.", "meta": [{ "k": "Inference", "v": "zone or geography" }, { "k": "Ops", "v": "none" }] },
+      { "name": "Self-hosted vLLM or SGLang on GPUs (AKS with KAITO)", "summary": "vLLM offers PagedAttention, continuous batching, chunked prefill, prefix caching and speculative decoding [[r16]]. SGLang adds RadixAttention and compressed finite state machines for structured output [[r18]]. KAITO deploys open models on AKS and integrates vLLM [[r21]].", "pros": ["You control weights, logs and network", "High steady utilization can lower unit cost"], "cons": ["You own GPUs, scaling, upgrades and safety tooling", "KAITO needs NVIDIA GPUs with compute capability 8.0 or later (no T4 or V100), Azure CLI 2.76.0 or later, public Azure regions and no Windows node pools"], "bestWhen": "Open or custom weights, strict control, high steady volume and GPU operations skills.", "avoidWhen": "Spiky or low volume, or no one to run GPUs.", "meta": [{ "k": "Inference", "v": "your cluster" }, { "k": "Ops", "v": "high" }] },
+      { "name": "On-device (Foundry Local, Ollama)", "summary": "Foundry Local is an on-device runtime and SDK on ONNX Runtime with an OpenAI-compatible API [[r20]]. Ollama runs local and cloud models behind OpenAI-compatible and Anthropic-compatible APIs [[r19]].", "pros": ["Data stays on the device and it works offline", "Foundry Local adds about 20 MB to an app and needs no Azure subscription"], "cons": ["Not a multi-user server: Microsoft points to vLLM or Triton for that", "Device-sized models"], "bestWhen": "Single-user, offline or privacy-first apps.", "avoidWhen": "Many concurrent users, or you need frontier quality.", "meta": [{ "k": "Inference", "v": "the device" }, { "k": "Ops", "v": "in the app" }] }
+    ] },
+    { "t": "table", "caption": "Data controls: what each lever covers and what it does not. Checked 2026-10-13.", "head": ["Lever", "What it controls", "What it does not control", "Check before you promise it"], "rows": [
+      ["Deployment type", "Where inference may run: Global, Data Zone, Standard or Regional Provisioned [[r24]]", "Retention or logging", "The Developer tier is for fine-tuned model evaluation only: 24-hour lifetime, no SLA or residency guarantee"],
+      ["Zero Data Retention (OpenAI)", "`store` on `/v1/responses` and `/v1/chat/completions` is always treated as false [[r25]]", "Endpoints that are not eligible, such as threads, vector stores and fine-tuning jobs, which keep state until deleted", "Needs approval. Abuse-monitoring logs are kept up to 30 days by default"],
+      ["Modified abuse monitoring (Azure)", "Removes storage and human review for approved customers [[r23]]", "Content filtering and other platform behaviour", "Default is automated review with possible human review [[r22]]"],
+      ["Customer-managed key", "Encryption of data at rest in the resource's associated storage: project artifacts, uploaded files, evaluation data [[r26]]", "Model inference", "Some previews lack it. Grant the managed identity key access first. Omit `keyVersion` to follow the latest version. RSA 2048 bits or more"],
+      ["Private endpoint and VNet", "The network path. The agent client is injected into a customer VNet subnet for outbound traffic [[r27]]", "Which tools work", "Browser automation, computer use, image generation and Logic Apps are unsupported. Bing grounding, web search and SharePoint grounding use public endpoints [[r28]]"]
+    ], "highlightCol": 2 },
+    { "t": "dials", "id": "w18-l3-hosting", "title": "Hosted or self-served?", "prompt": "Flip the dials. No option wins everywhere, and the winner moves with data control and traffic shape.",
+      "dials": [
+        { "id": "control", "label": "Data control", "values": [ { "id": "std", "label": "Standard retention and region terms are fine" }, { "id": "strict", "label": "Strict residency, retention or isolation" } ] },
+        { "id": "traffic", "label": "Traffic shape", "values": [ { "id": "spiky", "label": "Low or spiky" }, { "id": "steady", "label": "High and steady" } ] },
+        { "id": "ops", "label": "GPU operations skill", "values": [ { "id": "none", "label": "None" }, { "id": "strong", "label": "A platform team with GPU skills" } ] },
+        { "id": "quality", "label": "Model quality needed", "values": [ { "id": "frontier", "label": "Frontier quality" }, { "id": "small", "label": "A smaller open model is enough" } ] }
+      ],
+      "options": [
+        { "id": "global", "name": "Managed, Global deployment", "summary": "Lowest effort and fastest model access." },
+        { "id": "zone", "name": "Managed, Data Zone or Regional", "summary": "Managed operations with residency." },
+        { "id": "self", "name": "Self-host on AKS with KAITO", "summary": "vLLM or SGLang on your GPUs." },
+        { "id": "device", "name": "On-device", "summary": "Foundry Local or Ollama in the app." },
+        { "id": "hybrid", "name": "Hybrid router", "summary": "Bulk on owned GPUs, hard cases on managed." }
+      ],
+      "scores": {
+        "global": {
+          "control": { "std": { "s": 2, "why": "Vendor defaults suffice and nothing needs operating." }, "strict": { "s": -2, "why": "Inference may run in any region." } },
+          "traffic": { "spiky": { "s": 2, "why": "Pay per use with no idle GPUs." }, "steady": { "s": -1, "why": "At high steady volume reserved or owned capacity can cost less." } },
+          "ops": { "none": { "s": 2, "why": "Nothing to run." }, "strong": { "s": 0, "why": "Skills go unused." } },
+          "quality": { "frontier": { "s": 2, "why": "New frontier models launch here first." }, "small": { "s": 0, "why": "More model than the task needs." } }
+        },
+        "zone": {
+          "control": { "std": { "s": 0, "why": "More constraint than needed." }, "strict": { "s": 2, "why": "Inference stays inside the zone or geography." } },
+          "traffic": { "spiky": { "s": 1, "why": "Pay per token." }, "steady": { "s": 1, "why": "Provisioned types reserve throughput." } },
+          "ops": { "none": { "s": 1, "why": "Managed, no GPUs." }, "strong": { "s": 0, "why": "Neutral." } },
+          "quality": { "frontier": { "s": 1, "why": "Geography types can lag on new models." }, "small": { "s": 0, "why": "Neutral." } }
+        },
+        "self": {
+          "control": { "std": { "s": -1, "why": "More work than the terms demand." }, "strict": { "s": 2, "why": "Weights, logs and network are yours." } },
+          "traffic": { "spiky": { "s": -2, "why": "Idle GPUs are expensive." }, "steady": { "s": 2, "why": "High utilization lowers unit cost." } },
+          "ops": { "none": { "s": -2, "why": "You own GPUs, scaling and safety tooling." }, "strong": { "s": 2, "why": "Skills turn into control and lower cost." } },
+          "quality": { "frontier": { "s": -2, "why": "Open models may trail frontier quality." }, "small": { "s": 2, "why": "An open model fits and you can tune serving." } }
+        },
+        "device": {
+          "control": { "std": { "s": 0, "why": "Neutral." }, "strict": { "s": 1, "why": "Data never leaves the device." } },
+          "traffic": { "spiky": { "s": 1, "why": "No servers to size." }, "steady": { "s": -2, "why": "Not a multi-user server. Microsoft points to vLLM or Triton." } },
+          "ops": { "none": { "s": 1, "why": "The runtime ships inside the app." }, "strong": { "s": 0, "why": "Neutral." } },
+          "quality": { "frontier": { "s": -2, "why": "Device-sized models only." }, "small": { "s": 1, "why": "A small model is the point." } }
+        },
+        "hybrid": {
+          "control": { "std": { "s": -1, "why": "Two systems to run for little reason." }, "strict": { "s": 1, "why": "Sensitive bulk traffic stays under your control." } },
+          "traffic": { "spiky": { "s": -1, "why": "The owned part idles." }, "steady": { "s": 2, "why": "Bulk on owned GPUs, hard cases on managed." } },
+          "ops": { "none": { "s": -2, "why": "Needs GPU skills plus a router." }, "strong": { "s": 1, "why": "Uses both skills and managed access." } },
+          "quality": { "frontier": { "s": 1, "why": "Hard cases still reach frontier models." }, "small": { "s": 0, "why": "Neutral." } }
+        }
+      },
+      "takeaway": "Residency usually starts with Data Zone or regional deployments before self-hosting. GPUs earn their keep only with steady volume, custom weights and skills." },
+    { "t": "stats", "items": [
+      { "label": "vLLM paper", "value": "2 to 4x", "note": "Throughput at the same latency against prior systems (2023)" },
+      { "label": "SGLang paper", "value": "up to 6.4x", "note": "Throughput, author-reported" },
+      { "label": "Foundry Local", "value": "about 20 MB", "note": "Added to an app" },
+      { "label": "Batch deployments", "value": "50% less", "note": "Global Batch and Data Zone Batch, 24-hour target" }
+    ] },
+    { "t": "failure", "title": "Hosting and data control failure modes", "items": [
+      { "symptom": "A KAITO workspace will not schedule", "cause": "The VM size uses GPUs older than Ampere (T4, V100, M60, K80), or the pool is a Windows node pool, or the region is not public", "fix": "Use NVIDIA GPUs with compute capability 8.0 or later and Azure CLI 2.76.0 or later. Avoid stopping and starting clusters that run active workspaces [[r21]]." },
+      { "symptom": "Compliance asks for ZDR and a feature stops working", "cause": "`store` is always false under ZDR, and some endpoints are not ZDR eligible and keep state until deleted", "fix": "Design stateless calls, own conversation state yourself and check eligibility for each endpoint you use [[r25]]." },
+      { "symptom": "A tool disappears after private networking is enabled", "cause": "Browser automation, computer use, image generation and Logic Apps are unsupported under isolation, and some grounding tools use public endpoints", "fix": "Check the tool matrix before choosing the isolation level [[r27]]." },
+      { "symptom": "An audit finds prompts processed outside the required geography", "cause": "A Global deployment was chosen because it is the recommended default", "fix": "Pick Data Zone or regional types for regulated data and verify each deployment's type [[r24]]." },
+      { "symptom": "The self-hosted cluster costs more than the API", "cause": "Utilization was assumed, and on-call, upgrades and safety tooling were left out", "fix": "Measure tokens per GPU-hour at real concurrency, add operations cost and compare with batch pricing before committing." }
+    ] },
+    { "t": "callout", "kind": "gotcha", "title": "Keys protect storage, not inference", "md": "A customer-managed key covers data at rest in the resource's associated storage. It does not stop the provider processing prompts at inference time, and it is not a residency control. Match each requirement to the lever that actually delivers it [[r26]]." }
+  ],
+  "quiz": [
+    { "id": "w18-l3-q1", "type": "single", "tag": "tradeoff", "difficulty": 2, "q": "A contract requires inference to stay in the EU, and the team does not want to run GPUs. Which choice fits?", "options": ["Global Standard, because Microsoft advises starting there for most workloads and it costs least", "A Data Zone or regional deployment, because inference stays inside the zone or geography", "A customer-managed key, because it keeps inference inside the geography", "A Developer tier deployment, because it carries no extra residency charge"], "answer": 1, "explain": "Data Zone types process data only within the zone, and Standard and Regional Provisioned types stay in the geography. Global may run anywhere, a key does not control where inference runs, and the Developer tier has no residency guarantee.", "ref": "r24" },
+    { "id": "w18-l3-q2", "type": "multi", "tag": "security", "difficulty": 3, "q": "Select every statement about customer-managed keys in Foundry that is true.", "options": ["They cover data at rest in the resource's associated storage, such as project artifacts, uploaded files and evaluation data", "They encrypt the model's inference computation so the provider cannot see prompts", "Omitting keyVersion makes the resource follow the latest key version", "RSA keys must be at least 2048 bits", "The managed identity needs no key access, because Azure grants it automatically"], "answers": [0, 2, 3], "explain": "Keys apply to stored data, the latest version is followed when keyVersion is omitted, and RSA keys of 2048 bits or more are required. Keys do not cover inference, and you must grant the managed identity access to the key before enabling.", "ref": "r26" },
+    { "id": "w18-l3-q3", "type": "match", "tag": "concept", "difficulty": 2, "q": "Match each tool to its role.", "pairs": [ { "l": "vLLM", "r": "Multi-user GPU serving with PagedAttention and continuous batching" }, { "l": "SGLang", "r": "RadixAttention KV reuse and structured-output support" }, { "l": "KAITO", "r": "AKS add-on that deploys open models and integrates vLLM" }, { "l": "Foundry Local", "r": "On-device runtime and SDK embedded in an application" } ], "explain": "vLLM and SGLang are serving engines with different strengths, KAITO is the Kubernetes layer that deploys them on AKS, and Foundry Local is an embedded runtime, not a multi-user server.", "ref": "r16" },
+    { "id": "w18-l3-q4", "type": "single", "tag": "diagnose", "difficulty": 2, "q": "After the team disables public network access for the Foundry environment, an agent's browser automation tool stops working. What is the most likely cause?", "options": ["The tool needs a larger model deployment than the one currently attached to the agent", "The agent identity lost its role assignment", "The public network settings were ignored by the portal", "Browser automation is not supported under network isolation"], "answer": 3, "explain": "Foundry lists browser automation, computer use, image generation and Logic Apps as unsupported under network isolation. Model size and role assignments would show different errors, and the setting is not ignored.", "ref": "r27" }
+  ],
+  "defend": null,
+  "refs": ["r24", "r22", "r23", "r25", "r26", "r27", "r28", "r16", "r17", "r18", "r19", "r20", "r21", "r45"],
+  "takeaways": [
+    "Map each requirement to the lever that delivers it: deployment type for inference location, ZDR for retention, keys for storage, private endpoints for the network path.",
+    "Residency usually starts with Data Zone or regional deployments, not self-hosting.",
+    "GPUs pay off with steady volume, custom weights and operations skills. KAITO needs compute capability 8.0 or later.",
+    "Foundry Local is an embedded runtime, not a multi-user server."
+  ]
+}

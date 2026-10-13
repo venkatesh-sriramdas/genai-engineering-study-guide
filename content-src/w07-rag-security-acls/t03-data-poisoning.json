@@ -1,0 +1,112 @@
+{
+  "id": "w07-t03",
+  "order": 3,
+  "group": "Threats",
+  "title": "Data poisoning",
+  "minutes": 7,
+  "difficulty": "core",
+  "summary": "An attacker writes a few documents so that retrieval returns them for chosen questions and the model repeats their false content. No hidden instruction is needed.",
+  "useIf": "Anyone outside your editorial control can add or change content that gets indexed.",
+  "avoidIf": "You need injection defences for hidden commands. Poisoning corrupts facts, so the controls differ.",
+  "explain": [
+    { "t": "p", "md": "Poisoning attacks the **knowledge**, not the instructions. PoisonedRAG injected five malicious texts per target question into a knowledge base of millions of texts and reported a 90% attack success rate, and the defences the authors tested were insufficient [[r7]]. Scale does not dilute the attack: the planted text only has to outrank honest text for the targeted query." },
+    { "t": "p", "md": "OWASP LLM04 classes poisoning as an integrity attack and notes that embedding data can be manipulated, that external sources carry the highest risk and that a backdoor can stay dormant until a trigger appears [[tr3]]. MITRE ATLAS names the RAG cases: AML.T0070 RAG Poisoning and AML.T0071 False RAG Entry Injection [[r4]]." },
+    { "t": "diagram", "id": "w07-t03-d1", "title": "A provenance gate before the index", "alt": "Sources pass through authentication, a quarantine and review step, then are indexed with provenance fields and a trust tier that retrieval can filter on.", "src": "flowchart LR\n  S[Source] --> A[Authenticate writer]\n  A --> Q[Quarantine and review]\n  Q --> X[(Index with provenance and tier)]\n  X --> R[Retrieval filters by tier]\n  R --> C[Answer with citations]" },
+    { "t": "p", "md": "The controls follow the OWASP LLM08 list: validate data and authenticate sources, tag and classify combined data, and keep immutable retrieval logs [[r2]]. In practice that means recording who wrote each chunk, when and from which system, giving each source a **trust tier**, and letting high-stakes questions retrieve only from the curated tier. Showing citations lets a reader spot a strange source." },
+    { "t": "callout", "kind": "note", "title": "Design reasoning, not a vendor feature", "md": "Trust tiers, canary queries and corpus anomaly checks are patterns that follow from the sources above. No cited document prescribes these exact controls, so test them against your own corpus." }
+  ],
+  "whereToUse": [
+    "Corpora fed by forums, tickets, customer uploads or web crawls",
+    "Shared drives where many accounts can edit and a compromise would go unnoticed",
+    "Pipelines that re-ingest nightly from sources with weak change control",
+    "High-stakes answers such as policy, pricing, safety or legal guidance"
+  ],
+  "whenToUse": {
+    "use": ["Writers are many, mixed or external", "A wrong answer has financial or safety impact", "You can attach provenance at ingest"],
+    "avoid": ["Relying on corpus size as protection", "Treating a content-safety filter as a poisoning control: it looks for harm, not for false facts", "Trusting a reranker to prefer honest text over text written to be relevant"],
+    "flips": ["A single vetted team writes everything: focus on account compromise and review", "Answers are low stakes and always cited: lighter tiering may be enough"]
+  },
+  "alternatives": {
+    "title": "Controls compared",
+    "head": ["Control", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Source authentication and write control", "You own the source systems", "Content comes from the open web", "Process cost, friction for authors"],
+      ["Trust tiers with tier-filtered retrieval", "Mixed sources, some high stakes", "Everything is equally trusted", "Lower recall for strict queries"],
+      ["Canary and golden-question regression checks", "You can name the answers that must not change", "Questions are open-ended", "Maintenance of the question set"],
+      ["Citations and source display", "Readers can judge sources", "Automated consumers read the answer", "Does not prevent the poison, only exposes it"],
+      ["Content safety filter", "Harm categories matter", "The poison is plausible and polite", "False sense of coverage"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "An answer about one product changes with no deploy", "cause": "A new or edited chunk outranks the honest one for that query", "fix": "Compare retrieval logs with ingest provenance, and run golden questions after every ingest" },
+    { "symptom": "Poison survives a delete", "cause": "Copies live in caches, replicas or an old index version", "fix": "Delete by source id across index, caches and the previous blue-green index" },
+    { "symptom": "No way to tell who wrote a chunk", "cause": "Provenance was not stored at ingest", "fix": "Store source, author, hash and ingest time as fields on every chunk" }
+  ],
+  "scenarios": [
+    {
+      "id": "w07-t03-s1",
+      "title": "Community forum as a source",
+      "situation": "A support assistant indexes an open customer community forum next to official documentation. Posts arrive all day. The assistant answers billing and safety questions.",
+      "constraints": ["Open writers", "High volume", "Some questions are high stakes"],
+      "unknowns": ["Can the forum be moderated before indexing?", "Do answers show sources?"],
+      "question": "How do you design the index?",
+      "options": [
+        { "name": "Moderate every post before it is indexed", "verdict": "good", "why": "Reduces obvious abuse.", "tradeoff": "Slow, costly, and plausible false content passes a quick review." },
+        { "name": "Separate trust tiers: official docs for high-stakes queries, forum content only for general help with citations", "verdict": "best", "why": "Poisoned posts cannot reach billing or safety answers, and the forum still adds recall elsewhere.", "tradeoff": "Some good forum answers are never used for strict questions." },
+        { "name": "One index and rely on the reranker to prefer good content", "verdict": "poor", "why": "A reranker measures relevance, and planted text is written to be relevant.", "tradeoff": "Acceptable only when every source is equally trusted and stakes are low." }
+      ],
+      "flips": [
+        { "if": "The forum is closed to verified staff", "then": "Treat it as one tier with change logging." },
+        { "if": "Answers are consumed by automation without a reader", "then": "Make tiering strict and add golden-question checks." }
+      ],
+      "takeaway": "Keep untrusted text away from decisions that cannot tolerate it."
+    },
+    {
+      "id": "w07-t03-s2",
+      "title": "Small curated policy set",
+      "situation": "Two thousand policy documents are edited by around thirty vetted authors. Wrong answers carry legal risk. A compromised author account is the main worry.",
+      "constraints": ["Small corpus", "Vetted writers", "Legal impact"],
+      "unknowns": ["Is there change review in the source?", "How fast must a poisoned change be reversible?"],
+      "question": "What do you add?",
+      "options": [
+        { "name": "Content safety filtering on every chunk", "verdict": "poor", "why": "A false but polite policy statement is not harmful content, so it passes.", "tradeoff": "Useful for toxic content in open corpora, not for integrity." },
+        { "name": "Large embedding model upgrade", "verdict": "poor", "why": "Better embeddings do not tell trusted text from planted text.", "tradeoff": "Right when recall is the problem, not integrity." },
+        { "name": "Reviewed, versioned changes, immutable ingest logs and a golden-question check after each ingest", "verdict": "best", "why": "A compromised account still needs a second reviewer, and any shifted answer is caught before users see it.", "tradeoff": "Slower publishing and a question set to maintain." }
+      ],
+      "flips": [
+        { "if": "Authors are numerous and change daily", "then": "Add automated anomaly checks on newly retrieved chunks." },
+        { "if": "Review is already enforced in the source system", "then": "Mirror that review as an ingest condition and skip duplicate approval." }
+      ],
+      "takeaway": "For a vetted corpus the threat is account compromise, so add review and regression checks."
+    },
+    {
+      "id": "w07-t03-s3",
+      "title": "Web crawl at scale",
+      "situation": "A research assistant ingests millions of crawled pages across the open web. Reviewing each page is impossible. Answers cite sources.",
+      "constraints": ["Millions of untrusted pages", "No per-page review", "Citations shown"],
+      "unknowns": ["Are there domains you can trust more than others?", "How costly is a wrong answer?"],
+      "question": "What reduces risk most?",
+      "options": [
+        { "name": "Domain trust scores with allowlisted tiers for sensitive topics, plus visible citations", "verdict": "best", "why": "It scales without per-page review and keeps readers in a position to judge.", "tradeoff": "Newer or niche sites lose recall in strict mode." },
+        { "name": "Add more documents so poison is diluted", "verdict": "poor", "why": "PoisonedRAG reported 90% success with five texts among millions, so dilution does not work.", "tradeoff": "More data helps coverage, not integrity." },
+        { "name": "Manual spot checks of random pages", "verdict": "good", "why": "Finds systemic problems.", "tradeoff": "Random samples rarely hit the five texts aimed at one query." }
+      ],
+      "flips": [
+        { "if": "The assistant is used only for brainstorming", "then": "Citations alone may be enough." },
+        { "if": "Targeted queries are known (brand or product names)", "then": "Monitor those queries with golden answers." }
+      ],
+      "takeaway": "Scale gives no protection against targeted poisoning."
+    }
+  ],
+  "quiz": [
+    { "id": "w07-t03-q1", "type": "single", "tag": "diagnose", "q": "Answers to refund questions changed on Tuesday. No deploy or model change happened. What do you check first?", "options": ["The model temperature", "The system prompt wording", "Retrieval logs for the top chunks, joined to ingest provenance for anything new on that day", "The reranker's latency"], "answer": 2, "explain": "A new or edited chunk that outranks the old one explains a change with no deploy. Temperature, prompt wording and latency do not explain a content shift that appeared on one day.", "ref": "r2" },
+    { "id": "w07-t03-q2", "type": "single", "tag": "concept", "q": "Which claim does PoisonedRAG support?", "options": ["A few crafted texts among millions can steer answers for targeted questions", "Poison only works on small corpora", "Content safety filters block it reliably", "It needs access to the model weights"], "answer": 0, "explain": "The paper reported 90% success with five malicious texts per target question in a knowledge base of millions, and the defences tested were insufficient. It does not need model access.", "ref": "r7" }
+  ],
+  "flashcards": [
+    { "front": "How is data poisoning different from indirect injection?", "back": "Poisoning plants false content that retrieval serves as fact. Injection plants instructions that the model may obey. Controls differ: provenance and review versus capability limits." },
+    { "front": "What did PoisonedRAG report?", "back": "About 90% attack success with five malicious texts per target question in a knowledge base of millions. The authors found the defences they tested insufficient." },
+    { "front": "Name two ingest-time controls for poisoning.", "back": "Source authentication with write control, and provenance fields plus a trust tier on every chunk, so retrieval can exclude low-trust content for high-stakes queries." }
+  ],
+  "related": ["w07-t02", "w07-t04", "w07-t19", "w07-l1", "w03-t11"],
+  "refs": ["r2", "r4", "r7", "tr3"]
+}

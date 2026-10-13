@@ -1,0 +1,99 @@
+{
+  "id": "w09-l02",
+  "order": 2,
+  "title": "Read the card before you trust it",
+  "kind": "problem",
+  "minutes": 16,
+  "brief": "Before you send one message you read the callee's Agent Card. The card is a claim, not proof. How you discover it, which interface you choose and how far you verify it depend on who the callee is, what the card reveals and how often it changes.",
+  "blocks": [
+    { "t": "h", "text": "What a card claims", "level": 2 },
+    { "t": "code", "lang": "json", "title": "An Agent Card in the v1.0 shape", "code": "{\n  \"name\": \"Parts Supplier Agent\",\n  \"description\": \"Checks stock, quotes prices and places orders for vehicle parts.\",\n  \"supportedInterfaces\": [\n    { \"url\": \"https://parts.example.com/a2a/v1\", \"protocolBinding\": \"JSONRPC\", \"protocolVersion\": \"1.0\" },\n    { \"url\": \"https://parts.example.com/a2a/rest\", \"protocolBinding\": \"HTTP+JSON\", \"protocolVersion\": \"1.0\", \"tenant\": \"retail\" }\n  ],\n  \"provider\": { \"organization\": \"Example Parts Ltd\", \"url\": \"https://parts.example.com\" },\n  \"version\": \"2.3.0\",\n  \"capabilities\": { \"streaming\": true, \"pushNotifications\": true, \"extendedAgentCard\": true },\n  \"securitySchemes\": {\n    \"partnerOAuth\": {\n      \"oauth2SecurityScheme\": {\n        \"flows\": {\n          \"clientCredentials\": {\n            \"tokenUrl\": \"https://login.example.com/token\",\n            \"scopes\": { \"parts.read\": \"Read stock and prices\", \"parts.order\": \"Place orders\" }\n          }\n        }\n      }\n    }\n  },\n  \"securityRequirements\": [ { \"schemes\": { \"partnerOAuth\": { \"list\": [\"parts.read\"] } } } ],\n  \"defaultInputModes\": [\"text/plain\", \"application/json\"],\n  \"defaultOutputModes\": [\"text/plain\", \"application/json\"],\n  \"skills\": [\n    { \"id\": \"stock-check\", \"name\": \"Stock check\", \"description\": \"Reports availability and lead time for a part number.\", \"tags\": [\"parts\", \"inventory\"], \"examples\": [\"Is part 12345 in stock for a 2018 hatchback?\"] },\n    { \"id\": \"place-order\", \"name\": \"Place order\", \"description\": \"Places an order for a quoted part.\", \"tags\": [\"parts\", \"orders\"],\n      \"securityRequirements\": [ { \"schemes\": { \"partnerOAuth\": { \"list\": [\"parts.order\"] } } } ] }\n  ]\n}", "caption": "Served at `/.well-known/agent-card.json`. The `securityRequirements` shape follows the sample card in section 8.5 of the spec. Required top-level fields: `name`, `description`, `supportedInterfaces`, `version`, `capabilities`, `defaultInputModes`, `defaultOutputModes`, `skills` [[r1]]." },
+    { "t": "table", "caption": "Read each field as a claim and decide how far to trust it", "head": ["Field", "What it tells you", "Trust note"], "rows": [
+      ["`supportedInterfaces`", "Ordered list of `url`, `protocolBinding`, `protocolVersion` and optional `tenant`. The first entry is preferred", "Pick the first binding you support. Copy `tenant` into every request exactly as declared [[r1]]"],
+      ["`capabilities`", "`streaming`, `pushNotifications`, `extensions` and `extendedAgentCard`", "Gates operations. A missing capability returns `UnsupportedOperationError` or `PushNotificationNotSupportedError` [[r1]]"],
+      ["`skills`", "`id`, `name`, `description` and `tags`, plus optional examples, modes and per-skill security", "Largely descriptive. It says what the agent is likely to do well, not a contract [[r1]]"],
+      ["`securitySchemes` and `securityRequirements`", "API key, HTTP, OAuth 2.0, OpenID Connect or mutual TLS, and which are needed", "Declares the rules. The server MUST still authenticate every request [[r1]]"],
+      ["`signatures`", "Optional JWS signatures over the card", "Proves integrity and origin of the card, not that the agent is safe or accurate [[r1]]"]
+    ], "highlightCol": 2 },
+    { "t": "h", "text": "Discover, then decide how far to verify", "level": 2 },
+    { "t": "compare", "title": "Discovery strategies", "intro": "The spec lists three ways to find a card [[r6]].", "options": [
+      { "name": "Well-known URI", "tag": "GA", "summary": "Fetch `https://{domain}/.well-known/agent-card.json`.", "pros": ["Easy to implement and standards based", "Supports automated discovery"], "cons": ["Open or domain-controlled by design", "A public card must not carry sensitive details"], "bestWhen": "Public agents or domain-wide discovery.", "avoidWhen": "The card describes internal URLs or sensitive skills.", "meta": [{ "k": "Setup", "v": "low" }, { "k": "Governance", "v": "low" }] },
+      { "name": "Curated registry", "tag": "No standard API", "summary": "Agents publish cards to a catalog that clients query by skill, tag or provider.", "pros": ["Central management and capability-based search", "Can return different cards by caller identity"], "cons": ["You deploy and run it", "The spec does not prescribe a registry API yet"], "bestWhen": "Enterprise estates or marketplaces.", "avoidWhen": "A handful of known partners.", "meta": [{ "k": "Setup", "v": "high" }, { "k": "Governance", "v": "high" }] },
+      { "name": "Direct configuration", "tag": "Pinned", "summary": "The client is configured with card URLs or card content.", "pros": ["Straightforward for known, static relationships", "Nothing published to the internet"], "cons": ["Inflexible for dynamic discovery", "Card changes need client reconfiguration"], "bestWhen": "Tightly coupled systems and a few partners.", "avoidWhen": "Many agents that change often.", "meta": [{ "k": "Setup", "v": "low" }, { "k": "Governance", "v": "manual" }] }
+    ] },
+    { "t": "dials", "id": "w09-l02-trust", "title": "Choose a discovery and verification approach", "prompt": "Flip where callees live, whether cards hold sensitive details and how often cards change.",
+      "dials": [
+        { "id": "scope", "label": "Where callees live", "values": [ { "id": "partner", "label": "A few known partners" }, { "id": "company", "label": "Many agents inside the company" }, { "id": "open", "label": "Unknown parties on the internet" } ] },
+        { "id": "sensitivity", "label": "Cards reveal sensitive skills or internal URLs", "values": [ { "id": "no", "label": "No" }, { "id": "yes", "label": "Yes" } ] },
+        { "id": "change", "label": "How often cards change", "values": [ { "id": "rare", "label": "Rarely" }, { "id": "often", "label": "Often" } ] }
+      ],
+      "options": [
+        { "id": "wk", "name": "Well-known URI", "summary": "Public card at a standard path." },
+        { "id": "reg", "name": "Curated registry", "summary": "Catalog with selective disclosure." },
+        { "id": "pin", "name": "Pinned configuration", "summary": "Card URLs or content fixed in config." },
+        { "id": "sig", "name": "Registry plus signed cards", "summary": "Registry discovery and JWS verification on every card." }
+      ],
+      "scores": {
+        "wk": {
+          "scope": { "partner": { "s": 1, "why": "Easy for a partner to publish and for you to fetch." }, "company": { "s": 0, "why": "No central search or governance." }, "open": { "s": 2, "why": "Built for broad discovery on a domain." } },
+          "sensitivity": { "no": { "s": 1, "why": "A public card is fine when nothing in it is sensitive." }, "yes": { "s": -2, "why": "Never put sensitive details in a public card. Use an authenticated extended card." } },
+          "change": { "rare": { "s": 0, "why": "Neutral." }, "often": { "s": 1, "why": "Clients refetch with conditional requests, so changes reach callers." } }
+        },
+        "reg": {
+          "scope": { "partner": { "s": -1, "why": "Heavy for a few partners." }, "company": { "s": 2, "why": "Central governance and search by skill." }, "open": { "s": 1, "why": "Works for marketplaces, but you decide whom to trust." } },
+          "sensitivity": { "no": { "s": 0, "why": "Neutral." }, "yes": { "s": 1, "why": "Registries can return different cards to different callers." } },
+          "change": { "rare": { "s": 0, "why": "Neutral." }, "often": { "s": 1, "why": "Cards are republished in one place." } }
+        },
+        "pin": {
+          "scope": { "partner": { "s": 2, "why": "A stable, known relationship." }, "company": { "s": -1, "why": "Does not scale to many agents." }, "open": { "s": -2, "why": "You cannot pin what you have not met." } },
+          "sensitivity": { "no": { "s": 0, "why": "Neutral." }, "yes": { "s": 1, "why": "Nothing is published for strangers to read." } },
+          "change": { "rare": { "s": 1, "why": "Few reconfigurations." }, "often": { "s": -2, "why": "Every card change needs a client reconfiguration." } }
+        },
+        "sig": {
+          "scope": { "partner": { "s": 0, "why": "You already know whom to trust." }, "company": { "s": 1, "why": "Integrity checks help when many teams publish." }, "open": { "s": 2, "why": "Origin and integrity matter most for cards from unknown parties." } },
+          "sensitivity": { "no": { "s": 0, "why": "Neutral." }, "yes": { "s": 0, "why": "A signature protects integrity, not confidentiality." } },
+          "change": { "rare": { "s": 0, "why": "Neutral." }, "often": { "s": -1, "why": "Every change needs re-signing and key management." } }
+        }
+      },
+      "takeaway": "Public and sensitive do not mix. Pick the discovery path by where callees live, then add signatures where origin matters." },
+    { "t": "failure", "title": "Failure modes and how to detect them", "items": [
+      { "symptom": "Calls fail with `UnsupportedOperationError` on streaming", "cause": "The client ignored `capabilities.streaming` and called `SendStreamingMessage`", "fix": "Read capabilities first and fall back to polling. Log capability mismatches" },
+      { "symptom": "Traffic flows to an unexpected endpoint after a card refresh", "cause": "A card was trusted without TLS validation, signature checks or pinning", "fix": "Validate the server certificate, verify signatures where present and alert when interface URLs change" },
+      { "symptom": "Internal URLs and sensitive skills appear in a public card", "cause": "One card served to everyone", "fix": "Move detail into an authenticated extended card or a registry that discloses by caller, and put access controls on the card endpoint" },
+      { "symptom": "Clients use stale cards after an upgrade", "cause": "No `Cache-Control: max-age` and `ETag`, or a fixed cache duration", "fix": "Servers send both headers. Clients use conditional requests with `If-None-Match`" },
+      { "symptom": "Requests are rejected on a multi-agent endpoint", "cause": "The client omitted or altered `tenant` from the chosen interface", "fix": "Copy the interface's `tenant` exactly into every request, and omit it when the interface has none" }
+    ] },
+    { "t": "accordion", "items": [
+      { "title": "Card signing in four steps", "blocks": [
+        { "t": "list", "style": "ol", "items": [
+          "Apply the spec's field-presence rules so the JSON matches what was set, then canonicalize with the JSON Canonicalization Scheme (RFC 8785), excluding the `signatures` field [[r1]] [[r19]].",
+          "Sign the canonical form as a JSON Web Signature (RFC 7515). Each signature has a base64url `protected` header and a base64url `signature`, and may carry an unprotected `header` [[r1]] [[r18]].",
+          "Publish the card with its `signatures` array.",
+          "Verify against a key you trust before using the card. Signing is optional (the spec says Agent Cards MAY be signed) [[r1]]."
+        ] }
+      ] },
+      { "title": "Extended Agent Card and tenant", "blocks": [
+        { "t": "list", "style": "ul", "items": [
+          "`capabilities.extendedAgentCard: true` means authenticated clients can call `GetExtendedAgentCard` for extra skills or detail. The call MUST require authentication, and clients SHOULD replace their cached public card for the session [[r1]].",
+          "If the capability is absent or false the call returns `UnsupportedOperationError`. If it is true but no extended card is configured the agent returns `ExtendedAgentCardNotConfiguredError` [[r1]].",
+          "Extended cards SHOULD NOT contain secrets such as unmasked credentials or internal URLs that would be dangerous if leaked [[r1]].",
+          "`tenant` lets one endpoint host many agents. When an interface declares it, clients MUST include it in every request [[r1]]."
+        ] }
+      ] }
+    ] }
+  ],
+  "quiz": [
+    { "id": "w09-l02-q1", "type": "single", "tag": "diagnose", "q": "A client log and the callee's card are shown. Which cause fits best?", "code": { "lang": "text", "code": "card:   \"capabilities\": { \"streaming\": false }\nclient: SendStreamingMessage -> UnsupportedOperationError: Streaming is not supported by the agent" }, "options": ["The callee's TLS certificate expired", "The client used the REST binding and the card declared JSON-RPC", "The client skipped the card's `capabilities` and called an operation the agent does not offer", "The task is in a terminal state and cannot accept messages"], "answer": 2, "explain": "If `capabilities.streaming` is false or absent, streaming operations MUST return `UnsupportedOperationError`. A TLS failure would not reach an operation-level error. Binding mismatch would fail differently, and a terminal task produces a different message for a different reason.", "difficulty": 1, "ref": "r1" },
+    { "id": "w09-l02-q2", "type": "multi", "tag": "security", "q": "Select every true statement about securing Agent Cards.", "options": ["Sensitive detail belongs behind an authenticated extended card", "A card MAY be signed as a JWS over its RFC 8785 canonical form", "A valid signature proves the agent's skills are accurate and safe", "`securitySchemes` in the card enforce authentication without any server checks", "Servers SHOULD send `Cache-Control: max-age` and an `ETag` for the card"], "answers": [0, 1, 4], "explain": "Extended cards, optional JWS signing and HTTP caching headers are in the spec. A signature proves integrity and origin, not accuracy or safety. The card only declares schemes, and the server MUST authenticate every request.", "difficulty": 2, "ref": "r1" },
+    { "id": "w09-l02-q3", "type": "single", "tag": "flip", "q": "You must discover hundreds of internal agents. Some skills are sensitive, and authors update cards every week. Which approach fits best?", "options": ["A curated registry that discloses cards by caller identity", "Pin each card URL in client configuration, reviewed at each release", "Rely on a public well-known URI for every agent, with sensitive skills described in plain text", "Ask each team to email the card to every client team"], "answer": 0, "explain": "Hundreds of agents with frequent change and sensitive skills point to a registry with selective disclosure. Pinning needs reconfiguration at every change, and public cards expose sensitive skills. Email is not discovery. The spec does not yet define a registry API, so you run it yourself.", "difficulty": 2, "ref": "r6" }
+  ],
+  "defend": null,
+  "refs": ["r1", "r6", "r18", "r19"],
+  "takeaways": [
+    "A card is a discovery claim. It declares interfaces, skills, capabilities and security, and the server still authenticates every request.",
+    "Pick the first supported interface, send `tenant` exactly as declared and check capabilities before calling an operation.",
+    "Skills are descriptive, not a contract. Signatures prove origin and integrity only.",
+    "Public cards must not carry sensitive detail. Use an authenticated extended card or selective disclosure.",
+    "The spec does not define a registry API, so you design that layer yourself."
+  ]
+}

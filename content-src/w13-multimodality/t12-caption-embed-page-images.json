@@ -1,0 +1,128 @@
+{
+  "id": "w13-t12",
+  "order": 12,
+  "group": "Multimodal retrieval",
+  "title": "Caption-then-embed vs multimodal embeddings vs page images",
+  "minutes": 9,
+  "difficulty": "advanced",
+  "summary": "Four ways to make visual content searchable: parse to text, caption figures with an LLM then embed the text, embed images directly into one vector, or embed whole pages as multi-vector images. The right one depends on where meaning lives, how users query and what evidence the answer must carry.",
+  "useIf": "You are designing retrieval over documents or images with figures, and must choose the indexing path and how to evaluate it.",
+  "avoidIf": "The corpus is plain text with no figures. A normal text index already does the job.",
+  "explain": [
+    { "t": "p", "md": "Azure AI Search documents two image paths [[r12]]. **Verbalize** with the GenAI Prompt skill: one LLM call per image, which supports hybrid text queries and citations. **Embed directly** with the Azure Vision or AML skill: no LLM at index time, supports image-to-vector queries and look-alike search, but gives no reasons or citation text. For mixed corpora use both. A third idea skips parsing and embeds the page image itself as many vectors (ColPali family), with about 30 times the storage of a text vector per page [[r14]]. Mixed corpora often justify two paths side by side." },
+    { "t": "p", "md": "The Content Understanding skill adds cross-page tables, bounding polygons and semantic chunking, and its image descriptions need REST `2026-05-01-preview`. New skillsets should use it instead of the Document Layout skill (mixed GA and preview, checked 2026-10-13) [[r12]]. Pick by evidence form first: citable text, similarity, or page-level relevance. Then check storage and index-time cost, and keep retrieval scores separate from answer scores." },
+    { "t": "dials", "id": "w13-t12-pick", "title": "Pick an indexing path", "prompt": "Flip the constraints and watch the ranking change.", "dials": [
+      { "id": "mean", "label": "Where meaning lives", "values": [{ "id": "text", "label": "Mostly prose" }, { "id": "fig", "label": "Figures and layout" }] },
+      { "id": "query", "label": "How users query", "values": [{ "id": "txt", "label": "Text only" }, { "id": "img", "label": "Image queries too" }] },
+      { "id": "evid", "label": "Evidence", "values": [{ "id": "cite", "label": "Citable text required" }, { "id": "sim", "label": "Similarity is enough" }] }
+    ], "options": [
+      { "id": "parse", "name": "Parse then text-embed", "summary": "OCR or layout, chunk, embed." },
+      { "id": "cap", "name": "Caption then embed", "summary": "An LLM verbalizes each figure." },
+      { "id": "single", "name": "Single-vector multimodal", "summary": "One vector per image or text." },
+      { "id": "page", "name": "Page-image multi-vector", "summary": "ColPali family over page images." }
+    ], "scores": {
+      "parse": { "mean": { "text": { "s": 2, "why": "Cheap and citable for prose." }, "fig": { "s": -2, "why": "Charts and diagrams flatten away." } }, "query": { "txt": { "s": 1, "why": "Standard text retrieval." }, "img": { "s": -2, "why": "Cannot take image queries." } }, "evid": { "cite": { "s": 2, "why": "Quotes come straight from text." }, "sim": { "s": 0, "why": "No special benefit." } } },
+      "cap": { "mean": { "text": { "s": 0, "why": "LLM cost with little gain on prose." }, "fig": { "s": 2, "why": "Descriptions make figures searchable and citable." } }, "query": { "txt": { "s": 1, "why": "Hybrid text queries work." }, "img": { "s": -1, "why": "Photo queries match only through descriptions." } }, "evid": { "cite": { "s": 2, "why": "Caption text can be cited." }, "sim": { "s": 0, "why": "Pays an LLM call you may not need." } } },
+      "single": { "mean": { "text": { "s": -1, "why": "Weaker than a text pipeline for prose answers." }, "fig": { "s": 1, "why": "Visual similarity without parsing." } }, "query": { "txt": { "s": 0, "why": "Text to image works." }, "img": { "s": 2, "why": "Image-to-vector queries are native." } }, "evid": { "cite": { "s": -2, "why": "No reasons or citation text." }, "sim": { "s": 2, "why": "Look-alike search is the use case." } } },
+      "page": { "mean": { "text": { "s": -1, "why": "Storage for no gain on prose." }, "fig": { "s": 2, "why": "Keeps layout and charts with no parsing." } }, "query": { "txt": { "s": 1, "why": "Text queries are encoded to token vectors." }, "img": { "s": -1, "why": "Built for text queries over page images." } }, "evid": { "cite": { "s": -1, "why": "Hits are pages, quotes need OCR." }, "sim": { "s": 1, "why": "Page-level relevance works well." } } }
+    }, "takeaway": "Prose points to parsing, cited figures to captions, image queries to single vectors, brittle parsing to page images. Mixed corpora often need two." },
+    { "t": "table", "caption": "Evaluate each path, and keep retrieval and answers separate", "head": ["Measure", "Why"], "rows": [
+      ["Recall at k per stratum (prose, chart, photo)", "A mixed average hides failures (practice)"],
+      ["Answer correctness given the right page", "Separates generator misreads from retrieval misses"],
+      ["Citation validity", "Whether the cited text or region supports the answer"],
+      ["Index size and cost per 1,000 pages", "Real budget, including index-time LLM calls"]
+    ] }
+  ],
+  "whereToUse": [
+    "RAG over manuals, reports and decks with charts and diagrams",
+    "Visual search over product, media or asset libraries",
+    "Mixed corpora with both text documents and uploaded images"
+  ],
+  "whenToUse": {
+    "use": [
+      "Caption then embed when figures need explanations and citations",
+      "Single-vector embeddings when users search by example image",
+      "Page-image retrieval when parsing is brittle and storage is available"
+    ],
+    "avoid": [
+      "Single-vector embeddings alone when answers need quoted evidence",
+      "Captioning everything when index-time LLM cost is prohibitive",
+      "Evaluating only answer quality: a retrieval miss and a generator error look alike"
+    ],
+    "flips": [
+      "Users start uploading photos: add an embedding path",
+      "Auditors demand quotes: add verbalization or OCR",
+      "Storage grows too fast: restrict page images to figure-heavy pages or compress"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Parse then text-embed", "Prose and simple tables", "Figures carry the answer", "Parsing errors, cheap storage"],
+      ["Caption then embed (GenAI Prompt skill)", "Figures need citations and hybrid search", "LLM cost per image is prohibitive", "One LLM call per image, caption errors"],
+      ["Single-vector (Azure Vision or AML skill)", "Image queries and look-alikes", "You must explain or cite", "No explanation text"],
+      ["Page-image multi-vector", "Parsing fails on layout and figures", "Tight index or citations as text", "About 30 times a text vector per page"],
+      ["Two paths side by side", "Mixed corpora", "Team cannot run two pipelines", "More to maintain and merge"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "The right page is retrieved but the answer misquotes a chart", "cause": "Generation misread the figure, and retrieval was never measured on its own", "fix": "Evaluate retrieval and answers separately, and crop or raise image detail for the generator." },
+    { "symptom": "Evaluation passes but users keep asking chart questions", "cause": "The golden set is text only", "fix": "Stratify the golden set by modality and report each stratum." }
+  ],
+  "scenarios": [
+    {
+      "id": "w13-t12-s1",
+      "title": "Manuals plus customer photos",
+      "situation": "A support assistant answers from product manuals and also lets customers upload a photo of a broken part to find similar parts and the matching manual page.",
+      "constraints": ["Mixed corpus", "Image queries on parts", "Text answers cite manual text"],
+      "unknowns": ["How big is the parts photo library?", "Is a GA-only rule in force?"],
+      "question": "How do you index?",
+      "options": [
+        { "name": "Two paths: verbalize or parse the manuals for text, and embed part photos for image queries", "verdict": "best", "why": "Mixed corpora often need both: citations for manuals and look-alike search for photos [[r12]].", "tradeoff": "Two pipelines and a result merge." },
+        { "name": "One path: caption every photo and manual figure", "verdict": "good", "why": "A single text index and simple merge.", "tradeoff": "Photo queries match only through descriptions." },
+        { "name": "One path: single-vector embeddings for everything", "verdict": "poor", "why": "Manuals lose citable text.", "tradeoff": "Right for a photo-only library." }
+      ],
+      "flips": [
+        { "if": "Customers never upload photos", "then": "Drop the embedding path." },
+        { "if": "Manuals are figure-dominated", "then": "Consider page images for those manuals." }
+      ],
+      "takeaway": "Mixed corpora justify two indexing paths."
+    },
+    {
+      "id": "w13-t12-s2",
+      "title": "Chart answers are wrong",
+      "situation": "A reporting assistant gives wrong chart values. The team proposes switching to a larger generator model before checking anything else.",
+      "constraints": ["Wrong answers on chart questions", "Golden set is text only", "No retrieval metrics"],
+      "unknowns": ["Is the right page retrieved?", "Does the generator read the chart correctly given the page?"],
+      "question": "What do you do first?",
+      "options": [
+        { "name": "Build a chart stratum in the golden set and measure retrieval and answer correctness separately", "verdict": "best", "why": "It tells you whether the miss is retrieval or generation before you spend on a fix.", "tradeoff": "Needs labelling effort." },
+        { "name": "Swap in a larger generator model", "verdict": "poor", "why": "If the right page is never retrieved a bigger model cannot help, and chart reading stays a known weak spot.", "tradeoff": "Reasonable after measurement shows generation is the issue." },
+        { "name": "Re-index everything as page images", "verdict": "good", "why": "May fix retrieval of figure pages.", "tradeoff": "Large cost, and untested against the real cause." }
+      ],
+      "flips": [
+        { "if": "Retrieval recall on charts is high", "then": "Fix generation: crop figures, raise detail, request data tables." },
+        { "if": "Recall on chart pages is low", "then": "Change the indexing path." }
+      ],
+      "takeaway": "Measure retrieval and answers apart before changing paths."
+    }
+  ],
+  "quiz": [
+    { "id": "w13-t12-q1", "type": "single", "tag": "tradeoff", "q": "A corpus has manuals needing citations and a photo library searched by example. Which design does the Azure AI Search guidance support?", "options": ["Verbalize only", "Embed only", "Both paths for mixed corpora", "Neither, use keyword search"], "answer": 2, "explain": "The guidance says to use both for mixed corpora: verbalization gives citations and hybrid queries, direct embedding gives image-to-vector queries. Either path alone fails one half of the corpus." },
+    { "id": "w13-t12-q2", "type": "match", "tag": "concept", "q": "Match each indexing path with its main weakness.", "pairs": [
+      { "l": "Caption then embed", "r": "One LLM call per image" },
+      { "l": "Single-vector multimodal", "r": "No reasons or citation text" },
+      { "l": "Page-image multi-vector", "r": "About 30 times the storage per page" },
+      { "l": "Parse then text-embed", "r": "Figures and layout flatten away" }
+    ], "explain": "Each path trades something: cost, explanation, storage or visual meaning." },
+    { "id": "w13-t12-q3", "type": "multi", "tag": "diagnose", "q": "Chart questions fail in production while the offline score is high. Which causes are plausible?", "options": ["The golden set has no chart stratum", "Retrieval and generation were never scored separately", "The embedding dimension is odd", "Generators can misread graphs and line styles"], "answers": [0, 1, 3], "explain": "A text-only golden set, joint scoring and chart-reading limits all explain it. An odd embedding dimension would not produce this pattern." }
+  ],
+  "flashcards": [
+    { "front": "What are the two image paths in Azure AI Search multimodal search?", "back": "Verbalize with the GenAI Prompt skill (one LLM call per image, citations and hybrid queries) or embed directly with the Azure Vision or AML skill (no LLM, image queries, no citation text). Use both for mixed corpora." },
+    { "front": "Why evaluate retrieval separately from answers in multimodal RAG?", "back": "A retrieval miss and a generator misread both produce wrong answers. Only separate scores show which to fix." },
+    { "front": "Which Content Understanding skill detail needs a preview REST version?", "back": "Image descriptions need REST `2026-05-01-preview`. The skill also gives cross-page tables, bounding polygons and semantic chunking." }
+  ],
+  "related": ["w13-t10", "w13-t11", "w13-t09", "w13-l3", "w13-l6"],
+  "refs": ["r12", "r14", "r10", "r13"]
+}

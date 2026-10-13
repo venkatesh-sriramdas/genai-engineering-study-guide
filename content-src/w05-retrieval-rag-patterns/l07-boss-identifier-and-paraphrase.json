@@ -1,0 +1,76 @@
+{
+  "id": "w05-l7",
+  "order": 7,
+  "title": "Boss: the identifier and the paraphrase",
+  "kind": "boss",
+  "minutes": 18,
+  "brief": "An interviewer describes an assistant whose users type error codes and paraphrased policy questions into the same box. No numbers are given. Design the retrieval stack and defend it.",
+  "blocks": [
+    { "t": "h", "text": "Your four minutes", "level": 2 },
+    { "t": "scenario", "title": "What you are handed", "known": ["Users ask about exact identifiers and about policies in their own words", "Answers must be grounded in the corpus and cite it", "The interviewer will probe latency, cost and what happens when retrieval fails"], "ask": ["What share of queries is each class, and is it measured?", "How big and how volatile is the corpus, and what are the permissions?", "What is the retrieval latency budget, and may text leave the network?", "What does a wrong answer cost, and may the system abstain?"], "tension": "Exact tokens favour keyword search, paraphrases favour vectors, and every extra stage costs latency and money." },
+    { "t": "diagram", "id": "w05-l7-stack", "title": "A defensible default stack", "alt": "A query is cleaned and classified, searched by a BM25 leg and a vector leg in parallel, fused with RRF, reranked over the top 50, passed through a cutoff, then answered with citations or abstained.", "src": "flowchart LR\n  U[Query] --> N[Clean and classify]\n  N --> K[BM25 leg]\n  N --> V[Vector leg]\n  K --> F[RRF fusion]\n  V --> F\n  F --> R[Rerank top 50]\n  R --> G{Cutoff}\n  G -->|pass| L[LLM with citations]\n  G -->|fail| A[Abstain]", "caption": "A starting point, not the answer. Each box has a dial that can remove or replace it." }
+  ],
+  "quiz": [
+    { "id": "w05-l7-q1", "type": "single", "tag": "flip", "difficulty": 2, "q": "The retrieval stage must fit in 800 ms, down from a 2 s budget. Your stack has a serial LLM query rewrite, parallel BM25 and vector legs, RRF and a managed reranker. Which change comes first?", "options": ["Drop the BM25 leg, which the vector leg already covers", "Swap the reranker for an LLM reranker to protect quality", "Raise the candidate count so the reranker can recover", "Remove the serial LLM rewrite and keep the original query"], "answer": 3, "explain": "The rewrite is a serial LLM call before any search, so it is the costliest stage to remove, and the original query keeps identifiers intact. Dropping BM25 gives up identifier recall, an LLM reranker adds latency, and more candidates add work. Latency numbers for each stage are not published, so measure them." },
+    { "id": "w05-l7-q2", "type": "multi", "tag": "tradeoff", "difficulty": 3, "q": "Select every metric that belongs in the rollout plan for this stack.", "options": ["Recall@k of the fused candidates, split into identifier, paraphrase and mixed queries", "Abstention rate, and how often an abstention was wrong", "Share of answers whose cited span supports the claim", "Number of tokens in the system prompt"], "answers": [0, 1, 2], "explain": "Recall by query class shows whether each leg earns its place, abstention quality shows whether the cutoff is calibrated, and support rate shows whether citations mean anything. Prompt length is a cost input, not a quality metric for this question." },
+    { "id": "w05-l7-q3", "type": "single", "tag": "tradeoff", "difficulty": 2, "q": "The interviewer asks: why not drop BM25 and use dense retrieval with a better embedding model?", "options": ["Embeddings blur exact identifiers and BM25 is a strong baseline, so measure identifier recall before dropping it", "Dense retrieval cannot be combined with metadata filters in any engine", "Embedding models are unable to index more than a few hundred documents", "Dense retrieval is always slower than BM25 by a factor of ten or more"], "answer": 0, "explain": "BEIR shows BM25 is a reliable baseline and dense models are often weaker out of domain, and identifiers are where embeddings blur most, so the decision should rest on identifier recall on your data. Dense retrieval works with filters, scales far beyond a few hundred documents, and its latency is not a fixed multiple of BM25." }
+  ],
+  "defend": {
+    "prompt": "Our assistant answers questions that mix exact identifiers, such as error codes, part numbers and ticket ids, with paraphrased policy questions in the same chat box. Design the retrieval stack and tell me how you would know it works.",
+    "timebox": "4 min",
+    "clarify": [
+      "What share of traffic is identifiers, paraphrases or both, and has anyone measured it?",
+      "How large and how volatile is the corpus, and how are the documents structured?",
+      "What is the permission model, and how fast must a revocation take effect?",
+      "What is the latency budget for retrieval, and does the chat history matter?",
+      "What does a wrong answer cost, and may the assistant say it does not know?",
+      "May chunk text leave our network for a managed or hosted reranker?"
+    ],
+    "options": [
+      { "name": "Hybrid (BM25 plus vector) with RRF", "when": "The query mix is mixed and there are no labels yet.", "tradeoff": "Two retrievals per query. The fused order is coarse, so precision at the top is only fair." },
+      { "name": "Hybrid plus a reranker and a cutoff", "when": "Precision at the top matters and one more stage fits the budget.", "tradeoff": "Adds a hop and a cost. Recall must come first, and score cutoffs drift, so keep them coarse." },
+      { "name": "Dense only with a tuned embedding model", "when": "Queries are almost all paraphrases and the model fits the domain.", "tradeoff": "Exact identifiers blur, and it is weaker out of domain." },
+      { "name": "Agentic retrieval", "when": "Questions are multi-part, history matters and the latency budget is relaxed.", "tradeoff": "Preview for planning levels as of 2026-10-13. Adds a planning pass and separate token billing." }
+    ],
+    "modelAnswer": [
+      { "t": "p", "md": "**1. Clarify the dials.** I would ask for the query mix, corpus size and change rate, permission model, retrieval latency budget, the cost of a wrong answer and whether text may leave the network. Without those, any stack is a guess." },
+      { "t": "p", "md": "**2. List the options, including the boring one.** BM25 alone is cheap and nails identifiers. Dense alone handles paraphrase and blurs codes. Hybrid fuses both. Hybrid plus a reranker adds precision. Agentic retrieval plans subqueries for harder questions." },
+      { "t": "p", "md": "**3. Pick for the stated dials.** For mixed traffic with no labels I would start with hybrid retrieval fused by RRF, because it needs no score normalisation and hedges both query classes. I would add a reranker over the top 50 candidates once recall is verified, with a coarse cutoff that triggers abstention, and I would make the answer cite spans. If the original query is rewritten, I would keep it as one of the fused searches so identifiers survive." },
+      { "t": "p", "md": "**What would flip the choice.**" },
+      { "t": "list", "style": "ul", "items": ["Latency halves: remove serial LLM calls such as the rewrite first, keep the keyword leg.", "Labelled queries become available: test a convex combination against RRF, since evidence says it can win with a small labelled set.", "Data may not leave the network: use a self-hosted cross-encoder instead of a hosted rerank API.", "Questions become corpus-wide or multi-part: test a graph or agentic approach, and count how many such questions exist first.", "Access differs per user: apply permission filters before ranking, and never share a cached context across users."] },
+      { "t": "p", "md": "**4. Failure modes and detection.**" },
+      { "t": "table", "head": ["Failure", "How I would detect it"], "rows": [["Identifier queries miss the right runbook", "Recall@k on an identifier slice of the labelled set"], ["Reranker never helps", "Gold chunk rank before rerank, since it only reorders the top 50"], ["Abstention rate jumps after a service update", "Alert on the abstention rate and re-run the labelled set"], ["Rewrite drops identifiers", "Compare recall with and without the rewrite per query class"], ["Citation does not support the claim", "Support rate from a sampled entailment check"]] },
+      { "t": "p", "md": "**5. Metrics and rollout.** Offline: recall@k and nDCG sliced by query class on a labelled set, then answer-level groundedness and citation support. Online: shadow the new stack against the current one, canary a small share with alerts on abstention rate, latency per stage and support rate, then widen." },
+      { "t": "p", "md": "**Close with the flip conditions.** I would change the stack if latency halves (drop serial LLM calls first), if labelled queries appear (test convex combination), if text may not leave the network (self-host the reranker), if questions turn corpus-wide or multi-part (test graph or agentic retrieval) or if permissions differ per user (filter before ranking)." },
+      { "t": "callout", "kind": "tip", "title": "The line that earns marks", "md": "Say what you would measure before you say what you would build, then name the one metric that would make you remove a stage." }
+    ],
+    "rubric": [
+      { "pt": "Asks about query mix, permissions, latency and the cost of a wrong answer before naming components", "w": 3 },
+      { "pt": "Offers at least two real options and includes the boring one", "w": 2 },
+      { "pt": "Chooses hybrid with rank-based fusion and explains why identifiers need the keyword leg", "w": 3 },
+      { "pt": "Places the reranker after recall, sizes candidates and sets a coarse cutoff with abstention", "w": 2 },
+      { "pt": "Keeps the original query when rewriting and names the identifier-dropping risk", "w": 2 },
+      { "pt": "States flip conditions for latency, permissions, labels and question shape", "w": 2 },
+      { "pt": "Names failure modes with a detection signal for each", "w": 2 },
+      { "pt": "Gives metrics sliced by query class and a staged rollout", "w": 1 }
+    ],
+    "followUps": [
+      { "q": "Users start asking for the main causes across all incident reports. What changes?", "a": "That is a global question, which flat top-k handles poorly. I would measure how many such questions arrive, then test a deferred graph approach or a summary index, and weigh the indexing cost against a corpus that changes." },
+      { "q": "RRF or a weighted score sum?", "a": "RRF first, because it needs no normalisation or labels. With a few hundred labelled queries I would test convex combination, since the evidence shows it can beat RRF and that RRF is sensitive to its parameters. The labelled set decides." },
+      { "q": "How do you set the abstention cutoff?", "a": "Coarsely, on a labelled set that includes unanswerable questions, and I would alert on the abstention rate, because reranker score distributions shift when the service model updates." }
+    ],
+    "redFlags": [
+      "Names a product before asking about the query mix",
+      "Treats a reranker as a fix for poor recall",
+      "Thresholds on RRF scores or hard-codes a fine reranker cutoff",
+      "Never mentions abstention, citations or how the stack is measured"
+    ]
+  },
+  "refs": ["r1", "r3", "r9", "r10", "r11", "r36", "r37"],
+  "takeaways": [
+    "Clarify the query mix, permissions, latency and cost of a wrong answer before choosing a stack",
+    "Hybrid with RRF is the default for mixed traffic, and a labelled set tells you when to change it",
+    "Rerank after recall, cut coarsely and design the abstention path",
+    "Measure by query class, then roll out in shadow and canary"
+  ]
+}

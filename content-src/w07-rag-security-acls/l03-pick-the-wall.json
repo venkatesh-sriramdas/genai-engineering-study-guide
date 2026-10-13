@@ -1,0 +1,107 @@
+{
+  "id": "w07-l3",
+  "order": 3,
+  "title": "Pick the wall",
+  "kind": "problem",
+  "minutes": 25,
+  "brief": "A chunk is about to be returned. Who decides whether this caller may see it: the index, your code, the source system or the shape of your infrastructure? Access selectivity, rule richness, revocation speed and where the content lives are all still open.",
+  "blocks": [
+    { "t": "h", "text": "Six places to enforce the wall", "level": 2 },
+    { "t": "p", "md": "Ask one question of every option: **which stages see denied text?** A post-filter lets it reach your code, rerankers, logs and caches. A pre-filter keeps it inside the index. A live check asks the source of truth. Delegation never copies the content. A physical wall removes the need for a per-document filter between tenants.\n\nMost real systems combine two: a pre-filter for the bulk of traffic and a live check on the top hits of restricted tiers. That combination is design reasoning from the options below, not a vendor pattern. The model is never one of the options [[r22]]." },
+    { "t": "compare", "title": "ACL enforcement options", "intro": "Each option names where it wins, where it loses and what flips the choice.", "options": [
+      { "name": "Post-filter in your code", "summary": "Retrieve the top k, then drop what the caller cannot see.", "pros": ["Simple, works on any engine", "Code can express any rule, including deny and sharing links"], "cons": ["Wastes top k when access is selective, so you over-fetch", "Denied text reaches rerankers, logs and caches first"], "bestWhen": "Almost every document is visible to almost every caller and the rules are too rich to precompute.", "avoidWhen": "Callers see a small slice of a large corpus, or denied text must never leave the index.", "meta": [ { "k": "Recall when selective", "v": "collapses" }, { "k": "Leak surface", "v": "widest" } ] },
+      { "name": "Pre-filter in the index", "tag": "GA or Preview", "summary": "Put the permission predicate inside the query: a security filter field (GA) or native ACL fields (preview).", "pros": ["Top k stays full of visible documents", "Denied text stays in the index", "One round trip"], "cons": ["The ACL copy lags the source", "Allow-lists only, so deny entries must be flattened", "Filtered ANN recall can drop at high selectivity"], "bestWhen": "Permissions are group based, some sync lag is tolerable and the content is already copied into the index.", "avoidWhen": "Revocation must take effect in seconds, or deny rules and links cannot be flattened.", "meta": [ { "k": "Recall", "v": "measure it" }, { "k": "Freshness", "v": "sync lag" } ] },
+      { "name": "Pre-filter plus live check on top hits", "summary": "Filter in the index, then ask the source of truth about the few hits that survive.", "pros": ["Closes the sync-lag window for the hits that matter", "The source evaluates deny rules and links exactly"], "cons": ["Adds latency and load on the source for every query", "Needs a source API that answers per document and fails closed"], "bestWhen": "Restricted tiers, revocation in seconds, or rules richer than an index field can hold.", "avoidWhen": "Broad internal content where hours of lag are acceptable.", "meta": [ { "k": "Latency", "v": "one parallel call per checked hit" }, { "k": "Freshness", "v": "live for checked hits" } ] },
+      { "name": "Delegate retrieval to the source", "tag": "Preview", "summary": "Let the system of record retrieve with the caller's token and do not copy the content. Examples: the Microsoft 365 Copilot Retrieval API, or a remote SharePoint knowledge source in Azure AI Search.", "pros": ["Permissions honoured at query time with nothing to sync", "No copy to leak or purge"], "cons": ["Little control over ranking, chunking or filters", "Retrieval API: 200 requests per user per hour, 25 results, unordered, license or pay-as-you-go (preview) needed"], "bestWhen": "The content already lives in Microsoft 365 and revocation must be near immediate.", "avoidWhen": "You need custom ranking, many sources or high per-user query rates.", "meta": [ { "k": "Freshness", "v": "live" }, { "k": "Control", "v": "low" } ] },
+      { "name": "Index or service per tenant", "summary": "A physical wall: one index per tenant, or a separate service for the largest tenants.", "pros": ["Strongest isolation", "Per-tenant delete, export and embedding model", "No tenant filter to forget"], "cons": ["Index caps per tier (Basic 15, S1 50, S2 and S3 200)", "Cost and operations grow with tenants", "Does nothing for group access inside a tenant"], "bestWhen": "Few large or regulated tenants whose access is only the tenant id.", "avoidWhen": "Thousands of small tenants, or per-document ACLs inside each tenant.", "meta": [ { "k": "Isolation", "v": "physical" }, { "k": "Cost", "v": "high per tenant" } ] },
+      { "name": "Index per user", "summary": "Every user gets a private slice of the index.", "pros": ["Perfect isolation for that user", "No filter needed"], "cons": ["Copies every shared document per reader", "Rebuilds on every permission change", "Hits index caps after a few principals"], "bestWhen": "Very few principals and highly personal data, such as a personal notes assistant.", "avoidWhen": "Shared documents, or any scale.", "meta": [ { "k": "Scale", "v": "a handful of principals" }, { "k": "Cost", "v": "very high" } ] }
+    ] },
+    { "t": "h", "text": "Flip the dials", "level": 2 },
+    { "t": "dials", "id": "w07-l3-wall", "title": "Where should the wall stand?", "prompt": "Set how selective access is, how rich the rules are, how fast revocation must be and where the content lives. Watch the winner change and read why.",
+      "dials": [
+        { "id": "sel", "label": "Share of the corpus a caller can see", "values": [ { "id": "most", "label": "Most of it" }, { "id": "few", "label": "A few percent" }, { "id": "tiny", "label": "A tiny slice (per-document ACLs)" } ] },
+        { "id": "model", "label": "Permission model", "values": [ { "id": "tag", "label": "Tenant id or flat tag" }, { "id": "group", "label": "Nested groups, per-document ACLs" }, { "id": "rich", "label": "Rich rules: deny, links, guests" } ] },
+        { "id": "revoke", "label": "Revocation must take effect in", "values": [ { "id": "hours", "label": "Hours" }, { "id": "minutes", "label": "Minutes" }, { "id": "seconds", "label": "Seconds" } ] },
+        { "id": "where", "label": "Where the content lives", "values": [ { "id": "copied", "label": "Copied into your index" }, { "id": "system", "label": "In a system with permission-honouring retrieval" } ] }
+      ],
+      "options": [
+        { "id": "post", "name": "Post-filter in your code", "summary": "Retrieve, then drop what the caller cannot see." },
+        { "id": "pre", "name": "Pre-filter in the index", "summary": "The predicate runs inside the search." },
+        { "id": "prelive", "name": "Pre-filter plus live check", "summary": "Index filter, then the source verifies the top hits." },
+        { "id": "delegate", "name": "Delegate to the source", "summary": "The system of record retrieves with the caller's token." },
+        { "id": "wall", "name": "Physical wall per tenant or user", "summary": "Separate indexes or services." }
+      ],
+      "scores": {
+        "post": {
+          "sel": { "most": { "s": 2, "why": "Nearly every hit survives, so the top k stays full." }, "few": { "s": -1, "why": "Hidden hits eat the top k, so you must over-fetch." }, "tiny": { "s": -2, "why": "Most queries return one result or none unless you fetch thousands." } },
+          "model": { "tag": { "s": 0, "why": "Works, though a filter is cheaper." }, "group": { "s": 0, "why": "Needs resolved groups in your code and an ACL lookup per hit." }, "rich": { "s": 1, "why": "Code can evaluate any rule: deny, links, guests." } },
+          "revoke": { "hours": { "s": 0, "why": "Fine, but not the reason to choose it." }, "minutes": { "s": 1, "why": "Can read a live ACL cache at check time." }, "seconds": { "s": 1, "why": "Can consult a live source, but denied text has already reached your code." } },
+          "where": { "copied": { "s": 0, "why": "Neutral." }, "system": { "s": 0, "why": "Neutral." } }
+        },
+        "pre": {
+          "sel": { "most": { "s": 1, "why": "Works, though the filter adds little when almost everything is visible." }, "few": { "s": 2, "why": "Only allowed documents compete, so the top k stays full." }, "tiny": { "s": 0, "why": "Recall under a very selective filter can degrade. Measure it." } },
+          "model": { "tag": { "s": 2, "why": "One filterable field does the job." }, "group": { "s": 2, "why": "Group ids in a filter, resolved from the token or Graph." }, "rich": { "s": -1, "why": "Allow-lists only. Deny entries and links must be flattened before indexing." } },
+          "revoke": { "hours": { "s": 2, "why": "Sync lag is acceptable." }, "minutes": { "s": 0, "why": "Bounded by your sync path. A pull indexer cannot beat 5 minutes." }, "seconds": { "s": -2, "why": "An index copy lags the source." } },
+          "where": { "copied": { "s": 2, "why": "The ACL fields sit beside the chunks they guard." }, "system": { "s": -1, "why": "Copying the content creates a sync problem you could avoid." } }
+        },
+        "prelive": {
+          "sel": { "most": { "s": 0, "why": "Live checks add latency for little gain." }, "few": { "s": 1, "why": "Filter first, then verify the few survivors." }, "tiny": { "s": 1, "why": "Few survivors keep the live check cheap." } },
+          "model": { "tag": { "s": 0, "why": "A tenant id needs no live check." }, "group": { "s": 1, "why": "Catches membership changes the index has not seen." }, "rich": { "s": 2, "why": "The source evaluates deny rules, links and guests exactly." } },
+          "revoke": { "hours": { "s": -1, "why": "Pays latency for freshness nobody asked for." }, "minutes": { "s": 1, "why": "Closes most of the lag window." }, "seconds": { "s": 2, "why": "The source of truth answers for every returned hit." } },
+          "where": { "copied": { "s": 1, "why": "Verifies the copy against its origin." }, "system": { "s": 0, "why": "Reasonable, but delegation may be simpler." } }
+        },
+        "delegate": {
+          "sel": { "most": { "s": 0, "why": "Neutral." }, "few": { "s": 1, "why": "The source ranks only what the caller can see." }, "tiny": { "s": 1, "why": "Same, with no filtered ANN to tune." } },
+          "model": { "tag": { "s": -1, "why": "Overkill for a flat tag." }, "group": { "s": 1, "why": "The source resolves groups itself." }, "rich": { "s": 2, "why": "The source applies its own full rules." } },
+          "revoke": { "hours": { "s": 0, "why": "Overkill for this speed." }, "minutes": { "s": 1, "why": "No copy to go stale." }, "seconds": { "s": 2, "why": "Permissions are read at query time." } },
+          "where": { "copied": { "s": -2, "why": "Nothing to delegate to once the content is copied elsewhere." }, "system": { "s": 2, "why": "The system of record answers with the caller's token." } }
+        },
+        "wall": {
+          "sel": { "most": { "s": 0, "why": "Neutral." }, "few": { "s": 1, "why": "Isolation makes selectivity a non-issue inside a tenant." }, "tiny": { "s": 1, "why": "A per-user slice is perfectly selective, at a high price." } },
+          "model": { "tag": { "s": 2, "why": "A tenant id maps to one index." }, "group": { "s": -2, "why": "Group access inside a tenant still needs a filter." }, "rich": { "s": -2, "why": "Walls cannot express deny rules or links." } },
+          "revoke": { "hours": { "s": 0, "why": "Neutral." }, "minutes": { "s": 0, "why": "Neutral." }, "seconds": { "s": 1, "why": "Cutting a tenant off is an access change with no per-document sync." } },
+          "where": { "copied": { "s": 1, "why": "The content is already copied, so splitting it is a layout choice." }, "system": { "s": -1, "why": "Duplicates content per tenant instead of querying the source." } }
+        }
+      },
+      "takeaway": "Post-filtering wins only when almost everything is visible. Pre-filtering is the default for copied content with group ACLs. Add a live check for seconds-level revocation, delegate when the source can retrieve, and build walls only when the permission model is a tenant id." },
+    { "t": "failure", "title": "Failure modes to recognise", "items": [
+      { "symptom": "Users with narrow access get two or three results when ten were expected.", "cause": "A post-filter over a selective permission model: eight of ten hits were removed after retrieval.", "fix": "Move the predicate into the query, or over-fetch with a cap (k_needed divided by the visible fraction) and alert on result count per query." },
+      { "symptom": "A revoked user still sees a document for hours.", "cause": "The ACL in the index lags the source, and no live check or cache TTL covers the gap.", "fix": "Set a revocation SLA per tier, push ACL merges on change events, live-check the top hits for restricted content and test with a revoked canary user." },
+      { "symptom": "Filtered vector queries return few or poor results although matching documents exist.", "cause": "ANN recall degrades under a highly selective filter.", "fix": "Measure recall at production selectivity against a brute-force baseline, raise candidate counts and consider exhaustive search for small partitions." },
+      { "symptom": "A result comes back unfiltered on one path only.", "cause": "The filter is missing from one code path, such as an agent tool call, or the index has no permission metadata so the header does nothing.", "fix": "Put one API gatekeeper in front of every store, apply the filter on every retrieval including those inside agent loops and add a canary test per path." },
+      { "symptom": "Denied text shows up in a rerank request or a log although the final answer was clean.", "cause": "Post-filtering lets denied text reach later stages before it is dropped.", "fix": "Filter before reranking and logging, or log identifiers only." }
+    ] },
+    { "t": "accordion", "items": [
+      { "title": "Go deeper: tenancy walls compared", "blocks": [
+        { "t": "table", "head": ["Wall", "How it isolates", "Wins when", "Loses when"], "rows": [
+          ["Service per tenant", "A separate search service", "Few large or regulated tenants, hardest separation", "Cost and operations per tenant, poor fit for many small tenants [[r22]]"],
+          ["Index per tenant", "A separate index in one service", "Hundreds of tenants. S3 HD allows 1,000 indexes per partition and 3,000 per service [[r20]]", "Per-tier caps: Basic 15, S1 50, S2 and S3 200"],
+          ["Shared index with a tenant filter", "A mandatory tenant field on every chunk and query", "Thousands of small tenants", "One missed filter leaks across tenants, so it needs the API gatekeeper"],
+          ["Namespace per tenant (Pinecone)", "Every read and write targets one namespace, and offboarding deletes it", "Many tenants on a vector store with namespaces, 100 (Starter) to 1,000,000 (Enterprise) per serverless index", "Vendor specific, and the query-cost argument is the vendor's own claim [[r34]]"],
+          ["Partition key per tenant (Cosmos DB)", "Tenant id as the partition key. Hierarchical keys lift the 20 GB logical partition limit", "Documents already in Cosmos DB", "A partition key is a data layout choice, not an authorization control [[r33]]"],
+          ["Row-level security (Azure SQL, PostgreSQL)", "A database predicate on every query, with the user passed through SESSION_CONTEXT", "Content in a relational store and the app sets the user per request", "Owners and BYPASSRLS roles bypass unless forced, and a shared login hides the user [[r31]] [[r32]]"]
+        ], "caption": "Azure's mixed model is documented: big tenants on dedicated services, small tenants on shared indexes [[r21]]." }
+      ] },
+      { "title": "Go deeper: the security filter pattern and its limits", "blocks": [
+        { "t": "code", "lang": "text", "title": "Security filter on a Collection(Edm.String) field", "code": "group_ids/any(g: search.in(g, 'g1, g2, g3'))", "caption": "The field is filterable and retrievable: false." },
+        { "t": "p", "md": "`search.in` equals a chain of `eq ... or` but is faster. The docs describe sub-second responses with hundreds or thousands of values and no explicit item cap, limited by request size (16 MB payload, 8 KB URL for GET), and latency grows with the value count [[r14]]. The pattern is a string match with no authentication, so your code must derive the principal from a validated token. `retrievable: false` hides the field from results but is not field-level security [[r13]]." }
+      ] }
+    ] },
+    { "t": "callout", "kind": "interview", "title": "What interviewers listen for", "md": "For each option, say which stage sees denied text and what flips the choice. A strong answer ends with the combination: pre-filter for the bulk, a live check for restricted tiers, a gatekeeper in front of every store and a canary test for every path." }
+  ],
+  "quiz": [
+    { "id": "w07-l3-q1", "type": "single", "tag": "flip", "q": "Content sits in SharePoint with deny-style rules and sharing links, and revocation must take effect in seconds. Which option moves to the top?", "options": ["Post-filter in your code against the indexed ACL copy of the permissions", "Pre-filter in the index with flattened group ids from nightly syncs", "Live-check the top hits at the source", "An index per user rebuilt whenever a permission changes"], "answer": 2, "explain": "Only the source of truth evaluates deny rules and links exactly and is current within seconds. A post-filter over an indexed copy and a flattened pre-filter both inherit sync lag and cannot express deny entries. An index per user multiplies copies and still lags the source.", "difficulty": 2, "ref": "r26" },
+    { "id": "w07-l3-q2", "type": "single", "tag": "bug", "q": "What is the most serious flaw in this handler?", "code": { "lang": "python", "code": "def search(request):\n    groups = request.json[\"groups\"]\n    flt = \"group_ids/any(g: search.in(g, '\" + \",\".join(groups) + \"'))\"\n    return index.search(request.json[\"q\"], filter=flt)" }, "options": ["The client supplies its own groups", "`search.in` is slower than a chain of `eq` clauses for long lists", "The ACL field should be marked retrievable so it can be filtered", "The filter should run after the search instead of before it"], "answer": 0, "explain": "The principal comes from the request body, so the filter enforces whatever the client claims. Groups must be derived from a validated token or Graph, and quotes in values need escaping. `search.in` is the faster form, retrievable is not needed for filtering, and moving the filter after the search would make it a post-filter.", "difficulty": 2, "ref": "r13" },
+    { "id": "w07-l3-q3", "type": "single", "tag": "diagnose", "q": "After launch the median user gets one result instead of ten. Telemetry for the median user is shown. What is the cause?", "code": { "lang": "text", "code": "k_needed = 10   fetched = 30   removed_by_acl = 29\nvisible_fraction = 5%" }, "options": ["Embedding model drift after the last re-index", "A reranker timeout under heavy load", "A recall floor in the pre-filter", "Post-filter with 3x over-fetch at 5% visible"], "answer": 3, "explain": "Fetching 30 candidates at 5% visibility leaves about 1.5 visible documents, which matches 29 of 30 removed. The fix is a pre-filter, or an over-fetch near 10 divided by 0.05, which is 200. Drift and timeouts do not show up as ACL removals, and a pre-filter would not report removals at all.", "difficulty": 2, "ref": "r22" },
+    { "id": "w07-l3-q4", "type": "single", "tag": "tradeoff", "q": "A product serves 40 enterprise tenants. A few are 100 times larger than the rest, each contract requires deletion within days, and access inside a tenant is only membership of the tenant. Which wall fits?", "options": ["Index per tenant, big ones on own services", "Shared index with a mandatory tenant filter and delete-by-query offboarding", "An index per user with tenants as folders", "A post-filter in your code with tenant ids in metadata"], "answer": 0, "explain": "Forty tenants fit well inside per-tier index caps, dropping an index satisfies deletion, and skewed sizes match the documented mixed model of dedicated services for large tenants. A shared index makes deletion a delete-by-query and bets on one filter never being missed. An index per user has no tenant meaning, and a post-filter isolates nothing.", "difficulty": 2, "ref": "r21" }
+  ],
+  "defend": null,
+  "refs": ["r13", "r14", "r20", "r21", "r22", "r26", "r31", "r32", "r33", "r34"],
+  "takeaways": [
+    "Ask which stage sees denied text. Post-filters expose the most stages, pre-filters the fewest.",
+    "Post-filtering needs a visible fraction near 1. Over-fetch is k_needed divided by that fraction.",
+    "Pre-filter for copied content with group ACLs, add a live check for seconds-level revocation.",
+    "Delegate to the source when it can retrieve with the caller's token, and walls fit only tenant-id permission models.",
+    "One gatekeeper in front of every store, and a canary test per code path."
+  ]
+}

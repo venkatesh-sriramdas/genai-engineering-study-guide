@@ -1,0 +1,97 @@
+{
+  "id": "w16-t06",
+  "order": 6,
+  "group": "Capacity",
+  "title": "Batch, flex and async",
+  "minutes": 7,
+  "difficulty": "core",
+  "summary": "Batch and Flex processing trade time for a 50% lower price. Batch queues a file for a 24-hour target, and Flex keeps a synchronous API shape but can be preempted.",
+  "useIf": "Nobody waits for the result: evaluations, enrichment, embeddings, classification, backfills.",
+  "avoidIf": "A user is waiting, or you cannot tolerate 429, 408 or a result hours later.",
+  "explain": [
+    { "t": "p", "md": "**Batch** takes a file of requests and returns results later. Azure Global Batch and Data Zone Batch cost 50% less than Global Standard, aim to finish within 24 hours, use a separate enqueued-token quota and carry no real-time SLA [[r5]]. OpenAI's Batch API is also 50% off with its own higher limits and a 24-hour window; the input is a `.jsonl` file with a unique `custom_id` per line, one model per file, up to 200 MB, and the queue counts as pending input tokens [[r12]]. Anthropic Message Batches take up to 100,000 requests or 256 MB, most finish within an hour, and they expire after 24 hours with results kept 29 days [[r13]]." },
+    { "t": "p", "md": "**Flex** is a per-request tier: set `service_tier: \"flex\"`. On Azure it is a preview for Global Standard at 50% off, with cached-token discounts, no latency or service SLA and preemptible capacity, so a 429 can mean no capacity and a 408 means raise the client timeout (doc samples use 900 seconds). There is no automatic fallback to Standard, it shares quota with Standard, and from 2026-09-25 unsupported models return 400 [[r11]]. OpenAI lists Flex as a beta at Batch API rates, with prompt-caching discounts on top, and its example raises the client timeout to 15 minutes [[tr9]]." },
+    { "t": "flow", "title": "Choosing a tier by how long the caller can wait", "direction": "h", "steps": [
+      { "title": "Seconds", "md": "Standard, Priority or provisioned. A person is waiting.", "tag": "sync" },
+      { "title": "Minutes", "md": "Flex with your own retry and fallback to Standard. Tolerates 429 and 408.", "tag": "preview" },
+      { "title": "Hours", "md": "Batch with `custom_id` mapping and partial-failure replay.", "tag": "async" }
+    ] }
+  ],
+  "whereToUse": [
+    "Offline evaluation runs over a golden set",
+    "Document enrichment, tagging and summarisation backfills",
+    "Embedding a corpus during re-indexing",
+    "Nightly classification of tickets or logs",
+    "Synthetic data generation for tests"
+  ],
+  "whenToUse": {
+    "use": ["The result is consumed hours later", "Volume is large and a half-price rate matters", "You can isolate the work from interactive quota", "Partial failures can be replayed by `custom_id`"],
+    "avoid": ["Interactive requests", "Work that must finish by a hard deadline shorter than the batch window", "Flex where a 429 or 408 breaks the pipeline and no fallback exists"],
+    "flips": ["The deadline tightens to minutes: Flex or Standard replaces Batch", "Flex is preview on Azure: a production dependency needs a fallback to Standard", "The model has no batch support: use Standard with an off-peak rate limiter"]
+  },
+  "alternatives": {
+    "title": "Async options compared",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Batch", "Hours of slack, huge volume", "Any deadline under a few hours", "24-hour target, no real-time SLA, queue quota"],
+      ["Flex (preview on Azure)", "Minutes to hours of slack, simple code", "You cannot handle preemption", "429 means no capacity, 408 needs long timeouts, shares Standard quota [[r11]]"],
+      ["Standard off-peak", "Model lacks batch support", "Peak quota is tight", "Full price"],
+      ["Queue with workers on Standard", "You need control over ordering and retries", "Cost sensitivity is high", "Full price plus queue operations"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A Flex job loses interactive capacity", "cause": "Flex shares quota with Standard, so a surge consumes the same allowance", "fix": "Cap Flex concurrency, run it off-peak, or use a separate deployment" },
+    { "symptom": "Flex calls fail with 429 even at low volume", "cause": "Capacity is preemptible and there is no automatic fallback", "fix": "Retry with backoff, then fall back to Standard in your own code" },
+    { "symptom": "Batch finished but outputs do not match inputs", "cause": "Results return in no guaranteed order", "fix": "Key every request with a unique `custom_id` and join on it; replay only failed ids" }
+  ],
+  "scenarios": [
+    {
+      "id": "w16-t06-s1",
+      "title": "Evaluate a release against 50,000 prompts",
+      "situation": "Each release is tested on a golden set of 50,000 prompts. Results are reviewed the next morning.",
+      "constraints": ["Nobody waits for results", "Volume repeats at every release", "Interactive traffic shares the account"],
+      "unknowns": ["Does the model support Batch on this platform?", "Is enqueued-token quota enough for the set?", "How are failures replayed?"],
+      "question": "Where does the run go?",
+      "options": [
+        { "name": "Batch with `custom_id` keys and a replay step", "verdict": "best", "why": "Half price, a separate quota that leaves interactive traffic alone, and the deadline is hours.", "tradeoff": "No real-time SLA, so a release blocked on results can wait up to 24 hours." },
+        { "name": "Flex processing", "verdict": "good", "why": "Same discount with synchronous code.", "tradeoff": "Preview, preemptible, shares quota with Standard." },
+        { "name": "Priority processing", "verdict": "poor", "why": "It pays a premium for latency nobody needs.", "tradeoff": "Right for interactive bursts." }
+      ],
+      "flips": [
+        { "if": "A release gate needs results within 30 minutes", "then": "Use Flex with a Standard fallback, or shrink the set." },
+        { "if": "Enqueued-token quota is too small for the whole set", "then": "Split jobs and stagger them." }
+      ],
+      "takeaway": "If the deadline is hours, Batch is the default."
+    },
+    {
+      "id": "w16-t06-s2",
+      "title": "Back-office review within 15 minutes",
+      "situation": "Analysts review AI-drafted summaries about 15 minutes after documents arrive. Volume is moderate and a few delayed items are acceptable.",
+      "constraints": ["Result needed in minutes", "Occasional delay is acceptable", "Cost matters"],
+      "unknowns": ["How are 429 and 408 handled?", "Can the code fall back to Standard?"],
+      "question": "What do you choose?",
+      "options": [
+        { "name": "Flex with long timeout, retry, and fallback to Standard", "verdict": "best", "why": "Half price with a synchronous shape, and the fallback protects the 15-minute expectation.", "tradeoff": "Preview on Azure, so keep the fallback and track fallback share." },
+        { "name": "Batch", "verdict": "poor", "why": "A 24-hour target with no SLA can miss a 15-minute expectation.", "tradeoff": "Right when the window is hours." },
+        { "name": "Standard", "verdict": "good", "why": "Simple and predictable.", "tradeoff": "Pays full price for slack you do not need." }
+      ],
+      "flips": [
+        { "if": "Fallback share to Standard exceeds half", "then": "Flex saves little; use Standard." },
+        { "if": "The model does not support Flex (such requests return 400 from 2026-09-25)", "then": "Switch to Standard or Batch by deadline." }
+      ],
+      "takeaway": "Minutes of slack fit Flex. Hours fit Batch."
+    }
+  ],
+  "quiz": [
+    { "id": "w16-t06-q1", "type": "order", "tag": "order", "q": "Order these by how long the caller can wait, shortest first.", "items": ["Standard or Priority", "Flex", "Batch"], "explain": "Interactive tiers serve people waiting. Flex fits minutes of slack and tolerates preemption. Batch fits hours with a 24-hour target [[r5]].", "difficulty": 1 },
+    { "id": "w16-t06-q2", "type": "single", "tag": "diagnose", "q": "Flex calls on Azure return 408. What does the doc advise?", "options": ["Switch the deployment to PTU", "Retry immediately without backoff", "Raise the client timeout; samples use 900 seconds"], "answer": 2, "explain": "On Azure Flex a 408 means raise the timeout, while a 429 can mean no capacity [[r11]]. PTU is unrelated, and immediate retries add load.", "difficulty": 2 },
+    { "id": "w16-t06-q3", "type": "multi", "tag": "concept", "q": "Which are true of the OpenAI Batch API?", "options": ["50% discount", "One model per file", "Results return in input order", "Each line needs a unique `custom_id`"], "answers": [0, 1, 3], "explain": "The guide describes a 50% discount, one model per file and unique `custom_id` values. Ordering is not guaranteed, which is why `custom_id` exists [[r12]].", "difficulty": 2 }
+  ],
+  "flashcards": [
+    { "front": "What do Batch and Flex give and take?", "back": "About 50% off in exchange for time. Batch has a 24-hour target. Flex is synchronous but preemptible with no SLA." },
+    { "front": "Why can Flex hurt production?", "back": "It shares quota with Standard and has no automatic fallback, so a surge or a 429 needs your own handling." },
+    { "front": "Why does Batch need `custom_id`?", "back": "Results are not guaranteed to return in input order. The id joins outputs to inputs and drives replay of failures." }
+  ],
+  "related": ["w16-t02", "w16-t05", "w16-t08", "w16-l3", "w14-t14"],
+  "refs": ["r5", "r11", "r12", "r13", "tr9"]
+}

@@ -1,0 +1,105 @@
+{
+  "id": "w04-t08",
+  "order": 8,
+  "group": "Chunking",
+  "title": "Contextual retrieval",
+  "minutes": 8,
+  "difficulty": "advanced",
+  "summary": "An LLM writes a short, chunk-specific context from the whole document and the context is prepended to the chunk before embedding and before building the keyword index. Ambiguous chunks become findable.",
+  "useIf": "Chunks lose their subject when cut ('revenue grew 3%') and lookups fail on ambiguous passages.",
+  "avoidIf": "Documents change constantly or ingest budget is tiny. Cheaper context (title and section path) may be enough.",
+  "explain": [
+    { "t": "p", "md": "A chunk such as 'Revenue grew by 3% over the previous quarter' does not say which company, period or product. **Contextual retrieval** fixes that at ingest. For each chunk, an LLM reads the whole document and the chunk and writes 50 to 100 tokens that situate the chunk. That context is prepended to the chunk text before it is **embedded** and before it is added to the **BM25** index. Anthropic published the method on 2024-09-19 [[tr16]]." },
+    { "t": "code", "lang": "text", "title": "Prompt pattern (adapted from the published method)", "code": "<document>{whole document}</document>\nHere is a chunk from that document:\n<chunk>{chunk text}</chunk>\nWrite a short context (one or two sentences) that situates this chunk within the document\nso that a search for it succeeds. Answer with the context only." },
+    { "t": "stats", "items": [
+      { "label": "Contextual embeddings", "value": "-35% failures", "note": "Top-20 retrieval failure rate 5.7% to 3.7% [[tr16]]" },
+      { "label": "Plus contextual BM25", "value": "-49% failures", "note": "Down to 2.9% [[tr16]]" },
+      { "label": "Plus reranking", "value": "-67% failures", "note": "Down to 1.9% [[tr16]]" },
+      { "label": "One-time cost with prompt caching", "value": "1.02 dollars per million document tokens", "note": "Vendor estimate under stated assumptions [[tr16]]" }
+    ] },
+    { "t": "p", "md": "Cost is the catch, and **prompt caching** is what makes it practical. Every call repeats the whole document. If all chunks of one document are processed together, that document is a shared prefix that can be cached, and only the chunk part changes. The vendor estimate assumes 800 token chunks, 8,000 token documents, 50 tokens of instructions and 100 tokens of generated context per chunk [[tr16]]. Their tests also found that passing the top 20 chunks beat 10 and 5. These are vendor results, so reproduce them on your corpus." },
+    { "t": "p", "md": "In Azure AI Search, one way to run this is a skillset step that calls a chat model; the GenAI Prompt skill is GA in `2026-04-01` [[tr47]]. The enriched text then feeds both the embedding skill and the searchable text field. Because every chunk's context depends on the document, regenerate the contexts of a document when it changes." },
+    { "t": "flow", "title": "Ingest steps", "steps": [
+      { "title": "Split", "md": "Chunk the document with any splitter." },
+      { "title": "Situate", "md": "For each chunk, send document and chunk to an LLM, with the document as a cacheable prefix." },
+      { "title": "Prepend", "md": "Join context and chunk text." },
+      { "title": "Index twice", "md": "Embed the combined text and add it to the BM25 index." }
+    ], "direction": "h" }
+  ],
+  "whereToUse": [
+    "Reports, filings and contracts where chunks refer to 'the company', 'the quarter' or 'the Party'",
+    "Hybrid search setups that combine vector and BM25 retrieval, where both benefit from the added text",
+    "Stable, high-value corpora where a one-time enrichment pays back",
+    "After cheap fixes (titles, section paths, parent-child) leave measurable lookup failures"
+  ],
+  "whenToUse": {
+    "use": ["Chunks are ambiguous without their document", "You run hybrid retrieval and can enrich both indexes", "The corpus is stable enough to amortise the LLM cost"],
+    "avoid": ["Documents change every few minutes", "Chunks already carry subject and section path", "No labelled set exists to confirm a gain"],
+    "flips": ["Edits are frequent: regenerate only changed documents, or use title and section path as context", "Prompt caching is unavailable: re-price the job, because every chunk re-reads its document", "Chunks are self-contained: skip it and spend the budget on reranking"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Contextual retrieval", "Ambiguous chunks, hybrid retrieval", "Volatile corpora, tiny budgets", "LLM call per chunk, regeneration on change"],
+      ["Title and section path prepended", "Structured documents", "Context lives deep in the document body", "Low, adds a few tokens per chunk"],
+      ["Parent-child retrieval", "Context is the surrounding section", "One-call latency budget", "Lookup or storage cost"],
+      ["Late chunking", "You run a long-context embedding model", "Hosted API returns only pooled vectors", "Needs token-level model output, no help to BM25"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "The enrichment bill is far above the estimate", "cause": "Each chunk call re-read the whole document without a cache hit, for example chunks were processed out of order", "fix": "Process chunks of one document back to back with the document as a stable prefix and verify cache hits" },
+    { "symptom": "Search surfaces chunks about the wrong entity", "cause": "The generated context named the wrong company or period, or repeated a generic phrase", "fix": "Constrain the prompt, spot-check samples and measure retrieval before and after" },
+    { "symptom": "Hundreds of contexts change after a small edit", "cause": "Each context depends on the whole document, so any change makes them stale", "fix": "Regenerate by document hash, and keep a change log of which contexts were refreshed" }
+  ],
+  "scenarios": [
+    {
+      "id": "w04-t08-s1",
+      "title": "Ambiguous filings, hybrid search",
+      "situation": "An analyst assistant searches company filings. Many chunks say 'the company' or 'the previous quarter' and lookups on them fail. Filings are immutable once published and the stack already runs vector plus BM25.",
+      "constraints": ["Ambiguous chunks", "Immutable documents", "Hybrid retrieval in place", "Moderate ingest budget"],
+      "unknowns": ["Is prompt caching available for the enrichment model?", "How large are the filings?"],
+      "question": "What do you add?",
+      "options": [
+        { "name": "Contextual retrieval feeding both embeddings and BM25, then a reranker", "verdict": "best", "why": "It targets the exact failure, immutable documents amortise the cost, and the vendor study shows the largest gain when BM25 and reranking are combined.", "tradeoff": "A one-time LLM pass and a larger text field." },
+        { "name": "Prepend title and section path only", "verdict": "good", "why": "Cheap and often enough for structured filings.", "tradeoff": "It cannot name the company or period if those live only in the first page." },
+        { "name": "Hierarchical summary trees over the filings", "verdict": "poor", "why": "Builds summaries for synthesis questions, not for fixing ambiguous lookups.", "tradeoff": "Right when users ask corpus-wide thematic questions." }
+      ],
+      "flips": [
+        { "if": "Filings are updated in place", "then": "Regenerate by document hash or fall back to title and section path." },
+        { "if": "No prompt caching is available", "then": "Re-run the cost estimate and consider enriching only the failing subset." }
+      ],
+      "takeaway": "Contextual retrieval pays when chunks are ambiguous, documents are stable and both indexes use the enriched text."
+    },
+    {
+      "id": "w04-t08-s2",
+      "title": "Small team, fast-changing wiki",
+      "situation": "A two-person team indexes an internal wiki whose pages change hourly. The budget is small and there are only a few ambiguous pages.",
+      "constraints": ["Hourly edits", "Small ingest budget", "Few ambiguous chunks", "Two engineers"],
+      "unknowns": ["Where do lookups fail today?", "Do pages have clear titles?"],
+      "question": "What is the proportionate fix?",
+      "options": [
+        { "name": "Prepend page title and section path, and add contextual retrieval only for the failing pages", "verdict": "best", "why": "Cheap context fixes most ambiguity and the LLM pass is limited to where it is measured to help.", "tradeoff": "A selective pipeline to maintain." },
+        { "name": "Contextual retrieval on every page on each edit", "verdict": "poor", "why": "Each edit forces regeneration of contexts for the whole page at hourly cadence.", "tradeoff": "Right for stable corpora that change rarely." },
+        { "name": "Do nothing until users complain", "verdict": "good", "why": "Zero cost and no extra pipeline.", "tradeoff": "Failures stay invisible without a labelled set, so measure first." }
+      ],
+      "flips": [
+        { "if": "Pages stabilise", "then": "Contextual retrieval across the wiki becomes affordable." },
+        { "if": "Recall metrics show broad ambiguity", "then": "Raise the share of pages enriched, using document hashes to limit regeneration." }
+      ],
+      "takeaway": "Spend LLM tokens where measured failures are, and where content is stable."
+    }
+  ],
+  "quiz": [
+    { "id": "w04-t08-q1", "type": "numeric", "tag": "numeric", "q": "The top-20 retrieval failure rate falls from 5.7% to 2.9% when contextual embeddings and contextual BM25 are combined. What is the relative reduction, in percent?", "answer": 49, "tolerancePct": 3, "unit": "%", "hint": "Divide the drop by the starting rate.", "explain": "(5.7 - 2.9) / 5.7 = 0.491, about 49%. It is a relative reduction in failures, not 2.8 percentage points of accuracy." },
+    { "id": "w04-t08-q2", "type": "single", "tag": "diagnose", "q": "Enrichment cost is ten times the estimate. Chunks are shuffled across a batch of many documents. What is the likely cause?", "options": ["The embedding model is too large", "BM25 indexing is expensive", "The context is too short", "The document prefix is not reused, so every call pays to read its document again"], "answer": 3, "explain": "The estimate relies on caching the document prefix. Interleaving chunks from many documents breaks reuse. Embedding model size, BM25 indexing and short context do not multiply the LLM bill." },
+    { "id": "w04-t08-q3", "type": "multi", "tag": "tradeoff", "q": "Which are true of contextual retrieval?", "options": ["Context is prepended before embedding and before BM25 indexing", "Contexts remain valid after any edit to the document", "Prompt caching makes the LLM pass far cheaper", "It removes the need to measure retrieval"], "answers": [0, 2], "explain": "Both indexes get the enriched text and caching cuts cost by sharing the document prefix. Contexts depend on the whole document and go stale after edits, and the vendor numbers still need confirmation on your corpus." }
+  ],
+  "flashcards": [
+    { "front": "What is contextual retrieval?", "back": "An LLM writes 50 to 100 tokens situating each chunk in its document. The context is prepended before embedding and BM25 indexing." },
+    { "front": "What failure-rate cuts did Anthropic report for top-20 retrieval?", "back": "35% with contextual embeddings (5.7% to 3.7%), 49% adding contextual BM25 (2.9%) and 67% adding reranking (1.9%)." },
+    { "front": "What makes contextual retrieval affordable?", "back": "Prompt caching of the document prefix. The vendor estimate is 1.02 dollars per million document tokens under stated assumptions." }
+  ],
+  "related": ["w04-t05", "w04-t06", "w04-t09", "w05-t04", "w05-t05", "w04-l2"],
+  "refs": ["tr16", "tr47"]
+}

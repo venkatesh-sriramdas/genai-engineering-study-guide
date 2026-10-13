@@ -1,0 +1,94 @@
+{
+  "id": "w08-t13",
+  "order": 13,
+  "group": "Security",
+  "title": "Tool poisoning, rug pulls and SSRF",
+  "minutes": 9,
+  "difficulty": "advanced",
+  "summary": "Tool descriptions, annotations and results are text the model reads, so a malicious or changed server can steer it. OAuth discovery also makes clients fetch URLs a server controls. Defend with pinning, review, least privilege and network controls.",
+  "useIf": "You connect hosts to servers you do not fully control, or run clients server-side.",
+  "avoidIf": "You treat tool metadata as trusted because the server is popular or the description is hidden from users.",
+  "explain": [
+    { "t": "p", "md": "These names come from researchers, not the spec. Invariant Labs (2025-04-01) described **tool poisoning**: malicious instructions in a tool's description that users never see but the model follows. **Shadowing** is a poisoned description that changes how the model uses another server's tool. A **rug pull** is a server changing a tool's description after the user approved it [[r13]]. Microsoft describes the same classes and recommends Prompt Shields, spotlighting and supply chain controls [[tr16]]." },
+    { "t": "table", "caption": "Attack patterns and defences", "head": ["Attack", "Where it lives", "How you notice", "Defence"], "rows": [["Tool poisoning", "Name, description or schema text", "Odd calls, data leaving, descriptions with hidden directives", "Show full descriptions, review before enabling, injection detection"], ["Shadowing", "One server's text steering another server's tool", "Calls to a trusted tool with changed arguments", "Namespaces, data-flow limits between servers"], ["Rug pull", "Definition changes after approval", "Hash differs from the approved one", "Pin version and hash, re-review on `list_changed` or TTL refresh"], ["Result injection", "Tool output or annotations", "Instructions in returned text", "Treat as untrusted input, spotlighting, approvals"], ["SSRF via OAuth discovery", "`resource_metadata`, `authorization_servers`, `token_endpoint` URLs", "Requests to internal IPs from the client", "HTTPS only, block private ranges, validate redirects, egress proxy"], ["Malicious local server command", "Client config or server package", "Unexpected process or network use", "Show the exact command, consent, sandbox"]] },
+    { "t": "p", "md": "**SSRF in discovery.** A malicious server can put URLs in the 401 `resource_metadata` header, in `authorization_servers` or in authorization server metadata that point at `http://169.254.169.254/` cloud metadata, localhost services, DNS-rebinding names or redirect chains. The spec's guidance: require HTTPS except loopback in development, block private and reserved ranges (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `127.0.0.0/8`, `169.254.0.0/16`, `fc00::/7`, `fe80::/10`), validate redirect targets and use an egress proxy. Do not hand-write IP checks, because encoding tricks defeat custom parsers [[r5]]." },
+    { "t": "p", "md": "**Controls that work.** Pin the server version and hash each tool description so a change forces re-review. Restrict exposure with `allowed_tools` and require approval for calls, as Foundry's MCP tool does with `require_approval`. Foundry docs treat remote tool descriptions, annotations and results as untrusted input [[r15]]. Clients SHOULD show tool inputs before calling [[r6]]." },
+    { "t": "callout", "kind": "warn", "title": "Pinning has a cost", "md": "Pinning stops silent changes but adds review work whenever a legitimate server updates. Budget for it, or approval fatigue will push users to accept everything." }
+  ],
+  "whereToUse": [
+    "A host that lets users add third-party servers",
+    "A hosted agent platform that fetches OAuth metadata from user-supplied server URLs",
+    "A security review of MCP tool catalogs before production",
+    "A developer tool that installs local servers with one click"
+  ],
+  "whenToUse": {
+    "use": ["Pin and hash definitions for any server you do not own", "Review description diffs when a list changes", "Run server-side clients behind an egress proxy", "Show users the exact command before launching a local server"],
+    "avoid": ["Auto-approving tools from unreviewed servers", "Trusting annotations or descriptions from third parties", "Following discovery URLs without network checks"],
+    "flips": ["Servers are built and operated by your own team: pinning can be lighter, but keep logging and diffs", "No server-side fetching of user-supplied URLs: SSRF exposure drops sharply"]
+  },
+  "alternatives": {
+    "title": "Defences compared",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Curated allow-list or private registry", "Enterprise with many users", "Users need ad hoc servers", "Review queue and delay"],
+      ["Pin version and hash descriptions", "Third-party servers that change", "Frequent legitimate releases", "Re-review effort"],
+      ["Approval for every call", "High-impact tools", "High call volume", "Approval fatigue"],
+      ["Prompt Shields and spotlighting", "Untrusted content reaches the model", "As the only control", "Probabilistic, not a guarantee"],
+      ["Egress proxy and IP blocks", "Server-side OAuth discovery", "Client-only desktop hosts", "Network engineering"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "An approved server starts taking actions nobody approved", "cause": "Its tool description changed after approval (a rug pull) and the host did not re-prompt", "fix": "Hash definitions, compare on every list refresh and require re-approval on change" },
+    { "symptom": "A hosted agent platform reaches cloud metadata endpoints", "cause": "OAuth discovery URLs from an untrusted server were followed", "fix": "Enforce HTTPS, block link-local and private ranges and route through an egress proxy" },
+    { "symptom": "Users approved a tool that looked harmless", "cause": "The UI showed a short title while the full description held hidden instructions", "fix": "Display the full description and the exact arguments before the first call" }
+  ],
+  "scenarios": [
+    {
+      "id": "w08-t13-s1",
+      "title": "Employees adding third-party servers",
+      "situation": "A company host lets staff add MCP servers. Several have access to email and files. Security wants control without blocking all use.",
+      "constraints": ["Many users", "Sensitive data in reach", "Third-party servers"],
+      "unknowns": ["Is there a private registry or allow-list process?", "Can tool definitions be pinned by hash?"],
+      "question": "What policy do you adopt?",
+      "options": [
+        { "name": "Approved list of reviewed servers, pinned versions and hashed descriptions", "verdict": "best", "why": "Limits the attack surface and detects rug pulls, with review effort spent once per version.", "tradeoff": "Slower onboarding of new servers." },
+        { "name": "Let users add anything and show the full description for approval", "verdict": "good", "why": "Flexible and gives users visibility.", "tradeoff": "Relies on users spotting hidden instructions and invites fatigue." },
+        { "name": "Allow any server from the public registry automatically", "verdict": "poor", "why": "The public registry is Preview, public only, and not meant for host apps to consume directly [[r10]].", "tradeoff": "Reasonable only for sandboxed experiments with no sensitive data." }
+      ],
+      "flips": [
+        { "if": "Servers only expose public, read-only data", "then": "Lighter review is acceptable." },
+        { "if": "The host can sandbox and isolate data flows per server", "then": "Widen the list." }
+      ],
+      "takeaway": "Trust is earned per server and version, not granted by a popularity signal."
+    },
+    {
+      "id": "w08-t13-s2",
+      "title": "A hosted platform that fetches user-supplied server URLs",
+      "situation": "A cloud service connects customer-provided MCP server URLs and performs OAuth discovery from its own network, which also hosts internal services and a metadata endpoint.",
+      "constraints": ["Client runs server-side", "URLs come from customers", "Internal network reachable"],
+      "unknowns": ["Is egress already proxied?", "Are private ranges blocked at the network layer?"],
+      "question": "How do you protect discovery?",
+      "options": [
+        { "name": "Egress proxy that blocks private and link-local ranges, HTTPS only, validate every redirect", "verdict": "best", "why": "Covers direct IPs, metadata endpoints, DNS rebinding and redirect chains.", "tradeoff": "Network engineering and an exception path for development." },
+        { "name": "A domain allow-list for customers", "verdict": "good", "why": "Strong when customers are few and known.", "tradeoff": "Blocks legitimate new servers until reviewed." },
+        { "name": "Trust TLS and follow the URLs", "verdict": "poor", "why": "TLS authenticates the host the attacker chose and does not stop requests to internal services.", "tradeoff": "Not appropriate for a server-side client." }
+      ],
+      "flips": [
+        { "if": "Only a desktop client on the user's own machine fetches URLs", "then": "The blast radius is the user's network, so lighter checks suffice." },
+        { "if": "Customers are fixed and contractually known", "then": "An allow-list is enough." }
+      ],
+      "takeaway": "Never let an untrusted server steer your network requests."
+    }
+  ],
+  "quiz": [
+    { "id": "w08-t13-q1", "type": "single", "tag": "diagnose", "q": "A user approved a calendar server last month. Yesterday it began reading files and emailing them. The tool names are unchanged. What is the most likely class of attack?", "options": ["SSRF through OAuth discovery", "A rug pull that changed the tool description after approval", "A confused deputy with a static client ID", "Token passthrough"], "answer": 1, "explain": "A definition changed after approval is a rug pull. SSRF concerns server-side fetches, the confused deputy concerns proxy consent and passthrough concerns tokens, none of which explain a changed description." },
+    { "id": "w08-t13-q2", "type": "multi", "tag": "security", "q": "Which are recommended SSRF mitigations for OAuth discovery in MCP clients?", "options": ["Block private and link-local IP ranges", "Validate each redirect hop", "Route discovery fetches through an egress proxy", "Write custom IP parsing for speed", "Require HTTPS except loopback in development"], "answers": [0, 1, 2, 4], "explain": "Blocking private ranges, validating redirects, an egress proxy and HTTPS enforcement are in the guidance. Custom IP parsing is discouraged because encoding tricks such as octal or IPv4-mapped IPv6 defeat it." }
+  ],
+  "flashcards": [
+    { "front": "What is a rug pull in MCP?", "back": "A server changes a tool's description after the user approved it, so an approved tool later carries malicious instructions." },
+    { "front": "Are tool poisoning and rug pulls defined in the MCP spec?", "back": "No. Invariant Labs named them on 2025-04-01. Microsoft describes the same classes. The spec's best-practices page covers SSRF, passthrough and local server risks." },
+    { "front": "Which URLs can a malicious server plant for SSRF during discovery?", "back": "`resource_metadata`, entries in `authorization_servers`, and endpoints in authorization server metadata such as `token_endpoint`." }
+  ],
+  "related": ["w08-t12", "w08-t05", "w08-t16", "w08-l06"],
+  "refs": ["r13", "tr16", "r5", "r15", "r6", "r10"]
+}

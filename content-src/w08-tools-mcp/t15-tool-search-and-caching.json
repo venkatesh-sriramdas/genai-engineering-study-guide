@@ -1,0 +1,118 @@
+{
+  "id": "w08-t15",
+  "order": 15,
+  "group": "Design and operations",
+  "title": "Scaling tool catalogs: tool search and caching",
+  "minutes": 9,
+  "difficulty": "advanced",
+  "summary": "When definitions swamp the context window or hurt selection accuracy, load tools on demand through tool search or code mode, and do it without breaking the prompt cache.",
+  "useIf": "You aggregate several servers, hold dozens or hundreds of tools, or see rising token cost and wrong tool choices.",
+  "avoidIf": "You have fewer than about ten small tools used on most requests. Loading them all is simpler and keeps the cache stable.",
+  "explain": [
+    { "t": "p", "md": "Large catalogs hurt twice: definitions eat context, and selection degrades. Anthropic reports that choosing the right tool degrades past 30 to 50 tools and that a typical five-server setup uses about 55k tokens, which tool search typically cuts by over 85 percent. Its guidance is to use tool search at 10 or more tools or more than 10k definition tokens [[r19]]. MCP client guidance suggests switching at a threshold such as 1% to 5% of the context window [[r8]]." },
+    { "t": "flow", "title": "Progressive discovery", "direction": "h", "steps": [
+      { "title": "Fetch", "md": "The host calls `tools/list` and caches it using `ttlMs`." },
+      { "title": "Defer", "md": "It does not inject the definitions. The model sees a search meta-tool and a few pinned tools." },
+      { "title": "Search", "md": "Keyword (BM25, regex), embedding, subagent or hybrid retrieval returns candidates." },
+      { "title": "Load", "md": "Chosen definitions are appended after the cache breakpoint." },
+      { "title": "Call", "md": "The model calls the tool, or a stable `call_tool` wrapper." }
+    ] },
+    { "t": "p", "md": "**Provider support.** Anthropic offers `tool_search_tool_regex_20251119` and `tool_search_tool_bm25_20251119` with `defer_loading: true` on deferred tools [[r19]]. OpenAI's Responses API offers `tool_search` for deferred functions, namespaces or MCP servers on `gpt-5.4` and later, and recommends fewer than 10 functions per namespace [[r20]]. Foundry Toolbox exposes `tool_search` and `call_tool`, both Preview as of 2026-10-13 [[r16]]." },
+    { "t": "p", "md": "**Caching.** Most providers cache the prompt prefix, including the `tools` array. Adding or removing definitions mid-conversation invalidates it, and the miss can cost more than the tokens saved. So append new definitions after the cache breakpoint instead of re-sorting, or route every call through one stable `call_tool({name, args})` wrapper, and treat server disconnection as a conversation boundary. In 2026-07-28 servers SHOULD return `tools/list` in deterministic order and send `ttlMs` and `cacheScope`, and a `list_changed` notification makes a cached list stale early [[r8]] [[tr6]]." },
+    { "t": "callout", "kind": "tip", "title": "Code mode", "md": "Instead of calling tools directly, the model writes code that runs in a sandbox and calls tools there, so only the final result returns. It saves tokens on chained calls but needs a sandbox, and approving a script does not grant blanket approval for each call it makes [[r8]]." }
+  ],
+  "whereToUse": [
+    "Hosts that aggregate many MCP servers",
+    "Platform tool catalogs with hundreds of operations",
+    "Agents whose tool library grows over time",
+    "Workflows that chain many calls over large intermediate data (code mode)"
+  ],
+  "whenToUse": {
+    "use": ["Use tool search past roughly 10 tools, 10k definition tokens or 1% to 5% of context", "Keep the 3 to 5 most used tools non-deferred", "Append discovered tools after the cache breakpoint", "Group by namespace or server with clear descriptions"],
+    "avoid": ["Re-sorting or rebuilding the `tools` array between turns", "Deferring every tool, including the search tool itself", "Adding a search step to a small, stable catalog"],
+    "flips": ["Prompt caching is not used: ordering matters less, but token cost still applies", "A sandbox is available and tasks chain many calls: consider code mode"]
+  },
+  "alternatives": {
+    "title": "Tool surface strategies",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Load all tools", "Fewer than about 10 small tools", "Dozens or more", "Tokens and wrong choices"],
+      ["Provider tool search", "Provider supports it and the catalog is large", "Provider lacks it, or you need custom ranking", "Vendor specific, discovery adds a step"],
+      ["Custom search plus stable `call_tool`", "Any model, strict cache control", "You do not want to own retrieval", "You build and tune the index"],
+      ["Code mode", "Chained calls with large intermediates", "No sandbox, short tasks", "Sandbox security and per-call authorization"],
+      ["Gateway or Toolbox bundles", "Central curation of a catalog", "Single small server", "Another layer to run"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Cache hit rate and latency worsen after enabling dynamic loading", "cause": "Definitions were inserted into the `tools` array mid-conversation, changing the prefix", "fix": "Append after the breakpoint or use a stable `call_tool` wrapper and keep ordering deterministic" },
+    { "symptom": "The model cannot find a tool that exists", "cause": "Vague names and descriptions, or a keyword index that misses synonyms", "fix": "Improve descriptions, add embeddings or hybrid search, and test retrieval recall" },
+    { "symptom": "The API rejects a request with a cache control error", "cause": "A deferred tool carried a cache breakpoint", "fix": "Put the breakpoint on a non-deferred tool" }
+  ],
+  "scenarios": [
+    {
+      "id": "w08-t15-s1",
+      "title": "Six servers and 300 tools in a chat host",
+      "situation": "A host connects six MCP servers exposing about 300 tools. Users chat all day, prompt caching is on, and a typical task needs three to five tools.",
+      "constraints": ["Hundreds of tools", "Prompt caching enabled", "Provider supports native tool search"],
+      "unknowns": ["Which tools are used most?", "Are namespaces or servers described clearly?"],
+      "question": "How should the host present tools?",
+      "options": [
+        { "name": "Provider tool search with servers as namespaces and 3 to 5 hot tools pinned", "verdict": "best", "why": "Cuts definition tokens and improves selection while the stable prefix keeps the cache warm.", "tradeoff": "Vendor-specific and discovery adds a step." },
+        { "name": "Custom search meta-tool with a stable `call_tool` wrapper", "verdict": "good", "why": "Works on any model and never changes the `tools` array.", "tradeoff": "You build, host and tune the retrieval." },
+        { "name": "Load all 300 definitions every turn", "verdict": "poor", "why": "It consumes a large share of context and degrades selection.", "tradeoff": "Fine for fewer than about ten small tools." }
+      ],
+      "flips": [
+        { "if": "The provider lacks native tool search", "then": "Build custom search with the stable wrapper." },
+        { "if": "Only two servers with 15 tools remain", "then": "Load all and keep the array fixed." }
+      ],
+      "takeaway": "Search for tools, but never reorder the cached prefix."
+    },
+    {
+      "id": "w08-t15-s2",
+      "title": "Eighteen tools and heavy cache reuse",
+      "situation": "A support assistant has 18 well-described tools used across many short turns. Prompt caching delivers most of its cost savings. Definitions total about 1.5% of the context.",
+      "constraints": ["Small catalog", "Cache savings matter", "Definitions near the lower threshold"],
+      "unknowns": ["Is selection accuracy a problem today?", "Will the catalog grow?"],
+      "question": "Do you add tool search?",
+      "options": [
+        { "name": "Keep all tools loaded with a fixed order and measure", "verdict": "best", "why": "Below clear thresholds, a stable array maximises cache hits and adds no search step.", "tradeoff": "You must watch growth and revisit at the threshold." },
+        { "name": "Prune and merge overlapping tools", "verdict": "good", "why": "Cuts tokens without a new mechanism.", "tradeoff": "Design work and re-evaluation." },
+        { "name": "Add tool search now", "verdict": "poor", "why": "It adds latency and a retrieval failure mode for a small catalog.", "tradeoff": "Right once the catalog grows past the threshold or accuracy drops." }
+      ],
+      "flips": [
+        { "if": "Definitions exceed about 5% of context or accuracy falls", "then": "Introduce tool search for the long tail and pin the hot tools." },
+        { "if": "More servers are about to be added", "then": "Plan search before the catalog explodes." }
+      ],
+      "takeaway": "Do not pay the search tax before the catalog forces it."
+    },
+    {
+      "id": "w08-t15-s3",
+      "title": "Chained processing over large documents",
+      "situation": "A data agent must read many documents, transform each and write results. Intermediate outputs are large and the model does not need to see them. A hardened sandbox exists.",
+      "constraints": ["Large intermediate data", "Sandbox available", "Many chained calls"],
+      "unknowns": ["What approval policy applies to calls made from inside the sandbox?", "How are credentials kept out of the sandbox?"],
+      "question": "How should the agent call tools?",
+      "options": [
+        { "name": "Code mode: the model writes a script that runs in the sandbox and calls tools", "verdict": "best", "why": "Intermediates stay in the sandbox and only a small summary returns to the model.", "tradeoff": "You must secure the sandbox, keep credentials with the host and authorize each call." },
+        { "name": "Tool search with direct calls", "verdict": "good", "why": "Simpler and needs no sandbox.", "tradeoff": "Every intermediate result flows through the model." },
+        { "name": "Direct calls passing every result through the model", "verdict": "poor", "why": "Token cost and latency explode on large intermediates.", "tradeoff": "Fine for short tasks with small results." }
+      ],
+      "flips": [
+        { "if": "No sandbox is available", "then": "Use direct calls with paginated, summarised results." },
+        { "if": "Each step needs human approval", "then": "Keep direct calls so approvals are visible." }
+      ],
+      "takeaway": "Keep bulky intermediates out of the model's context."
+    }
+  ],
+  "quiz": [
+    { "id": "w08-t15-q1", "type": "single", "tag": "diagnose", "q": "After adding dynamic tool loading, cache hit rate fell. The code re-sorts and rebuilds the `tools` array whenever a tool is discovered. What is the best fix?", "options": ["Sort the array alphabetically each turn", "Append discovered definitions after the cache breakpoint or route calls through a stable `call_tool` wrapper", "Disable `ttlMs`", "Defer every tool including the search tool"], "answer": 1, "explain": "Changing the prefix invalidates the cache. Appending after the breakpoint or using a stable wrapper keeps it intact. Re-sorting changes the prefix, `ttlMs` is unrelated and at least one tool, normally the search tool, must stay non-deferred." },
+    { "id": "w08-t15-q2", "type": "multi", "tag": "tradeoff", "q": "Which practices help preserve prompt caching with large tool catalogs?", "options": ["Return `tools/list` in a deterministic order", "Keep a few hot tools non-deferred and stable", "Re-sort the `tools` array on every turn", "Treat server disconnection as a conversation boundary", "Connect and disconnect servers mid-turn freely"], "answers": [0, 1, 3], "explain": "Deterministic ordering, a stable hot set and treating disconnection as a boundary protect the prefix. Re-sorting and freely changing servers mid-turn change the prefix and cause misses." }
+  ],
+  "flashcards": [
+    { "front": "When should you switch to progressive tool discovery?", "back": "When definitions take a significant share of context. MCP guidance suggests 1% to 5% of the window, Anthropic suggests 10 or more tools or over 10k tokens." },
+    { "front": "How do you keep prompt caching with dynamic tools?", "back": "Append new definitions after the cache breakpoint or use a stable `call_tool` wrapper, keep `tools/list` order deterministic and treat disconnects as conversation boundaries." },
+    { "front": "What is code mode?", "back": "The model writes code that runs in a sandbox and calls tools, so intermediate results stay out of context. It needs a sandbox and per-call authorization." }
+  ],
+  "related": ["w08-t14", "w08-t16", "w08-t10", "w08-l06"],
+  "refs": ["r19", "r20", "r8", "r16", "tr6"]
+}

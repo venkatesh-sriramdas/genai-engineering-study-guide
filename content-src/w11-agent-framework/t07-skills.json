@@ -1,0 +1,115 @@
+{
+  "id": "w11-t07",
+  "order": 7,
+  "group": "Behaviour",
+  "title": "Skills",
+  "minutes": 7,
+  "difficulty": "advanced",
+  "summary": "A skill is a portable folder of instructions, references and scripts (the agentskills.io format) that an agent loads on demand. Only a short description sits in the prompt until the skill is needed.",
+  "useIf": "You have reusable domain procedures (expense policy, report templates, data checks) that would bloat the system prompt if always loaded.",
+  "avoidIf": "The behaviour is one short rule that belongs in the instructions, or the API is too unstable for your release gate: the skills API is experimental.",
+  "explain": [
+    { "t": "p", "md": "A skill is a directory with a required `SKILL.md` (YAML frontmatter plus markdown) and optional `scripts/`, `references/` and `assets/`. Required frontmatter: `name` (max 64 characters, lowercase letters, digits and hyphens, matching the directory name) and `description` (max 1,024 characters, saying what it does and when to use it) [[tr7]]. Keep `SKILL.md` under 500 lines and move detail into reference files." },
+    { "t": "p", "md": "**Progressive disclosure** keeps context small: (1) **advertise** about 100 tokens per skill in the system prompt each run, (2) **load** the full body with `load_skill` (under 5,000 tokens recommended), (3) **read resources** with `read_skill_resource`, (4) **run scripts** with `run_skill_script`. `load_skill` is always advertised; the other two only when some skill has resources or scripts [[tr7]]." },
+    { "t": "flow", "title": "How a skill reaches the model", "direction": "h", "steps": [
+      { "title": "Advertise", "md": "Name and description, about 100 tokens each." },
+      { "title": "Load", "md": "`load_skill` returns the SKILL.md body." },
+      { "title": "Read", "md": "`read_skill_resource` fetches a reference file." },
+      { "title": "Run", "md": "`run_skill_script` needs a script runner you supply." }
+    ] },
+    { "t": "p", "md": "**Sources.** File-based (folders with SKILL.md), code-defined (`AgentInlineSkill` / `InlineSkill`), class-based, and MCP-based (`UseMcpSkills` / `MCPSkillsSource`). The provider (`AgentSkillsProvider` in C#, `SkillsProvider` in Python) is a context provider. **Approval:** in the Harness all three skill tools require approval by default, and without a script runner script execution fails. Auto-approve only trusted read-only tools, for example `AgentSkillsProvider.ReadOnlyToolsAutoApprovalRule` [[tr7]]. The Harness enables skills by default in .NET (discovering from the current directory) and opt-in in Python through `skills_paths` or `skills_provider`." },
+    { "t": "code", "lang": "yaml", "title": "expense-report/SKILL.md", "code": "---\nname: expense-report\ndescription: File and validate employee expense reports according to company policy. Use when asked about expense submissions, reimbursement rules, or spending limits.\nlicense: Apache-2.0\nmetadata:\n  version: \"2.1\"\n---\n# Steps\n1. Load references/POLICY_FAQ.md for limits.\n2. Run scripts/validate.py on the draft." },
+    { "t": "tabs", "tabs": [
+      { "label": "C#", "blocks": [ { "t": "code", "lang": "csharp", "code": "AIAgent agent = chatClient.AsHarnessAgent(new HarnessAgentOptions\n{\n    AgentSkillsSource = new AgentFileSkillsSource(\n        Path.Combine(AppContext.BaseDirectory, \"skills\")),\n    ToolApprovalAgentOptions = new ToolApprovalAgentOptions\n    {\n        // auto-approve load_skill and read_skill_resource, not run_skill_script\n        AutoApprovalRules = [AgentSkillsProvider.ReadOnlyToolsAutoApprovalRule],\n    },\n});" } ] },
+      { "label": "Python", "blocks": [ { "t": "code", "lang": "python", "code": "skills = SkillsProvider.from_paths(skill_paths=Path(__file__).parent / 'skills')\nagent = Agent(client=client, instructions='You are helpful.',\n              context_providers=[skills])\n\n# or on the Harness:\nagent = create_harness_agent(client, skills_paths=['./skills'])" } ] }
+    ] },
+    { "t": "callout", "kind": "preview", "title": "Experimental API (checked 2026-10-13)", "md": "The skills API had breaking changes in python 1.3.0 and 1.4.0 (May 2026), including folder discovery moving to the agentskills.io layout. The 1.0 GA blog listed Skills as preview [[tr7]] [[tr41]]." }
+  ],
+  "whereToUse": [
+    "Company procedures: expense rules, security review checklists, support playbooks",
+    "Agents shared by many teams, where each team adds a skill folder instead of editing prompts",
+    "Skills reused across Agent Skills-compatible products because the format is an open spec",
+    "Long procedures with scripts, such as validators or generators, that the model should run rather than imitate"
+  ],
+  "whenToUse": {
+    "use": [
+      "You have many procedures and only a few apply to any one request",
+      "Content changes by domain owners, not developers, and should ship as files",
+      "You want auditable, versioned behaviour packages"
+    ],
+    "avoid": [
+      "One or two short rules: put them in the instructions",
+      "You cannot supply a safe script runner but the skill depends on scripts",
+      "Sources are untrusted: skill text and scripts steer the agent and may execute code"
+    ],
+    "flips": [
+      "Skill sources come from an MCP server you do not control: keep approval on for all three skill tools",
+      "The skill count grows past the point where advertising costs matter (100 tokens each): filter or aggregate sources with the skill source decorators"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Skill", "Many on-demand procedures, portable across products", "A single always-on rule", "Experimental API, extra tool calls to load"],
+      ["System instructions", "Short, always-needed rules", "Long procedures used rarely", "Every token paid on every run"],
+      ["Context provider with retrieval", "Large knowledge bases to search", "Step-by-step procedures with scripts", "Retrieval quality becomes the risk"],
+      ["Function tool", "A deterministic action with a schema", "Instructions and reference material", "Needs code per action"],
+      ["Workflow node", "A fixed, audited procedure", "Open-ended use chosen by the model", "Less flexible"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A skill never loads", "cause": "Invalid YAML, a duplicate recognised field, wrong field casing, or `name` not matching the directory prevents loading", "fix": "Use the lowercase field names from the spec, keep `name` equal to the folder, validate with a loader test" },
+    { "symptom": "Script execution fails in the Harness", "cause": "No script runner was supplied for file-based scripts", "fix": "Pass an `AgentFileSkillScriptRunner` (C#) or a runner in Python, and keep `run_skill_script` behind approval" },
+    { "symptom": "Upgrade breaks skill discovery", "cause": "The experimental API changed in python 1.3.0 and 1.4.0", "fix": "Pin versions and read the significant-changes page before upgrading" }
+  ],
+  "scenarios": [
+    {
+      "id": "w11-t07-s1",
+      "title": "Forty procedures, one assistant",
+      "situation": "A finance assistant must follow forty procedures owned by different teams. Each request touches one or two. Prompt size already costs money and latency.",
+      "constraints": ["40 procedures", "Owners are not developers", "Cost and latency matter"],
+      "unknowns": ["Do any procedures include scripts?", "Are the folders from trusted owners only?", "How often do procedures change?"],
+      "question": "How do you package them?",
+      "options": [
+        { "name": "One skill per procedure, file-based, with read-only auto-approval and script approval kept on", "verdict": "best", "why": "About 4,000 tokens to advertise 40 skills (40 x 100) instead of loading all bodies, owners edit files, scripts stay gated.", "tradeoff": "Extra tool calls to load, an experimental API, and advertising cost still grows with count." },
+        { "name": "One big system prompt containing every procedure", "verdict": "poor", "why": "Pays all tokens on every request and degrades attention.", "tradeoff": "Fine for under five short rules." },
+        { "name": "A retrieval context provider over the procedure documents", "verdict": "good", "why": "Scales to very many documents.", "tradeoff": "No scripts or step structure; retrieval may miss a needed step." }
+      ],
+      "flips": [
+        { "if": "There are thousands of procedures", "then": "Use retrieval to find candidates and skills for the few that matter, or filter sources per user." },
+        { "if": "Procedures must be identical for every run and audited", "then": "Make them workflow steps." }
+      ],
+      "takeaway": "Skills trade extra load calls for a small standing prompt."
+    },
+    {
+      "id": "w11-t07-s2",
+      "title": "Third-party skills from a registry",
+      "situation": "A platform team wants agents to pull skills from an external MCP server so partners can publish procedures. Some skills include scripts.",
+      "constraints": ["Untrusted publishers", "Scripts possible", "Agents hold privileged tools"],
+      "unknowns": ["Is there a sandbox for scripts?", "Is the publisher vetted?", "Can skills call privileged tools?"],
+      "question": "What is your stance?",
+      "options": [
+        { "name": "Allow reading skills, keep approval on for all three skill tools, run scripts only in a sandbox runner, vet publishers", "verdict": "best", "why": "Skill text steers the model and scripts execute code, so both need gating.", "tradeoff": "Friction for users and engineering work for the sandbox." },
+        { "name": "Auto-approve all skill tools for speed", "verdict": "poor", "why": "An untrusted skill could steer the agent into privileged tools or run code.", "tradeoff": "Only acceptable for skill sources you wrote and review." },
+        { "name": "Block external skills entirely", "verdict": "good", "why": "Safest.", "tradeoff": "Loses the partner ecosystem you wanted." }
+      ],
+      "flips": [
+        { "if": "The publisher set is closed and signed", "then": "Relax to read-only auto-approval for those sources." },
+        { "if": "Scripts are removed from the package format you accept", "then": "Approval for `run_skill_script` becomes moot, but keep reviewing instruction text." }
+      ],
+      "takeaway": "A skill is code and prompt at once: trust it like a dependency."
+    }
+  ],
+  "quiz": [
+    { "id": "w11-t07-q1", "type": "numeric", "tag": "numeric", "q": "An agent has 30 skills. Each advertisement costs about 100 tokens. How many tokens does advertising add to the system prompt on every run?", "answer": 3000, "tolerancePct": 0, "unit": "tokens", "explain": "30 skills x about 100 tokens = about 3,000 tokens, before any skill body is loaded. Bodies load only through `load_skill` and should stay under 5,000 tokens each.", "ref": "tr7" },
+    { "id": "w11-t07-q2", "type": "single", "tag": "security", "q": "In the Harness, what is the default approval behaviour of the skill tools?", "options": ["None of them require approval", "Only `run_skill_script` requires approval", "All three (`load_skill`, `read_skill_resource`, `run_skill_script`) require approval", "Approval applies only to MCP-based skills"], "answer": 2, "explain": "All three require approval by default; use a read-only auto-approval rule only for sources you trust.", "ref": "tr7" }
+  ],
+  "flashcards": [
+    { "front": "Name the four stages of skill progressive disclosure.", "back": "Advertise (about 100 tokens each), load (`load_skill`, under 5,000 tokens), read resources, run scripts." },
+    { "front": "Frontmatter limits of a skill?", "back": "`name` max 64 chars, lowercase letters, digits, hyphens, equal to the folder name. `description` max 1,024 chars." },
+    { "front": "Which SDK enables skills by default in the Harness?", "back": ".NET enables them by default; Python makes them opt-in via `skills_paths` or `skills_provider`." }
+  ],
+  "related": ["w11-t06", "w11-t12", "w11-t08", "w08-t14"],
+  "refs": ["tr7", "tr41"]
+}

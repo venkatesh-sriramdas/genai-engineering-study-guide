@@ -1,0 +1,111 @@
+{
+  "id": "w11-t18",
+  "order": 18,
+  "group": "Orchestrations",
+  "title": "Sequential orchestration",
+  "minutes": 6,
+  "difficulty": "core",
+  "summary": "A pipeline of agents: each one receives the conversation so far, adds its answer and passes it on. The last participant's answer is the workflow output.",
+  "useIf": "Each step builds on the previous one: draft, review, polish; translate, check, format.",
+  "avoidIf": "Steps are independent (use concurrent) or the next step depends on the content in ways a model must decide (use handoff or group chat).",
+  "explain": [
+    { "t": "p", "md": "Build with `SequentialBuilder(participants=[...]).build()` in Python or `AgentWorkflowBuilder.BuildSequential(agents)` in .NET. It is a prebuilt graph: agents and custom executors can be mixed. By default **each agent receives the previous agent's whole conversation** (its input plus its reply), so later agents see the original request and earlier answers. The terminal output is an `AgentResponse` with the **last participant's** messages [[tr23]]." },
+    { "t": "p", "md": "**Two knobs.** `chain_only_agent_responses=True` makes every agent consume only the previous agent's response messages, which suits translation chains and progressive refinement where earlier turns would distract. `intermediate_output_from=[writer, reviewer]` surfaces earlier participants' outputs as `intermediate` events (and demotes them from the final set), so a UI can stream each stage [[tr23]]. Tool approvals inside a sequential workflow arrive as request events; free-text feedback from a person needs handoff or a request port, because sequential does not pause for free text on its own [[tr19]]." },
+    { "t": "flow", "title": "Sequential pipeline", "direction": "h", "steps": [
+      { "title": "Writer", "md": "Gets the user request, drafts." },
+      { "title": "Reviewer", "md": "Gets request plus draft, critiques." },
+      { "title": "Editor", "md": "Gets everything, produces the final text (terminal output)." }
+    ] },
+    { "t": "tabs", "tabs": [
+      { "label": "C#", "blocks": [ { "t": "code", "lang": "csharp", "code": "var workflow = AgentWorkflowBuilder.BuildSequential(writer, reviewer, editor);\n\nvar messages = new List<ChatMessage> { new(ChatRole.User, \"Write a tagline for an eBike.\") };\nawait using StreamingRun run = await InProcessExecution.RunStreamingAsync(workflow, messages);\nawait run.TrySendMessageAsync(new TurnToken(emitEvents: true));\nawait foreach (WorkflowEvent evt in run.WatchStreamAsync())\n    if (evt is AgentResponseUpdateEvent e) Console.Write(e.Update.Text);" } ] },
+      { "label": "Python", "blocks": [ { "t": "code", "lang": "python", "code": "from agent_framework.orchestrations import SequentialBuilder\n\nworkflow = SequentialBuilder(\n    participants=[writer, reviewer, editor],\n    chain_only_agent_responses=False,           # default: full conversation\n    intermediate_output_from=[writer, reviewer],\n).build()\n\nasync for event in workflow.run('Write a tagline for an eBike.', stream=True):\n    if event.type in ('intermediate', 'output'):\n        print(event.type, event.data.text, end='')" } ] }
+    ] }
+  ],
+  "whereToUse": [
+    "Content pipelines: draft, review, edit, format",
+    "Translation or normalisation chains where each stage transforms the previous output",
+    "Progressive refinement of a plan, query or summary",
+    "Mixed pipelines where a custom executor (validator, enricher) sits between agents"
+  ],
+  "whenToUse": {
+    "use": [
+      "Order matters and each step needs the previous result",
+      "You want a simple, predictable topology that is straightforward to explain",
+      "Latency is acceptable because steps add up"
+    ],
+    "avoid": [
+      "Steps could run in parallel: you pay the sum of latencies for nothing",
+      "The context grows large and earlier turns distract: use `chain_only_agent_responses=True` or a different design",
+      "A step needs a branch or loop: use a custom graph"
+    ],
+    "flips": [
+      "A step only needs the previous reply: set `chain_only_agent_responses=True` to cut tokens and distraction",
+      "A person must give free text between steps: switch to handoff or add a request port"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Sequential", "Dependent steps in a fixed order", "Independent work", "Latency is the sum, full context grows per step"],
+      ["Concurrent", "Independent views, ensembles", "Steps depend on each other", "Cost is the sum, aggregation needed"],
+      ["Custom workflow", "Branches, loops, state", "A plain pipeline suffices", "Design effort"],
+      ["Single agent with a long prompt", "Simple tasks", "Separate roles improve quality", "One role does everything"],
+      ["Group chat", "Iterative review among several roles", "A fixed order is enough", "More rounds, more tokens"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Code that read raw text from the output breaks after upgrading", "cause": "Orchestration terminal output became an `AgentResponse` in Python 1.2.2 (2026-04-29) [[tr49]]", "fix": "Read `final.messages` and their `text`" },
+    { "symptom": "Only the last agent's output is visible to the UI", "cause": "By default the last participant is the only terminal output source", "fix": "Pass `intermediate_output_from` for the stages you want to stream" },
+    { "symptom": "Token cost grows quadratically with pipeline length", "cause": "Each agent receives the full conversation so far", "fix": "Use `chain_only_agent_responses=True` or compact between steps" }
+  ],
+  "scenarios": [
+    {
+      "id": "w11-t18-s1",
+      "title": "Marketing copy with a legal check",
+      "situation": "Copy is written, then checked for claims by a compliance agent, then edited. Each step must see the original brief. Volume is 2,000 pieces a day; each stage takes 4 to 6 seconds.",
+      "constraints": ["Order fixed", "Compliance needs the original brief", "Latency of about 15 seconds is fine"],
+      "unknowns": ["Does the editor need the compliance comments?", "Are outputs for each stage stored?"],
+      "question": "Which orchestration and settings?",
+      "options": [
+        { "name": "Sequential with the default full-conversation context and intermediate output for audit", "verdict": "best", "why": "Every stage sees the brief and earlier answers, the order is fixed, and intermediate outputs give an audit trail.", "tradeoff": "Latency is about 12 to 18 seconds and tokens grow with each stage." },
+        { "name": "Concurrent writer and compliance agents", "verdict": "poor", "why": "Compliance must review the written copy, which does not exist yet.", "tradeoff": "Right for independent reviews of the same input." },
+        { "name": "Sequential with `chain_only_agent_responses=True`", "verdict": "good", "why": "Cheaper.", "tradeoff": "Compliance would not see the original brief, which it needs here." }
+      ],
+      "flips": [
+        { "if": "The editor only polishes style", "then": "Use chain-only responses for that stage via a custom graph to save tokens." },
+        { "if": "Compliance fails often and the writer must retry", "then": "Use a custom workflow with a conditional back-edge." }
+      ],
+      "takeaway": "Pick full or chain-only context by what each stage actually needs to see."
+    },
+    {
+      "id": "w11-t18-s2",
+      "title": "Pure translation chain",
+      "situation": "A document goes through English to French, then a style pass, then a terminology check. Each stage should see only the previous output. Documents are long.",
+      "constraints": ["Each step transforms the previous output", "Long inputs", "Cost matters"],
+      "unknowns": ["Is the original English needed at the check step?", "Maximum document length?"],
+      "question": "How do you configure it?",
+      "options": [
+        { "name": "Sequential with `chain_only_agent_responses=True`", "verdict": "best", "why": "Each agent sees only the previous response, so tokens stay flat and earlier turns do not distract.", "tradeoff": "The last stage cannot compare against the original text." },
+        { "name": "Sequential with full conversation", "verdict": "good", "why": "The checker can compare to the source.", "tradeoff": "The long source and every intermediate text are re-sent at each stage, which multiplies tokens." },
+        { "name": "One agent doing all three steps", "verdict": "poor", "why": "Mixes roles and hides which step failed.", "tradeoff": "Acceptable for short, low-stakes documents." }
+      ],
+      "flips": [
+        { "if": "The terminology check needs the source", "then": "Store the source in workflow state and fetch it in a custom executor." },
+        { "if": "Inputs are short", "then": "Full context is fine and simpler." }
+      ],
+      "takeaway": "Chain-only is the cheap default for pure transformations."
+    }
+  ],
+  "quiz": [
+    { "id": "w11-t18-q1", "type": "single", "tag": "concept", "q": "In a default Python `SequentialBuilder` workflow, which output surfaces as the terminal `output` event?", "options": ["Every participant's output", "A summary generated by the framework", "The first participant's output", "The last participant's response messages"], "answer": 3, "explain": "By default the last participant is the output source. Use `intermediate_output_from` to surface others as `intermediate` events.", "ref": "tr23" },
+    { "id": "w11-t18-q2", "type": "numeric", "tag": "numeric", "q": "Four agents run in sequence at 5 seconds each. A parallel design would be bounded by the slowest agent. How many seconds does the sequential pipeline take at minimum?", "answer": 20, "tolerancePct": 0, "unit": "s", "explain": "Sequential latency is the sum: 4 x 5 = 20 s. A concurrent design would take about 5 s plus aggregation, but only works if the agents are independent.", "ref": "tr23" }
+  ],
+  "flashcards": [
+    { "front": "What does each agent receive in a default sequential workflow?", "back": "The previous agent's whole conversation: its input plus its reply." },
+    { "front": "What does `chain_only_agent_responses=True` change?", "back": "Each agent consumes only the previous agent's response messages, not the earlier turns." },
+    { "front": "How do you stream non-final stages?", "back": "Pass `intermediate_output_from=[...]`; those participants emit `intermediate` events instead of `output`." }
+  ],
+  "related": ["w11-t19", "w11-t23", "w10-t02"],
+  "refs": ["tr23", "tr19", "tr49"]
+}

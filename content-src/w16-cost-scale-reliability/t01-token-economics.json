@@ -1,0 +1,93 @@
+{
+  "id": "w16-t01",
+  "order": 1,
+  "group": "Cost",
+  "title": "Where the money goes: token economics",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "A model bill is the sum of uncached input, cached input, cache writes, output and reasoning tokens, multiplied by the number of calls a task makes. Knowing which sink dominates tells you which lever to pull.",
+  "useIf": "The bill grew faster than traffic, or you must price a new feature before you build it.",
+  "avoidIf": "You treat it as a one-number exercise: cost per token alone hides retries, loops and failed tasks.",
+  "explain": [
+    { "t": "p", "md": "Every request pays for several token categories. **Uncached input** is full price. **Cached input** is a read of reused prefix state: 0.1x the uncached rate on OpenAI GPT-5.6 and later, and 0.05x on GPT-6.1 Sol [[r25]]. A **cache write** costs 1.25x on those models, and OpenAI bills each token at exactly one of the uncached, cached or write rates. One write plus nine reads costs 2.15x against 10x uncached [[r25]]. Anthropic charges 1.25x for a 5-minute write, 2x for a 1-hour write and 0.1x for a read [[r26]]. **Output** tokens come last, and **reasoning tokens** sit inside the completion count, so a short visible answer can hide a long generation [[r27]]." },
+    { "t": "p", "md": "The visible prompt is rarely the biggest sink. **Tool definitions**, the **system prompt** and the **history** are re-sent on every call. An **agent loop** multiplies all of it by the number of model calls per task. With a constant 500 new tokens per turn, 20 turns process 500 x (1 + 2 + ... + 20) = 105,000 input tokens for 10,000 tokens of new content (derived). Caching and compaction exist to flatten that curve." },
+    { "t": "diagram", "id": "w16-t01-d1", "title": "Where tokens go in one agent step", "alt": "Tool definitions, system prompt, history and retrieved context form the prompt. The model call returns reasoning and answer tokens, and the next step re-sends the grown prompt.", "src": "flowchart LR\n  T[Tool definitions] --> P[Prompt]\n  S[System prompt] --> P\n  H[History] --> P\n  C[Retrieved context] --> P\n  P --> M[Model call]\n  M --> R[Reasoning tokens]\n  M --> A[Answer tokens]\n  A --> H" },
+    { "t": "formula", "title": "Cost per successful task", "expr": "cost per task = sum over calls (uncached x p_in + cached x 0.1 x p_in + written x 1.25 x p_in + output x p_out) / task success rate", "vars": [ { "k": "p_in, p_out", "v": "your price sheet per input and output token (not quoted here, prices change)" }, { "k": "0.1, 1.25", "v": "read and write multipliers on GPT-5.6 and later [[r25]]" }, { "k": "success rate", "v": "share of tasks that finish correctly; retries and failures raise cost per task" } ], "example": "Five requests share one prefix inside its lifetime. Cost in units of one uncached prefix: 1.25 + 4 x 0.1 = 1.65, against 5.0 uncached (derived)." }
+  ],
+  "whereToUse": [
+    "A finance review of a bill that grew faster than traffic",
+    "Pricing a new assistant or agent feature before launch",
+    "Choosing the first cost lever: batch, cache, trim, route or limit output",
+    "Per-tenant or per-team chargeback, using gateway token metrics [[r3]]",
+    "Comparing two models by cost per successful task, not price per million tokens"
+  ],
+  "whenToUse": {
+    "use": ["Spend is rising and nobody can say which consumer or prompt section drives it", "You are about to switch models or add caching and need a baseline", "Agents or tools make several model calls per user task", "You need chargeback by team, tenant or feature"],
+    "avoid": ["You treat it as a one-number exercise: cost per token alone hides retries, loops and failed tasks", "Optimising a workload whose monthly spend is small against engineering time", "Cutting tokens on a path where quality is not yet measured"],
+    "flips": ["Reasoning-heavy workload: output and reasoning tokens dominate, so measure completion tokens first", "Long static prefix with high reuse: cached reads dominate and the write premium matters", "Mostly asynchronous work: batch pricing changes the baseline by half"]
+  },
+  "alternatives": {
+    "title": "Ways to measure cost, compared",
+    "head": ["Metric", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Cost per token", "Comparing price sheets for the same task", "Models differ in verbosity, retries or steps", "A cheaper token can mean a dearer task"],
+      ["Cost per request", "Single-call endpoints with stable prompts", "Agents with variable call counts", "Hides loops and tool fan-out"],
+      ["Cost per successful task (this topic)", "Agents, retries, mixed quality", "No success signal exists yet", "Needs an eval or outcome label"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "The bill doubled while traffic grew 20%", "cause": "Longer prompts, growing history, more agent steps or a switch to a reasoning model, not more users", "fix": "Attribute tokens by consumer and by prompt section, then compare tokens per task before and after" },
+    { "symptom": "Caching was enabled and cost went up", "cause": "On GPT-5.6 and later a write costs 1.25x, so a prefix used once loses 25% [[r25]]", "fix": "Cache only prefixes reused at least twice inside the lifetime, or use explicit mode with no breakpoints" },
+    { "symptom": "A cheaper model raised cost per task", "cause": "More retries, longer outputs or extra agent steps offset the lower price", "fix": "Track cost per successful task and tokens per task, not price per token" }
+  ],
+  "scenarios": [
+    {
+      "id": "w16-t01-s1",
+      "title": "The bill doubled, traffic did not",
+      "situation": "A support assistant answers questions with retrieval. Monthly model spend doubled while requests grew 20%. Nobody owns the prompt, and several teams call one shared deployment.",
+      "constraints": ["Quality must not drop", "Prices and model mix are unknown", "One shared deployment serves several teams"],
+      "unknowns": ["Did the average prompt or the average output grow?", "Which team or feature grew fastest?", "Did anyone change the model, effort level or retrieval depth?"],
+      "question": "What do you do first?",
+      "options": [
+        { "name": "Attribute tokens by consumer and prompt section, then pick the biggest sink", "verdict": "best", "why": "Without attribution any lever is a guess. A gateway metric by team and a split of prompt tokens into system, tools, history and retrieval show where growth came from.", "tradeoff": "Costs a day or two of instrumentation before any saving lands." },
+        { "name": "Swap to the cheapest model for every request", "verdict": "poor", "why": "It cuts price per token but may raise retries, output length and escalations, and it changes quality unmeasured.", "tradeoff": "Right only after evals show the cheap model passes the quality bar on this task mix." },
+        { "name": "Lower max_tokens everywhere", "verdict": "good", "why": "Output is the costliest token class and caps are cheap to ship.", "tradeoff": "Truncated answers hurt quality if the cap is below natural answer length; it does not touch input growth." }
+      ],
+      "flips": [
+        { "if": "Attribution shows 70% of tokens are an unchanged 9,000-token prefix", "then": "Fix prefix ordering and caching first." },
+        { "if": "One batch-like consumer grew fastest and nobody waits for it", "then": "Move that consumer to Batch for half price." }
+      ],
+      "takeaway": "Attribute first. The lever follows the sink."
+    },
+    {
+      "id": "w16-t01-s2",
+      "title": "A cheap-looking classifier",
+      "situation": "A classification endpoint runs 5 million short requests a day on a reasoning model. Visible answers are one word. Cost is far above the estimate from the price sheet.",
+      "constraints": ["Task has labelled examples", "Latency budget is 1 second", "Volume is high and steady"],
+      "unknowns": ["How many reasoning tokens does each call use?", "What accuracy does a non-reasoning model reach on the labelled set?", "Is the effort level configurable?"],
+      "question": "Where is the money going and what is the fix?",
+      "options": [
+        { "name": "Check completion token details for reasoning tokens, then lower effort or use a non-reasoning model if evals hold", "verdict": "best", "why": "Reasoning tokens count inside completion tokens, so a one-word answer can cost thousands of hidden tokens.", "tradeoff": "Accuracy must be re-measured on the labelled set before the switch." },
+        { "name": "Add a semantic cache", "verdict": "good", "why": "Repeated short inputs can hit, saving whole calls.", "tradeoff": "Adds an embedding and lookup per miss, and wrong hits are a quality risk." },
+        { "name": "Buy PTUs for the volume", "verdict": "poor", "why": "It changes how you pay, not how many tokens each call burns.", "tradeoff": "Right after tokens per call are minimised and traffic is steady." }
+      ],
+      "flips": [
+        { "if": "Nobody waits for the result", "then": "Batch the work for half price." },
+        { "if": "Accuracy drops sharply without reasoning", "then": "Keep reasoning on hard cases only, behind a router." }
+      ],
+      "takeaway": "Hidden reasoning tokens turn a one-word answer into a large bill."
+    }
+  ],
+  "quiz": [
+    { "id": "w16-t01-q1", "type": "numeric", "tag": "numeric", "q": "A prefix is written once at 1.25x and then read 4 more times at 0.1x inside its lifetime. What is the total cost, in units of one uncached pass over the prefix?", "answer": 1.65, "tolerancePct": 1, "unit": "x", "hint": "1.25 plus four reads", "explain": "1.25 + 4 x 0.1 = 1.65. Five uncached passes would cost 5.0. The same arithmetic on one write plus nine reads gives the 2.15x in the OpenAI guide [[r25]].", "difficulty": 1 },
+    { "id": "w16-t01-q2", "type": "multi", "tag": "concept", "q": "A user sends one message and the agent makes 10 model calls. Which of these are paid as input tokens on each of the 10 calls?", "options": ["Tool definitions", "System prompt", "Only the user message", "Earlier tool results kept in history"], "answers": [0, 1, 3], "explain": "Tool definitions, the system prompt and the accumulated history are re-sent every call. The user message is not the only input; it is one small part. Caching lowers the price of the repeated parts but does not remove them.", "difficulty": 1 },
+    { "id": "w16-t01-q3", "type": "single", "tag": "diagnose", "q": "Cost per token fell 40% after a model switch, but cost per task rose. Which cause is most consistent?", "options": ["Cached reads cost 0.1x", "The new model needs more steps and retries per task", "Batch pricing applied by mistake"], "answer": 1, "explain": "More steps and longer outputs raise tokens per task faster than price per token fell. Cached reads and batch pricing both lower cost, so neither explains a rise.", "difficulty": 2 }
+  ],
+  "flashcards": [
+    { "front": "On GPT-5.6 and later, what do cache writes and reads cost relative to uncached input?", "back": "Write 1.25x, read 0.1x (0.05x on GPT-6.1 Sol). One write plus nine reads is 2.15x against 10x uncached." },
+    { "front": "Why can a one-word answer be expensive?", "back": "Reasoning tokens count inside completion tokens. The hidden generation is billed even when the visible answer is short." },
+    { "front": "Which metric hides retries and agent loops?", "back": "Cost per token. Track cost per successful task and tokens per task instead." }
+  ],
+  "related": ["w16-t02", "w16-t03", "w16-t06", "w16-l1", "w02-t11"],
+  "refs": ["r25", "r26", "r27", "r3"]
+}

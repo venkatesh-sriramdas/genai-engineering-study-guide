@@ -1,0 +1,118 @@
+{
+  "id": "w02-t10",
+  "order": 10,
+  "group": "KV cache and serving",
+  "title": "Quantization: weights and KV cache",
+  "minutes": 9,
+  "difficulty": "advanced",
+  "summary": "Quantization stores numbers in fewer bits. Quantizing weights shrinks the model and speeds memory-bound decode. Quantizing the KV cache lets more sequences fit. Both trade quality risk for capacity.",
+  "useIf": "You host a model and weights or KV memory limit capacity, and you can run an eval before and after.",
+  "avoidIf": "You use a hosted API, or you cannot test quality on your own tasks, especially at long context.",
+  "explain": [
+    { "t": "p", "md": "Two different things get quantized, and they fix different limits. **Weight quantization** (and activation quantization) shrinks the model. Memory is roughly parameters times bytes per weight: an 8B model is about 16 GB in bf16, 8 GB at 8 bits and 4 GB at 4 bits (derived). **KV cache quantization** shrinks the per-sequence cache, so more sequences fit at long context." },
+    { "t": "table", "caption": "What each kind of quantization changes", "head": ["Target", "Saves", "Speeds up", "Main risk"], "rows": [
+      ["Weights, 8-bit (FP8 or INT8)", "About half of bf16 weight memory", "Memory-bound decode, and prefill where hardware supports the format", "Small accuracy loss, needs an eval"],
+      ["Weights, 4-bit (for example INT4 W4A16)", "About a quarter of bf16 weight memory", "Decode bandwidth", "Larger quality risk, method-dependent"],
+      ["KV cache, FP8", "Half of bf16 KV per token", "Concurrency and long context", "Error grows with context, some layers are sensitive"],
+      ["KV cache, 2-bit (KIVI)", "About 2.6x less peak memory in the paper", "Batch size, up to 4x", "Research-grade, near-equal quality only as reported"]
+    ] },
+    { "t": "p", "md": "**Formats and methods.** Names such as W8A8 and W4A16 give weight bits then activation bits. vLLM's LLM Compressor path supports FP8 W8A8, INT8 W8A8 and INT4 W4A16, besides AWQ, GPTQ and bitsandbytes. Its hardware table lists FP8 W8A8 on Ada, Hopper and AMD GPUs but not on Ampere, so check your GPU [[tr7]]. LLM.int8() halves inference memory by keeping outlier features in 16-bit [[tr15]]. GPTQ reaches 3 to 4 bits on 175B-parameter models with negligible accuracy loss as reported [[tr17]]. AWQ protects about 1% of salient weight channels, found from activation statistics [[tr16]]." },
+    { "t": "p", "md": "**KV cache.** vLLM supports `kv_cache_dtype=\"fp8\"`. With no calibration all scales are 1.0, and the docs recommend calibrating on a dataset with llm-compressor. Some layer types, such as sliding-window attention, are more sensitive, and `--kv-cache-dtype-skip-layers` keeps chosen layers in the native type [[tr8]]. KIVI quantizes keys per channel and values per token to 2 bits without tuning, reporting 2.6x less peak memory, up to 4x batch size and 2.35x to 3.47x throughput with near-equal quality [[r20]]." },
+    { "t": "callout", "kind": "gotcha", "title": "Gate on your own tasks, at your own context length", "md": "Aggregate benchmark scores hide losses on exact quotes, numbers, tool-call arguments and long-range recall. Test those at your real context lengths before and after." }
+  ],
+  "whereToUse": [
+    "Fitting a larger model on fewer GPUs by quantizing weights",
+    "Raising concurrency on long-context services by quantizing the KV cache",
+    "Speeding up memory-bound decode on self-hosted models",
+    "Edge or cost-limited deployments where memory is the hard limit",
+    "Reading vendor claims about FP8 or INT4 serving: ask which tasks were tested"
+  ],
+  "whenToUse": {
+    "use": [
+      "Weights do not fit, or leave too little memory for KV",
+      "Concurrency at long context is capped by KV memory",
+      "You have an eval set that covers your hardest tasks and context lengths"
+    ],
+    "avoid": [
+      "You cannot measure quality on your own data",
+      "Tasks need exact quotation, precise arithmetic or long-range recall and the eval shows a drop",
+      "Your GPU lacks hardware support for the format, so memory shrinks but speed does not"
+    ],
+    "flips": [
+      "KV is the binding limit: quantize KV before weights, since weights are already fine",
+      "Weights are the binding limit: quantize weights, not KV",
+      "The eval shows a drop at long context: keep sensitive layers in native precision or use fewer bits only on the short-context path"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with other ways to fit and speed",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["8-bit weights (FP8 or INT8)", "Weights bind, quality bar is high", "Hardware lacks support", "Small quality drop, needs eval"],
+      ["4-bit weights", "Memory is tight, tasks tolerate noise", "Exact tasks, strict quality", "Larger drop, method-dependent"],
+      ["FP8 KV cache", "KV binds at long context", "Long-range recall is fragile", "Calibration, layer sensitivity"],
+      ["2-bit KV (KIVI)", "Throughput-bound, tolerant tasks", "Exact quotation, high stakes", "Research-grade, test carefully"],
+      ["GQA or MLA model, or a smaller model", "You can choose the model", "Model is fixed", "Different model quality"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Answers degrade only on long documents after KV quantization", "cause": "Quantization error accumulates with context length", "fix": "Eval at the real maximum context, calibrate scales, skip sensitive layers [[tr8]]" },
+    { "symptom": "Model fits but is no faster", "cause": "The GPU lacks native support for the format, so it runs weight-only paths", "fix": "Check the hardware support table before choosing the format [[tr7]]" },
+    { "symptom": "Numbers or quoted spans are subtly wrong after a 4-bit move", "cause": "Aggregate benchmarks hid a loss on precise tasks", "fix": "Add exact-match and numeric checks to the eval gate" }
+  ],
+  "scenarios": [
+    {
+      "id": "w02-t10-s1",
+      "title": "70B model must fit on two GPUs",
+      "situation": "A team wants to serve a 70B model on two 80 GB Hopper GPUs. In bf16 the weights are about 140 GB, leaving almost no room for KV. Tasks include numeric extraction where mistakes are costly.",
+      "constraints": ["Hopper GPUs support FP8", "Quality bar is strict on numbers", "An eval set exists"],
+      "unknowns": ["How large is the long-context KV need?", "How big is the eval gap at 8 bits versus 4 bits?"],
+      "question": "What do you quantize first?",
+      "options": [
+        { "name": "Quantize only the KV cache", "verdict": "poor", "why": "The 140 GB of weights alone do not fit well, and KV quantization does not shrink them.", "tradeoff": "Right when weights already fit and KV is the binding limit." },
+        { "name": "4-bit weight-only for the largest saving", "verdict": "good", "why": "It cuts weights to about a quarter and leaves ample room for KV.", "tradeoff": "More quality risk on numeric tasks, so it needs a strong eval." },
+        { "name": "8-bit FP8 weights, gated by the numeric eval", "verdict": "best", "why": "It halves weights to about 70 GB, supported on Hopper, with the smallest quality risk that still fits.", "tradeoff": "Less memory saved than 4-bit, so KV room may still be tight." }
+      ],
+      "flips": [
+        { "if": "8-bit leaves too little KV room and the 4-bit eval passes", "then": "Move to 4-bit weights." },
+        { "if": "The GPUs are Ampere", "then": "FP8 W8A8 is not supported there, so use INT8 or a weight-only format." }
+      ],
+      "takeaway": "Quantize the thing that binds, in the smallest step that fits."
+    },
+    {
+      "id": "w02-t10-s2",
+      "title": "Long contracts, concurrency capped by KV",
+      "situation": "A service answers questions over long contracts at 64K tokens. Weights fit comfortably on the GPUs, but KV caps concurrency at 6 users. Answers must quote clauses exactly.",
+      "constraints": ["KV is the binding limit", "Exact quotation required", "Self-hosted engine supports FP8 KV"],
+      "unknowns": ["Is there a long-context exact-quote eval?", "Which layers are sensitive in this model?"],
+      "question": "How do you raise concurrency?",
+      "options": [
+        { "name": "Calibrated FP8 KV, skip sensitive layers, gate on an exact-quote eval at 64K", "verdict": "best", "why": "It halves KV with the smallest quality risk and targets the real limit.", "tradeoff": "Calibration and testing effort, and less than a 2-bit saving." },
+        { "name": "Add GPUs", "verdict": "good", "why": "No quality risk.", "tradeoff": "Cost and parallelism overhead." },
+        { "name": "Switch to 2-bit KV for the biggest gain", "verdict": "poor", "why": "Research-grade quantization is risky for exact quotation at 64K tokens.", "tradeoff": "Right for throughput-bound, error-tolerant tasks with an eval to back it." }
+      ],
+      "flips": [
+        { "if": "The FP8 eval fails on exact quotes", "then": "Add GPUs or shorten the context with retrieval." },
+        { "if": "Many users share the same contracts", "then": "Prefix caching may raise capacity without touching numerics." }
+      ],
+      "takeaway": "Exactness requirements set how aggressive the KV format can be."
+    }
+  ],
+  "quiz": [
+    { "id": "w02-t10-q1", "type": "numeric", "tag": "numeric", "q": "A 70B-parameter model is stored at 4 bits per weight (0.5 bytes). Roughly how many GB do the weights take?", "answer": 35, "tolerancePct": 3, "unit": "GB", "hint": "70 billion x 0.5 bytes", "explain": "70e9 x 0.5 bytes is 35 GB, versus 140 GB in bf16. Real files are slightly larger because of scales and unquantized layers.", "difficulty": 1, "ref": "tr7" },
+    { "id": "w02-t10-q2", "type": "single", "tag": "diagnose", "q": "Weights fit comfortably, but concurrency at 64K context is capped. Which quantization targets that limit?", "options": ["INT4 weight-only quantization", "A smaller tokenizer vocabulary", "Higher temperature", "FP8 KV cache"], "answer": 3, "explain": "KV memory binds, so a lower-precision KV cache raises the number of sequences that fit. INT4 weights shrink the model but not the per-sequence cache, and vocabulary or temperature are unrelated.", "difficulty": 2, "ref": "tr8" },
+    { "id": "w02-t10-q3", "type": "match", "tag": "concept", "q": "Match each method to its core idea.", "pairs": [
+      { "l": "LLM.int8()", "r": "Int8 matmul with outlier features kept in 16-bit" },
+      { "l": "GPTQ", "r": "One-shot weight quantization using approximate second-order information" },
+      { "l": "AWQ", "r": "Protects salient weight channels found from activation statistics" },
+      { "l": "KIVI", "r": "2-bit KV cache, keys per channel and values per token" }
+    ], "explain": "Each is a named technique from its paper. LLM.int8 and GPTQ and AWQ target weights, while KIVI targets the KV cache.", "difficulty": 3, "ref": "r20" }
+  ],
+  "flashcards": [
+    { "front": "Which limit does weight quantization fix, and which does KV quantization fix?", "back": "Weight quantization shrinks model memory and speeds memory-bound decode. KV quantization lets more sequences fit at long context." },
+    { "front": "What does W4A16 mean?", "back": "4-bit weights with 16-bit activations. The first number is weight bits and the second is activation bits." },
+    { "front": "What is the safe way to adopt KV quantization?", "back": "Calibrate scales, skip sensitive layers and gate on an eval at your real maximum context length." }
+  ],
+  "related": ["w02-t04", "w02-t05", "w02-t09", "w02-l3"],
+  "refs": ["r20", "tr7", "tr8", "tr15", "tr16", "tr17", "r24"]
+}

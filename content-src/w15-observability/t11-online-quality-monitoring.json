@@ -1,0 +1,163 @@
+{
+  "id": "w15-t11",
+  "order": 11,
+  "group": "Operating",
+  "title": "Online quality monitoring",
+  "minutes": 8,
+  "difficulty": "advanced",
+  "summary": "Online quality monitoring scores a sample of live traces with reference-free evaluators, such as LLM judges and safety checks, then tracks the scores for drift. Sampling rate, filters and judge cost are the controls, and privacy rules apply to what judges read.",
+  "useIf": "Quality failures are silent, production inputs differ from your test set, and you need an early signal between releases.",
+  "avoidIf": "You score all traffic with an untested judge, or send regulated content to an evaluator you do not control.",
+  "explain": [
+    { "t": "p", "md": "Offline evaluations run on dataset examples that have reference outputs: regression, benchmarking and gating. **Online** evaluations run on production runs and threads, which have **no reference outputs**, so they check quality patterns, safety and anomalies with reference-free judges [[tr5]]. Foundry frames this as the post-production stage: operational metrics, continuous evaluation of sampled live traffic, scheduled evaluation on a test dataset to detect drift, scheduled red teaming and Azure Monitor alerts [[tr2]]." },
+    { "t": "flow", "title": "An online scoring loop", "direction": "h", "steps": [
+      { "title": "Sample", "md": "Pick a share of live traces by random or intelligent sampling.", "tag": "cost control" },
+      { "title": "Score", "md": "Run reference-free evaluators on the sampled runs.", "tag": "judge" },
+      { "title": "Aggregate", "md": "Track pass rates and distributions per agent and version.", "tag": "metric" },
+      { "title": "Alert", "md": "Notify on sustained drops, not single failures.", "tag": "ticket" },
+      { "title": "Learn", "md": "Add failing traces to the offline golden set.", "tag": "feedback" }
+    ] },
+    { "t": "p", "md": "In Foundry, continuous evaluation is in **preview** (checked 2026-10-13). `ContinuousEvaluationRuleAction(eval_id=..., max_hourly_runs=100)` documents a default limit of 100 runs per hour, and runs are skipped when it is reached, so raise `max_hourly_runs` if results go missing. The project's managed identity needs the Foundry User role. Live traffic can use Random or Intelligent sampling [[tr3]]. **Intelligent sampling** for trace evaluation does exact dedupe, hard filters (broken, truncated or malformed tool-call traces), aggregation and then MinHash farthest-first selection for diversity, runs on local compute with no extra model calls and takes `max_traces` (preview) [[tr4]]." },
+    { "t": "p", "md": "LangSmith sets sampling rate, filters and spend limits per attached project or dataset, not per evaluator, and its docs give 10 percent of traces as an example of controlling cost [[tr5]]. Two design points follow. A frozen test set gives a stable drift baseline, while a set built from traces moves with real users. And online scoring reads real prompts, so content capture and personal data rules apply to the judge as well as to the trace." }
+  ],
+  "whereToUse": [
+    "A production assistant where answer quality can drop after a model, prompt or data change",
+    "An agent platform that needs early warning on groundedness or task completion",
+    "A safety program that samples live conversations for policy violations",
+    "A release process that feeds failing production traces back into the golden set",
+    "Drift detection between model versions or retrieval index refreshes"
+  ],
+  "whenToUse": {
+    "use": [
+      "Score a sample of live traces, with intelligent or filtered sampling for diversity",
+      "Use a validated, cheaper judge and batch criteria where the platform allows",
+      "Alert on rolling pass rates and add failing traces to the offline set"
+    ],
+    "avoid": [
+      "Do not score every request with an expensive judge",
+      "Do not trust judge scores that were never compared with human labels",
+      "Do not send regulated content to an external judge without controls"
+    ],
+    "flips": [
+      "Content is regulated: run judges inside your boundary on redacted or referenced content",
+      "Traffic is tiny: score everything or review manually",
+      "A change has shipped: raise the sampling rate for a short window, then lower it"
+    ]
+  },
+  "alternatives": {
+    "title": "Ways to monitor quality after launch",
+    "head": ["Approach", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Continuous evaluation on sampled traffic", "Silent failures, live inputs differ from tests", "Content cannot leave a boundary", "Judge cost, preview status in Foundry [[tr3]]"],
+      ["Scheduled evaluation on a frozen set", "Stable regression and drift baseline", "Real users shift away from the set", "Misses unseen failure types"],
+      ["User feedback and review of flagged traces", "Cheap signal of real dissatisfaction", "Silent errors", "Sparse and biased"],
+      ["Shadow or canary comparison", "Comparing a candidate change on real traffic", "No second deployment available", "Duplicate traffic cost"]
+    ]
+  },
+  "pitfalls": [
+    {
+      "symptom": "Evaluation results stop appearing for some hours",
+      "cause": "Continuous evaluation hit the default limit of 100 runs per hour and skipped the rest",
+      "fix": "Raise `max_hourly_runs` or lower the sample rate [[tr3]]"
+    },
+    {
+      "symptom": "The judge cost grows faster than traffic",
+      "cause": "Every trace is scored, or many near-duplicate traces are scored",
+      "fix": "Sample, dedupe and filter, and use a cheaper judge after checking agreement [[tr4]]"
+    },
+    {
+      "symptom": "Scores look fine while users complain",
+      "cause": "The judge is uncalibrated or the sample misses the failing segment",
+      "fix": "Compare scores with human labels and stratify the sample by agent, tool and route"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "w15-t11-s1",
+      "title": "Fifty thousand conversations a day, cost sensitive",
+      "situation": "An assistant handles 50,000 conversations a day. Quality is checked only offline. Judge calls are billed per token and the budget is fixed.",
+      "constraints": ["High volume", "Fixed judge budget", "Need drift detection"],
+      "unknowns": ["How much do near-duplicate conversations dominate?", "Is there a validated cheaper judge?"],
+      "question": "How do you monitor quality online?",
+      "options": [
+        { "name": "Intelligent sampling with dedupe and diversity, a cheaper validated judge, rolling pass-rate alerts", "verdict": "best", "why": "It spends the judge budget on diverse, informative traces and tracks drift cheaply.", "tradeoff": "Sampling can miss rare failures, so keep a small random slice too." },
+        { "name": "Score every conversation", "verdict": "poor", "why": "Judge cost scales with traffic and near-duplicates add little signal.", "tradeoff": "Right for very low traffic." },
+        { "name": "Random 1 percent sample with no filters", "verdict": "good", "why": "Simple and cheap.", "tradeoff": "Misses rare segments and wastes budget on duplicates and broken traces." }
+      ],
+      "flips": [
+        { "if": "A new model or prompt has shipped", "then": "Raise the sample rate for a while." },
+        { "if": "Failures cluster in one tool or route", "then": "Stratify the sample by that dimension." }
+      ],
+      "takeaway": "Spend judge budget on diverse, informative traces."
+    },
+    {
+      "id": "w15-t11-s2",
+      "title": "Regulated conversations and an external judge",
+      "situation": "An assistant handles confidential case data. The team wants online quality scores. The only judge available today runs in an external service.",
+      "constraints": ["Regulated data", "External judge", "Need online signal"],
+      "unknowns": ["Can a judge run inside the boundary?", "Can inputs be redacted or replaced by references?"],
+      "question": "How do you proceed?",
+      "options": [
+        { "name": "Run in-boundary judges on redacted or referenced content, and keep external judges for synthetic data only", "verdict": "best", "why": "It keeps regulated text inside your controls while still giving a signal.", "tradeoff": "More engineering and possibly a weaker judge." },
+        { "name": "Send full conversations to the external judge", "verdict": "poor", "why": "It moves regulated content outside your boundary.", "tradeoff": "Acceptable for synthetic or public data." },
+        { "name": "Skip online scoring and review a small manual sample", "verdict": "good", "why": "No data movement.", "tradeoff": "Low coverage and slow feedback." }
+      ],
+      "flips": [
+        { "if": "The vendor meets your data residency and retention rules", "then": "An external judge may be acceptable under contract." },
+        { "if": "Only metadata-level checks are needed", "then": "Use deterministic checks on non-content signals." }
+      ],
+      "takeaway": "The judge reads the same sensitive text the trace would hold."
+    }
+  ],
+  "quiz": [
+    {
+      "id": "w15-t11-q1",
+      "type": "single",
+      "tag": "concept",
+      "q": "Why can online evaluation work without ground truth answers?",
+      "options": [
+        "It uses reference-free judges and safety checks on production traces",
+        "It copies answers from the golden set",
+        "It waits for users to label every conversation",
+        "It only measures latency"
+      ],
+      "answer": 0,
+      "explain": "Production runs have no reference outputs, so online scoring relies on reference-free judges and safety checks. The golden set is for offline work and user labels are sparse."
+    },
+    {
+      "id": "w15-t11-q2",
+      "type": "multi",
+      "tag": "tradeoff",
+      "q": "Which are sound ways to control the cost of online scoring? Select all that apply.",
+      "options": [
+        "Sample live traffic, using filters and dedupe",
+        "Use a cheaper judge after validating agreement with a stronger one",
+        "Score every request regardless of volume",
+        "Cap runs per hour and raise the cap only when results go missing"
+      ],
+      "answers": [0, 1, 3],
+      "explain": "Sampling with filters, a validated cheaper judge and hourly caps all control spend. Scoring every request scales cost with traffic."
+    },
+    {
+      "id": "w15-t11-q3",
+      "type": "single",
+      "tag": "bug",
+      "q": "Foundry continuous evaluation results stop appearing for several hours at peak traffic. What is the documented default that may explain it?",
+      "options": [
+        "Traces older than a day are ignored",
+        "Evaluators run only on weekends",
+        "Sampling is forced to zero above 1,000 requests",
+        "A limit of 100 runs per hour, after which runs are skipped"
+      ],
+      "answer": 3,
+      "explain": "The documented default is 100 runs per hour and runs are skipped once it is reached. Raising `max_hourly_runs` or lowering the sample rate addresses it."
+    }
+  ],
+  "flashcards": [
+    { "front": "What is the difference between offline and online evaluation?", "back": "Offline runs on datasets with reference outputs. Online runs on production traces with no references, using reference-free judges and safety checks." },
+    { "front": "What is the default cap for Foundry continuous evaluation?", "back": "100 runs per hour (`max_hourly_runs`). Runs are skipped when reached. The feature is preview as of 2026-10-13." },
+    { "front": "What does Foundry intelligent sampling do?", "back": "Dedupes, filters broken traces, aggregates and selects diverse traces with MinHash farthest-first, on local compute with no extra model calls (preview)." }
+  ],
+  "related": ["w15-t10", "w15-t06", "w14-t02", "w14-t09", "w14-t15"],
+  "refs": ["tr2", "tr3", "tr4", "tr5"]
+}

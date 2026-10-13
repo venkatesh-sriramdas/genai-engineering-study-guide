@@ -1,0 +1,104 @@
+{
+  "id": "w04-t11",
+  "order": 11,
+  "group": "Chunking",
+  "title": "Tables, code and figures",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "Tables, code and figures break text splitters. Keep each as a unit, repeat headers and signatures, and turn figures into searchable descriptions linked to the original image.",
+  "useIf": "Documents carry tables, code or diagrams and users ask about the values, functions or pictures inside them.",
+  "avoidIf": "The corpus is prose only. Do not pay for table, code and figure handling you will never retrieve.",
+  "explain": [
+    { "t": "p", "md": "A splitter that counts tokens treats a table as a stream of words. Cut it mid-row and the numbers are no longer attached to their column headers. Code split at a token limit separates a function body from its signature. A figure is not text at all unless you create text for it. The fix is to detect these elements during parsing and give each a **chunking rule of its own**." },
+    { "t": "table", "caption": "Chunking rules by content type", "head": ["Content", "Chunk unit", "Put in the chunk", "Trap"], "rows": [
+      ["Small table", "The whole table", "Caption, header row, surrounding sentence", "Splitting it inside a row"],
+      ["Large table", "Groups of rows", "Header row repeated in every chunk, caption", "Header only in the first chunk"],
+      ["Record-style table (one row is one record)", "One row per chunk", "Row as key: value pairs, table name", "Losing column meaning when rows are flattened"],
+      ["Code", "A function, method or class", "File path, signature, docstring, language", "Cutting at a token limit mid-function"],
+      ["Figure or chart", "A text description of it", "Caption, generated description, page, image URL", "Description split from its image link"]
+    ] },
+    { "t": "p", "md": "Parsing supplies the structure. Document Intelligence layout v4.0 returns Markdown with HTML tables, handwriting flags and figure regions [[tr41]]. The Content Understanding skill in AI Search outputs tables and figures as Markdown; its AI image descriptions are an opt-in preview in `2026-05-01-preview` (checked 2026-10-13) [[tr5]]. The Azure Architecture Center warns that if an image description is split across chunks, the image URL should be repeated in each chunk, and shows an analyzer that adds title, summary and keywords as metadata [[tr9]]." },
+    { "t": "callout", "kind": "tip", "title": "Numbers need exact terms", "md": "Dense embeddings are weak at exact numbers and identifiers (practice). For table-heavy corpora pair vector search with keyword search, and consider adding a short text summary of each table next to it so natural-language questions also match." },
+    { "t": "accordion", "items": [
+      { "title": "Code: chunk by symbol", "blocks": [ { "t": "p", "md": "Parse code into functions, methods and classes with a syntax-aware splitter, then store each with its file path, signature and docstring. A short header such as `src/billing/tax.py :: compute_vat(amount, region)` makes the chunk findable by name and by purpose. Very long functions can be split at inner blocks with the signature repeated." } ] },
+      { "title": "Figures: description chunks", "blocks": [ { "t": "p", "md": "Create a text chunk per meaningful figure: caption, nearby sentence and a generated description of what the chart or diagram shows, plus page and image URL for display. Skip decorative images. A vision model adds cost per image, so classify first and describe only figures that carry information." } ] }
+    ] }
+  ],
+  "whereToUse": [
+    "Financial statements, spec sheets and pricing tables where users ask for specific values",
+    "Engineering knowledge bases mixing prose, diagrams and code samples",
+    "Slide decks and reports where charts carry the key message",
+    "Any corpus parsed by a layout model that already identifies tables and figures"
+  ],
+  "whenToUse": {
+    "use": ["Questions are about values in tables, functions in code or content of charts", "A parser exposes tables and figures as separate elements", "You can store the image or table source for display"],
+    "avoid": ["Prose-only content", "Decorative images that carry no information", "No parser capable of recognising tables, so the extra rules would run on garbled text"],
+    "flips": ["Tables are huge: chunk by row groups with repeated headers and add a summary", "Numbers dominate questions: add keyword or structured lookup beside vectors", "Image volume is high: describe only classified informative figures"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Table-aware chunks (whole table or row groups)", "Questions about values and comparisons", "No parser detects tables", "Parser quality, header repetition tokens"],
+      ["Row per chunk", "Record lookups, one row is one entity", "Questions compare rows or columns", "Column context lost without key: value form"],
+      ["Flatten to text, fixed-size chunks", "Cheapest, tables are minor", "Tables carry the answers", "Numbers detached from headers"],
+      ["Vision-LLM page description", "Charts and slides carry the message", "High page volume on a tight budget", "Cost per page and description accuracy"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "The assistant quotes the wrong year's figure", "cause": "A large table was split and later chunks lost the header row, so values lack their column labels", "fix": "Repeat the header row in every row-group chunk and include the caption" },
+    { "symptom": "Searching a function name finds nothing", "cause": "Code was split by tokens, so the signature is in a different chunk or the name is absent", "fix": "Chunk by symbol and prepend path and signature to each chunk" },
+    { "symptom": "A figure description is retrieved but the image link is missing", "cause": "The description was split across chunks and only one carries the URL", "fix": "Repeat the image URL in each chunk of the description, as the Architecture Center advises" },
+    { "symptom": "Parsing code that read checkbox tokens breaks after an upgrade", "cause": "Document Intelligence v4.0 `2024-11-30` returns tables as HTML and checkboxes as ☒ and ☐", "fix": "Pin the API version and keep a parsing regression set" }
+  ],
+  "scenarios": [
+    {
+      "id": "w04-t11-s1",
+      "title": "Financial tables with comparison questions",
+      "situation": "Analysts ask for values and year-over-year comparisons from long financial statements. Tables run to many rows and columns. Keyword search also exists.",
+      "constraints": ["Large tables", "Comparison questions", "Numbers must be exact", "Hybrid retrieval available"],
+      "unknowns": ["Do questions compare rows, columns or both?", "How long is the longest table?"],
+      "question": "How do you chunk the tables?",
+      "options": [
+        { "name": "Row-group chunks with the header row and caption repeated, plus a short text summary per table", "verdict": "best", "why": "Values stay attached to column labels, comparisons within a group work and the summary helps natural-language matching.", "tradeoff": "Repeated headers add tokens and the summary needs generation." },
+        { "name": "One row per chunk in key: value form", "verdict": "good", "why": "Excellent for single-row lookups.", "tradeoff": "Comparisons across rows need several chunks and lose layout." },
+        { "name": "Flatten tables to plain text and chunk at 512 tokens", "verdict": "poor", "why": "Numbers drift away from their headers when chunks are cut.", "tradeoff": "Fine only when tables are minor and the answers lie in prose." }
+      ],
+      "flips": [
+        { "if": "Every row is an independent record such as a product", "then": "One row per chunk becomes best." },
+        { "if": "Tables are small", "then": "Keep each table whole." }
+      ],
+      "takeaway": "Keep values attached to their headers in every chunk."
+    },
+    {
+      "id": "w04-t11-s2",
+      "title": "Engineering docs with diagrams and code",
+      "situation": "An engineering portal mixes prose, architecture diagrams and code samples. Users ask how a component works and where a function lives. Image volume is high and many images are logos or icons.",
+      "constraints": ["Diagrams carry key information", "Many decorative images", "Code samples are searchable by name", "Vision cost is monitored"],
+      "unknowns": ["What share of images are informative?", "Do diagrams have captions?"],
+      "question": "What is your plan?",
+      "options": [
+        { "name": "Chunk code by symbol with path and signature, and describe only informative figures with caption, description and image URL", "verdict": "best", "why": "Functions are found by name, diagrams become searchable and vision spend goes only where information lives.", "tradeoff": "A classifier step and some missed borderline images." },
+        { "name": "Ignore figures and index text and code only", "verdict": "good", "why": "Cheapest, and captions may carry some meaning.", "tradeoff": "Answers that depend on a diagram are missing." },
+        { "name": "Describe every image with a vision model", "verdict": "poor", "why": "Pays for logos and icons, and noisy descriptions pollute results.", "tradeoff": "Right for scanned slides where every image is content." }
+      ],
+      "flips": [
+        { "if": "Most images turn out to be informative charts", "then": "Describe them all and budget for it." },
+        { "if": "Diagrams have rich captions", "then": "Use captions as the description and skip the vision call." }
+      ],
+      "takeaway": "Spend parsing and vision budget only on elements users will retrieve."
+    }
+  ],
+  "quiz": [
+    { "id": "w04-t11-q1", "type": "single", "tag": "diagnose", "q": "The assistant gives the right row's value but the wrong year. The table was split into several chunks. Most likely cause?", "options": ["Overlap is too high", "Later chunks lack the header row, so values have no column labels", "The embedding dimension is too small", "The index uses HNSW"], "answer": 1, "explain": "Chunks after the first have values without headers, so the year column is lost. Overlap, dimensions and index type are not the cause of this symptom." },
+    { "id": "w04-t11-q2", "type": "match", "tag": "concept", "q": "Match each content type to a good chunk unit.", "pairs": [ { "l": "Record-style table", "r": "One row per chunk, as key: value pairs" }, { "l": "Large table", "r": "Row groups with the header repeated" }, { "l": "Source code", "r": "One function or class with path and signature" }, { "l": "Informative chart", "r": "A text description chunk with the image URL" } ], "explain": "Each unit keeps meaning intact: records, headers, symbols and descriptions. A fixed token window would separate values from headers and signatures from bodies." },
+    { "id": "w04-t11-q3", "type": "multi", "tag": "tradeoff", "q": "Which are sound ways to reduce vision-model cost for figures?", "options": ["Classify images and describe only informative ones", "Reuse captions as descriptions when they are rich", "Describe every decorative icon for completeness", "Skip all figures even when charts hold the answers"], "answers": [0, 1], "explain": "Classification and caption reuse save calls without losing key content. Describing icons wastes spend and adds noise, and skipping everything loses answers that live in charts." }
+  ],
+  "flashcards": [
+    { "front": "How do you chunk a table that is too large for one chunk?", "back": "Split by row groups and repeat the header row and caption in every chunk so values keep their column labels." },
+    { "front": "How should code be chunked?", "back": "By symbol (function, method, class), with file path and signature attached, instead of at a fixed token limit." },
+    { "front": "What does the Azure Architecture Center say about split image descriptions?", "back": "If a description is split across chunks, repeat the image URL in each chunk so every hit can show the image." }
+  ],
+  "related": ["w04-t05", "w04-t01", "w03-t05", "w03-t03", "w05-t02", "w04-l2"],
+  "refs": ["tr5", "tr9", "tr41"]
+}

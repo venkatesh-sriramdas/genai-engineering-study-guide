@@ -1,0 +1,109 @@
+{
+  "id": "w06-t07",
+  "order": 7,
+  "group": "Azure AI Content Safety",
+  "title": "Platform guardrails in Azure OpenAI and Foundry",
+  "minutes": 9,
+  "difficulty": "advanced",
+  "summary": "A Foundry guardrail is a named set of controls. Each control names a risk, the intervention points to scan and an action. Models and agents follow different rules, and streaming mode decides when violating text can appear.",
+  "useIf": "You deploy models or agents in Microsoft Foundry and want managed filtering configured as policy, not code.",
+  "avoidIf": "Your agents run outside Foundry Agent Service or your policy needs custom taxonomies: guardrails do not cover other registered agents.",
+  "explain": [
+    { "t": "p", "md": "A **guardrail** is a named collection of controls. Each control defines a risk, the intervention points to scan (user input, tool call, tool response, output) and the response action: **annotate** or **annotate and block**. Agents support only annotate and block. Tool call and tool response controls are preview and for agents only. The system applies to all Foundry Models sold by Azure except audio transcription models, and to agents built in Foundry Agent Service, not to other agents in the Foundry Control Plane [[r1]]. New models get `Microsoft.DefaultV2` [[r2]]. Creating guardrails needs the Foundry Account Owner role, renamed from Azure AI Account Owner [[r1]]." },
+    { "t": "table", "caption": "Which risks apply to models and agents (Foundry guardrails page, checked 2026-10-13)", "head": ["Risk", "Models", "Agents (preview)"], "rows": [["Hate, sexual, self-harm, violence", "Yes", "Yes"], ["User prompt attacks, indirect attacks", "Yes", "Yes"], ["Protected material (text, code)", "Yes", "Yes"], ["PII (preview)", "Yes", "Yes"], ["Task adherence (preview)", "Yes", "Yes"], ["Spotlighting (preview)", "Yes", "No"], ["Groundedness (preview)", "Yes", "No"]] },
+    { "t": "callout", "kind": "warn", "title": "An agent guardrail replaces the model guardrail", "md": "Risks are detected in an agent using the guardrail assigned to the agent, not the one on its underlying model. With no custom guardrail the agent inherits the model's. Controls for preview risks that agents do not yet support are ignored for the agent but still apply to models that share the guardrail [[r1]]." },
+    { "t": "p", "md": "**Streaming.** The default mode buffers completion text, filters each buffer and returns content chunks, not single tokens. The **asynchronous filter** streams token by token with no added filter latency, sends annotations in separate messages with offsets, and guarantees the stop signal only within about a 1,000 character window, so some violating text can reach the user first. Changing the mode needs permission to modify content filtering policies [[r9]]. The Foundry **PII filter** scans model output only, is preview, and its block action blocks the whole output [[r8]]." }
+  ],
+  "whereToUse": [
+    "Applying one policy consistently across many model deployments and agents",
+    "Meeting an organisation's baseline for harm, jailbreak and protected-material controls",
+    "Giving security teams a named policy object to review and audit",
+    "Choosing between buffered and asynchronous streaming for a chat UI",
+    "Adding tool-level scanning to Foundry agents that call external tools"
+  ],
+  "whenToUse": {
+    "use": [
+      "Use the default guardrail as a baseline and add controls by risk",
+      "Use agent guardrails with tool call and tool response controls for agents with tools",
+      "Use buffered streaming when showing violating text even briefly is unacceptable",
+      "Use annotate mode first to measure flag rates before blocking"
+    ],
+    "avoid": [
+      "Avoid assuming a model guardrail covers an agent that has its own guardrail",
+      "Avoid enabling groundedness or Spotlighting controls and expecting them to run on agents",
+      "Avoid the asynchronous filter for audiences where early exposure is unacceptable"
+    ],
+    "flips": [
+      "Latency matters more than brief exposure and the audience is internal: asynchronous streaming is acceptable",
+      "Agents run outside Foundry Agent Service: implement guards in your own pipeline",
+      "Policy needs custom categories or languages not tested by the service: add your own classifier"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Foundry guardrails on a model", "Managed policy for model calls", "Agent tool behaviour matters", "Tool controls do not apply to models"],
+      ["Foundry guardrails on an agent (preview)", "Agent in Foundry Agent Service with tools", "Agent registered elsewhere", "Preview, block-only action, replaces model guardrail"],
+      ["Standalone Content Safety APIs", "Any app or platform, custom action logic", "You want zero code", "You orchestrate calls and actions"],
+      ["Open-source rails (NeMo, Guardrails AI)", "Custom flows, self-hosting", "You need a managed service", "Operations and evaluation burden"],
+      ["Deterministic app-side controls", "Allow lists, schemas, egress limits", "You need semantic detection", "No detection of novel content"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Tool calls are unscanned after creating an agent guardrail", "cause": "The agent's guardrail fully overrides the model's and contained no tool controls", "fix": "Add tool call and tool response controls to the agent guardrail" },
+    { "symptom": "A groundedness control seems inactive on an agent", "cause": "Groundedness and Spotlighting are not applicable to agents, so the control does not take effect", "fix": "Check the applicability table and add a separate groundedness step for agents" },
+    { "symptom": "Users briefly see disallowed text while streaming", "cause": "Asynchronous filter signals the stop only within about 1,000 characters", "fix": "Use buffered streaming for sensitive audiences, or hide text client-side until clear" },
+    { "symptom": "An agent has no guardrail despite the organisation policy", "cause": "The agent is registered in the Foundry Control Plane but not built in Foundry Agent Service", "fix": "Add guards in the agent's own pipeline or rebuild it in the service" }
+  ],
+  "scenarios": [
+    {
+      "id": "w06-t07-s1",
+      "title": "Streaming chat for teenagers",
+      "situation": "A public chat product for teenagers streams responses for a responsive feel. Showing even a few harmful sentences is unacceptable to the business. Latency complaints are secondary.",
+      "constraints": ["Young audience", "No tolerance for brief exposure", "Streaming UX wanted", "Foundry model deployment"],
+      "unknowns": ["How long are typical answers?", "Can the client delay rendering?"],
+      "question": "Which streaming mode do you choose?",
+      "options": [
+        { "name": "Default buffered streaming with filtering on each buffer", "verdict": "best", "why": "Content is filtered before chunks reach the user, so no violating text is shown.", "tradeoff": "Chunked delivery feels less smooth." },
+        { "name": "Asynchronous filter with the client hiding text until annotations arrive", "verdict": "good", "why": "Fast tokens and some protection.", "tradeoff": "You build the hiding logic, and the stop signal is only guaranteed within about 1,000 characters." },
+        { "name": "Asynchronous filter with raw rendering", "verdict": "poor", "why": "Violating text can be displayed before the stop signal.", "tradeoff": "Right for an internal tool where brief exposure is tolerable." }
+      ],
+      "flips": [
+        { "if": "Audience is internal staff and speed matters", "then": "Asynchronous streaming with logging is acceptable." },
+        { "if": "Answers are short", "then": "Non-streamed responses avoid the issue entirely." }
+      ],
+      "takeaway": "Streaming mode is a decision about tolerated exposure."
+    },
+    {
+      "id": "w06-t07-s2",
+      "title": "Foundry agent with external tools",
+      "situation": "An agent in Foundry Agent Service calls a CRM tool and a web-fetch tool. The team set guardrails on the model deployment months ago and now builds the agent. Preview features are acceptable.",
+      "constraints": ["Agent in Foundry Agent Service", "Tools return untrusted content", "Existing model guardrail", "Preview acceptable"],
+      "unknowns": ["Which tools write data?", "Do all controls the team uses apply to agents?"],
+      "question": "How do you configure the guardrail?",
+      "options": [
+        { "name": "A dedicated agent guardrail with user input, tool call, tool response and output controls using annotate and block", "verdict": "best", "why": "Agents use their own guardrail, and the tool controls are the only managed scan of tool traffic.", "tradeoff": "Preview features and block-only actions for agents." },
+        { "name": "Inherit the model's guardrail and enforce tool allow lists in code", "verdict": "good", "why": "Keeps input and output coverage and limits tool abuse deterministically.", "tradeoff": "No managed scan of tool calls and responses." },
+        { "name": "An agent guardrail containing only an output control", "verdict": "poor", "why": "It replaces the model's controls and leaves input, tool calls and tool responses unscanned.", "tradeoff": "Right only for an agent with no tools and trusted input." }
+      ],
+      "flips": [
+        { "if": "Preview is not allowed for tool controls", "then": "Use deterministic allow lists and the standalone APIs inside your tool wrapper." },
+        { "if": "The agent has no tools", "then": "Input and output controls suffice." }
+      ],
+      "takeaway": "Review the agent's effective guardrail, not the model's."
+    }
+  ],
+  "quiz": [
+    { "id": "w06-t07-q1", "type": "single", "tag": "bug", "q": "A model deployment has a strict violence control. An agent on that model has its own guardrail without a violence control. What applies to the agent?", "options": ["The model's violence control", "Both guardrails combined", "Only the agent's guardrail, so no violence control", "The default guardrail"], "answer": 2, "explain": "The agent's guardrail fully overrides the model's, so the model's violence control does not apply. Guardrails are not combined, and the default applies only when no custom guardrail is assigned.", "ref": "r1" },
+    { "id": "w06-t07-q2", "type": "single", "tag": "concept", "q": "How long is the stop signal guaranteed to arrive in the asynchronous filter?", "options": ["Before any token is sent", "Within one second", "Only after the full response", "Within about 1,000 characters"], "answer": 3, "explain": "The docs guarantee the stop signal only within about a 1,000 character window, so some violating text can be shown first. It is not before tokens, not time-based and not only at the end.", "ref": "r9" },
+    { "id": "w06-t07-q3", "type": "multi", "tag": "flip", "q": "Which controls are listed as not applicable to agents?", "options": ["Spotlighting", "Groundedness", "Task adherence", "Hate and violence"], "answers": [0, 1], "explain": "Spotlighting and groundedness apply to models only. Task adherence and the harm categories apply to both models and agents.", "ref": "r1" }
+  ],
+  "flashcards": [
+    { "front": "What is a Foundry guardrail?", "back": "A named collection of controls. Each defines a risk, intervention points to scan and an action (annotate, or annotate and block)." },
+    { "front": "Agent versus model guardrail?", "back": "An agent's guardrail fully overrides its model's. With none assigned, the agent inherits the model's. Applies only to agents built in Foundry Agent Service." },
+    { "front": "Default versus asynchronous streaming filter?", "back": "Default buffers and filters each chunk. Asynchronous sends tokens immediately and signals stop only within about 1,000 characters." }
+  ],
+  "related": ["w06-t01", "w06-t04", "w06-t05", "w06-t06", "w06-t09", "w12-t01"],
+  "refs": ["r1", "r2", "r8", "r9"]
+}

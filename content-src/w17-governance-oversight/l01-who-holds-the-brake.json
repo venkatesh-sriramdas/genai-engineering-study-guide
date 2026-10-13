@@ -1,0 +1,94 @@
+{
+  "id": "w17-l1",
+  "order": 1,
+  "title": "Who holds the brake?",
+  "kind": "problem",
+  "minutes": 20,
+  "brief": "An agent is about to act. Decide whether a person approves first, is pulled in on a trigger, reviews a sample afterwards or only sees a log, while reversibility, reach, volume and regulatory class are still open.",
+  "blocks": [
+    { "t": "h", "text": "Four brakes and their price", "level": 2 },
+    { "t": "p", "md": "Oversight is a brake with a price. **Approve before action** stops harm before it lands but adds friction and invites rubber-stamping. **Escalate on a trigger** pulls a person in only for hard cases. **Sampled review with undo** accepts that some mistakes land and relies on cheap reversal. **Log and alert only** gives accountability after the fact, not a brake.\n\nLaw and design heuristics agree on the shape. For high-risk systems Article 14 expects oversight proportionate to risk, autonomy and context: people can understand the system's limits, stay aware of automation bias, interpret output, decide not to use or override it, and interrupt it with a stop control. For biometric identification under Annex III point 1(a), two competent people must verify separately before action [[r5]]. Meta's Rule of Two says that when a session needs untrusted input, sensitive access and the ability to change state or communicate externally, require human approval [[r23]]. A reviewer who sees a tool name and a yes button is not exercising oversight, so design the screen to show the evidence and the arguments." },
+    { "t": "compare", "title": "Oversight patterns", "intro": "Each pattern names where it wins, where it loses and what flips the choice.", "options": [
+      { "name": "Approve before action", "summary": "A person approves each action, or each action above a threshold, before it runs. A two-person variant adds a second independent reviewer.", "pros": ["Stops harm before it lands", "A named approver gives clear accountability"], "cons": ["Friction and queues", "Rubber-stamping at volume"], "bestWhen": "Irreversible or externally visible actions at modest volume.", "avoidWhen": "Thousands of reversible actions a day.", "meta": [ { "k": "Friction", "v": "high" }, { "k": "Harm stopped", "v": "before it lands" } ] },
+      { "name": "Escalate on a trigger", "summary": "The agent acts alone until a rule fires: low confidence, a large amount, sensitive data or a policy hit.", "pros": ["Humans see only the hard cases", "Scales with volume"], "cons": ["Only as good as the trigger", "A narrow trigger hides costly misses"], "bestWhen": "High volume with a risky tail you can describe.", "avoidWhen": "Irreversible actions where one missed trigger is unacceptable.", "meta": [ { "k": "Friction", "v": "medium" }, { "k": "Depends on", "v": "trigger quality" } ] },
+      { "name": "Sampled review with undo", "summary": "Actions run, a sample is reviewed afterwards and mistakes are reversed.", "pros": ["Almost no friction", "Measures the real error rate"], "cons": ["Damage lands before review", "Needs a real undo"], "bestWhen": "High volume, reversible actions with low reach.", "avoidWhen": "Irreversible or externally visible actions.", "meta": [ { "k": "Friction", "v": "low" }, { "k": "Harm stopped", "v": "after the fact" } ] },
+      { "name": "Log and alert only", "summary": "Record every action and alert on anomalies, with no person in the path.", "pros": ["No friction", "A complete audit trail"], "cons": ["No brake before harm", "Gives no means to intervene, which Article 14 expects for high-risk systems"], "bestWhen": "Low-risk, reversible, internal actions.", "avoidWhen": "Anything with external reach or a regulated use.", "meta": [ { "k": "Friction", "v": "none" }, { "k": "Harm stopped", "v": "none" } ] }
+    ] },
+    { "t": "h", "text": "Set the oversight level", "level": 2 },
+    { "t": "dials", "id": "w17-l1-brake", "title": "How much human oversight does this action need?", "prompt": "Set how reversible the action is, how far it reaches, how many a day and whether the use is high-risk under the AI Act. The best brake changes.",
+      "dials": [
+        { "id": "rev", "label": "Reversibility", "values": [ { "id": "easy", "label": "Easy to undo" }, { "id": "costly", "label": "Costly to undo" }, { "id": "irrev", "label": "Irreversible" } ] },
+        { "id": "reach", "label": "Reach", "values": [ { "id": "one", "label": "One user or record" }, { "id": "many", "label": "Many people or externally visible" } ] },
+        { "id": "volume", "label": "Volume", "values": [ { "id": "low", "label": "Dozens a day" }, { "id": "high", "label": "Thousands a day" } ] },
+        { "id": "regime", "label": "Regulatory class", "values": [ { "id": "unreg", "label": "Not regulated as high-risk" }, { "id": "high", "label": "High-risk use under the AI Act" } ] }
+      ],
+      "options": [
+        { "id": "approve", "name": "Approve before action", "summary": "One person approves each action." },
+        { "id": "dual", "name": "Two-person review", "summary": "Two independent reviewers approve." },
+        { "id": "escalate", "name": "Escalate on a trigger", "summary": "A person joins when a rule fires." },
+        { "id": "sample", "name": "Sampled review with undo", "summary": "Review a sample after the fact." },
+        { "id": "audit", "name": "Log and alert only", "summary": "Record everything, alert on anomalies." }
+      ],
+      "scores": {
+        "approve": {
+          "rev": { "easy": { "s": -1, "why": "Friction for an action you can undo." }, "costly": { "s": 1, "why": "Worth a person's time." }, "irrev": { "s": 2, "why": "A human gate before the point of no return." } },
+          "reach": { "one": { "s": 0, "why": "Neutral." }, "many": { "s": 1, "why": "Visible mistakes justify the pause." } },
+          "volume": { "low": { "s": 1, "why": "A person can keep up." }, "high": { "s": -2, "why": "The queue grows and approvals become rubber stamps." } },
+          "regime": { "unreg": { "s": 0, "why": "Neutral." }, "high": { "s": 1, "why": "Article 14 expects the means to override and stop." } }
+        },
+        "dual": {
+          "rev": { "easy": { "s": -2, "why": "Heavy for reversible actions." }, "costly": { "s": 0, "why": "Reserve it for the costliest cases." }, "irrev": { "s": 2, "why": "Two independent checks before the point of no return." } },
+          "reach": { "one": { "s": -1, "why": "Overkill for one record." }, "many": { "s": 2, "why": "Many affected people justify two reviewers." } },
+          "volume": { "low": { "s": 0, "why": "Affordable only at low volume." }, "high": { "s": -2, "why": "Unaffordable at volume." } },
+          "regime": { "unreg": { "s": -1, "why": "Overkill." }, "high": { "s": 2, "why": "Some high-risk uses require two separate verifications (Article 14(5))." } }
+        },
+        "escalate": {
+          "rev": { "easy": { "s": 1, "why": "Pull a person in only when unsure." }, "costly": { "s": 1, "why": "Triggers catch the risky slice." }, "irrev": { "s": 0, "why": "A confidence trigger alone is not a gate for irreversible actions." } },
+          "reach": { "one": { "s": 1, "why": "Fine for contained mistakes." }, "many": { "s": 0, "why": "A missed trigger is visible to many." } },
+          "volume": { "low": { "s": 0, "why": "Neutral." }, "high": { "s": 2, "why": "Humans see only the hard cases." } },
+          "regime": { "unreg": { "s": 1, "why": "Reasonable." }, "high": { "s": 0, "why": "Needs documented triggers and a real override path." } }
+        },
+        "sample": {
+          "rev": { "easy": { "s": 1, "why": "Undo makes after-the-fact review safe." }, "costly": { "s": -1, "why": "Damage lands before review." }, "irrev": { "s": -2, "why": "Review arrives after the point of no return." } },
+          "reach": { "one": { "s": 1, "why": "A mistake affects one person." }, "many": { "s": -1, "why": "A bad batch spreads before anyone samples." } },
+          "volume": { "low": { "s": 0, "why": "Few items to sample." }, "high": { "s": 2, "why": "The only way to cover thousands of actions." } },
+          "regime": { "unreg": { "s": 1, "why": "Acceptable." }, "high": { "s": -1, "why": "Not sufficient alone for high-risk oversight." } }
+        },
+        "audit": {
+          "rev": { "easy": { "s": 2, "why": "Cheap when mistakes are fixable." }, "costly": { "s": -1, "why": "A log does not undo harm." }, "irrev": { "s": -2, "why": "No brake before harm." } },
+          "reach": { "one": { "s": 1, "why": "Contained mistakes are tolerable." }, "many": { "s": -2, "why": "Nobody stops a wide mistake." } },
+          "volume": { "low": { "s": 0, "why": "Neutral." }, "high": { "s": 2, "why": "Scales to any volume." } },
+          "regime": { "unreg": { "s": 1, "why": "Acceptable for low-risk uses." }, "high": { "s": -2, "why": "Logs are required but are not oversight." } }
+        }
+      },
+      "takeaway": "Reversibility and reach pick the family: approval for irreversible, sampling for reversible. Volume and regulatory class then adjust it. Say which dial moved you." },
+    { "t": "failure", "title": "Failure modes to recognise", "items": [
+      { "symptom": "Approval rate sits near 100% and decisions take two seconds.", "cause": "Volume or a bare yes or no screen has turned approval into rubber-stamping, the automation bias Article 14 warns about.", "fix": "Show arguments and evidence, seed known-bad items and track the catch rate, and move low-risk actions to sampled review." },
+      { "symptom": "A risky tool runs after a client message claims it was approved.", "cause": "An unbound or replayed approval. By default the framework authorizes a call only when the response matches a pending request in the same session.", "fix": "Keep approval binding on. If you disable it, bind approvals to request id, user and session in your own gate [[r16]]." },
+      { "symptom": "The gated tool is never called, yet the same effect happens.", "cause": "The gate sits on one tool while a second tool, an MCP server or an API reaches the same effect.", "fix": "Gate by action class at a gateway or policy layer and test every path that can produce the effect." },
+      { "symptom": "Escalations are rare and a costly mistake slips through.", "cause": "A confidence trigger that is too narrow or poorly calibrated.", "fix": "Add risk triggers (amount, external recipient, data class), audit what was not escalated and tune with seeded cases." }
+    ] },
+    { "t": "tabs", "tabs": [
+      { "label": "Python", "blocks": [
+        { "t": "code", "lang": "python", "title": "Gate a tool and read the approval request", "code": "from agent_framework import tool\n\n@tool(approval_mode=\"always_require\")\ndef issue_refund(order_id: str, amount: float) -> str:\n    \"\"\"Refund an order.\"\"\"\n    ...\n\nresult = await agent.run(\"Refund order 1182\", session=session)\nfor req in result.user_input_requests:\n    if req.function_call is not None:\n        show_reviewer(req.function_call.name, req.function_call.arguments)", "caption": "Reply with req.to_function_approval_response(True or False) in a new run on the same session." }
+      ] },
+      { "label": ".NET", "blocks": [
+        { "t": "code", "lang": "csharp", "title": "Wrap the function so it needs approval", "code": "AIFunction refund = AIFunctionFactory.Create(IssueRefund);\nAIFunction gated = new ApprovalRequiredAIFunction(refund);\n// Pass gated in the agent's tools. The response then carries\n// ToolApprovalRequestContent instead of a final answer." }
+      ] }
+    ] }
+  ],
+  "quiz": [
+    { "id": "w17-l1-q1", "type": "single", "tag": "tradeoff", "q": "An agent issues refunds. Refunds under 20 units are easy to reverse and run in the thousands each day. Refunds above 5,000 units are hard to claw back and run a few times a day. Which oversight design fits?", "options": ["Approve every refund", "Sampled review with undo for small refunds and approval for large ones", "Log and alert only for every refund", "Two-person review for every refund"], "answer": 1, "explain": "Reversibility and volume point in opposite directions across the two tiers, so you tier the brake. Approving thousands of small refunds creates a queue and rubber-stamping, logging alone gives no brake before a 5,000 unit loss, and two-person review for everything is unaffordable at volume.", "difficulty": 2, "ref": "r5" },
+    { "id": "w17-l1-q2", "type": "single", "tag": "bug", "q": "What does this setting risk unless your application enforces an equivalent binding?", "code": { "lang": "python", "code": "client.function_invocation_configuration[\"disable_approval_response_binding\"] = True" }, "options": ["Approvals expire after one minute", "Tool calls stop being gated at all", "Approvals are shared across users in the same tenant", "A fabricated or replayed response can authorize a privileged tool call"], "answer": 3, "explain": "By default a local approval authorizes a call only when it matches a pending request in the same session. Disabling the binding restores unbound behaviour, so a forged or replayed response can approve a privileged call. Gating itself stays on, there is no one-minute expiry in that setting and it does not share approvals across tenants.", "difficulty": 3, "ref": "r16" },
+    { "id": "w17-l1-q3", "type": "multi", "tag": "security", "q": "Select every control that reduces automation bias on an approval screen (design reasoning, consistent with Article 14).", "options": ["Show the arguments, retrieved evidence and a diff of the change", "Require a written reason for approvals above a threshold", "Seed known-bad items and track the reviewer catch rate", "Preselect the approve button to save time", "Track decision time and approval rate per reviewer"], "answers": [0, 1, 2, 4], "explain": "Evidence, justification, seeded errors and decision metrics all make careless approval visible or harder. A preselected approve button does the opposite and encourages the automation bias Article 14 asks overseers to resist.", "difficulty": 2, "ref": "r5" }
+  ],
+  "defend": null,
+  "refs": ["r5", "r16", "r23"],
+  "takeaways": [
+    "Reversibility and reach choose the family of brake. Volume and regulatory class adjust it.",
+    "Approval without evidence is not oversight. Show arguments, seed bad items and measure the catch rate.",
+    "Bind approvals to the pending request, the user and the session so they cannot be replayed.",
+    "Gate by action class, not by one tool, or the effect leaks through another path.",
+    "When all three Rule of Two properties are needed, a human approves."
+  ]
+}

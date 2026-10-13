@@ -1,0 +1,120 @@
+{
+  "id": "w17-t03",
+  "order": 3,
+  "group": "Oversight",
+  "title": "Audit logging and accountability",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "An audit log answers who did what, on whose authority, with which evidence and which versions. Log identifiers and decisions by default, keep content on a short, controlled leash, and make the accountability chain explicit.",
+  "useIf": "You must reconstruct an agent's action, show a regulator what the system did, or assign accountability after an incident.",
+  "avoidIf": "You plan to dump full prompts into a general log store: it copies protected content into a place with weaker access control.",
+  "explain": [
+    { "t": "p", "md": "For high-risk systems, EU AI Act Article 12 requires the ability to record events automatically over the system's lifetime, supporting risk identification, post-market monitoring and monitoring of operation [[r8]]. Deployers must keep the logs under their control for a period appropriate to the purpose, **at least six months**, unless other law, notably data protection law, provides otherwise [[tr1]]. OWASP recommends immutable retrieval logs for RAG [[tr10]]." },
+    { "t": "p", "md": "**What to log** is a trade-off between debugging value and exposure. Default to identifiers and decisions: principal, agent identity, tool, argument hashes or ids, retrieved document ids, filter and policy decisions, model, prompt and tool versions, approver and outcome. Capture content only for a bounded window with its own access control, because logs copy ACL-protected content into a store that has no ACLs (design reasoning). **Accountability** needs a chain: the **sponsor** is accountable for purpose and lifecycle, the **owner** administers configuration and credentials, the agent identity acts, and in on-behalf-of mode a delegating user is a second identity to record [[r18]] [[r27]]." },
+    { "t": "diagram", "id": "w17-t03-d1", "title": "The accountability chain in one record", "alt": "A sponsor and owner govern an agent identity. A delegating user and an approver feed an action. The action produces an immutable audit record.", "src": "flowchart LR\n  SP[Sponsor] --> AG[Agent identity]\n  OW[Owner] --> AG\n  US[Delegating user] --> AG\n  AG --> AC[Action]\n  AP[Approver] --> AC\n  AC --> LG[Audit record]" },
+    { "t": "table", "caption": "Fields of a useful audit record", "head": ["Field", "Why you need it", "Exposure risk"], "rows": [
+      ["Principal and agent identity", "Who acted and on whose behalf", "Low"],
+      ["Tool, argument hash or ids, result status", "What happened without storing content", "Low"],
+      ["Retrieved document ids, filter, policy decision", "Why the answer contained that data", "Low to medium"],
+      ["Model, prompt and tool versions", "Reproduce behaviour after changes", "Low"],
+      ["Approver, evidence shown, decision time", "Prove human oversight", "Medium"],
+      ["Prompt and response content", "Deep debugging", "High: copies protected content"]
+    ] }
+  ],
+  "whereToUse": [
+    "Agent runtimes and tool gateways, at every action",
+    "RAG retrieval layers, recording ids, principal and filter hash",
+    "Approval systems, recording who saw what evidence",
+    "High-risk systems that fall under Article 12 and Article 26",
+    "Incident response, where logs decide containment and reporting"
+  ],
+  "whenToUse": {
+    "use": ["Actions affect people, money or data", "A regulator, customer or auditor may ask for evidence", "Several identities share responsibility for one action", "You need to prove an approval happened"],
+    "avoid": ["Logging raw content to a broadly readable store", "Logging only successes", "Mutable logs that the acting system can edit"],
+    "flips": ["Debugging needs content: capture it for a bounded window under its own ACL, then delete", "Data-subject deletion applies: store ids and hashes, not personal content", "Sampling would drop incidents: keep full audit records and sample only debug traces"]
+  },
+  "alternatives": {
+    "title": "What to put in the log",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Identifiers and decisions only", "Audit and compliance, privacy sensitive", "Debugging needs the exact prompt", "Harder root cause analysis"],
+      ["Content with redaction", "Debugging with PII masked", "Redaction misses secrets", "Partial exposure, tooling cost"],
+      ["Full content under strict access", "Short investigation windows", "Long retention or broad readers", "Copies protected data, deletion duties"],
+      ["No content logging", "Highest privacy need", "Forensics or regulator evidence", "Telemetry gaps in incidents"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A log search returns confidential documents to the wrong people", "cause": "Prompts and retrieved text were logged into a store without document-level access control", "fix": "Log ids and decisions, restrict content logs to a bounded window and a small group, and set retention" },
+    { "symptom": "Nobody can tell which agent or user caused an action", "cause": "Only the service principal was logged, not the delegating user or approver", "fix": "Record agent identity, delegating user, sponsor and approver on every action" },
+    { "symptom": "The incident window is missing from the logs", "cause": "Head sampling dropped the trace, or retention was too short", "fix": "Keep audit records unsampled and retain at least the legal minimum for your class" },
+    { "symptom": "An investigator cannot trust the log", "cause": "The acting system can alter its own records", "fix": "Write to an append-only or immutable store with separate access" }
+  ],
+  "scenarios": [
+    {
+      "id": "w17-t03-s1",
+      "title": "A high-risk system in the EU",
+      "situation": "A deployer runs a system it has classified as high-risk. A regulator may ask what the system did on a given date.",
+      "constraints": ["Article 12 and 26 apply", "Data protection law applies", "Records must be tamper-resistant"],
+      "unknowns": ["Which logs are under the deployer's control and which the provider keeps?", "What retention period does the purpose justify?"],
+      "question": "What do you keep?",
+      "options": [
+        { "name": "Automatically generated event logs for at least six months in an immutable store, with ids and decisions, plus a documented retention rule", "verdict": "best", "why": "It meets the Article 26 floor and supports Article 12 purposes while limiting personal data.", "tradeoff": "Storage and governance cost, and some debugging detail is not available." },
+        { "name": "Keep full prompts and outputs forever", "verdict": "poor", "why": "It collides with data-protection duties and enlarges the breach surface.", "tradeoff": "Right only where a rule demands content retention and access is tightly controlled." },
+        { "name": "Keep one month of logs to save cost", "verdict": "poor", "why": "It is below the six-month minimum unless other law provides otherwise.", "tradeoff": "Shorter retention may be right for non-regulated systems." }
+      ],
+      "flips": [
+        { "if": "The system is not high-risk", "then": "Choose retention by risk and business need." },
+        { "if": "Another law sets a different period", "then": "Follow it, and document the reason." }
+      ],
+      "takeaway": "Six months is the floor for deployers of high-risk systems."
+    },
+    {
+      "id": "w17-t03-s2",
+      "title": "An HR copilot over sensitive documents",
+      "situation": "An internal copilot answers questions over permissioned HR documents. Engineers want full prompt logs to debug retrieval.",
+      "constraints": ["Documents are access-controlled", "Staff data is sensitive", "Debugging is a real need"],
+      "unknowns": ["Who can read the log store?", "Can a debug session be time boxed?"],
+      "question": "What do you log?",
+      "options": [
+        { "name": "Ids, principal, filter hash and decisions by default; content only for a time-boxed debug window with its own ACL", "verdict": "best", "why": "It keeps the audit trail and bounds the content copy.", "tradeoff": "Some debugging needs a ticket and a window." },
+        { "name": "Log everything to the shared platform log", "verdict": "poor", "why": "It copies protected HR content into a store with broader readers.", "tradeoff": "Fine only for non-sensitive synthetic data." },
+        { "name": "Log nothing about content or retrieval", "verdict": "good", "why": "Maximum privacy.", "tradeoff": "No evidence of what was retrieved, which weakens incident response." }
+      ],
+      "flips": [
+        { "if": "Debugging happens on synthetic data", "then": "Full logging is safe." },
+        { "if": "A leak is suspected", "then": "Extend the content window under approval." }
+      ],
+      "takeaway": "Ids by default, content by exception."
+    },
+    {
+      "id": "w17-t03-s3",
+      "title": "Many agents, one fleet",
+      "situation": "A fleet of agents acts on behalf of users and also autonomously. A customer disputes an action taken yesterday.",
+      "constraints": ["Mixed on-behalf-of and autonomous modes", "Multi-agent hand-offs", "Sponsors and owners differ"],
+      "unknowns": ["Is there a correlation id across hand-offs?", "Does the record include the approver?"],
+      "question": "What must the record show?",
+      "options": [
+        { "name": "Agent identity, delegating user if any, sponsor, approver, tool, argument ids, versions and a correlation id across hand-offs", "verdict": "best", "why": "It lets you attribute the action to people and versions and replay the chain.", "tradeoff": "More fields to populate and protect." },
+        { "name": "Service principal and timestamp only", "verdict": "poor", "why": "Many agents share it, so accountability is lost.", "tradeoff": "Enough for a single trivial service." },
+        { "name": "Free-text log lines per agent", "verdict": "good", "why": "Easy to start.", "tradeoff": "Hard to query, join or prove." }
+      ],
+      "flips": [
+        { "if": "No human approvers exist", "then": "Record the policy decision that allowed the action." },
+        { "if": "Only one agent exists", "then": "A simpler record is enough." }
+      ],
+      "takeaway": "An unattributed action is an unaccountable action."
+    }
+  ],
+  "quiz": [
+    { "id": "w17-t03-q1", "type": "numeric", "tag": "numeric", "q": "Under Article 26(6), what is the minimum period in months that deployers of high-risk systems keep automatically generated logs under their control, unless other law provides otherwise?", "answer": 6, "tolerancePct": 0, "unit": "months", "explain": "Article 26(6) says a period appropriate to the intended purpose, of at least six months, unless Union or national law (in particular data protection law) provides otherwise [[tr1]].", "difficulty": 1 },
+    { "id": "w17-t03-q2", "type": "multi", "tag": "tradeoff", "q": "Which fields belong in a default audit record without copying protected content?", "options": ["Principal and agent identity", "Retrieved document ids and filter decision", "Full retrieved passages", "Model and prompt versions"], "answers": [0, 1, 3], "explain": "Ids, decisions and versions support audit without copying content. Full passages belong only in a bounded, controlled debug window.", "difficulty": 2 },
+    { "id": "w17-t03-q3", "type": "single", "tag": "security", "q": "Why can verbose prompt logging create a data leak?", "options": ["Logs copy ACL-protected content into a store with weaker access control", "Logs slow down the model", "Logs change model weights"], "answer": 0, "explain": "The risk is access, not performance. Anyone with log access can read content they could not read in the source system.", "difficulty": 1 }
+  ],
+  "flashcards": [
+    { "front": "What do Article 12 and Article 26(6) require?", "back": "Art 12: automatic event recording over the lifetime of high-risk systems. Art 26(6): deployers keep logs under their control at least six months unless other law differs." },
+    { "front": "Who is accountable in the Entra Agent ID model?", "back": "The sponsor is accountable for purpose and lifecycle, with at least one per agent identity. The owner administers configuration and credentials." },
+    { "front": "Default content policy for audit logs?", "back": "Ids and decisions by default. Content only for a bounded window with its own access control." }
+  ],
+  "related": ["w17-t01", "w17-t02", "w17-t09", "w17-l5", "w07-t16", "w15-t06"],
+  "refs": ["r8", "r18", "r27", "tr1", "tr10"]
+}

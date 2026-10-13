@@ -1,0 +1,129 @@
+{
+  "id": "w18-t09",
+  "order": 9,
+  "group": "Specialised agents",
+  "title": "Computer-use and browser agents",
+  "minutes": 8,
+  "difficulty": "advanced",
+  "summary": "A model looks at screenshots and drives a browser or desktop by clicking and typing, or by writing automation code. It reaches software with no API, and it reads untrusted screen content while holding the controls.",
+  "useIf": "A task lives behind a user interface that has no API or MCP tool, and you can run the agent in an isolated environment with confirmations.",
+  "avoidIf": "An API, MCP tool or script already does the job, or the environment holds sensitive data or logged-in sessions the agent should not reach.",
+  "explain": [
+    { "t": "p", "md": "In **computer use** the model sees screenshots and other tool results, decides what to do next, and your application executes the action. You provide the environment: the model does not run anything itself [[r36]]. The loop is screenshot, action, screenshot, bounded by a step limit." },
+    { "t": "diagram", "id": "w18-t09-d1", "title": "Computer-use loop with a policy gate", "alt": "A screenshot goes to the model, which proposes an action. A policy gate checks the allow-list and asks for confirmation on consequential steps. Approved actions run in a sandbox, which produces a new screenshot.", "src": "flowchart LR\n  S[Screenshot] --> M[Model]\n  M --> P[Proposed action]\n  P --> G{Policy gate}\n  G -->|allowed| X[Run in sandbox]\n  G -->|consequential| H[Human confirm]\n  H --> X\n  X --> S" },
+    { "t": "p", "md": "The gate is where you enforce policy. The model proposes an action, but your code decides whether it runs: it checks the target against an allow-list, asks a person to confirm anything consequential such as paying, deleting or sending, and stops the run when a step or time budget is spent. The model never holds the keyboard directly." },
+    { "t": "table", "caption": "Vendor paths, checked 2026-10-13", "head": ["Vendor", "Path", "Status and notes"], "rows": [
+      ["OpenAI", "Code execution (model writes Playwright or PyAutoGUI scripts) or the `computer` tool with structured mouse and keyboard actions", "For GPT-6 Astra OpenAI recommends code execution. The `computer` tool stays supported. If you already expose UI operations as function or remote MCP tools, you can keep that [[r36]]"],
+      ["Claude", "`computer_toolset_20260801` client toolset (17 member tools), plus a separate browser use tool for web-only tasks", "GA on the Claude API and Google Cloud, beta on Microsoft Foundry and Bedrock. Claude 5.5 and later reject `computer_20251124` and `computer_20250124` on the Claude API [[r35]]"],
+      ["Foundry computer use tool", "`computer-use-preview` model, screenshot and action loop in a VM or sandbox", "Preview, no SLA, not recommended for production, access by application form, not supported in network-isolated Foundry [[r34]] [[r27]]"]
+    ] },
+    { "t": "p", "md": "**Safe use** follows the same checklist across vendors: isolate the environment, allow-list sites and apps, treat screen content as untrusted input, confirm consequential actions and bound the number of steps [[r36]]. Foundry's page warns of prompt injection risk and advises running on a VM or sandbox with no access to sensitive data [[r34]]. Prefer an API or MCP tool when one exists, and prefer code execution or a browser-only tool over full desktop control for web tasks." }
+  ],
+  "whereToUse": [
+    "Back-office or legacy applications with no API where manual data entry is the only route",
+    "Testing user flows and filling forms in staging environments",
+    "Web research and form tasks, ideally through browser automation in an isolated browser",
+    "Prototyping automation before an API or integration is built"
+  ],
+  "whenToUse": {
+    "use": [
+      "No API or MCP tool exists and the work is repetitive enough to automate",
+      "The agent runs in a VM or sandbox with no sensitive data or personal sessions",
+      "Consequential actions (submit, pay, delete, send) need human confirmation"
+    ],
+    "avoid": [
+      "Running on a person's own logged-in desktop or browser profile",
+      "Production workloads that need an SLA while using a preview tool",
+      "Environments with network isolation on Foundry, where the tool is unsupported"
+    ],
+    "flips": [
+      "An API or MCP tool appears: switch to it, since it is faster, cheaper and safer",
+      "Web-only task: use browser automation code instead of pixel-level desktop control",
+      "Your vendor retires a tool version: update the tool name, as Claude 5.5 and later reject the older versions"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Direct API or MCP tool", "One exists", "The app has no API", "Integration work, but lowest risk"],
+      ["Code execution against a browser (Playwright)", "Web tasks where scripts can batch actions", "Heavy native desktop apps", "Needs an isolated runtime and good scripts"],
+      ["Computer tool (structured actions)", "Pixel-level control across any UI", "You can script or call an API", "Slow loop, many screenshots, injection exposure"],
+      ["Browser-only tool", "Web-only tasks", "Native desktop software", "Narrower scope than full desktop control"],
+      ["Scripted RPA", "Stable UI and fixed steps", "The UI changes or steps vary", "Brittle to change, no reasoning"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "The agent clicks something it was never asked to do", "cause": "Screen text or a page carried instructions and the model treated them as commands (prompt injection)", "fix": "Treat screen content as untrusted, allow-list targets, confirm consequential actions and keep the environment free of sensitive data." },
+    { "symptom": "The run loops for a long time and costs a lot", "cause": "No step cap, or the page changed and the agent keeps retrying", "fix": "Bound steps, set time budgets and stop with a clear failure state." },
+    { "symptom": "Calls start failing after a model upgrade", "cause": "The older tool version is rejected by newer models, for example `computer_20251124` on Claude 5.5 and later", "fix": "Pin tool versions to the model and run a smoke test on every upgrade." }
+  ],
+  "scenarios": [
+    {
+      "id": "w18-t09-s1",
+      "title": "Legacy desktop app, no API",
+      "situation": "Staff re-key about 200 records a day into a legacy desktop application with no API. Data is internal and moderately sensitive. Mistakes are fixable but costly.",
+      "constraints": ["No API", "Moderate sensitivity", "Daily volume is steady"],
+      "unknowns": ["Can the app run in a VM with a service account?", "Which actions are irreversible?"],
+      "question": "How do you automate it?",
+      "options": [
+        { "name": "Run the agent on an employee's logged-in desktop", "verdict": "poor", "why": "It exposes personal sessions and data to an agent reading untrusted screen content.", "tradeoff": "Acceptable only on a dedicated throwaway machine with no personal access." },
+        { "name": "Scripted RPA", "verdict": "good", "why": "Predictable for a stable UI.", "tradeoff": "Breaks on UI changes and cannot handle variations." },
+        { "name": "Computer use in a dedicated VM, with an allow-list, a step limit and confirmation before submit", "verdict": "best", "why": "It follows the safety checklist: isolate, allow-list, bound steps and confirm consequential actions.", "tradeoff": "Slow loop and setup effort, and you still sample outputs for errors." }
+      ],
+      "flips": [
+        { "if": "A vendor API appears", "then": "Switch to it." },
+        { "if": "Errors are expensive and irreversible", "then": "Keep a human on every submit." }
+      ],
+      "takeaway": "No API does not mean no controls. Isolate, allow-list and confirm."
+    },
+    {
+      "id": "w18-t09-s2",
+      "title": "Web research and form filling",
+      "situation": "An agent gathers pricing from public sites and fills a quote form on one partner site. Everything is web based and no credentials are involved for the research part.",
+      "constraints": ["Web-only", "Public pages are untrusted", "Cost per task matters"],
+      "unknowns": ["Do the sites block automation?", "Is the partner form behind a login?"],
+      "question": "Which approach fits?",
+      "options": [
+        { "name": "Code execution driving an isolated browser", "verdict": "best", "why": "OpenAI recommends code execution for GPT-6 Astra, and scripts can combine actions and loops in one call for web tasks.", "tradeoff": "Needs a sandboxed runtime and script review." },
+        { "name": "Full desktop control on an admin workstation", "verdict": "poor", "why": "It gives a web-reading agent a machine with broad access.", "tradeoff": "Right only for a native app that has no browser route, and then in a VM." },
+        { "name": "The pixel-level computer tool in a VM", "verdict": "good", "why": "Works across any page.", "tradeoff": "Slower, more screenshots and more tokens than scripted browser control." }
+      ],
+      "flips": [
+        { "if": "Sites expose an API", "then": "Use it." },
+        { "if": "The partner form needs login", "then": "Add credential isolation and confirmation before submit." }
+      ],
+      "takeaway": "For web tasks, scripted browser control beats full desktop control."
+    },
+    {
+      "id": "w18-t09-s3",
+      "title": "Production target with an SLA",
+      "situation": "A team wants computer use in production. Their contract demands a supported service with an SLA. They are evaluating the Foundry tool.",
+      "constraints": ["SLA required", "Production traffic", "Must run behind security review"],
+      "unknowns": ["Is a GA path available in their cloud?", "Is network isolation also required?"],
+      "question": "How do you proceed?",
+      "options": [
+        { "name": "Ship the Foundry computer use tool", "verdict": "poor", "why": "It is preview with no SLA and not recommended for production.", "tradeoff": "Fine for a proof of concept and for learning the loop." },
+        { "name": "Use a GA path such as Claude's `computer_toolset_20260801` on the Claude API, or code execution, in your own sandbox", "verdict": "best", "why": "The Claude toolset is GA on the Claude API and the sandbox is under your control.", "tradeoff": "A different vendor surface to secure, and you check data and residency terms." },
+        { "name": "Wait for a GA Foundry tool", "verdict": "good", "why": "Keeps one platform.", "tradeoff": "No automation until then, and the sources checked give no GA date." }
+      ],
+      "flips": [
+        { "if": "Network isolation on Foundry is also required", "then": "Computer use is unsupported there. Use a separate, controlled sandbox." },
+        { "if": "An API appears", "then": "Drop computer use." }
+      ],
+      "takeaway": "Check the status label before production. Preview means no SLA."
+    }
+  ],
+  "quiz": [
+    { "id": "w18-t09-q1", "type": "single", "tag": "concept", "q": "For GPT-6 Astra, what integration does OpenAI recommend for computer use?", "options": ["Use the `computer` tool only, with structured mouse and keyboard actions", "Code execution with Playwright or PyAutoGUI", "Manual screenshots", "Avoid computer use"], "answer": 1, "explain": "OpenAI recommends code execution for GPT-6 Astra, and the `computer` tool remains supported as an alternative.", "ref": "r36" },
+    { "id": "w18-t09-q2", "type": "multi", "tag": "security", "q": "Which controls belong in a computer-use deployment?", "options": ["Isolate the environment in a VM or sandbox", "Allow-list sites and apps", "Treat on-screen text as trusted instructions", "Confirm consequential actions and bound steps"], "answers": [0, 1, 3], "explain": "Isolation, allow-lists, confirmation and step bounds are the standard checklist. Screen content is untrusted input and must not be treated as instructions.", "ref": "r36" },
+    { "id": "w18-t09-q3", "type": "single", "tag": "flip", "q": "A Foundry project uses network isolation. Can the Foundry computer use tool run there as of 2026-10-13?", "options": ["Yes, once a private endpoint is configured on the project", "Only with a CMK", "No, computer use is not supported under isolation", "Only in the Standard setup"], "answer": 2, "explain": "Browser automation and computer use are not supported in network-isolated Foundry. Private endpoints, CMK and the Standard setup do not change that.", "ref": "r27" }
+  ],
+  "flashcards": [
+    { "front": "What is the computer-use loop?", "back": "Screenshot, model proposes an action, your app executes it in an isolated environment, new screenshot. Bound it with a step limit and confirmations." },
+    { "front": "What is the status of the Foundry computer use tool?", "back": "Preview, no SLA, not recommended for production, access by application form, unsupported under network isolation (checked 2026-10-13)." },
+    { "front": "What do Claude 5.5 and later do with old computer tool versions?", "back": "They reject `computer_20251124` and `computer_20250124` on the Claude API. Use `computer_toolset_20260801`, GA on the Claude API." }
+  ],
+  "related": ["w18-l4", "w18-t08", "w07-t17", "w11-t06", "w17-t02", "w08-t17"],
+  "refs": ["r27", "r34", "r35", "r36"]
+}

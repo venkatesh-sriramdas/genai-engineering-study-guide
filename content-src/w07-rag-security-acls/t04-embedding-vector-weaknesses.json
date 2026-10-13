@@ -1,0 +1,118 @@
+{
+  "id": "w07-t04",
+  "order": 4,
+  "group": "Threats",
+  "title": "Embedding and vector weaknesses",
+  "minutes": 7,
+  "difficulty": "advanced",
+  "summary": "Vector stores add risks of their own: cross-tenant leaks from missing filters, text recovered from embeddings, and poisoned vectors. OWASP covers them as LLM08.",
+  "useIf": "Your index holds embeddings of private text, or several tenants and apps share one vector store.",
+  "avoidIf": "You are choosing an ACL pattern. Use the access control topics and treat this as the threat background.",
+  "explain": [
+    { "t": "p", "md": "OWASP LLM08:2025 names four weaknesses: unauthorized access and data leakage, cross-context leaks in multi-tenant shared vector stores, embedding inversion attacks and data poisoning [[r2]]. The common thread is that **similarity is not authorization**: a nearest-neighbour search returns what is close to the query, and it has no idea who is asking." },
+    { "t": "h", "level": 3, "text": "Inversion: vectors are not anonymised text" },
+    { "t": "p", "md": "A text embedding looks like opaque numbers, but Vec2Text recovered 92% of 32-token inputs exactly from embeddings produced by two embedding models, and it recovered full names from a dataset of clinical notes [[tr7]]. Treat vectors with the same classification, access rules and deletion rules as the source text." },
+    { "t": "h", "level": 3, "text": "Cross-tenant exposure: a missing filter is a breach" },
+    { "t": "p", "md": "In a shared store the only wall is a filter on every query. The Azure Architecture Center says to apply a tenant discriminator and a user-level filter on every retrieval request, including those made inside an agent loop, and to put an API layer in front so other code cannot query the stores directly [[r22]]." },
+    { "t": "table", "caption": "Weakness, mechanism and first control", "head": ["Weakness", "Mechanism", "First control"], "rows": [
+      ["Cross-context leak", "A query without the tenant or user filter hits the shared index", "Gateway derives the filter from the authenticated request"],
+      ["Inversion", "An attacker with vector access reconstructs text", "Same access class and encryption as the source; limit raw vector export"],
+      ["Poisoned vectors", "Crafted chunks sit close to target queries", "Source authentication, provenance, immutable logs [[r2]]"],
+      ["Residual copies", "Deleted source text still has vectors, replicas or exports", "Delete by source id everywhere, including exports and old index versions"]
+    ] },
+    { "t": "callout", "kind": "note", "title": "Design reasoning", "md": "Result counts, scores and timing can also reveal that a hidden document exists. No source above measures this for RAG, so test whether your API exposes raw scores or counts to callers who should not learn that." }
+  ],
+  "whereToUse": [
+    "Shared vector stores used by several applications or tenants",
+    "Pipelines that export embeddings to analytics, evaluation or partner systems",
+    "Retention and deletion reviews of an index that holds personal or confidential text",
+    "Agent tools that accept a tenant id or filter as an argument"
+  ],
+  "whenToUse": {
+    "use": ["Several tenants or apps share a store", "Embeddings leave the retrieval service", "A deletion or offboarding obligation exists"],
+    "avoid": ["Believing vectors are anonymous because they look like numbers", "Letting the model or the client supply the tenant filter", "Exporting raw vectors to broad-access analytics stores"],
+    "flips": ["One tenant per store with physical isolation: cross-tenant risk drops but inversion and deletion remain", "Embeddings never leave the service and the corpus is public: weigh integrity more than confidentiality"]
+  },
+  "alternatives": {
+    "title": "Isolation choices for vector data",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Shared store, mandatory filter behind a gateway", "Many small tenants", "A code path skips the gateway", "One bug exposes every tenant"],
+      ["Store or index per tenant", "Few tenants, strict isolation", "Thousands of small tenants", "Service limits and operations cost"],
+      ["Encrypt vectors and limit export", "Vectors leave the retrieval service", "You must search them as plaintext", "Key management and slower analytics"],
+      ["Treat vectors as public", "The source text is public", "Any private text was embedded", "Inversion recovers the text"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A tenant sees another tenant's snippet", "cause": "A tool or batch job queried the index without the tenant filter", "fix": "Route every query through one API layer that injects the filter from the authenticated identity" },
+    { "symptom": "Embeddings sit in a shared analytics bucket", "cause": "Vectors were assumed harmless", "fix": "Give them the source classification, or drop them from exports" },
+    { "symptom": "Deleted documents still influence answers", "cause": "Old index versions, replicas or caches keep the vectors", "fix": "Delete by source id across every copy and test with a canary document" }
+  ],
+  "scenarios": [
+    {
+      "id": "w07-t04-s1",
+      "title": "Embeddings exported to analytics",
+      "situation": "A platform team wants to copy all document embeddings into a shared analytics warehouse for clustering. The text stays in the secured store. The team calls the vectors harmless numbers.",
+      "constraints": ["Source text is confidential", "Warehouse has broad read access", "No deletion process for exports"],
+      "unknowns": ["Which classification do the source documents carry?", "Who can read the warehouse?"],
+      "question": "How do you respond?",
+      "options": [
+        { "name": "Export vectors but remove document ids", "verdict": "poor", "why": "Removing ids does not stop inversion of the vector itself.", "tradeoff": "Acceptable for vectors made from public text." },
+        { "name": "Export only low-dimensional projections for clustering", "verdict": "good", "why": "Lowers exposure for analytics that do not need full vectors.", "tradeoff": "Quality drops and you must verify the projection is not invertible for your data." },
+        { "name": "Treat vectors as the same classification as the text and keep them inside the same access boundary", "verdict": "best", "why": "Inversion research shows embeddings can reconstruct text, so exposure of vectors is exposure of content.", "tradeoff": "Analytics must run inside the secured store or on a reduced set." }
+      ],
+      "flips": [
+        { "if": "The source text is public", "then": "Export is fine and only integrity matters." },
+        { "if": "The warehouse has the same access controls as the source", "then": "Export is acceptable, with deletion propagated." }
+      ],
+      "takeaway": "Classify embeddings like their source text."
+    },
+    {
+      "id": "w07-t04-s2",
+      "title": "Tenant id in a tool argument",
+      "situation": "A multi-tenant SaaS assistant uses a shared index. The retrieval tool takes a tenant id as an argument that the model fills in from conversation context.",
+      "constraints": ["Shared index", "Thousands of small tenants", "Model chooses tool arguments"],
+      "unknowns": ["Is there an API layer in front of the index?", "Can users influence the context the model sees?"],
+      "question": "How do you fix the design?",
+      "options": [
+        { "name": "Add a system prompt rule to always use the current tenant", "verdict": "poor", "why": "A prompt rule is not enforcement, and injection can override it.", "tradeoff": "Fine as guidance on top of enforced filters." },
+        { "name": "Remove the argument: a gateway derives tenant and user filters from the authenticated request and injects them", "verdict": "best", "why": "The model can be steered by documents and users, so it must never choose the filter.", "tradeoff": "Tools lose flexibility for cross-tenant admin queries, which need a separate path." },
+        { "name": "Validate the tenant id the model supplies against the session", "verdict": "good", "why": "Catches mismatches.", "tradeoff": "Still trusts the model to supply the other filter fields and needs careful coverage." }
+      ],
+      "flips": [
+        { "if": "A few tenants need hard isolation", "then": "Give them a dedicated index or service and route by tenant." },
+        { "if": "Agents call several tools in a loop", "then": "Apply the same injected filter in every tool call." }
+      ],
+      "takeaway": "The model never supplies an authorization filter."
+    },
+    {
+      "id": "w07-t04-s3",
+      "title": "Offboarding a customer",
+      "situation": "A customer leaves and the contract requires removal of all their data within thirty days. Their chunks sit in a shared index, in a nightly export and in a cache.",
+      "constraints": ["Contractual deletion deadline", "Shared index", "Export and cache copies exist"],
+      "unknowns": ["Is there a source id on every chunk?", "How long do caches and exports live?"],
+      "question": "What do you do?",
+      "options": [
+        { "name": "Delete by tenant id across index, exports, caches and old index versions, then verify with a canary query", "verdict": "best", "why": "Vectors and cached answers are copies of the customer's data.", "tradeoff": "Needs tenant ids on every copy and a tested delete path." },
+        { "name": "Delete from the live index only", "verdict": "poor", "why": "Exports and caches keep serving or storing the data.", "tradeoff": "Enough only when no other copy exists." },
+        { "name": "Rebuild the whole index without the tenant", "verdict": "good", "why": "Clean result.", "tradeoff": "Expensive for a shared index and still misses exports and caches." }
+      ],
+      "flips": [
+        { "if": "Each tenant has a dedicated index", "then": "Deleting the index gives fast, complete offboarding for that store." },
+        { "if": "Retention rules require proof", "then": "Keep the delete log, not the content." }
+      ],
+      "takeaway": "Deletion must reach every copy of the vector and the text."
+    }
+  ],
+  "quiz": [
+    { "id": "w07-t04-q1", "type": "single", "tag": "security", "q": "Why should embeddings of confidential documents carry the same classification as the documents?", "options": ["Vector databases are slow to delete from", "Inversion work has recovered exact text and personal names from embeddings", "Embeddings are always larger than the text", "Cosine similarity reveals the user's identity"], "answer": 1, "explain": "Vec2Text recovered 92% of 32-token inputs exactly and recovered full names from clinical notes. Size, deletion speed and identity leakage are unrelated to the classification argument.", "ref": "tr7" },
+    { "id": "w07-t04-q2", "type": "multi", "tag": "tradeoff", "q": "Which are OWASP LLM08 mitigations for a shared vector store? Choose all that apply.", "options": ["Permission-aware stores with strict logical partitioning", "Source authentication and data validation", "Raising the embedding dimension", "Immutable retrieval logs"], "answers": [0, 1, 3], "explain": "OWASP lists permission-aware stores with logical and access partitioning, data validation with source authentication, tagging and classification, and immutable retrieval logs. A larger dimension does not address leakage.", "ref": "r2" }
+  ],
+  "flashcards": [
+    { "front": "What does \"similarity is not authorization\" mean?", "back": "Nearest-neighbour search returns what is close to the query and knows nothing about the caller. Permission checks must be added to the query or applied by another system." },
+    { "front": "What did Vec2Text show?", "back": "Text embeddings can be inverted: 92% of 32-token inputs recovered exactly from embeddings of two models, and full names from clinical notes. Treat vectors as sensitive as the text." },
+    { "front": "What does the Architecture Center advise for shared RAG stores?", "back": "A tenant discriminator and user-level filter on every retrieval, an API layer in front of the stores, filters inside agent loops too, and access logs of grounding data." }
+  ],
+  "related": ["w07-t03", "w07-t09", "w07-t06", "w04-t18"],
+  "refs": ["r2", "r22", "tr7"]
+}

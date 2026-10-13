@@ -1,0 +1,99 @@
+{
+  "id": "w04-t07",
+  "order": 7,
+  "group": "Chunking",
+  "title": "Proposition chunking",
+  "minutes": 7,
+  "difficulty": "advanced",
+  "summary": "An LLM rewrites each passage into atomic, self-contained facts (propositions) and each one is embedded on its own. Matching gets very precise, at the cost of an LLM pass at ingest and many more vectors.",
+  "useIf": "Questions target individual facts about named entities, the corpus is stable and ingest budget allows an LLM pass.",
+  "avoidIf": "The corpus is huge or volatile, or the exact original wording must be the evidence and a rewrite is a risk.",
+  "explain": [
+    { "t": "p", "md": "A **proposition** is the smallest piece of text that states one fact and still makes sense alone. It names its subject instead of using pronouns, and it carries enough context to be understood without the passage. The Dense X Retrieval paper tested retrieval at passage, sentence and proposition granularity. Indexing propositions beat passage-level and sentence-level units for dense retrieval, and fine-grained units helped downstream question answering under a fixed prompt budget [[tr13]]." },
+    { "t": "diagram", "id": "w04-t07-d1", "title": "Proposition pipeline", "alt": "A passage is sent to an LLM that splits it into atomic, decontextualised propositions. Each proposition is embedded and stored with a link to its source passage. At query time the best propositions are matched and the source passage can be returned.", "src": "flowchart LR\n  A[\"Passage\"] --> B[\"LLM: split into facts\"]\n  B --> C[\"Resolve pronouns and add names\"]\n  C --> D[\"Embed each proposition\"]\n  D --> E[\"Store with source passage id\"]\n  E --> F[\"Match, then return source\"]" },
+    { "t": "p", "md": "Propositions are usually generated with a prompt that asks the model to split a passage into minimal, standalone statements, replace pronouns with the entities they refer to and keep each statement faithful to the source. The Dense X authors fine-tuned a text generation model (the 'Propositionizer', distilled from GPT-4 outputs) to segment Wikipedia, which is one way to lower the per-passage cost [[tr13]]. Either way, the proposition text is a new artefact that you must version and verify." },
+    { "t": "table", "caption": "One passage at three granularities", "head": ["Unit", "Example", "Self-contained?"], "rows": [
+      ["Passage", "The Eiffel Tower, built for the 1889 World's Fair, was designed by the company of Gustave Eiffel. It remains a landmark.", "Yes, but covers several facts"],
+      ["Sentence", "It remains a landmark.", "No, 'It' has no referent"],
+      ["Propositions", "The Eiffel Tower was built for the 1889 World's Fair. The Eiffel Tower was designed by the company of Gustave Eiffel. The Eiffel Tower remains a landmark.", "Yes, one fact each"]
+    ] },
+    { "t": "p", "md": "The trade-offs are real. Every passage goes through an LLM call, so ingest cost and time scale with the corpus. The index holds many more vectors than passage chunks. A rewrite can introduce errors or drop a qualifier, so keep a link from each proposition to its source span and spot-check a sample. When the source changes, regenerate the propositions for that passage." },
+    { "t": "callout", "kind": "tip", "title": "Use propositions as retrieval keys", "md": "A safer pattern is to match on propositions but return the original passage or its parent to the model. You keep the precision of atomic matching and the original wording as evidence. This is parent-child retrieval with propositions as the children." }
+  ],
+  "whereToUse": [
+    "Encyclopedic or reference text with many entity-centred facts",
+    "Open-domain question answering where one fact answers one question",
+    "A small, stable, high-value corpus where ingest cost is minor",
+    "Experiments to lift recall on questions that sentence chunks miss because of pronouns"
+  ],
+  "whenToUse": {
+    "use": ["Questions ask for single facts about named things", "The corpus changes rarely", "You can store a link to the source passage"],
+    "avoid": ["Millions of fast-changing documents on a tight ingest budget", "Evidence must be verbatim and rewriting is a compliance risk", "Answers need reasoning across long passages, not single facts"],
+    "flips": ["Storage or ingest cost bites: restrict propositions to the documents that need them", "Rewrite accuracy is in doubt: return the source passage, never the rewrite", "Questions become analytic: move to larger chunks or hierarchical summaries"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Proposition chunking", "Atomic fact lookups, pronoun-heavy text", "Large or volatile corpora, verbatim evidence", "LLM pass per passage, many vectors, rewrite errors"],
+      ["Sentence chunks", "Cheap fine granularity", "Sentences lean on neighbours", "Pronouns and lost subjects"],
+      ["Contextual retrieval", "Chunks need context but wording must stay", "Ingest budget is tiny", "LLM pass, context regeneration on change"],
+      ["Passage chunks (recursive)", "General purpose, low cost", "Several facts blur one vector", "Less precise matching"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "The assistant states a fact the source never made", "cause": "The LLM rewrite merged or altered statements while generating propositions", "fix": "Return the source passage to the model, store the source span, and sample-check rewrites against it" },
+    { "symptom": "Index size and embedding bill jump after enabling propositions", "cause": "One passage became many vectors, plus an LLM call per passage", "fix": "Apply it to a measured subset and estimate vector count before a full run" },
+    { "symptom": "Several propositions from one passage fill the top results", "cause": "Each atomic fact from the same passage matches the query", "fix": "Group by source passage and return each passage once" }
+  ],
+  "scenarios": [
+    {
+      "id": "w04-t07-s1",
+      "title": "Stable reference text, entity questions",
+      "situation": "A team indexes a stable reference collection of 300,000 passages. Users ask about specific entities and attributes. Pronouns in the text make sentence chunks fail.",
+      "constraints": ["Stable corpus", "Entity-centred factoid questions", "Ingest budget allows an LLM pass", "Labelled questions exist"],
+      "unknowns": ["How many vectors can the index hold?", "Is verbatim evidence required?"],
+      "question": "How do you improve recall?",
+      "options": [
+        { "name": "Generate propositions, embed them, link to the source passage and return the passage", "verdict": "best", "why": "Atomic, decontextualised units fix the pronoun problem and the passage keeps the original wording.", "tradeoff": "An LLM pass, many more vectors and regeneration on change." },
+        { "name": "Add overlap to sentence chunks", "verdict": "good", "why": "Cheap and may recover some lost context.", "tradeoff": "Does not resolve pronouns, only repeats neighbours." },
+        { "name": "Semantic chunking of the passages", "verdict": "poor", "why": "Boundary placement does not fix missing subjects inside a sentence.", "tradeoff": "Useful for topic-shifting text with no headings." }
+      ],
+      "flips": [
+        { "if": "The index is near its capacity", "then": "Use propositions only for the documents with the worst recall." },
+        { "if": "Passages are rewritten monthly", "then": "Regenerate by changed passage using content hashes." }
+      ],
+      "takeaway": "Propositions fix lost subjects, and they pay for it in ingest and storage."
+    },
+    {
+      "id": "w04-t07-s2",
+      "title": "Compliance corpus, wording is evidence",
+      "situation": "A compliance team must show the exact policy text for every answer. Auditors reject paraphrased evidence. The corpus is moderate and edited monthly.",
+      "constraints": ["Verbatim evidence required", "Audit trail needed", "Moderate corpus", "Monthly edits"],
+      "unknowns": ["Is recall currently failing?", "Is an LLM allowed to touch the text?"],
+      "question": "Which design do you choose?",
+      "options": [
+        { "name": "Structure-aware chunks with section paths, citing original text", "verdict": "best", "why": "No rewriting, stable boundaries and exact quotes for auditors.", "tradeoff": "Pronoun-heavy sentences may match less precisely." },
+        { "name": "Propositions as retrieval keys, original passage returned", "verdict": "good", "why": "Better matching while the evidence stays verbatim.", "tradeoff": "An LLM pass that needs review and a rewrite-accuracy check." },
+        { "name": "Propositions returned to the model as the evidence", "verdict": "poor", "why": "Paraphrased text is not the policy wording and may be wrong.", "tradeoff": "Acceptable for internal quick answers where the wording is not audited." }
+      ],
+      "flips": [
+        { "if": "Measured recall is too low with plain chunks", "then": "Add propositions as keys while still citing the source passage." },
+        { "if": "Auditors accept summaries linked to sources", "then": "Rewritten text can be shown with a citation to the original." }
+      ],
+      "takeaway": "Use propositions to find, and the original text to prove."
+    }
+  ],
+  "quiz": [
+    { "id": "w04-t07-q1", "type": "single", "tag": "concept", "q": "What makes a text unit a good proposition?", "options": ["It states one fact and is understandable without the surrounding passage", "It is exactly one sentence", "It is shorter than 10 tokens", "It was produced by splitting every 100 characters"], "answer": 0, "explain": "A proposition is atomic and self-contained: one fact, with its subject named. A sentence may hold several facts or depend on pronouns, and length or fixed cuts do not guarantee either property." },
+    { "id": "w04-t07-q2", "type": "multi", "tag": "tradeoff", "q": "Which are costs of proposition chunking?", "options": ["An LLM call over every passage at ingest", "Many more vectors than passage chunks", "Smaller embedding dimensions", "Risk that the rewrite alters a fact"], "answers": [0, 1, 3], "explain": "Propositions need generation, multiply vectors and can distort wording. Embedding dimensions do not shrink because of this strategy." },
+    { "id": "w04-t07-q3", "type": "single", "tag": "flip", "q": "Auditors need verbatim evidence but recall on pronoun-heavy text is weak. What is the best adjustment?", "options": ["Return propositions as the evidence", "Use 2,048 token chunks", "Match on propositions and return the original passage", "Disable chunking"], "answer": 2, "explain": "Using propositions only as retrieval keys keeps precision and verbatim evidence. Returning the rewrite breaks the audit rule, and large chunks or no chunking would blur matching." }
+  ],
+  "flashcards": [
+    { "front": "What is a proposition in Dense X Retrieval?", "back": "An atomic, self-contained statement of one fact with its subject named, written so it makes sense without the passage." },
+    { "front": "What did Dense X find about proposition granularity?", "back": "Indexing propositions beat passage and sentence units for dense retrieval and helped QA under a fixed prompt budget." },
+    { "front": "What is the safer way to use propositions?", "back": "Match on propositions, but return the original passage or its parent so evidence stays verbatim." }
+  ],
+  "related": ["w04-t03", "w04-t04", "w04-t06", "w04-t08", "w04-l2"],
+  "refs": ["tr13"]
+}

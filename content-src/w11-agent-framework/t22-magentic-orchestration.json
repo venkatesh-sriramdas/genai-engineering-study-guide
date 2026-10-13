@@ -1,0 +1,114 @@
+{
+  "id": "w11-t22",
+  "order": 22,
+  "group": "Orchestrations",
+  "title": "Magentic orchestration",
+  "minutes": 8,
+  "difficulty": "advanced",
+  "summary": "A group chat with a planning manager based on Magentic-One. The manager builds a plan, tracks progress in a ledger, picks the next agent, detects stalls, replans and synthesises the final answer.",
+  "useIf": "The solution path is not known in advance and a manager must plan, delegate and adapt across specialists over many rounds.",
+  "avoidIf": "A simpler pattern works. The docs say to use group chat when you do not need complex planning, and they warn Magentic is untested outside its original design.",
+  "explain": [
+    { "t": "p", "md": "The Magentic manager analyses the task, creates an initial plan, selects which participant acts next from the evolving context, assesses progress and updates the plan, and finally synthesises one answer. A **progress ledger** tracks whether the request is satisfied, whether the team is in a loop and whether progress is being made. Consecutive non-progressing rounds increment a **stall counter**; exceeding the maximum triggers an automatic reset and replan [[tr27]]." },
+    { "t": "flow", "title": "Magentic loop", "steps": [
+      { "title": "Plan", "md": "Manager writes facts and a plan. Optional human plan review." },
+      { "title": "Select and act", "md": "Manager picks an agent for the next subtask; the agent works." },
+      { "title": "Assess", "md": "Progress ledger: satisfied, looping, making progress?" },
+      { "title": "Stall and reset", "md": "Too many stalls: replan (bounded by max resets)." },
+      { "title": "Synthesize", "md": "Manager produces the final answer when done or at limits." }
+    ] },
+    { "t": "p", "md": "**Limits.** The builder exposes maximum rounds, maximum stalls and maximum resets (the page's sample uses 10, 3 and 2, which are sample values, not documented defaults). **Plan review** differs by SDK: Python `enable_plan_review=False` by default; .NET `RequirePlanSignoff` defaults to `true`. Review pauses surface as `MagenticPlanReviewRequest`, and you answer with `approve()` or `revise(feedback)` [[tr27]]. **Manager options in Python:** `manager_agent` makes a new `StandardMagenticManager` per workflow (sharing the supplied agent); `manager_agent_factory` and `manager_factory` run once per `build()`; a shared `manager` instance must not serve concurrent or interleaved workflows. Customising manager prompts requires matching update prompts, and a custom `progress_ledger_prompt` must keep the built-in JSON schema [[tr27]]." },
+    { "t": "tabs", "tabs": [
+      { "label": "C#", "blocks": [ { "t": "code", "lang": "csharp", "code": "Workflow workflow = new MagenticWorkflowBuilder(managerAgent)\n    .AddParticipants([researcherAgent, coderAgent])\n    .RequirePlanSignoff(true)   // default true in .NET\n    .WithMaxRounds(10)\n    .WithMaxStalls(3)\n    .WithMaxResets(2)\n    .Build();" } ] },
+      { "label": "Python", "blocks": [ { "t": "code", "lang": "python", "code": "from agent_framework.orchestrations import (MagenticBuilder,\n    MagenticPlanReviewRequest, MagenticPlanReviewResponse)\n\nworkflow = MagenticBuilder(\n    participants=[researcher_agent, coder_agent],\n    intermediate_output_from=[researcher_agent, coder_agent],\n    manager_agent=manager_agent,\n    enable_plan_review=True,        # default False in Python\n    max_round_count=10, max_stall_count=3, max_reset_count=2,\n).build()\n\nasync for ev in workflow.run(task, stream=True):\n    if ev.type == 'request_info' and ev.request_type is MagenticPlanReviewRequest:\n        plan = ev.data.plan.text\n        reply = ev.data.approve()   # or ev.data.revise('shorten step 3')\n        # resume: workflow.run(responses={ev.request_id: reply}, stream=True)" } ] }
+    ] },
+    { "t": "callout", "kind": "preview", "title": "Maturity (checked 2026-10-13)", "md": "Orchestrations are stable in the SDK, but the docs state it is untested how well Magentic performs outside the original Magentic-One design, and the .NET Magentic types are experimental (diagnostic `MAAIW001`). Default limit values are not documented [[tr27]]." }
+  ],
+  "whereToUse": [
+    "Open-ended research or analysis needing a web researcher, a coder and a writer in changing order",
+    "Tasks where visible planning and progress tracking help a human supervise",
+    "Problems that need replanning when an approach stalls",
+    "Prototypes comparing planned multi-agent runs against simpler orchestrations"
+  ],
+  "whenToUse": {
+    "use": [
+      "The path is unknown and specialists must be sequenced dynamically",
+      "You can afford planning and ledger calls on top of the specialists' work",
+      "A human plan review is valuable before expensive execution"
+    ],
+    "avoid": [
+      "A fixed order or a simple review loop: sequential or group chat is cheaper and better tested",
+      "Strict latency or budget limits: the manager adds calls every round",
+      "Regulated flows needing provable step order: use a workflow graph"
+    ],
+    "flips": [
+      "Stalls are frequent: raise the stall limit only after fixing participant instructions, or reduce scope",
+      "Plans must be approved before spending tokens: enable plan review (default off in Python, on in .NET)"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Magentic", "Dynamic multi-agent planning", "Predictable or simple tasks", "Planning and ledger calls, limited evidence outside Magentic-One"],
+      ["Group chat", "Review loops with a selector", "Needs real planning and replanning", "No progress ledger or stall logic"],
+      ["Harness Agent with todos and background agents", "One planner agent, delegated subtasks", "Many peer specialists", "Background agents are experimental and lose in-flight work on restart"],
+      ["Custom workflow graph", "Provable order, checkpoints", "Open-ended planning", "You encode the plan"],
+      ["Handoff", "Specialist owns the user", "Central coordination", "Mesh broadcasting"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A long Magentic run produces a vague answer after many rounds", "cause": "Round limit reached while stalls and resets consumed the budget", "fix": "Inspect `MagenticOrchestratorEvent` ledger updates, tighten specialist instructions and set realistic limits" },
+    { "symptom": "Two concurrent runs affect each other", "cause": "A stateful explicit `manager` instance was shared across workflows", "fix": "Use `manager_factory` so each workflow gets isolated manager state" },
+    { "symptom": "Plan review never appears in Python", "cause": "`enable_plan_review` defaults to `False` there (in .NET `RequirePlanSignoff` is `true`)", "fix": "Opt in explicitly and handle `MagenticPlanReviewRequest`" }
+  ],
+  "scenarios": [
+    {
+      "id": "w11-t22-s1",
+      "title": "Open-ended market analysis",
+      "situation": "An analyst asks for a market analysis with data gathering, calculations and a written brief. The path depends on what the data shows. A person should approve the plan before expensive runs. Budget is 5 per task.",
+      "constraints": ["Unknown path", "Plan approval wanted", "Cost cap 5"],
+      "unknowns": ["How many specialists?", "Typical number of rounds?", "Is latency a concern?"],
+      "question": "Which orchestration?",
+      "options": [
+        { "name": "Magentic with plan review on, a researcher and a coder, modest limits (rounds 10, stalls 3, resets 2) and spend alerts", "verdict": "best", "why": "The path is dynamic, the ledger detects stalls, and plan review controls spend before work starts.", "tradeoff": "Manager calls add cost every round; limited evidence outside Magentic-One's design." },
+        { "name": "Group chat with an agent-based orchestrator", "verdict": "good", "why": "Simpler and better tested, with an LLM choosing speakers.", "tradeoff": "No plan, progress ledger or automatic replanning." },
+        { "name": "Concurrent researcher and coder", "verdict": "poor", "why": "The coder needs the researcher's data, so they are not independent.", "tradeoff": "Right if both can work from the same input in parallel." }
+      ],
+      "flips": [
+        { "if": "The steps become known and repeatable", "then": "Encode them as a workflow graph." },
+        { "if": "Budget is under 1 per task", "then": "Use a single Harness agent with todos." }
+      ],
+      "takeaway": "Magentic buys adaptive planning with extra calls: use it when the path is genuinely unknown."
+    },
+    {
+      "id": "w11-t22-s2",
+      "title": "Regulated process with auditors",
+      "situation": "A lender wants an agent team to assemble a credit memo. Auditors require a fixed, documented review order and reproducible steps.",
+      "constraints": ["Fixed order required", "Reproducibility", "Per-step audit"],
+      "unknowns": ["Which steps need an LLM?", "Who signs off?"],
+      "question": "Is Magentic a fit?",
+      "options": [
+        { "name": "No: build a workflow graph with agent executors, a request port for sign-off and checkpoints", "verdict": "best", "why": "A planning manager picks the order at run time, which conflicts with a mandated order.", "tradeoff": "Design effort and less flexibility on unusual cases." },
+        { "name": "Yes, with plan review on", "verdict": "poor", "why": "A reviewed plan still allows replanning and a different order on stalls.", "tradeoff": "Reasonable for exploratory drafts that auditors do not govern." },
+        { "name": "Sequential orchestration", "verdict": "good", "why": "Fixed order with little code.", "tradeoff": "No branching, state or approval gate without a custom graph." }
+      ],
+      "flips": [
+        { "if": "Auditors accept a reviewed plan as evidence", "then": "Magentic with plan review and stored plans may fit." },
+        { "if": "Only the narrative paragraph needs an LLM", "then": "Keep the process as code and call one agent." }
+      ],
+      "takeaway": "Dynamic planning and mandated order pull in opposite directions."
+    }
+  ],
+  "quiz": [
+    { "id": "w11-t22-q1", "type": "single", "tag": "flip", "q": "Plan review in Magentic: which default pairing is correct?", "options": ["Python on, .NET off", "Python off (`enable_plan_review=False`), .NET on (`RequirePlanSignoff` true)", "Both off", "Both on"], "answer": 1, "explain": "The defaults differ by language. Opt in explicitly in Python, and opt out in .NET when you want an unattended run.", "ref": "tr27" },
+    { "id": "w11-t22-q2", "type": "order", "tag": "order", "q": "Order the Magentic execution flow.", "items": ["Manager creates the initial plan", "Optional human plan review", "Manager selects an agent for the next subtask", "Manager assesses progress and updates the plan", "Manager synthesises the final result"], "explain": "Plan, review, select and execute, assess (stall detection and replan loop back to selection), then synthesise.", "ref": "tr27" }
+  ],
+  "flashcards": [
+    { "front": "What is the Magentic stall counter?", "back": "It counts consecutive non-progressing rounds. Exceeding the maximum triggers an automatic reset and replan." },
+    { "front": "What three limits does the builder expose?", "back": "Max rounds, max stalls and max resets (sample values 10, 3, 2; defaults are not documented)." },
+    { "front": "What do the docs say about Magentic outside Magentic-One?", "back": "It is untested how well it performs outside the original design. Prefer group chat if you do not need complex planning." }
+  ],
+  "related": ["w11-t21", "w11-t23", "w11-t08", "w10-t15"],
+  "refs": ["tr27"]
+}

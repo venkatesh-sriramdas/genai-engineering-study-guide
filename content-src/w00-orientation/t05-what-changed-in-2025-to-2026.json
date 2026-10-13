@@ -1,0 +1,157 @@
+{
+  "id": "w00-t05",
+  "order": 5,
+  "group": "Freshness",
+  "title": "What changed in 2025 to 2026",
+  "minutes": 9,
+  "difficulty": "core",
+  "summary": "A dated map of the API, protocol and platform changes that break code or old advice, with GA, Preview, Deprecated or Retired status checked on 2026-10-13.",
+  "useIf": "You read an older tutorial, answer an interview question about a platform, or plan an upgrade.",
+  "avoidIf": "You need today's price or limit: confirm it in the live documentation, because this map is dated.",
+  "explain": [
+    { "t": "p", "md": "Most of this map is about **old advice that now misleads**: a tutorial teaches Chat Completions plus reasoning plus tools, an answer says MCP needs `initialize` and a session id, or a design uses an API that has been shut down. Status values were checked on **2026-10-13**. **GA** means generally available, **Preview** has no SLA and can change, **Deprecated** still works but has an end date, and **Retired** has stopped working. When a source gave no explicit status, the row says so." },
+    { "t": "p", "md": "Three patterns repeat across the rows. **Parameters get stricter**: newer models reject sampling values, forced tool choice or an effort value that older models accepted. **State and protocols move toward explicit handles**: Responses and Conversations hold state on the server, and MCP dropped its implicit session. **Old surfaces end on a date**: Assistants, On Your Data, preview hosted agents and several model snapshots. Sort your own estate by the earliest end date first." },
+    { "t": "h", "level": 3, "text": "Models and APIs" },
+    { "t": "table", "head": ["Date", "Change", "Status", "Source"], "compact": true, "rows": [
+      ["2025-03-11", "Responses API released with built-in tools", "GA", "[[r1]]"],
+      ["2025-08", "Azure OpenAI v1 API opt-in: base URL `/openai/v1`, no `api-version`", "GA", "[[r28]]"],
+      ["2025-08-20", "Conversations API released. It is not ZDR eligible", "GA", "[[r29]]"],
+      ["2025-08-26", "Assistants API deprecation announced, sunset 2026-08-26. Azure status after that date is unverified", "Retired on OpenAI", "[[r4]] [[r2]]"],
+      ["2026-03-05", "GPT-5.4: Chat Completions rejects tools when reasoning effort is not `none`", "GA", "[[r3]]"],
+      ["2026-04-16", "Claude Opus 4.7: new tokenizer (about 30% more tokens), non-default sampling values return 400", "GA", "[[r7]]"],
+      ["2026-09-03", "GPT-6 Astra: async tool calling, and `reasoning.effort: none` returns HTTP 400 on Astra", "GA", "[[r30]]"],
+      ["2026-09-22 and 2026-09-28", "Claude Opus 5.5 (thinking cannot be disabled) and Sonnet 5.5 (forced `tool_choice` returns 400)", "GA", "[[r7]]"],
+      ["2026-09-29", "GPT-6.1 Sol: Chat Completions works only without tools", "GA", "[[r30]]"]
+    ] },
+    { "t": "h", "level": 3, "text": "Caching, cost and tuning" },
+    { "t": "table", "head": ["Date", "Change", "Status", "Source"], "compact": true, "rows": [
+      ["2025-12-11, 2026-02-10", "`/responses/compact`, then server-side compaction with `context_management`", "GA", "[[r1]]"],
+      ["2026-07-09 (model version date)", "GPT-5.6 caching: cache writes billed (1.25x input on OpenAI), explicit breakpoints, `prompt_cache_options`. Older models return 400 for the new fields", "GA", "[[r5]] [[r6]]"],
+      ["2026-09-08", "Prompt Cache Diagnostics for GPT-5.6 and later in Responses", "GA", "[[r1]]"],
+      ["2026-05-07", "OpenAI winds down self-serve fine-tuning. No new jobs for active customers after 2027-01-06", "Deprecated", "[[r2]]"],
+      ["2026-06-03", "Evals platform, reusable prompts and Agent Builder deprecated. Evals read-only 2026-10-31, all shut down 2026-11-30", "Deprecated", "[[r2]]"],
+      ["2026-09-25", "Azure Flex request to a model without Flex returns 400, not a fallback", "Flex is Preview", "[[r31]]"]
+    ] },
+    { "t": "h", "level": 3, "text": "Protocols" },
+    { "t": "table", "head": ["Date", "Change", "Status", "Source"], "compact": true, "rows": [
+      ["2025-03-26", "MCP: Streamable HTTP replaces HTTP+SSE, OAuth 2.1 framework added", "Spec revision", "[[tr2]]"],
+      ["2025-06-18", "MCP servers become OAuth resource servers, RFC 8707 resource indicators required of clients, batching removed", "Spec revision", "[[tr3]]"],
+      ["2025-11-25, 2025-12-09", "MCP: URL elicitation and experimental Tasks. Then MCP moves under the Agentic AI Foundation", "Spec revision", "[[tr4]] [[r9]]"],
+      ["2026-03-12", "A2A v1.0.0 with breaking renames. v1.0.1 followed on 2026-05-28", "GA", "[[r10]] [[r32]]"],
+      ["2026-07-28", "MCP: stateless protocol (no `initialize`, no session id), multi round-trip requests replace server push, sampling and roots deprecated, Tasks become an extension, deterministic `tools/list`", "Spec revision", "[[r8]]"],
+      ["2026-10-13", "Foundry serves A2A preview 0.3 unless the version header or query value requests 1.0", "Check header", "[[r11]]"]
+    ] },
+    { "t": "h", "level": 3, "text": "Agent platforms, search and policy" },
+    { "t": "table", "head": ["Date", "Change", "Status", "Source"], "compact": true, "rows": [
+      ["2026-04-03", "Microsoft Agent Framework 1.0 announced. Core is stable, hosting, A2A, DevUI and AG-UI packages stay preview", "GA core", "[[r12]]"],
+      ["2026-05-01", "Microsoft Agent 365 GA (per user). Team-workflow agents with their own access were public preview at launch", "GA", "[[r15]]"],
+      ["2026-08-20", "Foundry initial-preview hosted agent backend support ends. Redeploy on the session-sandbox model", "Deprecated", "[[r33]]"],
+      ["2026-04-01", "AI Search stable API: index projections and Content Understanding skill GA, first stable agentic retrieval is `minimal` extractive only", "GA", "[[r16]] [[r17]]"],
+      ["2026-10-14", "Azure OpenAI On Your Data retires, one day after the check date", "Deprecated", "[[r19]]"],
+      ["2026-07-27", "EU Digital Omnibus on AI in force. Annex III high-risk moves to 2027-12-02, Annex I to 2028-08-02", "In force", "[[r22]]"]
+    ] },
+    { "t": "h", "level": 3, "text": "Dates to pin" },
+    { "t": "table", "head": ["Date", "What happens", "Platform"], "compact": true, "rows": [
+      ["2026-10-23", "Shutdown of `gpt-4`, `gpt-4-turbo`, `gpt-3.5-turbo`, `o1`, `o3-mini`, `o4-mini`, `gpt-4.1-nano` and related fine-tunes", "OpenAI API [[r2]]"],
+      ["2026-10-31 and 2026-11-30", "Evals read-only, then shutdown of Evals, reusable prompts and Agent Builder", "OpenAI API [[r2]]"],
+      ["2026-11-19", "`o1`, `o3`, `o4-mini` and related retire", "Azure OpenAI [[r18]]"],
+      ["2026-12-01", "Foundry Workflows (preview) retire", "Foundry [[r25]]"],
+      ["2026-12-09", "`gpt-4o` version 2024-05-13 retires", "Azure OpenAI [[r18]]"],
+      ["2027-04-14", "The `gpt-4.1` family retires", "Azure OpenAI [[r18]]"]
+    ] },
+    { "t": "callout", "kind": "gotcha", "title": "Platform dates differ", "md": "The same model can retire on different days on OpenAI and Azure, for example `gpt-5` on 2026-12-11 on the OpenAI API against 2027-02-09 on Azure. Always name the platform when you quote a date." }
+  ],
+  "whereToUse": [
+    "Before answering an interview question about a specific API or protocol version",
+    "When reviewing a tutorial or a code sample that is more than a few months old",
+    "When planning upgrades, to sort work by the earliest end date",
+    "When writing a design document that cites a product feature and needs a status label"
+  ],
+  "whenToUse": {
+    "use": [
+      "A source predates 2026-07 and teaches Assistants, HTTP+SSE or Chat Completions with reasoning tools",
+      "You quote a feature as available and must say GA or Preview",
+      "You own a dated shutdown list and need to sequence migrations"
+    ],
+    "avoid": [
+      "You need current prices or quotas: this map does not carry them",
+      "You assume one platform's date applies to another",
+      "You treat a vendor announcement date as the date a feature is available in your region or tier"
+    ],
+    "flips": [
+      "A row's status changes after 2026-10-13: trust the live page and update your notes",
+      "The answer will be recorded in a design document: cite the source link and the check date",
+      "You use a preview feature in production: record the fallback and the review date"
+    ]
+  },
+  "alternatives": {
+    "title": "Ways to keep up with change",
+    "head": ["Method", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Dated freshness map (this topic)", "You need a fast list of what broke and what ends", "Weeks pass after the check date", "Goes stale, so read the check date"],
+      ["Vendor changelogs and deprecation pages", "You need the authoritative date", "You need synthesis across vendors", "Long and vendor-shaped"],
+      ["Spec revisions and release notes", "A protocol or SDK is in your stack", "You only need a summary", "Detailed, and different pages can disagree"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Chat Completions agent code fails after a model upgrade", "cause": "From GPT-5.4, tools with reasoning effort other than `none` need Responses, and a default effort of `medium` still counts", "fix": "Move the tool loop to Responses, or set effort to `none` and accept the loss of reasoning" },
+    { "symptom": "An MCP client waits for a session id that never arrives", "cause": "The 2026-07-28 revision removed `initialize` and the session id", "fix": "Read the revision your server speaks and negotiate the version" },
+    { "symptom": "A GA claim fails a review", "cause": "A product can be GA at the API level while a portal or a package is Preview", "fix": "State which surface you mean, for example API GA and portal Preview" }
+  ],
+  "scenarios": [
+    {
+      "id": "w00-t05-s1",
+      "title": "Agent code breaks after a model upgrade",
+      "situation": "A Chat Completions agent that calls tools ran on an older reasoning model. After moving the Azure deployment to `gpt-5.6-sol` it fails with 'Function tools with reasoning_effort are not supported', although the code never sets an effort.",
+      "constraints": ["Tool calling is required", "The model must keep reasoning for hard questions", "A release is due this month"],
+      "unknowns": ["How many tool loops depend on Chat Completions message shapes?", "Is Responses available in the same Azure region?"],
+      "question": "What do you do?",
+      "options": [
+        { "name": "Keep Chat Completions and set `reasoning_effort` to `none`", "verdict": "good", "why": "The tool loop runs unchanged, which fits a tight release.", "tradeoff": "You give up reasoning, so hard questions get worse." },
+        { "name": "Move the agent loop to the Responses API", "verdict": "best", "why": "Tools with reasoning need Responses on these models, and it keeps reasoning on [[r3]] [[tr5]].", "tradeoff": "You rewrite message handling for Items and re-test the tool loop." },
+        { "name": "Keep the code and omit the effort parameter", "verdict": "poor", "why": "The default effort is `medium`, so the model still reasons and the call still fails.", "tradeoff": "Omitting a parameter helps only when the default is `none`, which holds for some earlier models, so check the model page." }
+      ],
+      "flips": [
+        { "if": "Quality tests show reasoning adds nothing for this task", "then": "Chat Completions with effort `none` is cheaper to ship." },
+        { "if": "The code must stay portable across OpenAI-compatible vendors", "then": "Keep Chat Completions with effort `none` behind an adapter and isolate the Responses path." }
+      ],
+      "takeaway": "An unset parameter takes the model's default, and the default may be the problem."
+    },
+    {
+      "id": "w00-t05-s2",
+      "title": "Sequence the migrations by date",
+      "situation": "On 2026-10-13 a team has a workload on `o4-mini` through the OpenAI API, a Foundry deployment of `gpt-4o` 2024-05-13, and eval dashboards on the OpenAI Evals platform.",
+      "constraints": ["Two engineers are available", "Each migration needs regression tests", "Dates differ by platform"],
+      "unknowns": ["Can the `o4-mini` workload move to a current model without prompt rewrites?", "Which eval datasets must be exported?"],
+      "question": "Which work goes first?",
+      "options": [
+        { "name": "Start with the Azure `gpt-4o` migration because it is the largest", "verdict": "poor", "why": "Size is not urgency. The 2026-10-23 and 2026-10-31 dates arrive first.", "tradeoff": "Starting with the largest item is right when its date is also the earliest." },
+        { "name": "Migrate everything in one release in December", "verdict": "good", "why": "One test cycle and one rollout.", "tradeoff": "It misses the October dates and puts all the risk in one release." },
+        { "name": "Replace `o4-mini` before 2026-10-23, export Evals before 2026-10-31, then handle the Azure `gpt-4o` date of 2026-12-09", "verdict": "best", "why": "It sorts the work by the earliest end date, and the OpenAI shutdown is only 10 days away [[r2]].", "tradeoff": "The Azure work waits and has a shorter runway." }
+      ],
+      "flips": [
+        { "if": "The `o4-mini` workload already runs on another model", "then": "The Evals export and the Azure date become the first items." },
+        { "if": "OpenAI extends a shutdown date", "then": "Re-sort the list, but keep the earliest published date until it is moved." }
+      ],
+      "takeaway": "Sort migrations by end date per platform, not by size."
+    }
+  ],
+  "quiz": [
+    { "id": "w00-t05-q1", "type": "match", "tag": "concept", "q": "Match each date to the change.", "pairs": [
+      { "l": "2025-03-11", "r": "Responses API released" },
+      { "l": "2026-03-12", "r": "A2A v1.0.0 published" },
+      { "l": "2026-07-28", "r": "MCP revision removes `initialize` and the session id" },
+      { "l": "2026-08-26", "r": "OpenAI Assistants API sunset" }
+    ], "explain": "These four dates anchor the API, protocol and retirement changes. The map above gives the source for each." },
+    { "id": "w00-t05-q2", "type": "single", "tag": "diagnose", "q": "A client talks to Foundry A2A with no version header or query value. Which protocol version does it get?", "options": ["1.0", "1.0.1", "Preview 0.3", "The newest preview"], "answer": 2, "explain": "On the check date Foundry served preview 0.3 unless the header or the query value requested another version [[r11]]. The header and the query value must agree or the call returns 400." },
+    { "id": "w00-t05-q3", "type": "multi", "tag": "bug", "q": "Which changes can break existing code without any change on your side?", "options": ["Chat Completions rejecting tools with reasoning effort other than `none` from GPT-5.4", "Claude Opus 4.7 returning 400 for non-default sampling values", "A model snapshot reaching its shutdown date", "A new reference page in the docs"], "answers": [0, 1, 2], "explain": "A parameter rule, a sampling rule and a shutdown each change behaviour on a date. A new documentation page changes nothing at run time." }
+  ],
+  "flashcards": [
+    { "front": "What happened to the OpenAI Assistants API?", "back": "Deprecation was announced on 2025-08-26 and the API was sunset on 2026-08-26. Threads map to Conversations and Runs to Responses." },
+    { "front": "What changed in MCP on 2026-07-28?", "back": "The protocol became stateless: no `initialize` and no session id, multi round-trip requests replaced server push, and Tasks moved to an extension." },
+    { "front": "Why can an unset reasoning effort still break tool calls?", "back": "The model applies its default, often `medium`, and Chat Completions rejects tools with any effort other than `none` on newer models." },
+    { "front": "Why name the platform when quoting a retirement date?", "back": "The same model can retire on different dates on OpenAI and on Azure." }
+  ],
+  "related": ["w00-l4", "w00-l5", "w01-t12", "w01-t03", "w08-t01"],
+  "refs": ["r1", "r2", "r3", "r4", "r7", "r8", "r10", "r11", "r12", "r15", "r18", "r25", "r30", "r33", "tr2", "tr3", "tr4", "tr5"]
+}

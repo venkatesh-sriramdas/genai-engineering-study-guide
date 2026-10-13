@@ -1,0 +1,93 @@
+{
+  "id": "w16-t03",
+  "order": 3,
+  "group": "Cost",
+  "title": "Routing and cascades as a cost lever",
+  "minutes": 8,
+  "difficulty": "advanced",
+  "summary": "A router picks a model per request, and a cascade tries a cheap model first and escalates when a check fails. Both save money only when query difficulty varies and quality is measured.",
+  "useIf": "Most queries are easy, a few are hard, and you have an eval set that can tell them apart.",
+  "avoidIf": "Tasks are uniformly hard, no eval set exists, or the prompt cache is your main saving.",
+  "explain": [
+    { "t": "p", "md": "A **router** decides before the call which model should answer. A **cascade** calls a cheap model, checks the result and escalates only on failure. FrugalGPT reported a cascade that matched the best single model with up to 98% lower cost, or beat GPT-4 by 4% at equal cost, on 2023 benchmarks and prices [[r20]]. RouteLLM trained routers on preference data and cut cost by more than 2x in some settings with no quality loss [[r21]]. Treat these as proof the idea works, not as your savings." },
+    { "t": "p", "md": "Azure's **model router** is one deployment that routes per request across OpenAI, DeepSeek, Meta, xAI and Anthropic models. Modes are `Balanced` (the default, cheapest within about 1% to 2% of the best quality), `Cost` (about 5% to 6%) and `Quality`. Version `2025-11-18` is current and updates in place, while `2025-08-07` and `2025-05-19` are frozen. It runs on Global Standard and Data Zone Standard, reads text only, and its context window equals the smallest model in the pool [[r14]]." },
+    { "t": "formula", "title": "Cascade break-even", "expr": "cascade cost = c_cheap + c_check + p_escalate x c_strong; it wins when p_escalate < 1 - (c_cheap + c_check) / c_strong", "vars": [ { "k": "c_cheap, c_strong", "v": "cost of one call on each model" }, { "k": "c_check", "v": "cost of the verifier or validator" }, { "k": "p_escalate", "v": "share of queries the check rejects" } ], "example": "c_strong = 10, c_cheap = 1, c_check = 0.5, p_escalate = 0.3: cost = 1.5 + 3 = 4.5, a 55% saving. Escalated queries also pay both latencies (derived)." },
+    { "t": "diagram", "id": "w16-t03-d1", "title": "A cascade with a verifier", "alt": "A query goes to a cheap model, a check accepts or rejects, rejected queries go to the strong model.", "src": "flowchart LR\n  Q[Query] --> C[Cheap model]\n  C --> V{Check passes}\n  V -->|yes| A[Answer]\n  V -->|no| S[Strong model]\n  S --> A" }
+  ],
+  "whereToUse": [
+    "A support or search assistant with a wide spread of query difficulty",
+    "Extraction pipelines where a schema or rule check can verify a cheap model's output",
+    "One endpoint for many teams, using the Azure model router with a model subset",
+    "Classifying intent first, then sending only complex intents to the large model"
+  ],
+  "whenToUse": {
+    "use": ["A good share of traffic is easy and a smaller model passes your eval on it", "A reliable verifier exists, such as schema validation, tests or retrieval overlap", "Latency of an extra hop on hard queries is acceptable"],
+    "avoid": ["The same model is cheap enough already and engineering time costs more", "Quality evals do not cover the hard tail", "Residency limits the pool so far that routing has little to choose from"],
+    "flips": ["High escalation rate: cost approaches the strong model plus overhead, so use one model", "Long shared prefix: routing across models splits the prompt cache, so measure both together", "Context windows differ: the router uses the smallest model's window, so long prompts need a pinned subset"]
+  },
+  "alternatives": {
+    "title": "Routing options compared",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Single model", "Small team, uniform tasks", "Easy traffic pays the large-model price", "Highest unit cost"],
+      ["Static rules by task type", "Clear task types, stable models", "Rules drift as models change", "Manual upkeep"],
+      ["Trained router (Azure model router)", "Mixed difficulty, one endpoint wanted", "Pool changes silently, text-only routing", "Cache split, smallest context window [[r14]]"],
+      ["Cascade with verifier", "Cheap model right most of the time, verifier reliable", "Many escalations, weak verifier", "Double spend and latency on hard queries"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Quality dips with no deployment change", "cause": "The router version `2025-11-18` updates in place, so the model pool changed without a version bump [[r14]]", "fix": "Pin a model subset, keep a regression eval and a shadow comparison" },
+    { "symptom": "Cache hit ratio fell after adding a router", "cause": "Consecutive requests reach different models, and each model has its own cache", "fix": "Measure cost with caching on both sides; use session affinity where offered, noting it is preview and no guarantee for Chat Completions" },
+    { "symptom": "Escalations are common and cost went up", "cause": "The verifier is weak or the cheap model fails the hard tail", "fix": "Track escalation rate, tighten routing features, or drop the cascade" }
+  ],
+  "scenarios": [
+    {
+      "id": "w16-t03-s1",
+      "title": "A mixed-difficulty support assistant",
+      "situation": "An assistant handles thousands of questions a day. Most are simple look-ups, some need multi-step reasoning. A labelled eval set exists. Data may be processed globally.",
+      "constraints": ["Latency p95 target of 3 seconds", "Global processing is allowed", "An eval set with difficulty labels exists"],
+      "unknowns": ["What share of queries is easy?", "Does a long shared prefix make caching the bigger lever?", "Who owns regressions after a router update?"],
+      "question": "How do you cut cost without hurting quality?",
+      "options": [
+        { "name": "Azure model router in Balanced mode with a pinned subset, shadow evals and rollback", "verdict": "best", "why": "One endpoint, per-request choice, and Balanced stays within about 1% to 2% of best quality by Microsoft's description.", "tradeoff": "Caching is split across models and the in-place version update needs monitoring." },
+        { "name": "Static rules by intent label", "verdict": "good", "why": "Predictable and cheap to run.", "tradeoff": "Rules go stale as models change and misroute hard queries." },
+        { "name": "Cascade where the cheap model grades its own answer", "verdict": "poor", "why": "Self-grading is a weak verifier, so escalations or missed errors rise.", "tradeoff": "Right when a deterministic check exists, such as schema or tests." }
+      ],
+      "flips": [
+        { "if": "A 9,000-token shared prefix dominates cost", "then": "A single model with caching can beat routing." },
+        { "if": "Prompts exceed the smallest pooled model's window", "then": "Pin a subset of large-window models or route by length yourself." }
+      ],
+      "takeaway": "Routing pays on wide difficulty spread with measured quality."
+    },
+    {
+      "id": "w16-t03-s2",
+      "title": "Extraction with a hard validator",
+      "situation": "A pipeline extracts invoice fields. A schema check and a checksum validate every output. Volume is high and the cheap model is right about 85% of the time.",
+      "constraints": ["Validator is deterministic", "Failures can be retried on a stronger model", "Batch is not possible, results feed a live form"],
+      "unknowns": ["What does an escalation cost in latency?", "Do validator failures correlate with document type?"],
+      "question": "Which design fits?",
+      "options": [
+        { "name": "Cascade: cheap model, validator, escalate failures", "verdict": "best", "why": "The verifier is reliable, escalation is about 15%, so cost is roughly c_cheap + 0.15 x c_strong.", "tradeoff": "The 15% of escalated requests pay two calls and two latencies." },
+        { "name": "Trained router on document features", "verdict": "good", "why": "Avoids paying twice on documents known to be hard.", "tradeoff": "Needs training data and misroutes unseen formats." },
+        { "name": "Always the strong model", "verdict": "poor", "why": "It pays the large price for the 85% that are easy.", "tradeoff": "Right when the strong model is only slightly dearer or errors are unacceptable." }
+      ],
+      "flips": [
+        { "if": "Escalation rises above the break-even rate", "then": "Use the strong model directly." },
+        { "if": "No validator exists", "then": "Do not cascade; use a router with evals or one model." }
+      ],
+      "takeaway": "A cascade is only as good as its verifier."
+    }
+  ],
+  "quiz": [
+    { "id": "w16-t03-q1", "type": "numeric", "tag": "numeric", "q": "A cascade has c_cheap = 1, c_check = 0.5 and c_strong = 10 (any unit). What is the highest escalation rate at which it still beats always using the strong model? Give the rate as a percentage.", "answer": 85, "tolerancePct": 1, "unit": "%", "hint": "1 - (1 + 0.5) / 10", "explain": "Break-even: 1.5 + p x 10 = 10, so p = 0.85. In practice latency and quality make the real threshold lower. Derived from the formula above.", "difficulty": 2 },
+    { "id": "w16-t03-q2", "type": "single", "tag": "diagnose", "q": "After adding the Azure model router, prompt cache hits drop. Which cause fits best?", "options": ["Consecutive requests reach different underlying models", "The router rewrites system prompts", "Routing disables all caching"], "answer": 0, "explain": "Caching helps only when consecutive requests reach the same model [[r14]]. The router does not rewrite prompts, and caching is not disabled but split.", "difficulty": 2 },
+    { "id": "w16-t03-q3", "type": "multi", "tag": "flip", "q": "Which changes favour a single pinned model over a router or cascade?", "options": ["A long shared prefix dominates spend", "Hard queries are rare and a verifier is reliable", "There is no eval set that covers hard queries", "Escalation rate would exceed 70%"], "answers": [0, 2, 3], "explain": "A dominant prefix, missing evals and a high escalation rate each remove the router's advantage. Rare hard queries with a reliable verifier favour a cascade.", "difficulty": 3 }
+  ],
+  "flashcards": [
+    { "front": "Router versus cascade?", "back": "A router picks a model before the call. A cascade calls the cheap model first, checks the result and escalates on failure." },
+    { "front": "What are the Azure model router modes?", "back": "Balanced (default, within about 1% to 2% of best quality), Cost (about 5% to 6%) and Quality." },
+    { "front": "Two hidden costs of routing?", "back": "It splits the prompt cache across models, and the router's context window equals the smallest model in the pool." }
+  ],
+  "related": ["w16-t01", "w16-t02", "w16-t10", "w16-l1", "w01-t17"],
+  "refs": ["r14", "r20", "r21", "r25"]
+}

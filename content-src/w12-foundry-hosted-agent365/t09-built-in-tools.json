@@ -1,0 +1,119 @@
+{
+  "id": "w12-t09",
+  "order": 9,
+  "group": "Tools and knowledge",
+  "title": "Built-in tools",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "Foundry agents act through built-in tools such as file search, code interpreter, web search, Azure AI Search, OpenAPI, SharePoint, Azure Functions and function calling. Each has a different cost, data boundary and toolbox eligibility.",
+  "useIf": "You are choosing which tool gives an agent facts, computation or actions, and what each choice costs in data exposure.",
+  "avoidIf": "You need permission-aware retrieval across many enterprise sources: look at Foundry IQ knowledge bases first.",
+  "explain": [
+    { "t": "p", "md": "Agents act on the world through **tools**. Foundry offers built-in tools such as web search, file search, code interpreter and memory, and lets you add custom tools through functions, OpenAPI specs and MCP servers [[r1]]. Pick by what the agent needs, then check cost, data boundary and whether the tool fits a toolbox [[r3]]." },
+    { "t": "diagram", "id": "w12-t09-d1", "title": "Which tool for which need", "alt": "Need leads to a tool: user files lead to file search, computing on data to code interpreter, public web facts to web search, your REST API to OpenAPI or function calling, curated organization content to a Foundry IQ knowledge base.", "src": "flowchart TB\n  N{What does the agent need?} -->|Facts in user files| F[File search]\n  N -->|Compute on data| C[Code interpreter]\n  N -->|Public web facts| W[Web search]\n  N -->|Call your REST API| O[OpenAPI or function calling]\n  N -->|Curated org content| K[Foundry IQ knowledge base]" },
+    { "t": "p", "md": "Three questions narrow the choice. First, does the agent need facts or computation? File search and web search retrieve, while code interpreter computes. Second, where does the data go? File search keeps files in your storage in the standard setup, but web search sends queries to Grounding with Bing under separate terms. Third, who executes the call? Platform tools run in Foundry, while function calling executes in your process. Cost also differs: file search and code interpreter add charges beyond token fees [[tr9]] [[tr10]]." },
+    { "t": "table", "caption": "Tool notes from the live pages (checked 2026-10-13)", "head": ["Tool", "What to know", "In a toolbox?"], "rows": [
+      ["File search", "Grounds the agent in your documents through a vector store. In the standard setup files stay in your storage and your Azure AI Search resource ingests them. Extra charges beyond tokens [[tr9]]", "Yes [[r3]]"],
+      ["Code interpreter", "Model writes and runs Python in a sandbox for analysis and charts. Extra charges. Two simultaneous conversations create two sessions, each active one hour by default with a 30 minute idle timeout [[tr10]]", "Yes [[r3]]"],
+      ["Web search", "Real-time public web with inline citations through Grounding with Bing. The Microsoft DPA does not apply to data sent to it and transfers occur outside compliance and geographic boundaries [[tr11]]", "Yes [[r3]]"],
+      ["Azure AI Search, OpenAPI, MCP, A2A", "Query an index, call REST APIs by spec, reach MCP servers and A2A agents", "Yes [[r3]]"],
+      ["SharePoint, Azure Functions, computer use, image generation", "Direct integration only. Custom MCP servers on Azure Functions use the `/runtime/webhooks/mcp` endpoint [[r1]]", "No [[r3]]"],
+      ["Function calling", "Your code executes the call, so it stays in your process", "No, client-side [[r3]]"]
+    ] },
+    { "t": "callout", "kind": "warn", "title": "Logic Apps: UNVERIFIED", "md": "Logic Apps does not appear in the toolbox support table or the overview's tool list on 2026-10-13. Whether it exists as a built-in tool in the new Agent Service is **UNVERIFIED**. Do not promise it until you confirm in the portal." }
+  ],
+  "whereToUse": [
+    "File search for assistants that answer from documents users upload or from a modest managed document set",
+    "Code interpreter for spreadsheet analysis, math and chart generation",
+    "Web search for current public facts where exposure to Bing grounding terms is acceptable",
+    "OpenAPI or MCP for actions on your own services, and Azure Functions where the function app already exists"
+  ],
+  "whenToUse": {
+    "use": [
+      "Use the managed tool when it matches the need, since Foundry runs and scales it",
+      "Prefer toolbox-eligible tools when several agents share them",
+      "Read the data-boundary note before enabling web search"
+    ],
+    "avoid": [
+      "Do not use file search as a substitute for permission-aware multi-source retrieval",
+      "Do not enable web search on agents that handle data that must stay inside compliance boundaries",
+      "Do not leave code interpreter open to unbounded concurrency: each conversation can open a session with extra charges"
+    ],
+    "flips": [
+      "Content is curated, shared and permission-sensitive: use a Foundry IQ knowledge base",
+      "Execution must stay in your process: use function calling",
+      "Data may not leave the compliance boundary: drop web search and use curated sources"
+    ]
+  },
+  "alternatives": {
+    "title": "Retrieval and action options",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["File search", "User-provided or small document sets", "Many sources, ACL-aware answers", "Extra charges, and an Azure AI Search resource ingests files [[tr9]]"],
+      ["Foundry IQ knowledge base", "Curated multi-source content with ACL sync", "A few ad hoc files in a chat", "Partly preview, more setup [[r6]]"],
+      ["Azure AI Search tool", "You already own a tuned index", "You want managed ingestion and sources", "You maintain the index"],
+      ["Web search", "Fresh public facts", "Sensitive data or a strict boundary", "DPA does not apply to data sent to Bing grounding [[tr11]]"],
+      ["Function calling", "Logic must run in your process", "You want platform-run tools", "You build and secure the executor"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Security review blocks the agent after launch", "cause": "Web search was on by default and data goes to Grounding with Bing outside the DPA", "fix": "Review the terms first and restrict with admin controls or a domain-restricted search [[tr11]]." },
+    { "symptom": "Costs spike on a data-analysis agent", "cause": "Each simultaneous conversation opens its own code interpreter session, active one hour by default", "fix": "Limit concurrency, shorten sessions and watch the extra charges [[tr10]]." },
+    { "symptom": "File upload fails for the developer", "cause": "Missing Storage Blob Data Contributor on the project's storage account or Foundry User on the project", "fix": "Assign both roles and retry [[tr9]]." }
+  ],
+  "scenarios": [
+    {
+      "id": "w12-t09-s1",
+      "title": "Fresh facts under a data boundary",
+      "situation": "An assistant should answer questions about recent industry news. Policy says customer data must not leave the compliance boundary.",
+      "constraints": ["Compliance boundary is strict", "Freshness is moderate", "A content team can curate sources"],
+      "unknowns": ["How fresh must answers be, hours or weeks?", "Can legal approve Bing grounding terms?"],
+      "question": "How do you give it current knowledge?",
+      "options": [
+        { "name": "Curated sources in a knowledge base or file search, refreshed on a schedule", "verdict": "best", "why": "Data stays in your boundary and a content team controls what the agent can cite.", "tradeoff": "Freshness is only as good as your refresh cycle." },
+        { "name": "Domain-restricted web search after legal review", "verdict": "good", "why": "Limits results to listed public domains.", "tradeoff": "Data sent still falls under Grounding with Bing terms, outside the DPA." },
+        { "name": "General web search enabled by default", "verdict": "poor", "why": "Data transfers occur outside compliance and geographic boundaries.", "tradeoff": "Right for public-information agents with no sensitive inputs." }
+      ],
+      "flips": [
+        { "if": "Answers must be minutes-fresh and the inputs carry no sensitive data", "then": "General web search is acceptable." },
+        { "if": "Sources span many systems with different permissions", "then": "Use a Foundry IQ knowledge base." }
+      ],
+      "takeaway": "Web search trades data boundary for freshness."
+    },
+    {
+      "id": "w12-t09-s2",
+      "title": "Spreadsheet analysis for each user",
+      "situation": "Users upload spreadsheets and ask for aggregates and charts. Volumes are small today and could grow.",
+      "constraints": ["Computation, not retrieval", "Per-user files", "Cost must not surprise"],
+      "unknowns": ["Peak concurrent conversations?", "Do charts need to persist?"],
+      "question": "Which tool do you add?",
+      "options": [
+        { "name": "Code interpreter", "verdict": "best", "why": "The model writes and runs Python in a sandbox, including charts.", "tradeoff": "Extra charges, and one session per simultaneous conversation." },
+        { "name": "File search", "verdict": "poor", "why": "It retrieves passages and does not compute aggregates or render charts.", "tradeoff": "Right for answering questions from document text." },
+        { "name": "Function calling to an analytics service you host", "verdict": "good", "why": "Deterministic and under your control.", "tradeoff": "You build and run the service and the client executes the call." }
+      ],
+      "flips": [
+        { "if": "Analyses are fixed reports", "then": "Function calling to a tested service is more predictable." },
+        { "if": "Concurrency grows sharply", "then": "Budget code interpreter sessions or move heavy jobs to a service." }
+      ],
+      "takeaway": "Match the tool to retrieval versus computation."
+    }
+  ],
+  "quiz": [
+    { "id": "w12-t09-q1", "type": "single", "tag": "diagnose", "q": "Code interpreter costs doubled when two users chatted at the same time. What explains it?", "options": ["Each simultaneous conversation creates its own code interpreter session", "File search was enabled", "The toolbox duplicated the tool", "Idle timeout is 30 hours"], "answer": 0, "explain": "Simultaneous calls in two conversations create two sessions, each active for one hour by default with a 30 minute idle timeout. The other options do not match the documented behavior.", "ref": "tr10" },
+    { "id": "w12-t09-q2", "type": "multi", "tag": "security", "q": "Which statements about the web search tool are supported by the docs?", "options": ["It uses Grounding with Bing Search and Bing Custom Search", "The Microsoft DPA applies to data sent to it", "Data transfers occur outside compliance and geographic boundaries", "It returns inline citations"], "answers": [0, 2, 3], "explain": "The page states the Bing grounding basis, the data-transfer boundary note and inline citations. It also says the DPA does not apply to data sent to these services.", "ref": "tr11" },
+    { "id": "w12-t09-q3", "type": "match", "tag": "concept", "q": "Match the need to the best built-in tool.", "pairs": [
+      { "l": "Answer from user-uploaded documents", "r": "File search" },
+      { "l": "Compute aggregates and draw charts", "r": "Code interpreter" },
+      { "l": "Current public facts with citations", "r": "Web search" },
+      { "l": "Run logic inside your own process", "r": "Function calling" }
+    ], "explain": "File search retrieves from your documents, code interpreter runs Python, web search grounds in the public web, and function calling leaves execution to your code.", "ref": "r3" }
+  ],
+  "flashcards": [
+    { "front": "Why is web search a data-boundary decision?", "back": "It uses Grounding with Bing. The Microsoft DPA does not apply to data sent there, and transfers occur outside compliance and geographic boundaries." },
+    { "front": "How does code interpreter bill and scale?", "back": "Extra charges beyond tokens. Each simultaneous conversation creates a session, active one hour by default with a 30 minute idle timeout." },
+    { "front": "Is Logic Apps a built-in agent tool in the new service?", "back": "UNVERIFIED on 2026-10-13. It is absent from the toolbox support table." }
+  ],
+  "related": ["w12-t08", "w12-t10", "w12-t12", "w08-t17", "w05-t13", "w12-l4"],
+  "refs": ["r1", "r3", "r6", "tr9", "tr10", "tr11"]
+}

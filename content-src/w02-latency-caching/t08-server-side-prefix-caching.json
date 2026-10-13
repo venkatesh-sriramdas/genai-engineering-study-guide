@@ -1,0 +1,109 @@
+{
+  "id": "w02-t08",
+  "order": 8,
+  "group": "KV cache and serving",
+  "title": "Server-side prefix caching",
+  "minutes": 9,
+  "difficulty": "advanced",
+  "summary": "Inference engines can keep the KV blocks of finished requests and reuse them when a new request starts with the same tokens. It is the self-hosted twin of provider prompt caching.",
+  "useIf": "You run your own engine and many requests share a long prefix such as a system prompt, tools or a document.",
+  "avoidIf": "Prompts are unique, or tenants must not infer each other's prompts and you have not set up isolation.",
+  "explain": [
+    { "t": "p", "md": "A prefix cache keeps the KV blocks computed for earlier requests. A new request whose first tokens match skips prefill for the shared part and starts at the first new token. The output does not change, because the same attention state is reused [[r7]]. Hosted prompt caching is the provider-run version of the same idea." },
+    { "t": "p", "md": "**vLLM** takes a hash-based approach. Each KV block is identified by a hash of its parent block's hash, its own tokens and any extra hashes (LoRA ID, multimodal input hash and `cache_salt`). Only full blocks are cached, and unused blocks are evicted in LRU order [[r7]]. **SGLang** keeps KV in a radix tree over token sequences (RadixAttention), which reuses prefixes automatically across calls and reports up to 6.4 times the throughput of earlier systems on structured LLM programs [[r8]]." },
+    { "t": "diagram", "id": "w02-t08-d1", "title": "Hash chain of a cached prefix", "alt": "The salt and extra hashes feed the first block hash. Each later block hash includes the parent hash, so a change in an early block changes every later hash.", "src": "flowchart LR\n  S[cache_salt and extra hashes] --> H1[Block 1 hash]\n  H1 --> H2[Block 2 hash]\n  H2 --> H3[Block 3 hash]\n  H3 --> N[New tokens: prefill from here]" },
+    { "t": "p", "md": "**Hit conditions.** The tokens must match from the very first token through whole blocks, the extra hashes must match, and the blocks must not have been evicted. One changed token early in the prompt changes every later hash." },
+    { "t": "p", "md": "**Multi-tenant risk.** Cache hits are faster, and speed is observable. An audit of LLM APIs found global cache sharing across users in seven providers, including OpenAI, so timing can reveal whether someone else's prompt was cached [[r12]]. In vLLM, a per-request `cache_salt` is injected into the first block's hash so that only requests with the same salt share blocks, which blocks timing attacks [[r7]]. Hash choice matters too: `sha256` is the default since v0.11, `sha256_cbor` gives reproducible hashes, and `xxhash` is faster but not cryptographic, so the docs warn of collision risk and possible leakage in multi-tenant setups [[r7]]." },
+    { "t": "callout", "kind": "gotcha", "title": "Isolation costs hits", "md": "A salt per tenant stops cross-tenant sharing, including of a common system prompt. Choose the salt granularity to match your trust boundary: per tenant, per trust group or none." }
+  ],
+  "whereToUse": [
+    "Self-hosted chat with a long shared system prompt and tool definitions",
+    "RAG or agent loops that resend a growing history each turn",
+    "Structured LLM programs and tree-of-thought style search that branch from a common prefix",
+    "Batch jobs that put the same instructions and examples in front of many items",
+    "Multi-tenant platforms that need per-tenant cache isolation"
+  ],
+  "whenToUse": {
+    "use": [
+      "A large share of tokens is an identical prefix across requests",
+      "Requests arrive often enough that blocks stay resident until reused",
+      "You can keep the prefix byte-identical and put variable text last"
+    ],
+    "avoid": [
+      "Every prompt is unique or starts with variable text",
+      "Tenants must not be able to probe each other and no salting is in place",
+      "You use a non-cryptographic hash in a multi-tenant deployment without a risk review"
+    ],
+    "flips": [
+      "Users share nothing confidential: keep one global cache to maximise hits",
+      "Compliance requires strict separation: salt per tenant and accept the lower hit rate",
+      "Memory is tight: the cache competes with active sequences, so evictions rise and hits fall"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Engine prefix cache, one global scope", "Single trust domain, shared prompts", "Tenants must be isolated", "Timing side channel across users"],
+      ["Engine prefix cache with per-tenant salt", "Multi-tenant platform", "Tenants share nothing anyway", "Lower hit rate, no cross-tenant reuse"],
+      ["No prefix caching", "Unique prompts, strict isolation, tiny traffic", "Long shared prefixes", "Repeated prefill cost"],
+      ["Hosted provider prompt cache", "You use a managed API", "You need engine-level control", "Provider-defined lifetime and pricing"],
+      ["Semantic cache", "Repeating questions with the same answer", "Answers differ per user", "Changes the answer, not only the cost"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Prefix cache shows no hits although prompts look alike", "cause": "Variable text such as a timestamp sits early in the prompt, or the shared part is shorter than one block", "fix": "Move variable text last and keep the shared prefix identical and longer than a block [[r7]]" },
+    { "symptom": "A user can tell whether another tenant used a prompt, by timing", "cause": "Cache blocks are shared globally across tenants", "fix": "Send a per-tenant `cache_salt` so hashes differ across tenants [[r7]] [[r12]]" },
+    { "symptom": "A security review flags the `xxhash` prefix-cache setting on a multi-tenant fleet", "cause": "A non-cryptographic hash theoretically raises collision risk, which the vLLM docs say can cause undefined behaviour or leak private information", "fix": "Use `sha256` (default since v0.11) or `sha256_cbor` in multi-tenant deployments [[r7]]" }
+  ],
+  "scenarios": [
+    {
+      "id": "w02-t08-s1",
+      "title": "Shared platform, confidential prompts",
+      "situation": "A SaaS platform serves many customer organisations from one vLLM fleet. Each organisation uses a confidential system prompt of about 4,000 tokens, reused across its users. Contracts forbid one customer inferring another's prompts.",
+      "constraints": ["Multi-tenant", "Confidential prompts", "Each tenant has many users and steady traffic"],
+      "unknowns": ["Can the gateway add a salt per request?", "Is a shared base prompt common to all tenants?"],
+      "question": "How do you configure prefix caching?",
+      "options": [
+        { "name": "One global cache, no salt", "verdict": "poor", "why": "Timing differences can reveal that another tenant's prompt was cached.", "tradeoff": "Right for a single-tenant deployment or public prompts." },
+        { "name": "Disable prefix caching", "verdict": "good", "why": "It removes the risk completely.", "tradeoff": "You pay the full 4,000-token prefill on every request." },
+        { "name": "Enable prefix caching with a per-tenant cache_salt", "verdict": "best", "why": "Users of one tenant share blocks, and other tenants cannot match them or time them.", "tradeoff": "A common base prompt is no longer shared across tenants, so hit rate is lower than global." }
+      ],
+      "flips": [
+        { "if": "Several tenants form one trust group and agree to share", "then": "Give that group a common salt so they share blocks. The salt covers the whole hash chain, so mixing salted and unsalted parts in one request is not possible." },
+        { "if": "Each tenant has very low traffic", "then": "Hits will be rare, so the benefit may not justify the memory." }
+      ],
+      "takeaway": "Salt at the trust boundary, and accept the hit-rate cost."
+    },
+    {
+      "id": "w02-t08-s2",
+      "title": "Internal assistant, one trust domain",
+      "situation": "An internal assistant for one company uses a 6,000-token system prompt and tool list for all staff. The platform team asks whether to salt the cache per user for safety.",
+      "constraints": ["Single trust domain", "Prompt is not confidential among staff", "TTFT is the pain point"],
+      "unknowns": ["Do staff see different tools by role?", "What is the threat model?"],
+      "question": "Do you salt per user?",
+      "options": [
+        { "name": "Salt per user", "verdict": "poor", "why": "It splits the cache into one copy per user and removes most reuse for no stated threat.", "tradeoff": "Right when users must not be able to probe each other." },
+        { "name": "Enable prefix caching with no salt and keep the prefix stable", "verdict": "best", "why": "All staff share one prefix, so each request skips most of the prefill.", "tradeoff": "A timing signal exists inside the company, which is acceptable under this threat model." },
+        { "name": "Salt per department", "verdict": "good", "why": "It keeps hits within a group while isolating groups.", "tradeoff": "Fewer hits than global, and only worthwhile if departments must be separated." }
+      ],
+      "flips": [
+        { "if": "HR or legal data appears in prompts for some roles", "then": "Salt by role or department." },
+        { "if": "Tools differ by role", "then": "Group by identical tool lists so each group shares a stable prefix." }
+      ],
+      "takeaway": "Isolation is a dial set by the threat model, not a default."
+    }
+  ],
+  "quiz": [
+    { "id": "w02-t08-q1", "type": "multi", "tag": "concept", "q": "Which inputs feed the hash of a KV block in vLLM prefix caching?", "options": ["The hash of the parent block", "The tokens in this block", "The request arrival time", "Extra hashes such as a LoRA ID or cache_salt"], "answers": [0, 1, 3], "explain": "The block hash combines the parent hash, the block's tokens and extra hashes. Arrival time is not part of it, which is why identical prefixes can match across requests.", "difficulty": 2, "ref": "r7" },
+    { "id": "w02-t08-q2", "type": "numeric", "tag": "numeric", "q": "A 1,000-token prompt matches a cached prefix exactly. vLLM caches only full blocks and the example block size is 16. How many tokens can be served from cache?", "answer": 992, "tolerancePct": 1, "unit": "tokens", "hint": "floor(1,000 / 16) x 16", "explain": "1,000 / 16 is 62.5, so 62 full blocks are cached, which is 992 tokens. The last 8 tokens fill a partial block and are recomputed.", "difficulty": 2, "ref": "r7" },
+    { "id": "w02-t08-q3", "type": "single", "tag": "security", "q": "Which setting best defends a shared vLLM fleet against timing probes of cached prompts?", "options": ["A faster non-cryptographic hash", "A per-tenant cache_salt in each request", "A larger block size", "Lower max_num_seqs"], "answer": 1, "explain": "The salt changes the first block's hash, so other tenants cannot reuse or time those blocks. A weaker hash raises collision risk, and block size or concurrency settings do not isolate tenants.", "difficulty": 2, "ref": "r7" }
+  ],
+  "flashcards": [
+    { "front": "How does vLLM identify a cached KV block?", "back": "By a hash of the parent block hash, the block's tokens and extra hashes such as LoRA ID, multimodal hash and cache_salt. Only full blocks are cached." },
+    { "front": "What does RadixAttention do?", "back": "It keeps KV in a radix tree of token sequences so prefixes are reused automatically across calls. SGLang reports up to 6.4x throughput on structured programs." },
+    { "front": "How do you stop cross-tenant timing probes in vLLM?", "back": "Send a per-request cache_salt, which is injected into the first block hash, so only same-salt requests share blocks." }
+  ],
+  "related": ["w02-t06", "w02-t11", "w02-t14", "w02-l3"],
+  "refs": ["r7", "r8", "r12"]
+}

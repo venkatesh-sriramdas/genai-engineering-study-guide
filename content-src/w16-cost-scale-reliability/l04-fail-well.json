@@ -1,0 +1,85 @@
+{
+  "id": "w16-l4",
+  "order": 4,
+  "title": "Fail well: retries, breakers, hedges and failover",
+  "kind": "problem",
+  "minutes": 25,
+  "brief": "Calls to the model fail in different ways: a blip, an exhausted quota, a slow tail, a dead region. Each deserves a different response, and the wrong one makes things worse. How critical the call is, whether it is cheap to repeat and how long recovery may take are all open.",
+  "blocks": [
+    { "t": "h", "text": "Match the pattern to the failure", "level": 2 },
+    { "t": "dials", "id": "w16-l4-resilience", "title": "Pick the resilience pattern", "prompt": "Flip the failure type, the nature of the call and how critical it is.", "dials": [
+      { "id": "failure", "label": "Failure type", "values": [{ "id": "blip", "label": "Transient overload, short Retry-After" }, { "id": "quota", "label": "Sustained quota exhaustion" }, { "id": "region", "label": "Regional outage" }, { "id": "tail", "label": "Slow tail, no errors" }] },
+      { "id": "call", "label": "The call", "values": [{ "id": "cheap", "label": "Cheap and idempotent" }, { "id": "costly", "label": "Expensive or stateful" }] },
+      { "id": "need", "label": "Criticality", "values": [{ "id": "critical", "label": "Critical, must answer" }, { "id": "soft", "label": "Degradable, a reduced answer is fine" }] }
+    ], "options": [
+      { "id": "retry", "name": "Retry with backoff and jitter", "summary": "Honor Retry-After, cap attempts." },
+      { "id": "breaker", "name": "Circuit breaker and backend pool", "summary": "Trip a bad backend, fail over to a healthy one." },
+      { "id": "region", "name": "Multi-region active-active or hot/warm", "summary": "A second region you built in advance." },
+      { "id": "hedge", "name": "Hedged requests", "summary": "Duplicate after the p95 delay." },
+      { "id": "degrade", "name": "Degrade or shed", "summary": "Smaller model, shorter answer, cache, queue." }
+    ], "scores": {
+      "retry": {
+        "failure": { "blip": { "s": 2, "why": "Honor Retry-After, add jitter and cap attempts and total time." }, "quota": { "s": -2, "why": "Retrying quota or billing errors never succeeds, so do not." }, "region": { "s": -1, "why": "Retries pile onto a dead region." }, "tail": { "s": 0, "why": "Retries fire after a failure, not after slowness." } },
+        "call": { "cheap": { "s": 1, "why": "A repeat costs little and is safe." }, "costly": { "s": -1, "why": "Repeats are expensive, and stateful calls may not be safe to repeat." } },
+        "need": { "critical": { "s": 1, "why": "Often enough to save the request." }, "soft": { "s": 0, "why": "A fallback may be a better use of the time." } }
+      },
+      "breaker": {
+        "failure": { "blip": { "s": 1, "why": "Trips after repeated failures and spreads load." }, "quota": { "s": 1, "why": "A pool shifts traffic to a deployment with headroom." }, "region": { "s": 2, "why": "Priority groups route to a healthy region while the breaker trips the bad one." }, "tail": { "s": 0, "why": "A breaker reacts to failures, not to slowness." } },
+        "call": { "cheap": { "s": 1, "why": "No state to move." }, "costly": { "s": -1, "why": "Stateful APIs need session affinity behind a pool." } },
+        "need": { "critical": { "s": 1, "why": "Keeps a path to a working backend." }, "soft": { "s": 0, "why": "Useful but not decisive." } }
+      },
+      "region": {
+        "failure": { "blip": { "s": 0, "why": "Overkill for a blip." }, "quota": { "s": 1, "why": "A second region brings its own quota." }, "region": { "s": 2, "why": "The only pattern that survives a regional outage, and you build it yourself." }, "tail": { "s": 0, "why": "Does not address slowness." } },
+        "call": { "cheap": { "s": 0, "why": "Works, but the standby is a fixed cost." }, "costly": { "s": -1, "why": "State and prompt caches are per region, so a failover starts cold." } },
+        "need": { "critical": { "s": 2, "why": "Recovery targets range from minutes to hours by tier." }, "soft": { "s": -1, "why": "A standby costs more than degradation for non-critical work." } }
+      },
+      "hedge": {
+        "failure": { "blip": { "s": 0, "why": "A duplicate does not help a rejected request." }, "quota": { "s": -2, "why": "Duplicates add load to an exhausted quota." }, "region": { "s": 0, "why": "Only helps if the duplicate can reach another region." }, "tail": { "s": 2, "why": "Cut p99.9 from 1,800 ms to 74 ms for about 2% more requests in the BigTable benchmark." } },
+        "call": { "cheap": { "s": 2, "why": "Cheap and idempotent is the safe case for duplicates." }, "costly": { "s": -2, "why": "A duplicate long generation doubles real spend." } },
+        "need": { "critical": { "s": 1, "why": "Trims the tail on critical paths." }, "soft": { "s": 0, "why": "Rarely worth the load." } }
+      },
+      "degrade": {
+        "failure": { "blip": { "s": 0, "why": "Retry first." }, "quota": { "s": 2, "why": "Smaller model, shorter output, cached answer, queue or shed." }, "region": { "s": 1, "why": "Keeps the core flow alive on reduced capacity." }, "tail": { "s": 1, "why": "Cutting work fits the time budget." } },
+        "call": { "cheap": { "s": 0, "why": "Neutral." }, "costly": { "s": 1, "why": "A cheaper fallback beats paying twice." } },
+        "need": { "critical": { "s": -1, "why": "A degraded answer may break the guarantee." }, "soft": { "s": 2, "why": "The product decision is already made." } }
+      }
+    }, "takeaway": "Name the failure first. Retries fix blips, degradation fixes sustained quota pressure, a second region fixes a regional outage and hedging fixes only the tail." },
+    { "t": "table", "caption": "Retry and hedging rules from the sources", "head": ["Technique", "Rule", "Source"], "rows": [
+      ["**Honor Retry-After**", "Treat it as a minimum and add a small random delay", "OpenAI rate limits [[r16]]"],
+      ["**Backoff with jitter**", "Without a header, use exponential backoff with jitter. Capped backoff alone leaves retry clusters, and jitter spreads them and cuts total calls", "OpenAI [[r16]] and AWS [[r18]]"],
+      ["**Caps**", "Cap attempts and total time", "OpenAI [[r16]]"],
+      ["**Never retry**", "Quota and billing errors", "OpenAI [[r16]]"],
+      ["**One retry layer**", "Count SDK retries so nested loops do not multiply traffic", "OpenAI [[r16]]"],
+      ["**Hedged requests**", "After about the p95 delay send a duplicate and take the first reply. In a Google BigTable benchmark, p99.9 for 1,000 keys fell from 1,800 ms to 74 ms for about 2% extra requests", "The Tail at Scale [[r19]]"]
+    ], "highlightCol": 0 },
+    { "t": "diagram", "id": "w16-l4-breaker", "title": "What a circuit breaker does", "alt": "State diagram. The breaker starts closed. When the failure count is reached in the interval it moves to open. After the trip duration, or the accepted Retry-After value, it returns to closed.", "src": "stateDiagram-v2\n  [*] --> Closed\n  Closed --> Open: failure count reached in the interval\n  Open --> Closed: trip duration over or Retry-After passed", "caption": "In APIM a tripped backend makes the gateway return 503 for traffic that would have gone to it [[r4]]." },
+    { "t": "code", "lang": "json", "title": "A backend circuit breaker rule (illustrative)", "code": "\"circuitBreaker\": {\n  \"rules\": [\n    {\n      \"name\": \"openAiBreaker\",\n      \"failureCondition\": {\n        \"count\": 3,\n        \"interval\": \"PT1M\",\n        \"statusCodeRanges\": [ { \"min\": 429, \"max\": 429 }, { \"min\": 500, \"max\": 599 } ]\n      },\n      \"tripDuration\": \"PT1M\",\n      \"acceptRetryAfter\": true\n    }\n  ]\n}", "caption": "A backend has one `circuitBreaker` rule with `failureCondition`, `tripDuration` and `acceptRetryAfter`. Rules are approximate across gateway instances and are not in the Consumption tier. For Azure OpenAI backends accept `Retry-After`, because it can be large, for example a day. Pools hold up to 30 backends with round-robin (default), weighted or priority balancing, and lower priority groups are used only when higher ones are tripped [[r4]]." },
+    { "t": "table", "caption": "Regional recovery tiers. Foundry does not fail over automatically, so you build two resources in two regions with two project connections [[r15]]", "head": ["Strategy", "Approximate RTO", "Approximate RPO", "Relative cost"], "rows": [
+      ["**Hot/hot**", "Minutes", "Near zero", "Highest: full duplicate resources in both regions"],
+      ["**Hot/warm**", "30 minutes to 2 hours", "Minutes to hours", "Moderate: critical resources running, others on standby"],
+      ["**Hot/cold**", "2 to 8 hours", "Hours", "Lowest: provisioned but not active"]
+    ], "highlightCol": 0 },
+    { "t": "failure", "title": "Failure modes of the failure handling", "items": [
+      { "symptom": "A short blip becomes a long outage", "cause": "A retry storm: SDK, application and gateway each retry, so three layers with three retries each send up to 4 x 4 x 4 = 64 attempts per request", "fix": "Keep one retry layer, cap attempts and total time, add jitter and a breaker. Detect with requests per unique task id" },
+      { "symptom": "A breaker never opens for one failing gateway instance", "cause": "Rules are approximate because gateway instances do not synchronize", "fix": "Treat it as best effort and watch backend failure rates centrally" },
+      { "symptom": "Clients see 503 and blame the model", "cause": "A tripped breaker makes the gateway itself return 503", "fix": "Tag gateway-originated errors in logs and traces and alert on breaker-open time" },
+      { "symptom": "Failover works on paper and fails in the incident", "cause": "The second region has no quota, deployment or model version, and Foundry does not fail over for you", "fix": "Create both deployments in advance, add Service Health alerts and availability tests, and rehearse. Front Door with one APIM per region can route around a dead region" },
+      { "symptom": "Cost and p95 TTFT jump after failover", "cause": "Prompt caches are not shared across regions, so the standby starts cold", "fix": "Prewarm where possible and budget for the cold start" },
+      { "symptom": "Stateful conversations break when traffic moves", "cause": "Stateful APIs such as Responses need session affinity behind a backend pool", "fix": "Enable session awareness on the pool, or keep conversation state outside the model API" }
+    ] }
+  ],
+  "quiz": [
+    { "id": "w16-l4-q1", "type": "order", "tag": "order", "q": "Put the handling of a failed model call in order, following OpenAI's retry guidance.", "items": ["Classify the error: do not retry quota or billing errors", "Wait at least the Retry-After value, otherwise use exponential backoff", "Add a small random jitter to the delay", "Stop at the attempt cap or the total time budget", "Fall back or degrade instead of retrying again"], "explain": "Classification comes first because some errors can never succeed. The wait honors the server's hint as a minimum. Jitter prevents synchronized retries. Caps bound the cost, and a fallback is the exit when the budget runs out.", "difficulty": 2, "ref": "r16" },
+    { "id": "w16-l4-q2", "type": "numeric", "tag": "numeric", "q": "An SDK, an application wrapper and a gateway each make one attempt plus 3 retries. When the backend keeps failing, how many calls can reach the backend for one user request?", "answer": 64, "tolerancePct": 1, "unit": "calls", "hint": "Each layer multiplies: (1 + 3) per layer", "explain": "Each layer makes 4 attempts per attempt of the layer above, so 4 x 4 x 4 = 64. This is why OpenAI advises counting SDK retries, and why one retry layer with a cap and jitter is the safer design.", "difficulty": 2, "ref": "r16" },
+    { "id": "w16-l4-q3", "type": "single", "tag": "tradeoff", "q": "Which hedging policy fits an LLM workload best?", "options": ["Hedge every call after 50 ms to cut the median, since duplicates cost less than slow answers", "Hedge long streaming generations, because they have the worst tails and duplicates add little load", "Never hedge LLM calls, because a duplicate can only make the tail worse under load", "Hedge cheap idempotent calls after about the p95 delay, cap the extra spend and cancel the loser"], "answer": 3, "explain": "Hedging works when the duplicate is cheap and safe, fires after about the p95 delay and has a spend cap. Hedging at 50 ms doubles load without helping the tail. Duplicating long generations doubles the real cost. Never hedging ignores the large p99.9 gains reported for cheap calls.", "difficulty": 3, "ref": "r19" }
+  ],
+  "defend": null,
+  "refs": ["r4", "r15", "r16", "r18", "r19", "r1", "r23"],
+  "takeaways": [
+    "Name the failure, then pick the pattern. Retries for blips, degradation for quota pressure, a second region for outages, hedging for tails",
+    "Never retry quota or billing errors, and keep to one retry layer with jitter and caps",
+    "A tripped APIM breaker returns 503 from the gateway, so label gateway errors in your traces",
+    "Foundry does not fail over for you. Build, test and rehearse the second region",
+    "Failover starts with a cold prompt cache and may lack quota, so plan for cost and latency"
+  ]
+}

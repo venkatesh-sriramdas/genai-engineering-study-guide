@@ -1,0 +1,94 @@
+{
+  "id": "w08-t06",
+  "order": 6,
+  "group": "Client features",
+  "title": "Elicitation",
+  "minutes": 7,
+  "difficulty": "core",
+  "summary": "Elicitation lets a server ask the user a question in the middle of a request, through the client. Form mode collects simple structured input and URL mode sends the user out of band for anything sensitive.",
+  "useIf": "A tool needs a missing, non-secret answer or a user consent that only a person can give, and the client declares support.",
+  "avoidIf": "You would collect passwords, API keys, tokens or payment data in a form, or no client capability exists and nobody can answer.",
+  "explain": [
+    { "t": "p", "md": "Elicitation is active, not deprecated, in 2026-07-28. A client declares `elicitation` (same as `{form: {}}`) or `url` capability, and a server MUST NOT send a mode the client did not declare [[r27]]." },
+    { "t": "table", "caption": "The two modes", "head": ["Mode", "What the user sees", "Schema", "Use for"], "rows": [["`form` (default if `mode` is omitted)", "A client-rendered form", "Flat object with primitive fields: string, number, boolean, single or multi-select enum", "Choices, confirmations, missing non-secret values"], ["`url`", "A link to open in a browser", "None. The server sends a `url` and a `message`", "OAuth to a third party, payments, secrets"]] },
+    { "t": "p", "md": "The user answers with an `action`: `accept` (with data in form mode), `decline` or `cancel`. Servers must handle all three and must not assume success. Form mode MUST NOT request passwords, API keys, access tokens or payment credentials, and URL mode MUST be used for them. In URL mode the client MUST show the full URL, get consent, not pre-fetch it, and open it so neither client nor model can inspect the page. Third-party credentials must never pass through the client [[r27]]." },
+    { "t": "diagram", "id": "w08-t06-d1", "title": "Elicitation in 2026-07-28", "alt": "The client calls tools/call, the server answers input_required with an elicitation request and requestState, the user answers, and the client retries with inputResponses.", "src": "sequenceDiagram\n  participant C as Client\n  participant S as Server\n  C->>S: tools/call id 1\n  S-->>C: input_required, elicitation, requestState\n  Note over C: User answers or declines\n  C->>S: tools/call id 2, inputResponses, requestState\n  S-->>C: complete result" },
+    { "t": "p", "md": "**What changed by revision.** Form mode arrived in 2025-06-18 and URL mode in 2025-11-25 [[r31]]. In both, the server pushed `elicitation/create` on a stream within a session. In 2026-07-28 that push is gone: the request rides inside a Multi Round-Trip Request, so the server stays stateless, and `notifications/elicitation/complete` and `elicitationId` were removed [[r3]] [[r1]]." },
+    { "t": "callout", "kind": "warn", "title": "URL mode is not login to your server", "md": "A server MUST NOT use URL elicitation to authorize users for itself. That is what MCP authorization is for. URL mode lets the user authorize your server to reach a third party, and your server stores those tokens." }
+  ],
+  "whereToUse": [
+    "Disambiguation: which of three matching accounts, which region, which environment",
+    "Confirmation before an irreversible step, with an explicit decline path",
+    "Connecting a user's account at a third-party SaaS through its own consent page",
+    "Collecting a few optional parameters a tool does not need every time"
+  ],
+  "whenToUse": {
+    "use": ["A human is present and the client declared the capability", "The answer is non-secret and fits a flat form", "Third-party authorization must happen outside the client", "Stateless servers should resume cleanly after the answer"],
+    "avoid": ["Collecting secrets in a form", "Unattended or headless runs with no one to answer", "Nested or complex data entry that exceeds flat primitives"],
+    "flips": ["No elicitation capability: add the field as a tool parameter or return an actionable `isError`", "The input is sensitive: switch from form to URL mode"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Form elicitation", "Small non-secret input mid-call", "Secrets or complex data", "Needs client support and a present user"],
+      ["URL elicitation", "Out-of-band consent or secrets", "Simple choices", "Server must store third-party tokens"],
+      ["Extra tool parameters", "The model can supply the value itself", "Only the user knows it", "Model may guess"],
+      ["Ask in chat", "Any host, no protocol support", "Structured validated input", "Free-form and unvalidated"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A security review blocks the server", "cause": "It asked for an API key through a form-mode elicitation", "fix": "Use URL mode so the secret never transits the client or the model" },
+    { "symptom": "Calls hang or fail on a headless client", "cause": "The server sent an elicitation to a client that did not declare the capability", "fix": "Read declared capabilities and fall back to parameters or an `isError` message" },
+    { "symptom": "Server state breaks after a user declines", "cause": "The code assumed `accept` and used missing content", "fix": "Branch on `accept`, `decline` and `cancel` and offer alternatives" }
+  ],
+  "scenarios": [
+    {
+      "id": "w08-t06-s1",
+      "title": "Choosing among matching accounts",
+      "situation": "A `transfer` tool finds three accounts matching the user's description. A person is in the session. The choice is not sensitive.",
+      "constraints": ["User is present", "Non-secret choice", "Client declares form support"],
+      "unknowns": ["Does the client actually declare `elicitation`?", "Could the model pick safely from account names?"],
+      "question": "How do you resolve the ambiguity?",
+      "options": [
+        { "name": "Form elicitation with a single-select enum", "verdict": "best", "why": "The user makes the choice, the server gets validated data and the flow resumes through the retry.", "tradeoff": "Requires client support and a user who responds." },
+        { "name": "Let the model pick the most likely account", "verdict": "poor", "why": "A wrong guess moves money or data to the wrong target.", "tradeoff": "Acceptable only for reversible, low-stakes choices." },
+        { "name": "Ask in chat and call the tool again with an `account_id`", "verdict": "good", "why": "Works in any host with no protocol feature.", "tradeoff": "Free-form reply and no server-side validation of the choice." }
+      ],
+      "flips": [
+        { "if": "The client lacks elicitation", "then": "Return an `isError` message listing the choices so the model can ask in chat." },
+        { "if": "The transfer is small, reversible and the match is exact", "then": "Proceed without asking to avoid needless friction." }
+      ],
+      "takeaway": "Let a human decide ambiguous, consequential choices."
+    },
+    {
+      "id": "w08-t06-s2",
+      "title": "Connecting a user's SaaS account",
+      "situation": "A server needs to call a third-party API as the user. That API issues tokens through its own OAuth consent page. The MCP client must not see the tokens.",
+      "constraints": ["Third-party credentials", "Client is untrusted for secrets", "Server can store tokens"],
+      "unknowns": ["Does the client declare `url` mode?", "Where will the server store tokens and how are they bound to the user?"],
+      "question": "How should the user grant access?",
+      "options": [
+        { "name": "URL elicitation to the third party's consent page", "verdict": "best", "why": "The user authorizes your server directly, outside MCP, and credentials never transit the client.", "tradeoff": "The server must hold and protect tokens keyed by verified user id." },
+        { "name": "Form elicitation asking the user to paste a token", "verdict": "poor", "why": "Form mode MUST NOT be used for access tokens, and the value would pass through the client.", "tradeoff": "There is no safe case for this." },
+        { "name": "A shared service account for everyone", "verdict": "good", "why": "No consent flow to build.", "tradeoff": "Loses per-user identity, audit and least privilege." }
+      ],
+      "flips": [
+        { "if": "The third party supports only service accounts", "then": "Use a managed identity and restrict scope." },
+        { "if": "The client lacks URL mode", "then": "Pre-authorize through an admin portal instead." }
+      ],
+      "takeaway": "Secrets and third-party consent go through URL mode."
+    }
+  ],
+  "quiz": [
+    { "id": "w08-t06-q1", "type": "single", "tag": "security", "q": "A server must obtain a user's API key for a vendor. Which approach complies with the spec?", "options": ["Form-mode elicitation with a password field", "URL-mode elicitation to an out-of-band page", "Put the key in the tool arguments", "Store it in `requestState`"], "answer": 1, "explain": "Form mode MUST NOT collect API keys or tokens, so URL mode applies. Tool arguments pass through the model and `requestState` is attacker-controlled input that returns through the client." },
+    { "id": "w08-t06-q2", "type": "multi", "tag": "concept", "q": "Which actions can the user's response carry?", "options": ["accept", "decline", "cancel", "defer", "retry"], "answers": [0, 1, 2], "explain": "The three actions are accept, decline and cancel. Servers must handle each. Defer and retry are not actions in the elicitation response." }
+  ],
+  "flashcards": [
+    { "front": "Which mode for passwords, API keys, tokens or payments?", "back": "URL mode. Form mode MUST NOT be used for sensitive credentials." },
+    { "front": "How did elicitation change in 2026-07-28?", "back": "It travels inside Multi Round-Trip Requests instead of a pushed `elicitation/create`. `notifications/elicitation/complete` and `elicitationId` were removed. It is not deprecated." },
+    { "front": "What must a server do with a decline or cancel?", "back": "Handle it: do not assume success, and offer alternatives or retry later." }
+  ],
+  "related": ["w08-t08", "w08-t07", "w08-t11", "w08-l04"],
+  "refs": ["r27", "r3", "r1", "r31"]
+}

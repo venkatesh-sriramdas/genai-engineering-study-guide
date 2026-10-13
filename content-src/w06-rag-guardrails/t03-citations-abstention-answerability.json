@@ -1,0 +1,109 @@
+{
+  "id": "w06-t03",
+  "order": 3,
+  "group": "Grounding",
+  "title": "Citation enforcement, abstention and answerability",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "Answerability decides whether the evidence can answer at all, citation enforcement forces each claim to point at a source span, and abstention is the safe response when it cannot.",
+  "useIf": "A confident wrong answer costs more than \"I could not find that\", and users or auditors need to trace claims to sources.",
+  "avoidIf": "The assistant is a creative or brainstorming tool where no source of truth exists.",
+  "explain": [
+    { "t": "p", "md": "Three checks sound alike and differ. **Answerability** asks before generation whether the retrieved evidence is sufficient. **Citation validity** asks after generation whether each citation points at a real span. **Support** asks whether that span entails the claim. A citation proves **provenance**, not **entailment**, so you still need a check such as NLI or quote verification. ALCE is a benchmark for answers with citations, and AIS (Attributable to Identified Sources) is an annotation framework for whether output is supported by a source [[r22]] [[r23]]." },
+    { "t": "p", "md": "**API-native citations** help: Anthropic's Citations feature is enabled with `citations` on `document` or `search_result` blocks, returns types such as `char_location`, `page_location` and `content_block_location`, does not count `cited_text` toward output tokens and works with prompt caching, token counting and batch. It is incompatible with structured outputs: enabling both returns HTTP 400 [[r24]]. **Prompt-based** enforcement asks for word-for-word quotes first on long documents and gives explicit permission to say \"I don't know\" [[r23]]." },
+    { "t": "p", "md": "**Abstention thresholds** need care. Azure's semantic reranker score runs from 0 to 4, and it only reorders the top 50 candidates, so poor recall before reranking cannot be fixed by a threshold [[tr1]]. Scores drift across model updates, so use coarse cut-offs and re-test after changes. Corrective RAG adds a retrieval evaluator that triggers a fallback when retrieved evidence looks poor, a pattern you can reuse for abstention [[r25]]. Good abstention is useful: say what is missing and offer a next step." },
+    { "t": "diagram", "id": "w06-t03-d1", "title": "Answerable, cited, supported or abstain", "alt": "A question is retrieved, an answerability gate decides, the model generates with citations, and a support check validates the cited spans. Failures at either gate lead to abstention or repair.", "src": "flowchart LR\n  Q[Question] --> R[Retrieve]\n  R --> A{Answerable}\n  A -->|yes| G[Generate with citations]\n  G --> V{Spans support claims}\n  V -->|yes| O[Answer]\n  V -->|no| X[Abstain or repair]\n  A -->|no| X" }
+  ],
+  "whereToUse": [
+    "Regulated assistants where every statement must be traceable to a document",
+    "Customer support bots that must not invent policies or prices",
+    "Search-plus-summary products that show source links",
+    "Enterprise Q&A where \"no answer found\" is a valid, logged outcome",
+    "Evaluation suites that score citation precision and recall"
+  ],
+  "whenToUse": {
+    "use": [
+      "Use an answerability gate when retrieval often returns weak evidence",
+      "Use API-native or schema-based citations so every claim carries a span reference",
+      "Use support checks (NLI, quote match) because citations alone are not proof",
+      "Use coarse retrieval-score cut-offs plus a measured abstention rate"
+    ],
+    "avoid": [
+      "Avoid treating the presence of a citation as evidence of correctness",
+      "Avoid hard-coded fine thresholds on reranker scores that drift",
+      "Avoid abstaining with a bare refusal: offer a next step"
+    ],
+    "flips": [
+      "You need structured JSON output: Anthropic citations return HTTP 400 with it, so put quote and source fields in your schema and verify them",
+      "Retrieval is high quality and the domain is low risk: a prompt permitting \"I don't know\" may replace a separate gate",
+      "False abstentions hurt more than errors: answer with a caveat and a confidence label instead of refusing"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Technique", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Answerability classifier before generation", "Weak retrieval is common", "Latency budget is tiny", "Extra call, misses partial answers"],
+      ["API-native citations", "Plain-text answers over provided documents", "You also need structured outputs", "Vendor-specific, HTTP 400 with structured outputs"],
+      ["Schema fields for quote and source id", "JSON outputs, programmatic checks", "Free-form prose answers", "You validate quotes yourself"],
+      ["Reranker score threshold", "A cheap first signal for no-answer", "Scores drift after model updates", "Coarse only, needs re-testing"],
+      ["Prompt-only citations", "Prototype, low risk", "Audit or regulated use", "No guarantee spans exist or support the claim"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Citations look right but the cited passage does not support the claim", "cause": "Citation proves provenance, not entailment", "fix": "Verify the quote exists and run an entailment check against the cited span" },
+    { "symptom": "Requests fail with HTTP 400 after turning on citations", "cause": "Anthropic citations cannot be combined with structured outputs", "fix": "Use schema fields for quotes and sources or run formatting as a separate step" },
+    { "symptom": "Abstention rate jumps after a ranker update", "cause": "A fine-grained score cut-off was tuned on the old score distribution", "fix": "Use coarse thresholds, re-test after model changes and alert on abstention drift" },
+    { "symptom": "Users call the bot unhelpful", "cause": "Over-abstention on a query type the threshold was never tuned for", "fix": "Measure false abstentions per query type and answer with caveats where risk allows" }
+  ],
+  "scenarios": [
+    {
+      "id": "w06-t03-s1",
+      "title": "Benefits guidance in a regulated setting",
+      "situation": "An assistant explains benefits rules to staff. A wrong answer can lead to a compliance incident. Retrieval sometimes returns weakly related chunks. An extra second of latency is fine.",
+      "constraints": ["High cost of wrong answers", "Weak retrieval at times", "Audit wants source spans", "1 extra second allowed"],
+      "unknowns": ["How often is the evidence insufficient?", "Is there a human escalation route?"],
+      "question": "How do you enforce evidence?",
+      "options": [
+        { "name": "Answerability gate, citations required on every claim, span support check, abstain with escalation", "verdict": "best", "why": "It stops unsupported answers at three points and leaves an audit trail.", "tradeoff": "More latency and some false abstentions." },
+        { "name": "Prompt asking the model to cite and say \"I don't know\"", "verdict": "poor", "why": "Nothing verifies that spans exist or support claims, so wrong answers pass.", "tradeoff": "Right for a low-risk prototype." },
+        { "name": "Citations plus a reranker-score cut-off", "verdict": "good", "why": "Cheap and removes the weakest cases.", "tradeoff": "Does not test support, and the cut-off drifts with ranker updates." }
+      ],
+      "flips": [
+        { "if": "Stakes drop to a general FAQ", "then": "A prompt with citations and a coarse cut-off is enough." },
+        { "if": "False abstentions dominate complaints", "then": "Answer with caveats where a claim is partially supported." }
+      ],
+      "takeaway": "In high-stakes domains, verify support and design the abstention path."
+    },
+    {
+      "id": "w06-t03-s2",
+      "title": "Extraction pipeline with JSON output",
+      "situation": "A pipeline extracts obligations from policy documents into JSON for a database. Each field must reference the source text. The team planned to use API-native citations.",
+      "constraints": ["Structured JSON output required", "Each field needs source evidence", "Batch processing", "Quote check can be automated"],
+      "unknowns": ["Is the model API fixed?", "Are quotes short enough to string-match?"],
+      "question": "How do you attach evidence?",
+      "options": [
+        { "name": "Add `quote` and `source_id` fields to the JSON schema and verify quotes by string match", "verdict": "best", "why": "It works with structured output and lets code verify evidence for every field.", "tradeoff": "Quotes lengthen output and you maintain the verifier." },
+        { "name": "API-native citations in one call, then a second call to format as JSON", "verdict": "good", "why": "Keeps native span locations and valid JSON.", "tradeoff": "Two calls and extra latency and cost." },
+        { "name": "API-native citations together with structured outputs in one request", "verdict": "poor", "why": "That combination returns HTTP 400.", "tradeoff": "Right when the output is plain text, not structured." }
+      ],
+      "flips": [
+        { "if": "Output can be plain text", "then": "API-native citations are simplest." },
+        { "if": "Quotes are long or paraphrased", "then": "Use an entailment check instead of string match." }
+      ],
+      "takeaway": "Pick the citation mechanism that your output format allows."
+    }
+  ],
+  "quiz": [
+    { "id": "w06-t03-q1", "type": "single", "tag": "bug", "q": "After enabling Anthropic citations on a request that also uses structured outputs, what happens?", "options": ["Citations are silently dropped", "Output tokens double", "The model ignores the schema", "The request returns HTTP 400"], "answer": 3, "explain": "The documentation states the two features are incompatible and enabling both returns HTTP 400. Silent dropping and token doubling are not documented.", "ref": "r24" },
+    { "id": "w06-t03-q2", "type": "single", "tag": "concept", "q": "Which statement about citations is correct?", "options": ["A citation proves the claim is true", "A citation removes the need for abstention", "A citation proves provenance, not that the passage entails the claim", "A citation guarantees the retrieved set was complete"], "answer": 2, "explain": "A citation shows where text came from. Whether the span supports the claim needs a separate check, and completeness and abstention are unrelated to citing.", "ref": "r23" },
+    { "id": "w06-t03-q3", "type": "order", "tag": "order", "q": "Order the steps of an evidence-enforced answer.", "items": ["Retrieve evidence", "Decide whether it is answerable", "Generate with citations", "Check that cited spans support the claims", "Answer or abstain with a next step"], "explain": "Answerability comes before generation, and support checks come after, so unsupported text never reaches the user." }
+  ],
+  "flashcards": [
+    { "front": "Provenance versus entailment?", "back": "A citation shows where text came from (provenance). Entailment asks whether the cited span supports the claim and needs its own check." },
+    { "front": "Which Azure reranker facts matter for abstention thresholds?", "back": "Scores run 0 to 4, only the top 50 candidates are reranked and distributions shift with model updates. Use coarse cut-offs and re-test." },
+    { "front": "What do Anthropic citations not combine with?", "back": "Structured outputs. Enabling both returns HTTP 400. They do work with prompt caching, token counting and batch." }
+  ],
+  "related": ["w06-t02", "w06-t06", "w06-t10", "w05-t06", "w05-t16", "w06-l2"],
+  "refs": ["r22", "r23", "r24", "r25", "tr1"]
+}

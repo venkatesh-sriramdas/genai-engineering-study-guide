@@ -1,0 +1,95 @@
+{
+  "id": "w05-t12",
+  "order": 12,
+  "group": "Advanced patterns",
+  "title": "GraphRAG and LazyGraphRAG",
+  "minutes": 8,
+  "difficulty": "advanced",
+  "summary": "GraphRAG builds an entity graph and community summaries so a system can answer whole-corpus questions that top-k chunks cannot. LazyGraphRAG defers the expensive model work to query time.",
+  "useIf": "Users ask global or thematic questions such as 'what are the main themes across these reports?', or answers require linking entities across documents.",
+  "avoidIf": "Questions are single-fact lookups, the corpus changes quickly, or per-user permissions apply inside community summaries.",
+  "explain": [
+    { "t": "p", "md": "Top-k vector RAG retrieves the chunks nearest a question. A question like 'what are the recurring root causes across all incident reports?' has no single nearest chunk. **GraphRAG** indexes differently. An LLM extracts entities, relationships and claims from text units and builds a graph. The graph is clustered hierarchically with the Leiden algorithm, and the LLM writes a **summary for every community**. Global queries run over those summaries. The query modes are Global, Local, DRIFT and Basic, and the indexing methods are `standard` (the LLM does all reasoning, the default) and `FastGraphRAG` (classic NLP replaces some LLM steps) [[r40]] [[r16]]." },
+    { "t": "diagram", "id": "w05-t12-d1", "title": "GraphRAG indexing and global query", "alt": "Documents become text units, entities and relationships form a graph, communities are summarised, and a global query is answered from the community summaries.", "src": "flowchart LR\n  D[Documents] --> T[Text units]\n  T --> E[Entities and relations]\n  E --> G[Graph]\n  G --> C[Leiden communities]\n  C --> S[Community summaries]\n  Q[Global question] --> M[Map over summaries]\n  S --> M\n  M --> A[Answer]" },
+    { "t": "p", "md": "**The cost problem and LazyGraphRAG.** Full GraphRAG spends many LLM calls at indexing time. Microsoft Research's LazyGraphRAG (blog dated 2024-11-25) reports indexing cost identical to vector RAG and 0.1% of full GraphRAG, answer quality comparable to GraphRAG Global Search on global queries at more than 700 times lower query cost, and, at 4% of the query cost of GraphRAG global search, better results than all compared methods. It exposes one cost-quality dial, the relevance test budget. These are the vendor's own benchmark numbers. An editor's note dated 2025-06-06 says it is integrated into Microsoft Discovery and Azure Local in public preview [[r17]]." },
+    { "t": "p", "md": "**Sibling idea.** RAPTOR clusters and summarises chunks recursively into a tree, so retrieval can pull from several abstraction levels. Paired with GPT-4 it raised the best QuALITY result by 20% absolute, and indexing LLM calls grow with corpus size [[r18]]. GraphRAG and RAPTOR are research code, so budget for engineering." },
+    { "t": "callout", "kind": "warn", "title": "Summaries mix documents", "md": "A community summary draws on many source documents. If readers hold different permissions, a shared summary can leak facts from documents a reader may not see. This is a reasoned limit, not a quoted one: build summaries per permission scope or avoid the pattern." }
+  ],
+  "whereToUse": [
+    "Sensemaking over a stable corpus of reports, interviews, tickets or filings",
+    "Investigations that follow entities and relationships across many documents",
+    "Executive summaries of themes, trends and outliers",
+    "Corpora where local lookups already work and global questions are the gap"
+  ],
+  "whenToUse": {
+    "use": ["A meaningful share of questions are global or thematic", "The corpus is entity-dense and relatively stable", "You can pay for indexing or accept a deferred-cost variant", "Source tracing is possible through the graph"],
+    "avoid": ["Most questions are single-fact lookups that hybrid search answers", "The corpus changes daily, forcing rebuilds", "Permissions differ per reader inside the corpus"],
+    "flips": ["Indexing budget is tight: test LazyGraphRAG-style deferral, noting the vendor numbers", "Corpus updates frequently: prefer hybrid retrieval and an agentic planner", "Only structure across levels is needed: consider a RAPTOR-style summary tree"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Hybrid top-k RAG", "Local lookups, fast-changing corpora", "Whole-corpus themes", "Cheap, misses global questions"],
+      ["GraphRAG", "Global and multi-hop questions, entity links", "Frequent updates, tight indexing budget", "Heavy LLM indexing, research code"],
+      ["LazyGraphRAG", "You want graph-style answers with low indexing cost", "You need GA-level maturity", "Vendor numbers, public preview in some products [[r17]]"],
+      ["RAPTOR", "Multi-level abstraction questions", "Frequent re-summarisation cost", "Recursive summarisation calls [[r18]]"],
+      ["Agentic retrieval", "Multi-part questions over several sources", "Whole-corpus aggregation", "Planning calls, mostly preview"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Indexing cost explodes on a large corpus", "cause": "The standard method uses LLM calls for all graph steps", "fix": "Estimate on a sample, consider `FastGraphRAG` or a deferred-cost approach, and cap the corpus scope" },
+    { "symptom": "Answers feel generic and cannot be traced to text", "cause": "Global answers come from community summaries, not source passages", "fix": "Expose the community and its source text units, and use Local mode for detail questions" },
+    { "symptom": "Graph answers go stale", "cause": "Updates require re-extraction and re-clustering", "fix": "Batch updates on a schedule or limit the graph to the stable part of the corpus" }
+  ],
+  "scenarios": [
+    {
+      "id": "w05-t12-s1",
+      "title": "Themes across five thousand incident reports",
+      "situation": "Analysts need recurring root causes, affected components and trends across five thousand closed incident reports. The archive grows monthly. Lookups of single incidents already work with hybrid search.",
+      "constraints": ["Stable archive with monthly additions", "Global questions are the gap", "Moderate indexing budget, all analysts see all reports"],
+      "unknowns": ["How many global questions per month?", "Can analysts verify answers against sources?"],
+      "question": "What do you add?",
+      "options": [
+        { "name": "Pilot a graph-style index (LazyGraphRAG-style deferral or GraphRAG on a subset) beside the hybrid index and route global questions to it", "verdict": "best", "why": "Global questions are the documented gap of top-k retrieval [[r16]], and the archive is stable with shared access.", "tradeoff": "Extra indexing, a routing decision and vendor-reported cost numbers you must verify on your data." },
+        { "name": "Increase k and let the model summarise 200 chunks", "verdict": "poor", "why": "Top-k chunks cover a sliver of the corpus and flood the context.", "tradeoff": "Reasonable for questions confined to one topic." },
+        { "name": "Replace hybrid with GraphRAG entirely", "verdict": "good", "why": "One system.", "tradeoff": "Lookups become costlier and slower than they need to be." }
+      ],
+      "flips": [
+        { "if": "The archive changes daily", "then": "Keep hybrid retrieval, and compute themes on a scheduled batch." },
+        { "if": "Almost every question is a single-incident lookup", "then": "Skip the graph index entirely and keep hybrid retrieval, since indexing cost buys nothing." }
+      ],
+      "takeaway": "Route global questions to a global index."
+    },
+    {
+      "id": "w05-t12-s2",
+      "title": "Per-department confidential reports",
+      "situation": "Reports are visible by department only. A leader asks 'what themes appear across all departments'.",
+      "constraints": ["Per-document permissions", "High sensitivity", "Cross-department summaries are requested"],
+      "unknowns": ["Is a cross-department view allowed at all?", "Who owns the redaction rules?"],
+      "question": "How do you answer thematic questions?",
+      "options": [
+        { "name": "Build summaries per permission scope and aggregate only what the asker is entitled to see, or refuse cross-scope aggregation", "verdict": "best", "why": "A shared community summary mixes sources and can leak across permissions.", "tradeoff": "More indexes and weaker global views." },
+        { "name": "One global community summary set for everyone", "verdict": "poor", "why": "Summaries embed facts from documents some readers cannot see.", "tradeoff": "Fine when every reader may see every document." },
+        { "name": "Plain top-k with security filters", "verdict": "good", "why": "Respects permissions.", "tradeoff": "Cannot answer corpus-wide themes." }
+      ],
+      "flips": [
+        { "if": "Leadership is allowed to see everything", "then": "A single graph index for that role is acceptable." },
+        { "if": "Only anonymised, count-level themes are needed across departments", "then": "Compute them from a metadata-only index that carries no document text, so no restricted content crosses a permission scope." }
+      ],
+      "takeaway": "Permissions and shared summaries clash."
+    }
+  ],
+  "quiz": [
+    { "id": "w05-t12-q1", "type": "single", "tag": "concept", "q": "Which question is GraphRAG built for, and top-k vector RAG handles poorly?", "options": ["What is the refund window in policy 12?", "Define MTTR", "Which file holds ticket 5512?", "What are the main themes across all reports?"], "answer": 3, "explain": "Global, whole-corpus questions have no single nearest chunk. The others are local lookups that hybrid search handles [[r16]]." },
+    { "id": "w05-t12-q2", "type": "match", "tag": "concept", "q": "Match each method to its description.", "pairs": [{ "l": "GraphRAG", "r": "Entities and relationships, Leiden communities, community summaries" }, { "l": "LazyGraphRAG", "r": "Defers LLM work to query time, vendor-reported low cost" }, { "l": "RAPTOR", "r": "Recursive cluster and summarise tree of chunks" }, { "l": "FastGraphRAG", "r": "Indexing method that swaps some LLM steps for classic NLP" }], "explain": "These match the sources: GraphRAG docs, the Microsoft Research LazyGraphRAG blog and the RAPTOR paper." },
+    { "id": "w05-t12-q3", "type": "single", "tag": "flip", "q": "The corpus changes daily and most questions are single-fact lookups. What do you choose?", "options": ["Full GraphRAG", "Hybrid retrieval with a reranker", "RAPTOR with nightly full rebuilds", "No retrieval"], "answer": 1, "explain": "Daily changes make graph and tree rebuilds costly, and lookups do not need them. Hybrid retrieval with a reranker fits." }
+  ],
+  "flashcards": [
+    { "front": "What does GraphRAG add that top-k RAG lacks?", "back": "A graph of entities and relationships with hierarchical community summaries, which lets it answer global questions." },
+    { "front": "What cost numbers did Microsoft report for LazyGraphRAG (2024-11-25)?", "back": "Indexing like vector RAG and 0.1% of GraphRAG, over 700 times lower query cost for comparable global quality. Vendor benchmark." },
+    { "front": "Why can community summaries leak data?", "back": "They blend facts from many documents, so readers with different permissions can see information they should not." }
+  ],
+  "related": ["w05-l5", "w05-t13", "w04-t10", "w07-t06", "w05-t01"],
+  "refs": ["r16", "r17", "r18", "r40"]
+}

@@ -1,0 +1,98 @@
+{
+  "id": "w18-l7",
+  "order": 7,
+  "title": "Boss: the first five checks",
+  "kind": "boss",
+  "minutes": 25,
+  "brief": "You have inherited an AI system you have never seen. The interviewer asks what you check first. The trigger, the risk tier and your access are not given, so clarify them, order your checks by them and say what would reorder them.",
+  "blocks": [
+    { "t": "h", "text": "The prompt and the five checks", "level": 2 },
+    { "t": "scenario", "title": "What you know and what to ask", "known": ["The system answers questions and may call tools", "You did not build it", "Someone asked you to look at it"], "ask": ["What triggered the review: a launch gate, an outage, a bill, a leak report or a quality complaint?", "How sensitive are the data and the actions it can take?", "What can I access: traces, configs, code and people?", "What decision will my findings feed?"], "tension": "A generic list of checks is easy. Ordering them by risk and naming the evidence to inspect is what shows seniority." },
+    { "t": "table", "caption": "Five checks and the evidence to ask for. Each one traces to a level in this world.", "head": ["Check", "What you are really asking", "Evidence to request"], "rows": [
+      ["1 What is running", "Which models, settings and prompts are live, and are they pinned and supported?", "One full trace, model IDs and deployment types, retirement dates, effort settings and prompt versions (levels 1 and 2)"],
+      ["2 Who can instruct it", "Which text carries authority, and where does untrusted text enter?", "A map of system, user, retrieved and tool-output inputs, and a red-team run with instructions hidden in documents (level 2)"],
+      ["3 What it can touch", "What can it read, write, run or click?", "Tool list with side effects, the SQL role, sandbox egress, session identifier handling and approval gates (level 4)"],
+      ["4 Where data goes", "Where are prompts processed and stored, and who holds the keys?", "Deployment type, retention and ZDR settings, key configuration and network path, checked against the tools in use (level 3)"],
+      ["5 How it is judged", "How do you know it works, and what does it cost?", "Eval gates, abstention tests, canary history, cost per task, reasoning tokens and tokens per language (levels 1, 5 and 6)"]
+    ], "highlightCol": 2 },
+    { "t": "callout", "kind": "interview", "title": "Say the order and the reason", "md": "Name the five checks, then say which two you would run first for this trigger and why. A trace first is the default because it shows the entry points of every other check in minutes." }
+  ],
+  "quiz": [
+    { "id": "w18-l7-q1", "type": "single", "tag": "tradeoff", "difficulty": 2, "q": "A system with regulated customer data and database write access is about to launch. Which check comes first?", "options": ["Check which data each identity can reach and where prompts and logs are processed and stored", "Compare token cost per task across all candidate models to find the cheapest option for launch", "Tune reasoning effort on every step so that latency meets the target before anything else", "Rewrite the system prompt for tone so that the assistant sounds consistent across channels"], "answer": 0, "explain": "Exposure comes first when the data is regulated and the system can write. Cost, effort tuning and tone matter later, because none of them limits damage if access or data location is wrong.", "ref": "r24" },
+    { "id": "w18-l7-q2", "type": "multi", "tag": "diagnose", "difficulty": 2, "q": "Select every artifact worth requesting in the first hour of reviewing an unfamiliar system.", "options": ["One full request trace with model, prompt and tool details", "The tool list with permissions and side effects", "A slide deck of the planned roadmap for next year", "The deployment type, retention and key settings for the model resource", "The team's favourite demo script"], "answers": [0, 1, 3], "explain": "A trace, the tool inventory and the data-control settings expose what runs, what it can touch and where data goes. A roadmap and a demo script describe intentions and best cases, not the behaviour of the live system.", "ref": "r10" },
+    { "id": "w18-l7-q3", "type": "single", "tag": "diagnose", "difficulty": 2, "q": "After a model upgrade every request returns HTTP 400. Which setting is the first suspect?", "code": { "lang": "text", "code": "model: gpt-6-astra\nreasoning: { effort: none }\nstore: false\ntools: [ get_order, search_kb ]" }, "options": ["store: false, which every model rejects", "reasoning effort none, which GPT-6 Astra does not support", "The tool list, because tools cannot be combined with reasoning", "The model name, because astra models are not available on Responses"], "answer": 1, "explain": "OpenAI's guide says GPT-6 Astra does not support none and returns HTTP 400. Tools are supported with Responses, store false is valid, and the model is served on Responses. This is why a capability table and contract test belong in every model swap.", "ref": "r1" },
+    { "id": "w18-l7-q4", "type": "match", "tag": "concept", "difficulty": 1, "q": "Match each check to the evidence you would ask for.", "pairs": [ { "l": "What is running", "r": "Model IDs, retirement dates, effort settings and the pinned prompt version" }, { "l": "Who can instruct it", "r": "Where retrieved text and tool output enter, and what authority they have" }, { "l": "What it can touch", "r": "Tool list, SQL role, sandbox egress and approval gates" }, { "l": "Where data goes", "r": "Deployment type, retention and ZDR settings, keys and network path" }, { "l": "How it is judged", "r": "Eval gates, abstention tests and cost per task" } ], "explain": "Each check has its own evidence. Asking for the wrong artifact, such as a roadmap for a data-location question, gives opinions instead of facts.", "ref": "r10" }
+  ],
+  "defend": {
+    "prompt": "You join a team and inherit an AI system you have never seen. What are the first five things you check?",
+    "timebox": "4 min",
+    "clarify": [
+      "What triggered the review: a launch gate, an outage, a bill, a leak report or a quality complaint?",
+      "How sensitive are the data, and what actions can the system take?",
+      "What can I access: traces, configs, code, the on-call engineer?",
+      "What decision will my findings feed: a launch gate, a fix list or a redesign?"
+    ],
+    "options": [
+      { "name": "Walk one request end to end", "when": "Little is known and the trigger is vague.", "tradeoff": "It is slow, and the risky parts may come late." },
+      { "name": "Data and access first", "when": "Sensitive data, write access or a leak report.", "tradeoff": "Cost and quality problems wait a day." },
+      { "name": "Reliability and cost first", "when": "An outage or a bill started the review.", "tradeoff": "Security gaps wait." },
+      { "name": "Quality first", "when": "Complaints about answers or regressions after a change.", "tradeoff": "Exposure that has not hurt yet is ignored." }
+    ],
+    "modelAnswer": [
+      { "t": "p", "md": "**1. Clarify the dials.** I would ask what triggered the review, how sensitive the data and actions are, what access I have to traces, configs and people, and what decision my findings feed. Those answers set the order of the checks, not the checks themselves." },
+      { "t": "table", "head": ["Ordering option", "Start here when", "Risk of starting here"], "rows": [
+        ["Walk one request end to end", "Little is known", "The risky parts may come late"],
+        ["Data and access first", "Sensitive data, write access, leak report", "Cost and quality wait"],
+        ["Reliability and cost first", "Outage or bill", "Security waits"],
+        ["Quality first", "Complaints or regressions", "Silent exposure is ignored"]
+      ] },
+      { "t": "p", "md": "**2 and 3. The five checks and my pick.**" },
+      { "t": "list", "style": "ol", "items": [
+        "**What is running.** Model IDs and deployment types, retirement dates, reasoning effort values the model supports, and prompt versions pinned together with retrieval and config. I ask for one full trace.",
+        "**Who can instruct it.** Where system, user, retrieved and tool-output text enter, and whether untrusted text is treated as data. The instruction hierarchy is a training-time mitigation, not a boundary.",
+        "**What it can touch.** Tool side effects, the SQL role, sandbox egress and session identifiers, computer-use isolation and approval gates.",
+        "**Where data goes.** Deployment type for inference location, retention and ZDR scope, customer-managed keys (storage at rest, not inference) and network isolation, checked against the tools in use.",
+        "**How it is judged.** Eval gates and golden set age, abstention tests, canary history, cost per task, reasoning tokens, tokens per language and stop reasons."
+      ] },
+      { "t": "p", "md": "For an unknown production system I would take a trace first, because it exposes the entry points of every other check in minutes. Then I would run exposure checks 3 and 4, then 2, then 5." },
+      { "t": "p", "md": "**4. Failure modes I expect and how I would detect them.**" },
+      { "t": "list", "style": "ul", "items": [
+        "**Unsupported or retired settings:** HTTP 400s after a model swap. Detect with error rates by status code and a capability contract test.",
+        "**Untrusted text obeyed:** instructions hidden in retrieved content. Detect with red-team documents and a review of tool permissions.",
+        "**Over-privileged actions:** an admin database role, egress on, shared session identifiers. Detect with a permission inventory.",
+        "**Data-control gaps:** a Global deployment for regulated data, ZDR with stateful endpoints, keys assumed to cover inference, tools unsupported under private networking. Detect by comparing configuration with the requirement list.",
+        "**Unmeasured quality and cost:** effort raised without an eval, no abstention tests, non-English cost blowouts. Detect with eval reports, reasoning tokens per request and tokens per language."
+      ] },
+      { "t": "p", "md": "**5. Metrics and rollout.** I would deliver a ranked risk list with an owner and a test per item. I would track the share of requests that log pinned versions, reviewed tool permissions, closed data-control gaps, eval pass rate, abstention on an unanswerable set, cost per task and errors by stop reason. Fixes ship through the release path: eval gate, mirror, canary, promote." },
+      { "t": "p", "md": "**What would flip this.** A leak report moves data and access to the front. An outage moves reliability forward. A bill spike starts with cost per task and effort settings. A quality complaint starts with evals and prompt history. With no trace access I start from configs and interview the on-call engineer." }
+    ],
+    "rubric": [
+      { "pt": "Asks what triggered the review, the risk tier and the access available before listing checks", "w": 3 },
+      { "pt": "States five distinct checks covering what runs, who instructs, what it touches, where data goes and how it is judged", "w": 3 },
+      { "pt": "Orders the checks by stated dials and says what would reorder them", "w": 3 },
+      { "pt": "Names the evidence to inspect for each check", "w": 2 },
+      { "pt": "Uses verified detail in at least two checks, such as per-model effort support, ZDR scope or session identifier handling", "w": 2 },
+      { "pt": "Names failure modes with detection signals", "w": 2 },
+      { "pt": "Ends with a ranked risk list, metrics and a staged fix plan", "w": 2 },
+      { "pt": "Stays within the timebox and avoids product name-dropping without a reason", "w": 1 }
+    ],
+    "followUps": [
+      { "q": "You have ten minutes and no production access. What do you check?", "a": "Configs and documents: model IDs and deployment types, data-control settings, the tool list with permissions and the release and eval process. Then ask the on-call engineer for the last incident and the last prompt change." },
+      { "q": "The team says the system is safe because it uses customer-managed keys and a model with an instruction hierarchy. How do you respond?", "a": "Keys cover data at rest in associated storage, not inference or residency. The hierarchy is a training-time mitigation, and tool output only lacks authority by default. I ask for least privilege, isolation and confirmation of consequential actions." },
+      { "q": "They raised reasoning effort to fix quality and cost doubled. What next?", "a": "Gate effort on an eval that shows a gain, track reasoning tokens per request, return to the vendor default or lower effort and consider sampling with a validator." }
+    ],
+    "redFlags": [
+      "Starts with a favourite tool or vendor instead of asking what triggered the review",
+      "Lists generic headings such as security, cost and quality with no evidence to inspect",
+      "Assumes encryption keys or the instruction hierarchy close the exposure",
+      "Changes the system before reading a trace"
+    ]
+  },
+  "refs": ["r1", "r10", "r24", "r9", "r26"],
+  "takeaways": [
+    "The five checks: what is running, who can instruct it, what it can touch, where data goes, how it is judged.",
+    "Order them by trigger, sensitivity and access, and say what would reorder them.",
+    "Name the evidence for every check: a trace, a tool inventory, configuration and an eval report.",
+    "One precise, verified detail per check turns a checklist into a credible answer."
+  ]
+}

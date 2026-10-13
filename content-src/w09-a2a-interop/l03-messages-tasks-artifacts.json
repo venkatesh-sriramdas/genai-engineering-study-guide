@@ -1,0 +1,76 @@
+{
+  "id": "w09-l03",
+  "order": 3,
+  "title": "Messages, tasks and artifacts",
+  "kind": "problem",
+  "minutes": 18,
+  "brief": "A remote agent gets a request that may be a quick answer, a long job or a conversation. How it models the reply, the state and the follow-ups decides whether callers can reason about the work. Choose a response style and learn the rules that keep ids and states consistent.",
+  "blocks": [
+    { "t": "h", "text": "The objects and the lifecycle", "level": 2 },
+    { "t": "table", "caption": "Core objects in the v1.0 spec [[r1]]", "head": ["Object", "Key fields", "Rules worth knowing"], "rows": [
+      ["Task", "`id`, `contextId`, `status`, `artifacts`, `history`", "The server generates `id`. It is the stateful unit of work with a lifecycle"],
+      ["Message", "`messageId`, `role`, `parts`, optional `taskId`, `contextId`, `referenceTaskIds`", "Roles are `ROLE_USER` and `ROLE_AGENT`. If both ids are given they must match, and with only `taskId` the server infers the context"],
+      ["Part", "Exactly one of `text`, `raw`, `url` or `data`, plus `mediaType`, `filename`, `metadata`", "`raw` is base64 in JSON. The v0.3 `kind` discriminator is gone"],
+      ["Artifact", "`artifactId`, `parts`, optional `name`, `description`", "A task output. `artifactId` is unique within the task and at least one part is required"]
+    ] },
+    { "t": "diagram", "id": "w09-l03-d1", "title": "Typical task lifecycle", "alt": "A task is submitted and then working. It can pause in input required or auth required and return to working. It ends in completed, failed, canceled or rejected.", "src": "stateDiagram-v2\n  [*] --> SUBMITTED\n  SUBMITTED --> WORKING\n  SUBMITTED --> REJECTED\n  WORKING --> INPUT_REQUIRED\n  INPUT_REQUIRED --> WORKING: client replies\n  WORKING --> AUTH_REQUIRED\n  AUTH_REQUIRED --> WORKING: credential obtained\n  WORKING --> COMPLETED\n  WORKING --> FAILED\n  WORKING --> CANCELED\n  COMPLETED --> [*]", "caption": "State names carry the prefix `TASK_STATE_` on the wire. Terminal: COMPLETED, FAILED, CANCELED, REJECTED. Interrupted: INPUT_REQUIRED and AUTH_REQUIRED. The spec defines the states and says terminal tasks accept no more messages. It does not publish a strict transition table, so treat the arrows as the usual flow [[r1]]." },
+    { "t": "compare", "title": "How should an agent respond to a message?", "intro": "Three styles from the Life of a Task guide [[r5]].", "options": [
+      { "name": "Message-only agent", "tag": "Stateless", "summary": "Always answer with a Message and use `contextId` to tie turns together.", "pros": ["Simplest to build", "No task state to store"], "cons": ["No progress tracking or interrupted states", "Poor fit for long work"], "bestWhen": "The agent wraps a quick LLM call or simple tools.", "avoidWhen": "Work is long-running or needs input-required handling.", "meta": [{ "k": "State", "v": "context only" }, { "k": "Overhead", "v": "low" }] },
+      { "name": "Task-generating agent", "tag": "Uniform", "summary": "Always return a Task, even for a plain answer, which becomes a completed task.", "pros": ["One model for every request", "Every unit of work is trackable and attributable"], "cons": ["Completed task objects for trivial exchanges", "Once a task exists, later replies are tasks too"], "bestWhen": "You need an audit trail and retries per request.", "avoidWhen": "Chatty, lightweight interactions dominate.", "meta": [{ "k": "State", "v": "per task" }, { "k": "Overhead", "v": "medium" }] },
+      { "name": "Hybrid agent", "tag": "Negotiate, then commit", "summary": "Use Messages to agree on scope, then create a Task for committed work.", "pros": ["Cheap clarification before costly work", "Task tracking only where it pays"], "cons": ["More branching logic", "Callers must handle both result shapes"], "bestWhen": "Scope needs a short dialogue before a long job.", "avoidWhen": "A tiny agent with one fixed behavior.", "meta": [{ "k": "State", "v": "context, then task" }, { "k": "Overhead", "v": "medium" }] }
+    ] },
+    { "t": "flow", "title": "A multi-turn exchange, end to end", "direction": "h", "steps": [
+      { "title": "Send", "md": "Client calls `SendMessage` with a message and no ids.", "tag": "client" },
+      { "title": "Task", "md": "Agent returns a Task with a server-made `taskId` and `contextId`.", "tag": "agent" },
+      { "title": "Ask", "md": "State becomes `INPUT_REQUIRED` with a status message.", "tag": "agent" },
+      { "title": "Reply", "md": "Client sends the same `taskId` and `contextId` with its answer.", "tag": "client" },
+      { "title": "Done", "md": "State `COMPLETED` with an Artifact.", "tag": "agent" },
+      { "title": "Refine", "md": "A new message with the same `contextId` and `referenceTaskIds` starts a new task.", "tag": "client" }
+    ] },
+    { "t": "failure", "title": "Failure modes and how to detect them", "items": [
+      { "symptom": "A follow-up returns `UnsupportedOperationError`", "cause": "The client sent a message to a task in a terminal state. Terminal tasks cannot restart", "fix": "Start a new task in the same `contextId` and set `referenceTaskIds`. Detect it by counting errors on terminal tasks" },
+      { "symptom": "An answer to a clarification starts a fresh task", "cause": "The reply carried only `contextId`. A `contextId` without `taskId` starts a new task in that conversation", "fix": "Include the original `taskId` as well as `contextId` when resuming" },
+      { "symptom": "Requests with client-made ids are rejected", "cause": "Clients cannot create tasks with their own `taskId`, and a `contextId` that does not match the task is rejected", "fix": "Let the server generate ids, treat `contextId` as opaque and echo ids unchanged" },
+      { "symptom": "Users see tasks that belong to someone else", "cause": "`GetTask` or `ListTasks` was not scoped to the authenticated caller", "fix": "Check authorization before any query. Return `TaskNotFoundError` for tasks the caller cannot access [[r1]]" },
+      { "symptom": "A caller shows an outdated report after a refinement", "cause": "Refinements create new artifacts and the protocol does not track versions", "fix": "Clients keep a version history. Agents reuse a consistent artifact name for refined versions [[r5]]" }
+    ] },
+    { "t": "accordion", "items": [
+      { "title": "Operations and where they live on the wire", "blocks": [
+        { "t": "table", "caption": "Method mapping across bindings [[r1]]", "head": ["Operation", "JSON-RPC and gRPC method", "HTTP+JSON endpoint"], "rows": [
+          ["Send a message", "`SendMessage`", "`POST /message:send`"],
+          ["Send and stream", "`SendStreamingMessage`", "`POST /message:stream`"],
+          ["Get a task", "`GetTask`", "`GET /tasks/{id}`"],
+          ["List tasks", "`ListTasks`", "`GET /tasks`"],
+          ["Cancel a task", "`CancelTask`", "`POST /tasks/{id}:cancel`"],
+          ["Subscribe to a task", "`SubscribeToTask`", "`POST /tasks/{id}:subscribe`"],
+          ["Push configuration (create, get, list, delete)", "Four `...TaskPushNotificationConfig` operations", "`/tasks/{id}/pushNotificationConfigs`"],
+          ["Get the extended card", "`GetExtendedAgentCard`", "`GET /extendedAgentCard`"]
+        ] },
+        { "t": "p", "md": "`ListTasks` uses cursor pagination and is scoped to the caller. Cancellation is idempotent. A duplicate cancel MAY return `TaskNotFoundError` if the task was already canceled and purged [[r1]]." }
+      ] },
+      { "title": "Named errors", "blocks": [
+        { "t": "list", "style": "ul", "items": [
+          "`TaskNotFoundError`: the id does not exist or is not accessible",
+          "`TaskNotCancelableError`: the task is not in a cancelable state",
+          "`UnsupportedOperationError`: terminal task, or streaming or the extended card is not supported",
+          "`PushNotificationNotSupportedError`: push is not declared in the card",
+          "`ContentTypeNotSupportedError`: a part's media type is not accepted",
+          "`ExtensionSupportRequiredError` and `VersionNotSupportedError`: a required extension or the requested version is missing"
+        ] }
+      ] }
+    ] }
+  ],
+  "quiz": [
+    { "id": "w09-l03-q1", "type": "order", "tag": "order", "q": "Put a typical multi-turn A2A exchange in order.", "items": ["Client sends `SendMessage` with a message and no ids", "Agent returns a Task with server-generated `taskId` and `contextId`", "Task moves to `INPUT_REQUIRED` and carries a question", "Client replies with the same `taskId` and `contextId`", "Task reaches `COMPLETED` with an Artifact"], "explain": "Clients cannot supply a new `taskId`, so the server mints ids on the first response. The question pauses the task in an interrupted state. The resume must reuse both ids. Completion produces the artifact.", "difficulty": 1, "ref": "r1" },
+    { "id": "w09-l03-q2", "type": "single", "tag": "diagnose", "q": "The client log is shown. What is the correct fix?", "code": { "lang": "text", "code": "t=0   SendMessage -> Task id=t-77 contextId=c-1 state=TASK_STATE_COMPLETED\nt=90  SendMessage taskId=t-77 contextId=c-1 \"add a summary\" -> UnsupportedOperationError" }, "options": ["Retry the same call after a short delay, because the agent was briefly unavailable and a terminal state clears itself after some minutes of inactivity", "Send the follow-up as a new message in `contextId` c-1 and reference `t-77` in `referenceTaskIds`, so the agent creates a new task", "Remove `contextId` so the server accepts the old `taskId`", "Generate a fresh `taskId` on the client for the follow-up"], "answer": 1, "explain": "`COMPLETED` is terminal and terminal tasks cannot accept messages or restart. A refinement is a new task in the same context. Retrying cannot help, removing `contextId` does not reopen the task, and clients cannot create their own task ids.", "difficulty": 2, "ref": "r5" },
+    { "id": "w09-l03-q3", "type": "match", "tag": "concept", "q": "Match each A2A object or state to its role.", "pairs": [ { "l": "Task", "r": "The stateful unit of work with a lifecycle" }, { "l": "Part", "r": "Exactly one of text, raw bytes, a URL or structured data" }, { "l": "`TASK_STATE_INPUT_REQUIRED`", "r": "An interrupted state that waits for the client" }, { "l": "`TASK_STATE_REJECTED`", "r": "A terminal state where the agent decided not to perform the task" } ], "explain": "A Task carries status, artifacts and history. A Part is a union of four content forms. Input-required is interrupted, not terminal. Rejected is terminal and means the agent declined the work.", "difficulty": 2, "ref": "r1" }
+  ],
+  "defend": null,
+  "refs": ["r1", "r5"],
+  "takeaways": [
+    "The server mints `taskId` and `contextId`. Clients echo them. A `contextId` without a `taskId` starts a new task.",
+    "Terminal tasks are immutable. Refinements start new tasks in the same context and reference earlier ones.",
+    "Choose message-only, task-generating or hybrid by whether work is long-running and needs tracking.",
+    "Scope every task operation to the authenticated caller and return `TaskNotFoundError` for anything else."
+  ]
+}

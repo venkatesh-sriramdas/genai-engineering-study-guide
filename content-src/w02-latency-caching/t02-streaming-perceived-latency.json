@@ -1,0 +1,119 @@
+{
+  "id": "w02-t02",
+  "order": 2,
+  "group": "Latency fundamentals",
+  "title": "Streaming and perceived latency",
+  "minutes": 7,
+  "difficulty": "core",
+  "summary": "Streaming sends tokens to the client as they are generated. Total time does not change, but the first word appears sooner and long calls stop timing out.",
+  "useIf": "A person reads the answer as it arrives and the answer is longer than a sentence or two.",
+  "avoidIf": "A program consumes the whole answer, or a check must see the full text before anyone may display it.",
+  "explain": [
+    { "t": "p", "md": "With `stream: true` the server returns the answer as a series of small events instead of one body. Streaming does not change total time. It lowers the time to the first visible response and avoids client timeouts on long outputs [[r14]]. Perceived latency tracks TTFT, not TTLT, so a 12 second answer that starts in 700 ms feels fast." },
+    { "t": "diagram", "id": "w02-t02-d1", "title": "One streamed call", "alt": "The client posts a request, the server sends a series of data events, then a completed event.", "src": "sequenceDiagram\n  participant C as Client\n  participant S as Server\n  C->>S: POST with stream true\n  S-->>C: data: delta 1\n  S-->>C: data: delta 2\n  S-->>C: data: delta n\n  S-->>C: completed event" },
+    { "t": "p", "md": "Most APIs use **server-sent events** (SSE). The response type is `text/event-stream`, each event is one or more `data:` lines ended by a blank line, `id:` and `retry:` support reconnection through the `Last-Event-ID` header, and a line starting with `:` is a comment. Servers can send a comment about every 15 seconds so that legacy proxies do not drop an idle connection [[tr3]]. On the Responses API the events to handle are `response.created`, `response.output_text.delta`, `response.completed` and `error`; Chat Completions puts text in a `delta` field [[tr5]]." },
+    { "t": "h", "text": "UI patterns that make it feel fast", "level": 3 },
+    { "t": "list", "style": "ul", "items": [
+      "Show a status line while retrieval or tools run (searching, reading, writing), then switch to text",
+      "Render incrementally, batched to animation frames, and keep the scroll position stable",
+      "Offer a stop button that cancels the request, so the server stops spending tokens",
+      "Show sources or tool results as they arrive, ahead of the final prose"
+    ] },
+    { "t": "p", "md": "**When streaming hurts.** Streaming makes moderation harder, because partial completions are hard to evaluate and moderation scores arrive only after the full output [[tr5]]. A structured output cannot be validated until it is complete. Buffering proxies hold events until the end, and a gateway needs long-lived unbuffered connections [[tr13]]. Token limits cannot count streamed tokens exactly, so APIM `llm-token-limit` always estimates when streaming [[tr14]]. Once text is on screen you cannot silently retry or retract it." }
+  ],
+  "whereToUse": [
+    "Chat and copilot UIs where users read as text appears",
+    "Long outputs (reports, code, explanations) that would otherwise risk client or gateway timeouts",
+    "Agent UIs that show progress: tool calls, retrieved sources, partial plans",
+    "Voice or text-to-speech pipelines that start speaking on the first sentence",
+    "Server-to-server calls where an idle-timeout would otherwise kill a long non-streamed request"
+  ],
+  "whenToUse": {
+    "use": [
+      "A human reads the output and TTFT is the felt delay",
+      "Answers are long enough that TTLT exceeds a few seconds",
+      "You can handle events in the client and the whole path allows unbuffered responses"
+    ],
+    "avoid": [
+      "A downstream program needs complete, validated JSON before any step may start",
+      "Policy requires a full-text safety check before display, and a chunk-level check is not acceptable",
+      "A proxy or CDN buffers the response and you cannot change it"
+    ],
+    "flips": [
+      "Output guard needs the whole answer: stream a status line, then release the text after the check, or guard in sentence-sized chunks",
+      "A job only needs to avoid an idle timeout: stream to a server-side buffer and never show partial text",
+      "Network is unreliable: add event ids and a resume path, or use background runs and polling"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Stream raw tokens", "Low-risk text for people", "Strict pre-display moderation", "Cannot retract shown text"],
+      ["Stream in guarded chunks", "Moderation and responsiveness both matter", "You need exact token-level display", "First chunk waits for the check"],
+      ["Non-streaming", "Program consumers, schema validation", "Long answers shown to people", "Whole-answer wait, timeout risk"],
+      ["Background run and polling", "Very long jobs, flaky clients", "Interactive feel", "More moving parts"],
+      ["Status updates only", "Agent steps before any text exists", "The answer itself is slow", "Does not shorten TTFT"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Nothing appears until the answer completes", "cause": "A proxy, CDN or gateway buffers the response", "fix": "Disable response buffering on the path, flush each event, and test through the real route [[tr13]]" },
+    { "symptom": "Streamed text could not be filtered before users saw it", "cause": "Moderation ran on the full output after display", "fix": "Check in chunks before release, or hold text for high-risk flows [[tr5]]" },
+    { "symptom": "Token metrics or limits are off for streamed calls", "cause": "Gateways estimate streamed tokens, and some OpenAI models need `include_usage: true` for accurate counts", "fix": "Request usage in the stream where supported and reconcile gateway counts with provider usage [[tr19]]" }
+  ],
+  "scenarios": [
+    {
+      "id": "w02-t02-s1",
+      "title": "Public chat with a safety policy",
+      "situation": "A consumer assistant answers questions for the public. Policy says unsafe text must never be displayed. Typical answers run 400 tokens. Users already complain about the wait.",
+      "constraints": ["High risk of harm if shown", "Human reader", "Answers take about 8 seconds in full"],
+      "unknowns": ["Can a check run per sentence in under 100 ms?", "Is a 1 to 2 second hold on the first sentence acceptable?"],
+      "question": "How do you deliver the answer?",
+      "options": [
+        { "name": "Stream through a chunk-level guard that releases each checked sentence", "verdict": "best", "why": "Users see the first sentence soon and nothing unchecked is shown.", "tradeoff": "TTFT rises by one chunk plus guard time, and a late unsafe sentence must end the stream." },
+        { "name": "Stream raw tokens and moderate afterwards", "verdict": "poor", "why": "Unsafe text is already visible when the check finishes.", "tradeoff": "Acceptable for an internal tool with low harm potential." },
+        { "name": "Do not stream and check the full answer", "verdict": "good", "why": "It is the safest, with one simple check.", "tradeoff": "Users wait the full 8 seconds and may leave." }
+      ],
+      "flips": [
+        { "if": "The audience is internal staff and the harm potential is low", "then": "Stream raw and log for review." },
+        { "if": "Guard latency per chunk exceeds the gap between chunks", "then": "Hold the full answer, show a status line and release after the check." }
+      ],
+      "takeaway": "Streaming and moderation can coexist when the check works on chunks."
+    },
+    {
+      "id": "w02-t02-s2",
+      "title": "Extraction job behind a gateway",
+      "situation": "A service extracts a long JSON object from a document and passes it to an order system. No human watches. Calls sometimes take 90 seconds and the gateway closes idle connections at 60 seconds.",
+      "constraints": ["Program consumer", "Needs complete valid JSON", "Gateway idle timeout is fixed"],
+      "unknowns": ["Can the gateway timeout be raised?", "Is the call idempotent if retried?"],
+      "question": "What do you do?",
+      "options": [
+        { "name": "Stream, accumulate on the server, validate, then pass on", "verdict": "best", "why": "Bytes flow, so the idle timeout does not fire, and the consumer still sees only complete JSON.", "tradeoff": "No latency gain for the end consumer, plus a little event handling code." },
+        { "name": "Stream partial JSON to the order system", "verdict": "poor", "why": "The downstream step would act on incomplete data.", "tradeoff": "Reasonable only for a consumer that parses incrementally and tolerates partial objects." },
+        { "name": "Keep the non-streamed call and retry on timeout", "verdict": "good", "why": "It is simple and works if calls are idempotent.", "tradeoff": "Each retry repeats the full cost and delay." }
+      ],
+      "flips": [
+        { "if": "The timeout can be raised above worst-case latency", "then": "A plain non-streamed call is the simplest choice." },
+        { "if": "The run takes many minutes", "then": "Use background mode and poll for the result." }
+      ],
+      "takeaway": "Streaming also fixes timeouts, even when no one reads the partial text."
+    }
+  ],
+  "quiz": [
+    { "id": "w02-t02-q1", "type": "single", "tag": "concept", "q": "What does turning on streaming change for a 10 second answer?", "options": ["Total generation time drops by half", "The first words appear sooner, but total generation time is about the same", "Output tokens are billed at a lower rate", "The model skips the prefill phase"], "answer": 1, "explain": "Streaming lowers time to first response and avoids client timeouts, but it does not change total time. Billing and prefill are unaffected.", "difficulty": 1, "ref": "r14" },
+    { "id": "w02-t02-q2", "type": "multi", "tag": "tradeoff", "q": "Which situations make streaming a poor fit?", "options": ["A program must validate a full JSON object before use", "A response buffering proxy sits in the path and cannot be changed", "A person reads a long answer in a chat window", "Users want a stop button to cancel generation"], "answers": [0, 1], "explain": "Full-object validation and unbuffered delivery are the two blockers. A human reading and a stop button are reasons to stream.", "difficulty": 2, "ref": "tr5" },
+    { "id": "w02-t02-q3", "type": "match", "tag": "concept", "q": "Match each SSE element to its role.", "pairs": [
+      { "l": "data: line", "r": "Carries the event payload" },
+      { "l": "id: field", "r": "Sets the Last-Event-ID sent on reconnect" },
+      { "l": "retry: field", "r": "Sets the reconnection time in milliseconds" },
+      { "l": "Line starting with a colon", "r": "Comment, usable as a keepalive" }
+    ], "explain": "These are the four stream elements defined in the HTML living standard. The colon comment is what servers send about every 15 seconds to keep legacy proxies from dropping the connection.", "difficulty": 2, "ref": "tr3" }
+  ],
+  "flashcards": [
+    { "front": "What does streaming change and not change?", "back": "It lowers time to the first visible token and avoids client timeouts. Total generation time stays about the same." },
+    { "front": "Name two reasons streaming can hurt.", "back": "Moderation of partial text is harder, and full-object validation or buffering proxies defeat it." },
+    { "front": "What keeps an SSE connection alive through legacy proxies?", "back": "A comment line (starting with a colon) sent about every 15 seconds." }
+  ],
+  "related": ["w02-t01", "w02-t17", "w01-t13", "w02-l1"],
+  "refs": ["r14", "tr3", "tr5", "tr13", "tr14", "tr19"]
+}

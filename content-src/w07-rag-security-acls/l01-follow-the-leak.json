@@ -1,0 +1,113 @@
+{
+  "id": "w07-l1",
+  "order": 1,
+  "title": "Follow the leak",
+  "kind": "problem",
+  "minutes": 20,
+  "brief": "A chunk of text is about to enter a prompt, and the model can only leak what retrieval hands it. Before you pick a control, find every place that text can land, who could have written it, and what the client does with the answer.",
+  "blocks": [
+    { "t": "h", "text": "Three ways a RAG system leaks", "level": 2 },
+    { "t": "p", "md": "A RAG system leaks in three ways. **Retrieval hands over text the caller may not see** (authorization). **Retrieval hands over text that attacks the model** (injection and poisoning). **The answer, or a copy of the text, carries data somewhere it should not go** (output, tools, caches, logs).\n\nOWASP names the relevant risks in the 2025 list: LLM01 Prompt Injection, LLM02 Sensitive Information Disclosure, LLM04 Data and Model Poisoning, LLM05 Improper Output Handling, LLM06 Excessive Agency and LLM08 Vector and Embedding Weaknesses [[r1]]. LLM08 is the RAG access-control risk: unauthorized access, cross-context leaks in multi-tenant vector stores, embedding inversion and poisoning, with permission-aware stores and immutable retrieval logs as mitigations [[r2]]. For agents, OWASP published a separate Top 10 for Agentic Applications 2026 on 2025-12-09 (ASI01 Agent Goal Hijack to ASI10 Rogue Agents) [[r3]].\n\nIndirect injection is older than most RAG systems. Greshake et al. showed on 2023-02-23 that LLM-integrated apps blur data and instructions, so an attacker writes a prompt into data that is likely to be retrieved [[r5]]. Hold one rule: **the model is never the authorization layer.**" },
+    { "t": "diagram", "id": "w07-l1-d1", "title": "Where retrieved text lands", "alt": "Corpus writers feed ingest and the index. Retrieval uses the caller identity and feeds the prompt and model. The model drives rendered output and tool calls. Retrieval also copies text into caches and logs.", "src": "flowchart LR\n  W[Corpus writers] -->|poisoning| I[Ingest and index]\n  I --> R[Retrieve and rank]\n  U[Caller identity] --> R\n  R -->|injection| P[Prompt and model]\n  P --> O[Rendered output]\n  P --> T[Tool calls]\n  R --> C[Caches and logs]", "caption": "Every arrow is a place where denied or hostile text can pass. Name the stage before you name the control." },
+    { "t": "table", "caption": "Stage, threat, ids, first control and how to detect it. ATLAS ids are from release 2026.09.", "head": ["Stage", "Threat", "Ids", "First control", "Detect with"], "rows": [
+      ["Corpus write", "RAG poisoning, false entries", "LLM04, AML.T0070, AML.T0071", "Write ACLs on the corpus, provenance, ingest-time scan", "Canary query: a planted claim must never become the top source"],
+      ["Index", "Cross-tenant leak, embedding inversion", "LLM08", "Permission-aware partitions, limit who can read raw vectors", "Cross-tenant canary document"],
+      ["Retrieve", "Returns text the caller may not see", "LLM02, LLM08", "Enforce the ACL in retrieval with the caller's identity", "A revoked test user must get zero hits"],
+      ["Prompt", "Indirect injection", "LLM01, AML.T0051.001", "Spotlighting, least-privilege tools", "Red-team documents with planted instructions"],
+      ["Model and tools", "Excessive agency, exfiltration by tool call", "LLM06, AML.T0086", "Fewer tools, scoped tokens, approval", "Alert on tool calls to unknown destinations"],
+      ["Output", "Markdown image or link exfiltration, script injection", "LLM05", "Sanitize, allowlist domains, no auto-fetch", "Egress logs for unfamiliar hosts"],
+      ["Caches and logs", "Denied text copied outside the ACL", "LLM02", "Scope cache keys by ACL, log ids not content", "Search every store for a planted canary string"]
+    ], "highlightCol": 3 },
+    { "t": "h", "text": "Pick the first injection defence", "level": 2 },
+    { "t": "dials", "id": "w07-l1-defence", "title": "Which layer do you buy first?", "prompt": "Flip who writes the corpus, what the agent can do and what the client renders. The first layer to buy changes. Every layer here is a design choice, and the classifier is the one most often over-trusted.",
+      "dials": [
+        { "id": "authors", "label": "Who writes the corpus", "values": [ { "id": "staff", "label": "Employees only" }, { "id": "cust", "label": "Customers or partners" }, { "id": "web", "label": "Open web or inbound mail" } ] },
+        { "id": "power", "label": "What the agent can do", "values": [ { "id": "read", "label": "Read and answer only" }, { "id": "act", "label": "Change state or send data out" } ] },
+        { "id": "render", "label": "What the client renders", "values": [ { "id": "text", "label": "Plain text" }, { "id": "rich", "label": "Markdown with images and links" } ] }
+      ],
+      "options": [
+        { "id": "spot", "name": "Spotlighting", "summary": "Delimit, datamark or encode untrusted text so the model can tell data from instructions." },
+        { "id": "shield", "name": "Classifier shield", "summary": "Screen inputs and documents with a trained detector such as Prompt Shields." },
+        { "id": "trifecta", "name": "Remove a leg (Rule of Two)", "summary": "Take away untrusted input, sensitive access, or the ability to change state or communicate out." },
+        { "id": "split", "name": "Control and data flow separation", "summary": "A CaMeL-style design where untrusted data cannot choose the actions." },
+        { "id": "egress", "name": "Output and egress controls", "summary": "Strip or allowlist links and images, block auto-fetch, tighten the content security policy." },
+        { "id": "approve", "name": "Human approval", "summary": "A person approves each risky tool call before it runs." }
+      ],
+      "scores": {
+        "spot": {
+          "authors": { "staff": { "s": 0, "why": "Low attack volume, but the layer is cheap." }, "cust": { "s": 1, "why": "Customer text is untrusted, so marking it pays off." }, "web": { "s": 1, "why": "Fully untrusted text. Mark it, then add a stronger layer." } },
+          "power": { "read": { "s": 1, "why": "Lowers steering of answers at almost no cost." }, "act": { "s": 0, "why": "Probabilistic, so it cannot guard an action alone." } },
+          "render": { "text": { "s": 1, "why": "With nothing rendered, steering is the remaining risk." }, "rich": { "s": 0, "why": "Does not stop a rendered image URL from carrying data out." } }
+        },
+        "shield": {
+          "authors": { "staff": { "s": 0, "why": "Few attacks to catch, and false positives cost real users." }, "cust": { "s": 1, "why": "Screens a steady stream of untrusted text." }, "web": { "s": 2, "why": "High attack volume is what classifiers are for." } },
+          "power": { "read": { "s": 1, "why": "Cheap screening for read-only answers." }, "act": { "s": 0, "why": "EchoLeak bypassed a production classifier, so it cannot gate actions alone." } },
+          "render": { "text": { "s": 0, "why": "Neutral." }, "rich": { "s": -1, "why": "One miss still leaves the exfiltration path open." } }
+        },
+        "trifecta": {
+          "authors": { "staff": { "s": -1, "why": "If every author is trusted the untrusted-input leg may already be absent." }, "cust": { "s": 1, "why": "Customer text is untrusted input, so another leg must go." }, "web": { "s": 2, "why": "Untrusted input is certain, so remove another leg." } },
+          "power": { "read": { "s": 0, "why": "No state-changing leg to remove." }, "act": { "s": 2, "why": "Cutting the send or change leg is the strongest single fix." } },
+          "render": { "text": { "s": 0, "why": "No external channel through rendering." }, "rich": { "s": 1, "why": "Rendering is a communication channel. Count it as the third leg." } }
+        },
+        "split": {
+          "authors": { "staff": { "s": -1, "why": "The utility cost buys little when authors are trusted." }, "cust": { "s": 0, "why": "Worth it only for high-value flows." }, "web": { "s": 1, "why": "Provable data-flow rules suit hostile inputs." } },
+          "power": { "read": { "s": -1, "why": "Pays the utility cost (77% versus 84% of tasks in the CaMeL paper) with no actions to protect." }, "act": { "s": 2, "why": "Capabilities block unauthorized flows even if the model is fooled." } },
+          "render": { "text": { "s": 0, "why": "Neutral." }, "rich": { "s": 1, "why": "Data-flow rules can treat rendered output as a sink." } }
+        },
+        "egress": {
+          "authors": { "staff": { "s": 0, "why": "Cheap hygiene at any trust level." }, "cust": { "s": 1, "why": "Hostile text is likely, so close the exit." }, "web": { "s": 1, "why": "Hostile text is certain, so close the exit." } },
+          "power": { "read": { "s": 0, "why": "Reduces exfiltration even without tools." }, "act": { "s": 1, "why": "Also blocks tool destinations outside an allowlist." } },
+          "render": { "text": { "s": -2, "why": "Nothing to strip or fetch, so little to gain." }, "rich": { "s": 2, "why": "Image and link rendering was a core EchoLeak step." } }
+        },
+        "approve": {
+          "authors": { "staff": { "s": 0, "why": "Reviewer cost does not shrink with trusted authors." }, "cust": { "s": 0, "why": "Useful only when an action is at stake." }, "web": { "s": 1, "why": "A human is the fallback when injection cannot be ruled out." } },
+          "power": { "read": { "s": -2, "why": "Nothing to approve, so it adds friction for no benefit." }, "act": { "s": 2, "why": "The Rule of Two fallback: require approval when all three legs remain." } },
+          "render": { "text": { "s": 0, "why": "Neutral." }, "rich": { "s": -1, "why": "Approving tool calls does not stop a rendered image fetch." } }
+        }
+      },
+      "takeaway": "Cheap marking wins for read-only text, egress controls win once the client renders rich output, and removing a leg or asking a human wins once the agent can act. Say which leg you removed." },
+    { "t": "failure", "title": "Failure modes to recognise", "items": [
+      { "symptom": "The system prompt says to show only documents the user may read, yet a restricted chunk appears in answers.", "cause": "Authorization was delegated to the model. Retrieval returned the chunk, so it is already in the context.", "fix": "Enforce the filter in retrieval with the caller's identity. Test with a revoked user and a canary document." },
+      { "symptom": "An answer contains a Markdown image or link to a host nobody recognises.", "cause": "Injected text told the model to encode data into a URL and the client fetched it, the EchoLeak pattern.", "fix": "Strip or allowlist links and images in output, block auto-fetch, tighten the content security policy and alert on unknown egress hosts." },
+      { "symptom": "One page wins nearly every answer on a topic and its claim is wrong.", "cause": "RAG poisoning: a few crafted texts rank first for the target questions. PoisonedRAG used five.", "fix": "Restrict corpus write access, record provenance, monitor top-source concentration and keep a canary question set." },
+      { "symptom": "A restricted snippet appears in a trace viewer or a semantic cache hit.", "cause": "Copies of denied text sit outside the ACL.", "fix": "Log ids and decisions, scope cache keys by ACL scope and search every store for a planted canary string." }
+    ] },
+    { "t": "accordion", "items": [
+      { "title": "Go deeper: the EchoLeak chain, step by step", "blocks": [
+        { "t": "list", "style": "ol", "items": [
+          "One crafted email reaches the mailbox. No click is needed (zero-click).",
+          "The text evades the cross-prompt injection classifier (XPIA).",
+          "Reference-style Markdown slips past link redaction.",
+          "An auto-fetched image carries data in its URL.",
+          "A Microsoft Teams proxy that the content security policy allows completes the path."
+        ] },
+        { "t": "p", "md": "The record is CVE-2025-32711 (NVD published 2025-06-11, CWE-74). Microsoft scored it 9.3 and NVD scored it 7.5, so quote the source with the number [[r6]]. The chain needed every link, so removing one link, such as the egress path, would have stopped the exfiltration. That last point is design reasoning, not a vendor statement." }
+      ] },
+      { "title": "Go deeper: spotlighting modes, the Rule of Two and CaMeL", "blocks": [
+        { "t": "p", "md": "**Spotlighting** has three modes: delimiting with randomized delimiters, datamarking with a token woven through the untrusted text, and encoding such as base64 or ROT13. In the authors' tests attack success fell from above 50% to below 2% on GPT-family models with minimal task impact. It is probabilistic, so it is one layer [[r8]].\n\n**Rule of Two** (Meta, 2025-10-31): within one session an agent should hold no more than two of untrustworthy inputs, access to sensitive systems or private data, and the ability to change state or communicate externally. If all three are needed, add human approval or an equivalent. Simon Willison's lethal trifecta (2025-06-16) names the same three. Both are heuristics, not standards [[r10]].\n\n**CaMeL** separates control flow from untrusted data and uses capabilities to block unauthorized data flows. It solved 77% of AgentDojo tasks with provable security, against 84% undefended, which is the security-utility trade in one number [[r9]]." },
+        { "t": "callout", "kind": "interview", "title": "What interviewers listen for", "md": "Layers plus a reduced trifecta, not one guard. PoisonedRAG reported about 90% success with five malicious texts among millions, so corpus write access belongs in the threat model [[r7]]. ATLAS names the techniques: AML.T0070 RAG Poisoning, AML.T0071 False RAG Entry Injection and AML.T0086 Exfiltration via AI Agent Tool Invocation [[r4]]." }
+      ] }
+    ] }
+  ],
+  "quiz": [
+    { "id": "w07-l1-q1", "type": "match", "tag": "security", "q": "Match each RAG scenario to the OWASP LLM Top 10 2025 risk that names it.", "pairs": [
+      { "l": "A retrieved web page tells the model to ignore its rules", "r": "LLM01 Prompt Injection" },
+      { "l": "A crafted document is written to rank first for one question", "r": "LLM04 Data and Model Poisoning" },
+      { "l": "Tenant A's chunks appear in tenant B's answer", "r": "LLM08 Vector and Embedding Weaknesses" },
+      { "l": "Rendered Markdown fetches an attacker's URL", "r": "LLM05 Improper Output Handling" },
+      { "l": "An agent with a broad mailbox tool sends data it should not", "r": "LLM06 Excessive Agency" }
+    ], "explain": "LLM01 covers instructions arriving through data, LLM04 covers corrupted knowledge, LLM08 is the RAG store and cross-context risk, LLM05 covers unsafe handling of model output such as rendering, and LLM06 covers tools with more power than the task needs.", "difficulty": 2, "ref": "r1" },
+    { "id": "w07-l1-q2", "type": "single", "tag": "flip", "q": "An assistant answers from employee-written wiki pages, can only read, and the client shows plain text. The product team then adds Markdown rendering with image display. Which layer becomes most urgent?", "options": ["Control and data flow separation in the CaMeL style, with capabilities on every tool", "Output and egress controls on links and images", "Human approval before every answer is shown to the user", "A larger classifier model screening every retrieved document"], "answer": 1, "explain": "Rendering adds an exfiltration channel, the step EchoLeak relied on, so closing the exit is the cheapest fix. CaMeL-style separation costs utility for a read-only flow, approval on every answer adds friction without addressing the image fetch, and a bigger classifier is still a probabilistic gate that a miss walks past.", "difficulty": 2, "ref": "r6" },
+    { "id": "w07-l1-q3", "type": "single", "tag": "diagnose", "q": "Alice has no finance access, yet the answer quotes a finance figure. What is the root cause?", "code": { "lang": "text", "code": "system:    \"Only use documents the signed-in user is allowed to read.\"\nretrieved: [doc-17 (finance-restricted), doc-42 (public)]\nuser:      alice (groups: marketing)" }, "options": ["The embedding dimension was too low to separate finance content", "Temperature was above zero, so the model drifted from its instructions", "The model ignored the instruction, so a stricter system prompt will fix it", "Retrieval returned doc-17 without checking access"], "answer": 3, "explain": "The log shows doc-17 was retrieved for a marketing user, so the leak happened before the model ran. A stricter prompt is still the model acting as the authorization layer. Embedding size and temperature change relevance and variety, not who may read a document.", "difficulty": 1, "ref": "r2" },
+    { "id": "w07-l1-q4", "type": "numeric", "tag": "numeric", "q": "A PoisonedRAG-style attacker targets 40 questions with five malicious texts each. The corpus holds 2,000,000 texts. What percent of the corpus does the attacker control?", "answer": 0.01, "tolerancePct": 5, "unit": "%", "hint": "texts planted divided by corpus size", "explain": "40 questions times 5 texts is 200 texts. 200 divided by 2,000,000 is 0.0001, which is 0.01 percent. The attack works on rank for specific questions, not on share of the corpus, so a small corpus share is no comfort. The paper reported about 90% success with five texts per question.", "difficulty": 2, "ref": "r7" }
+  ],
+  "defend": null,
+  "refs": ["r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10"],
+  "takeaways": [
+    "The model is never the authorization layer: enforce access in retrieval and tools with the caller's identity.",
+    "Name the stage that sees denied text: index, ranker, prompt, cache, log or rendered output.",
+    "Injection defences are layers, and the classifier is the one most often trusted alone.",
+    "Remove a leg of the trifecta before buying a smarter detector.",
+    "Corpus write access is part of the threat model. Five texts were enough in PoisonedRAG."
+  ]
+}

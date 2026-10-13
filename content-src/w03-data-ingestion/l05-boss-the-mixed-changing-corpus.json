@@ -1,0 +1,95 @@
+{
+  "id": "w03-l5",
+  "order": 5,
+  "title": "Boss: the mixed, changing corpus",
+  "kind": "boss",
+  "minutes": 18,
+  "brief": "An interviewer describes four kinds of source, content that changes all day and permissions that differ per document. No numbers are given. Design the ingestion layer and defend it.",
+  "blocks": [
+    { "t": "h", "text": "Your four minutes", "level": 2 },
+    { "t": "scenario", "title": "What you are handed", "known": ["Scanned and born-digital PDFs in blob storage", "A SharePoint library, rows in a product database and a wiki", "Content changes all day, and permissions differ per document", "The interviewer will probe deletes, replay, cost and what happens when permissions change"], "ask": ["How fresh must each source be, and which source matters most?", "How fast must a delete or a permission revocation take effect?", "How many documents and pages, and what share is scanned?", "May text leave the network for managed parsing and embedding?", "Who owns the pipeline on call, and what does a wrong answer cost?"], "tension": "Seconds of freshness and exact deletes cost operations effort, while managed indexers are simple but slower and not available for every source." },
+    { "t": "diagram", "id": "w03-l5-stack", "title": "A defensible hybrid, as a starting point", "alt": "Blob files and a SharePoint library feed a scheduled indexer. The product database and the wiki feed a CDC path to a queue and workers that parse and embed. Both paths write to a green index behind an alias. Workers send failures to a dead-letter store, and a reconciliation job compares source ids with index keys.", "src": "flowchart LR\n  B[Blob files] --> IX[Scheduled indexer]\n  SP[SharePoint library] --> IX\n  DB[Product database] --> CD[CDC to queue]\n  WK[Wiki] --> CD\n  CD --> W[Workers parse and embed]\n  IX --> G[Index behind alias]\n  W --> G\n  W --> DL[Dead-letter store]\n  RC[Reconciliation job] --> G", "caption": "Each box has a dial that can remove or replace it. SharePoint indexing is preview as of 2026-10-13." }
+  ],
+  "quiz": [
+    { "id": "w03-l5-q1", "type": "numeric", "tag": "numeric", "difficulty": 2, "q": "The index holds 50 million chunks and about 2 percent of them change each day. By what factor does an incremental pipeline embed fewer chunks per day than a nightly full rebuild?", "answer": 50, "tolerancePct": 2, "unit": "times fewer", "hint": "Compare 100 percent of the corpus with the changed share.", "explain": "A rebuild embeds all 50 million chunks, and the incremental path embeds about 1 million. 100 / 2 = 50. The factor shrinks as churn rises, so measure the real change rate, and note that a changed document can touch every chunk it owns [[r4]]." },
+    { "id": "w03-l5-q2", "type": "single", "tag": "flip", "difficulty": 3, "q": "A new rule says a deleted document must stop appearing within 5 minutes. Which change fits best?", "options": ["Shorten every indexer schedule to 5 minutes and keep the current delete settings", "Send tombstone events, delete chunks by parent id, and reconcile ids nightly", "Rebuild the whole index into a fresh index every 5 minutes, then swap the alias", "Tell the model in the prompt to ignore documents that are marked as deleted"], "answer": 1, "explain": "The indexer floor is 5 minutes before the run time is added, and a blob or Cosmos DB indexer sees only soft deletes anyway. Events can remove chunks as soon as the delete is known, and reconciliation catches the ones that were missed. A rebuild every 5 minutes is impractical, and a prompt instruction leaves the content in the index [[r3]] [[r4]] [[r6]]." },
+    { "id": "w03-l5-q3", "type": "single", "tag": "diagnose", "difficulty": 3, "q": "A dashboard shows the index holds exactly as many documents as the source, yet users report stale and missing answers. What does the matching count fail to prove?", "options": ["That the embedding model is the same for every chunk in the index", "That the permissions on each chunk are correct for every user", "That the chunk size is right for the question types asked", "That the same ids are present and the content hashes match"], "answer": 3, "explain": "Counts can match while a deleted document lingers and a new one never arrived, and updates that were never applied leave the count untouched. Compare the set of ids and the content fingerprints per document. The other options are also unproven by a count, but none of them explain stale and missing answers at equal counts [[r33]]." },
+    { "id": "w03-l5-q4", "type": "multi", "tag": "tradeoff", "difficulty": 3, "q": "Select the signals worth alerting on for this pipeline.", "options": ["Age of the oldest message in the dead-letter store", "The indexer run status alone, because Success means every document arrived", "Drift: ids in the source but not the index, and ids in the index but not the source", "The 429 rate from the embedding API and the queue depth"], "answers": [0, 2, 3], "explain": "Dead-letter age shows poison documents nobody has triaged, drift shows silent loss and orphans, and 429 rate with queue depth shows backpressure before it becomes lag. A run can succeed while errors stay below the failure tolerance, so status alone hides problems [[r33]]." }
+  ],
+  "defend": {
+    "prompt": "We have scanned and born-digital PDFs in blob storage, a SharePoint library, product rows in a database and a wiki. Everything changes during the day, deleted content must stop appearing quickly and access differs per document. Design the ingestion layer and tell me how you would know it is correct.",
+    "timebox": "4 min",
+    "clarify": [
+      "How fresh must each source be, and which one is the strictest?",
+      "How fast must a delete or a permission revocation take effect?",
+      "How many documents and pages are there, and what share is scanned or table-heavy?",
+      "May text leave our network for managed parsing and embedding?",
+      "Who owns the pipeline on call, and what does a wrong or leaked answer cost?",
+      "Which embedding model will we use, and do we expect to change it?"
+    ],
+    "options": [
+      { "name": "Managed indexers and skillsets for every source", "when": "Sources are GA stores, minutes of staleness is fine and built-in skills cover the parsing.", "tradeoff": "5 minute schedule floor, run caps (plan for 2 hours), SharePoint is preview, and you cannot apply your own retry and dead-letter policy per file." },
+      { "name": "Event-driven pipeline for every source", "when": "Seconds matter everywhere and the team can run queues, workers and replay.", "tradeoff": "More to operate, and delivery is at least once so every write must be idempotent." },
+      { "name": "Hybrid: indexer for stable files, events and CDC for the fast sources", "when": "Freshness needs differ by source, which is the usual case.", "tradeoff": "Two paths must agree on the key scheme, the fingerprint and the delete rules, or the same document is written twice differently." },
+      { "name": "Nightly batch rebuild", "when": "The corpus is small and a day of staleness is acceptable.", "tradeoff": "Re-embeds unchanged content, and a delete shows only after the next rebuild." }
+    ],
+    "modelAnswer": [
+      { "t": "p", "md": "**1. Clarify the dials.** I would ask about freshness per source, how fast deletes and revocations must land, volume and the scanned share, whether text may leave the network, who is on call and what a leak costs. Those decide the architecture, and I would not name a component before I have them." },
+      { "t": "p", "md": "**2. List the options, including the boring one.** All indexers is simplest. All events is fastest and most work. A hybrid matches freshness to each source. A nightly rebuild is the baseline that tells us what the others must beat." },
+      { "t": "p", "md": "**3. Pick for the stated dials.** For differing freshness I would use a hybrid. A scheduled indexer with a skillset handles blob files and the SharePoint library, where minutes are fine, and I would label the SharePoint indexer as preview as of 2026-10-13 and have a push fallback. The product database and the wiki go through CDC (change feed or log-based) into a queue, and workers parse, chunk, embed and push with `mergeOrUpload`. Every chunk gets a stable key from source id and position, a parent id, and a fingerprint of text, parser, chunker and embedding model, so retries and replays are safe because delivery is at least once." },
+      { "t": "list", "style": "ul", "items": [
+        "**Parsing by class:** native text for clean files, layout analysis or Content Understanding for scans and tables, a local open-source parser if text must stay in the network, and a vision model only for pages whose meaning is a picture.",
+        "**Deletes:** a soft-delete policy from the first run on Blob and Cosmos DB sources, tombstones through the event path, chunk removal by parent id, and a nightly reconciliation of source ids against index keys.",
+        "**Permissions:** capture ACL ids and sensitivity on every chunk at ingest, with a re-sync path for permission changes. Knowledge source ACL ingestion is preview.",
+        "**PII:** run the PII skill before embedding where answers never need the value, and keep the value with permissions where they do.",
+        "**Versioning:** a new index per embedding model behind an alias, validated on labelled queries, with a rollback window."
+      ] },
+      { "t": "p", "md": "**What would flip the choice.**" },
+      { "t": "list", "style": "ul", "items": [
+        "Seconds of freshness for every source: move the indexer sources onto events too.",
+        "No platform team: prefer indexers and a Foundry IQ knowledge source, and accept the slower path.",
+        "Text may not leave the network: self-host parsing and embedding.",
+        "A deletion deadline of minutes: events plus soft-delete flags, because the indexer floor is 5 minutes before run time.",
+        "A model retirement date is near: schedule the blue-green re-embed first."
+      ] },
+      { "t": "p", "md": "**4. Failure modes and detection.**" },
+      { "t": "table", "head": ["Failure", "How I would detect it"], "rows": [
+        ["A deleted document still answers", "Reconciliation drift count, and a canary delete test per source"],
+        ["Poison file blocks the queue", "Dead-letter depth and age of the oldest item"],
+        ["Retry storm on the embedding API", "429 rate, queue depth, worker concurrency"],
+        ["Chunks visible to the wrong people", "A restricted-user test set and ACL field coverage per chunk"],
+        ["Parser upgrade silently changes chunks", "Regression set of hard pages, and the fingerprint change rate"]
+      ] },
+      { "t": "p", "md": "**5. Metrics and rollout.** Freshness lag at p95 from source change to searchable, drift counts, parse success per document class, dead-letter depth and age, embedding spend per changed document and permission-sync lag. Roll out by building the new pipeline into a shadow index, comparing it with the current one on labelled queries and deletion canaries, then canary the alias." },
+      { "t": "callout", "kind": "tip", "title": "The line that earns marks", "md": "Say how you prove the index equals the source: ids and fingerprints reconciled, not counts compared." }
+    ],
+    "rubric": [
+      { "pt": "Asks about freshness per source, delete and revocation deadlines, volume, residency and ownership before naming components", "w": 3 },
+      { "pt": "Offers real options including the boring ones, and mixes paths by source freshness", "w": 2 },
+      { "pt": "Makes writes idempotent with stable ids and a fingerprint, and knows delivery is at least once", "w": 3 },
+      { "pt": "Handles deletes per source and adds reconciliation because hard deletes are invisible to indexers", "w": 3 },
+      { "pt": "Routes parsing by document class and names the version and preview status of what it picks", "w": 2 },
+      { "pt": "Captures ACLs and PII handling at ingest, before embedding, with a re-sync path", "w": 2 },
+      { "pt": "Names failure modes with a detection signal and designs dead letters, backoff and replay", "w": 2 },
+      { "pt": "Plans blue-green re-embedding behind an alias and a staged rollout", "w": 1 }
+    ],
+    "followUps": [
+      { "q": "The embedding model is retired in eighteen months. What do you do today?", "a": "Check the retirement schedule, then make the fingerprint include the model so the pipeline can rebuild on change. Build the new index beside the old one, validate on labelled queries, repoint the alias, and keep the old index for a rollback window." },
+      { "q": "A user is removed from a group at 10:00 and can still retrieve a document at 10:30. Why?", "a": "The permission was captured at ingest and not re-synced, so chunk ACLs are stale. I would shorten the sync for permission changes, check live for sensitive documents and measure the permission-sync lag as a metric." },
+      { "q": "Half of the scanned PDFs have tables that parse badly. What do you do next?", "a": "Score tables per document type on a labelled set, try layout analysis or Content Understanding against a local parser, keep the raw table for the model, and route only the worst pages to a vision model with validation." }
+    ],
+    "redFlags": [
+      "Says the indexer takes care of deletes without asking how the index is reconciled with the source",
+      "Treats exactly-once delivery as a given and skips idempotent writes",
+      "Compares counts instead of ids and fingerprints to prove the index is correct",
+      "Adds permissions only at query time, with nothing captured at ingest"
+    ]
+  },
+  "refs": ["r3", "r4", "r6", "r7", "r12", "r13", "r14", "r33", "r30"],
+  "takeaways": [
+    "Clarify freshness per source, delete and revocation deadlines, volume, residency and ownership before choosing a pipeline",
+    "A hybrid of indexers and an event path is the usual answer, joined by one key scheme and one fingerprint",
+    "Prove correctness with reconciled ids and fingerprints, not counts, and alert on drift and dead-letter age",
+    "Capture permissions and PII decisions at ingest, and re-embed by blue-green behind an alias"
+  ]
+}

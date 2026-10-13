@@ -1,0 +1,120 @@
+{
+  "id": "w04-t12",
+  "order": 12,
+  "group": "Embeddings",
+  "title": "Embedding models and how to choose",
+  "minutes": 9,
+  "difficulty": "core",
+  "summary": "The embedding model decides what 'similar' means in your index. Choose it by quality on your own documents and languages, then by dimensions, cost, latency, hosting and lifecycle.",
+  "useIf": "You are picking or revisiting the model that turns chunks and queries into vectors.",
+  "avoidIf": "You would choose from a public leaderboard rank alone. It is a shortlist, not a decision.",
+  "explain": [
+    { "t": "p", "md": "An **embedding model** maps text to a vector so that texts with related meaning land close together. Everything downstream (index size, recall, query latency, cost) inherits that choice. Five dials decide it: **quality** on your domain and languages, **dimensions** (storage and speed), **cost** per million tokens, **latency** (a model call on every query) and **hosting and lifecycle** (managed or self-hosted, and when the model retires)." },
+    { "t": "table", "caption": "Model facts worth knowing (checked 2026-10-13)", "head": ["Model", "Dimensions", "Facts"], "rows": [
+      ["text-embedding-3-small", "1,536 (default)", "MTEB 62.3, MIRACL 44.0, about 62,500 pages per dollar [[tr24]] [[tr28]]"],
+      ["text-embedding-3-large", "3,072 (default)", "MTEB 64.6, MIRACL 54.9, about 9,615 pages per dollar [[tr24]] [[tr28]]"],
+      ["text-embedding-ada-002", "1,536 (fixed)", "MTEB 61.0, MIRACL 31.4, about 12,500 pages per dollar [[tr24]] [[tr28]]"],
+      ["Cohere embed-v4.0", "256, 512, 1,024 or 1,536 (default)", "Text and images, 128k context [[tr30]]"],
+      ["Cohere embed-v5.0-pro and -fast", "256 to 2,048 (default 2,048)", "Text, images and mixed PDFs, 128k context [[tr30]]"],
+      ["Open models (BGE, E5, Nomic)", "Varies by model", "Self-hosted, some need query and document prefixes, Nomic supports Matryoshka [[tr31]]"]
+    ] },
+    { "t": "p", "md": "The three OpenAI models accept up to 8,192 input tokens. Pages per dollar assume about 800 tokens per page [[tr24]]. Azure OpenAI allows up to 2,048 input items in one embeddings call [[tr28]]." },
+    { "t": "p", "md": "**Treat leaderboards as a shortlist.** MTEB v1 covers 8 task types, 58 datasets and 112 languages, and its authors found that no single method won every task [[tr18]]. MMTEB extends this to 500+ tasks and 250+ languages [[tr19]]. Neither is your corpus. Build a **domain test set**: 50 to 200 real queries, each labelled with the chunk or chunks that answer it, and compare the shortlisted models on recall at k and rank of the first relevant hit, using your own chunking and language mix." },
+    { "t": "callout", "kind": "warn", "title": "Lifecycle is part of the choice", "md": "You cannot upgrade an embedding model in place; new embeddings are required [[tr28]]. The Azure OpenAI retirement schedule (page updated 2026-09-21) lists text-embedding-3-large, 3-small and ada-002 as retiring 2028-02-09 [[tr29]]. An older page had given ada-002 an earlier date, so check the live schedule before quoting one. Plan the migration path before you commit." },
+    { "t": "p", "md": "Index time and query time must use the same model. In AI Search the vectorizer in the index must use the same model as the embedding skill [[tr3]]. Query-time embedding is a model call on every search, so it counts against your latency budget and rate limits." }
+  ],
+  "whereToUse": [
+    "A new RAG build, before the index schema and vector dimensions are fixed",
+    "A cost or memory review when the vector store is growing faster than planned",
+    "Adding languages, where model quality differs sharply (MIRACL averages)",
+    "Evaluating a migration before a retirement date forces it"
+  ],
+  "whenToUse": {
+    "use": ["Compare 2 to 4 shortlisted models on a domain test set", "Pick a larger model when languages or vocabulary are hard", "Pick a smaller model or shorter vectors when memory or cost is the limit"],
+    "avoid": ["Choosing by overall leaderboard rank without testing your chunks", "Mixing vectors from different models in one index", "Locking in a model with no plan for its retirement"],
+    "flips": ["Multilingual or specialised vocabulary: favour the large model or a tested multilingual model", "Memory is the bottleneck: shorten dimensions or quantize before switching to a weaker model", "Data must stay on premises: move to a tested open model you host"]
+  },
+  "alternatives": {
+    "title": "Model families compared",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["text-embedding-3-large", "Hard domains, many languages, quality first", "Memory or cost per vector dominates", "3,072 dimensions by default, about 6.5 times the cost per token of 3-small by the pages-per-dollar figures"],
+      ["text-embedding-3-small", "Cost, English-heavy, large corpora", "Multilingual quality is critical", "Lower MIRACL (44.0 against 54.9)"],
+      ["Cohere embed v4 or v5", "Multimodal or very long inputs, selectable dimensions", "Procurement allows only one model vendor", "Another vendor to manage, check the page for release details"],
+      ["Open model, self-hosted", "Data residency, offline use, tuning", "You lack GPU and MLOps capacity", "Prefix rules, serving, upgrades are yours"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "The top leaderboard model does worse than the previous one in production", "cause": "Benchmarks use other domains, languages and chunk sizes, and no model won every MTEB task", "fix": "Evaluate shortlisted models on your own labelled queries and chunks" },
+    { "symptom": "Retrieval quality collapses after a model change with no reindex", "cause": "Old stored vectors and new query vectors come from different models and are not comparable", "fix": "Re-embed every chunk with the new model into a new index, then cut over (see the dimensions and drift topics)" },
+    { "symptom": "Query latency has a floor you cannot lower", "cause": "Each search makes a synchronous embedding call, which is part of the latency budget", "fix": "Pick a lower-latency model or region, cache embeddings of repeated queries and keep the call close to the search service" }
+  ],
+  "scenarios": [
+    {
+      "id": "w04-t12-s1",
+      "title": "Multilingual support corpus",
+      "situation": "A support assistant serves ten languages from a corpus of 3 million chunks. Quality on non-English queries matters and the team can run a one-week evaluation.",
+      "constraints": ["Ten languages", "3 million chunks", "Quality over cost", "A week for evaluation"],
+      "unknowns": ["Which languages carry most traffic?", "Do queries mix languages?"],
+      "question": "How do you choose?",
+      "options": [
+        { "name": "Shortlist 3-large and one multilingual alternative, test on about 100 labelled queries per major language", "verdict": "best", "why": "Multilingual quality varies a lot (MIRACL 54.9 against 44.0 for 3-small), and your own queries settle it.", "tradeoff": "Labelling effort and larger vectors." },
+        { "name": "text-embedding-3-small for the lower cost", "verdict": "good", "why": "Cheapest acceptable option if the test shows enough recall.", "tradeoff": "The MIRACL gap suggests weaker non-English retrieval." },
+        { "name": "Pick whichever model tops the public leaderboard", "verdict": "poor", "why": "The leaderboard is not your languages or chunks, and no model won every task.", "tradeoff": "A fine way to build the shortlist, not to decide." }
+      ],
+      "flips": [
+        { "if": "Three languages carry 95% of traffic", "then": "Optimise for those and test the rest lightly." },
+        { "if": "Memory is tight", "then": "Test 3-large with shortened dimensions and quantization." }
+      ],
+      "takeaway": "Test shortlisted models on your languages and chunks."
+    },
+    {
+      "id": "w04-t12-s2",
+      "title": "Huge English corpus, memory-bound",
+      "situation": "An English-only corpus has 200 million chunks. Raw float32 vectors at 3,072 dimensions would need about 2.5 TB before index overhead. Budget is capped.",
+      "constraints": ["200 million chunks", "English only", "Hard memory budget", "Recall target set"],
+      "unknowns": ["What recall loss is tolerable?", "Is a rescoring step acceptable?"],
+      "question": "Which model setup do you test first?",
+      "options": [
+        { "name": "3-small, or 3-large with shortened dimensions, compared on recall against the budget", "verdict": "best", "why": "Halving or quartering storage per vector is worth testing before any other lever, and both options respect the budget.", "tradeoff": "A measured recall drop to accept." },
+        { "name": "3-large at full 3,072 dimensions", "verdict": "poor", "why": "About 2.5 TB of raw vectors blows the budget at this scale.", "tradeoff": "Right when the corpus is a few million chunks." },
+        { "name": "3-large full size, then quantize heavily", "verdict": "good", "why": "Keeps quality headroom while cutting memory.", "tradeoff": "Quantization and rescoring settings add tuning and storage for originals." }
+      ],
+      "flips": [
+        { "if": "The corpus drops to 5 million chunks", "then": "Full-size 3-large fits and quality may win." },
+        { "if": "Recall target is strict", "then": "Keep larger vectors and rely on quantization with rescoring." }
+      ],
+      "takeaway": "At scale, bytes per vector are part of the model decision."
+    },
+    {
+      "id": "w04-t12-s3",
+      "title": "Data may not leave the site",
+      "situation": "A regulated team must keep documents and queries on premises. They have a small GPU cluster and an ML engineer.",
+      "constraints": ["No external API calls", "Small GPU cluster", "One ML engineer", "English and German content"],
+      "unknowns": ["How many queries per second?", "Are query prefixes handled by the library?"],
+      "question": "What do you deploy?",
+      "options": [
+        { "name": "A self-hosted open model such as BGE, E5 or Nomic, tested on a domain set", "verdict": "best", "why": "Meets the residency rule and can be evaluated offline.", "tradeoff": "You own serving, prefixes, upgrades and scaling." },
+        { "name": "A managed hosted API with a data processing agreement", "verdict": "poor", "why": "Text leaves the site, which the constraint forbids.", "tradeoff": "Right when residency rules allow a specific region or contract." },
+        { "name": "Train a model from scratch", "verdict": "good", "why": "Full control.", "tradeoff": "Far more effort than a tested open model for little gain." }
+      ],
+      "flips": [
+        { "if": "Policy allows a regional managed service", "then": "Compare it on quality and operations cost." },
+        { "if": "German retrieval is weak", "then": "Test multilingual open models before tuning." }
+      ],
+      "takeaway": "Residency rules narrow the field, and testing still decides within it."
+    }
+  ],
+  "quiz": [
+    { "id": "w04-t12-q1", "type": "single", "tag": "concept", "q": "What is the right use of a public embedding leaderboard like MTEB?", "options": ["Final model decision", "Replacing your own evaluation", "Building a shortlist to test on your corpus", "Proving a model suits your languages"], "answer": 2, "explain": "No single method won every MTEB task and the datasets are not your corpus, so use it to shortlist and then test. It cannot make the decision or prove fit for your languages." },
+    { "id": "w04-t12-q2", "type": "multi", "tag": "tradeoff", "q": "Which belong in a domain embedding evaluation?", "options": ["Real queries labelled with the chunks that answer them", "Your own chunking settings", "Your actual mix of languages", "Only the model's published MTEB average"], "answers": [0, 1, 2], "explain": "The evaluation must reflect real queries, chunks and languages. A published average is not a domain test." },
+    { "id": "w04-t12-q3", "type": "single", "tag": "flip", "q": "Why must the model choice include a migration plan?", "options": ["Vectors from different models are comparable, so swapping is trivial", "Embeddings cannot be upgraded in place and models have retirement dates", "Models never retire", "Migration only affects the query side"], "answer": 1, "explain": "New embeddings are required for any model change and the Azure schedule lists retirement dates. Vectors from different models are not comparable, and a swap touches both stored and query vectors." }
+  ],
+  "flashcards": [
+    { "front": "What are the five dials for choosing an embedding model?", "back": "Quality on your domain and languages, dimensions, cost, latency and hosting with lifecycle." },
+    { "front": "Why is MTEB a shortlist, not a decision?", "back": "MTEB v1 had no single winner across tasks and its datasets are not your corpus. Build a domain test set." },
+    { "front": "When do Azure OpenAI text-embedding-3 and ada-002 retire?", "back": "The schedule page updated 2026-09-21 lists 2028-02-09. An older page gave ada-002 an earlier date, so check the live schedule." }
+  ],
+  "related": ["w04-t13", "w04-t14", "w04-t15", "w03-t09", "w05-t03", "w04-l3"],
+  "refs": ["tr3", "tr18", "tr19", "tr24", "tr28", "tr29", "tr30", "tr31"]
+}

@@ -1,0 +1,95 @@
+{
+  "id": "w05-t02",
+  "order": 2,
+  "group": "Baseline",
+  "title": "Lexical and sparse retrieval (BM25, SPLADE)",
+  "minutes": 7,
+  "difficulty": "core",
+  "summary": "Lexical retrieval matches the words of the query against an inverted index and scores with BM25. Learned sparse models such as SPLADE keep the inverted index but learn which terms matter.",
+  "useIf": "Users search with identifiers, names, codes, dates or jargon, or you need explainable matches and no embedding cost.",
+  "avoidIf": "Queries are paraphrases that share few words with the documents and nothing else covers vocabulary mismatch.",
+  "explain": [
+    { "t": "p", "md": "An **inverted index** maps each term to the documents that contain it. **BM25** scores a document for a query by summing, per query term, how rare the term is across the index (IDF) and how often it appears in the document (TF), with two controls. `k1` sets how fast extra occurrences stop adding score, and `b` sets how strongly long documents are penalised [[tr6]]. In Azure AI Search, BM25 is fixed on services created after July 2020, the defaults are `k1` 1.2 and `b` 0.75, and `@search.score` has no upper bound [[tr5]] [[tr6]]." },
+    { "t": "formula", "title": "BM25 in its standard form", "expr": "score(q,d) = sum over terms t in q of IDF(t) * tf * (k1 + 1) / (tf + k1 * (1 - b + b * |d| / avgdl))", "vars": [{ "k": "tf", "v": "occurrences of the term in document d" }, { "k": "k1", "v": "term-frequency saturation, 1.2 by default in Azure" }, { "k": "b", "v": "length normalisation from 0 to 1, 0.75 by default in Azure" }, { "k": "|d| / avgdl", "v": "document length relative to the average length" }], "example": "With `k1` at 0, a term counts once whether it appears one time or fifty. Larger `k1` lets repeated terms keep adding score, which favours documents that match many query terms [[tr6]]." },
+    { "t": "p", "md": "**Learned sparse retrieval** keeps the inverted-index serving model but replaces counts with weights a neural model learns. SPLADE adds explicit sparsity regularisation and a log-saturation effect on term weights, so queries and documents become sparse vectors that include expansion terms the text never contained [[tr1]]. You gain some synonym coverage and still get index-friendly serving. The Azure vector pages read on 2026-10-13 do not document SPLADE-style sparse or late-interaction retrieval, so using them means another engine (UNVERIFIED for Azure support)." },
+    { "t": "p", "md": "Why keep lexical retrieval in 2026? BEIR found BM25 a reliable baseline out of domain, where dense models often lose [[r11]]. Azure's own guidance says product codes, specialised jargon, dates and people's names do better with keyword search [[r43]]." },
+    { "t": "callout", "kind": "gotcha", "title": "Analyzer settings decide whether an identifier matches", "md": "A tokenizer that splits `ERR-4012` into `err` and `4012` changes what BM25 sees. Test your identifiers through the analyzer you configured, and keep a field that preserves them whole." }
+  ],
+  "whereToUse": [
+    "First-stage retrieval for support, legal and engineering corpora full of codes, clause numbers and part numbers",
+    "The keyword leg of a hybrid query, fused with a vector leg",
+    "Search over short structured fields such as titles, SKUs and names",
+    "A cheap baseline against which every dense or hybrid experiment is judged"
+  ],
+  "whenToUse": {
+    "use": ["A large share of queries contain exact tokens users expect to match", "You need to show why a document matched", "Out-of-domain robustness matters more than paraphrase coverage", "You cannot afford embedding and re-embedding costs"],
+    "avoid": ["Users describe symptoms in their own words and the documents use other vocabulary", "Cross-language queries with no shared tokens", "You rely on BM25 alone for conceptual questions"],
+    "flips": ["Paraphrase share grows: add a vector leg and fuse with RRF", "You control the engine and need expansion without embeddings at query time: consider learned sparse retrieval", "Identifiers dominate: weight the keyword leg up or route those queries to BM25 first"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["BM25", "Identifiers, names, dates, jargon, out-of-domain", "Vocabulary mismatch, paraphrase", "Analyzer tuning, no semantics"],
+      ["Learned sparse (SPLADE style)", "You need expansion with inverted-index serving", "Your engine has no sparse-vector support", "Model inference at index and query time, another stack"],
+      ["Dense vectors", "Paraphrase and conceptual questions", "Rare terms, exact codes", "Embedding cost, ANN index memory"],
+      ["Hybrid (BM25 plus dense)", "Mixed query types", "Latency budget is tight, no labelled data to tune", "Two retrievals and a fusion step"],
+      ["Late interaction (ColBERT style)", "Fine-grained token matching at high quality", "Storage is constrained", "Index size can grow about tenfold before compression [[r12]]"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Exact error code returns related but wrong pages", "cause": "The analyzer split the code into tokens that are common elsewhere", "fix": "Index the code in a whole-token field, and test identifiers through the analyzer" },
+    { "symptom": "Results reorder between identical queries", "cause": "Tied scores have undefined order, and replicas compute index statistics per replica", "fix": "Add a tiebreaker such as `$orderby=search.score() desc, Rating desc`, and do not compare raw scores across runs [[tr5]]" },
+    { "symptom": "Every result has `@search.score` of 1", "cause": "The query was a wildcard, fuzzy, regex or empty search, which are not scored", "fix": "Use a scored full-text query when you need ranking" }
+  ],
+  "scenarios": [
+    {
+      "id": "w05-t02-s1",
+      "title": "Runbook search by error code",
+      "situation": "Engineers paste error codes and service names into an assistant. The runbook corpus is a few hundred thousand chunks and rarely changes.",
+      "constraints": ["Most queries contain an exact code", "Runbooks use the same codes as the logs", "Moderate budget"],
+      "unknowns": ["What share of queries are paraphrases?", "Does the analyzer keep codes intact?"],
+      "question": "What do you build first?",
+      "options": [
+        { "name": "BM25 with a whole-token field for codes, then add vectors only if paraphrase misses show up", "verdict": "best", "why": "Codes are the use case lexical retrieval was made for, and it is cheap and explainable.", "tradeoff": "Paraphrased symptoms will miss until you add a vector leg." },
+        { "name": "Vector-only retrieval with a strong embedding model", "verdict": "poor", "why": "Dense retrievers generalise poorly to rare entities and exact strings [[tr2]].", "tradeoff": "Right when queries are symptoms in plain language and documents are prose." },
+        { "name": "Hybrid from day one with a semantic ranker", "verdict": "good", "why": "Covers both query types.", "tradeoff": "Higher cost and complexity before you know the paraphrase share." }
+      ],
+      "flips": [
+        { "if": "A third of queries are paraphrased symptoms", "then": "Add a vector leg and fuse with RRF." },
+        { "if": "The engine supports learned sparse vectors and you need expansion", "then": "Evaluate a SPLADE-style model against BM25 on your labelled queries." }
+      ],
+      "takeaway": "Exact tokens favour lexical retrieval."
+    },
+    {
+      "id": "w05-t02-s2",
+      "title": "Tiny team, mixed language corpus",
+      "situation": "A two-person team indexes support articles written in several languages. Users write in their own language, and some articles are translations.",
+      "constraints": ["Queries and documents may not share tokens", "No ML platform team", "Quality matters more than cost"],
+      "unknowns": ["Which languages and how many?", "Do the analyzers exist for each language?"],
+      "question": "Is BM25 alone acceptable?",
+      "options": [
+        { "name": "Add a multilingual embedding vector leg and fuse with BM25", "verdict": "best", "why": "Cross-language matches need semantic similarity, while BM25 still catches product names that stay untranslated.", "tradeoff": "Embedding cost and a second index to keep in sync." },
+        { "name": "BM25 alone with per-language analyzers", "verdict": "good", "why": "Works when users search in the document language.", "tradeoff": "Fails on cross-language queries." },
+        { "name": "Translate every document into English before indexing", "verdict": "poor", "why": "A costly pipeline that still loses nuance and names.", "tradeoff": "Reasonable only for a small corpus with a single target language." }
+      ],
+      "flips": [
+        { "if": "Users always search in the language of the document", "then": "BM25 with per-language analyzers is enough." },
+        { "if": "Quality matters less than cost and users only need roughly relevant articles", "then": "Keep BM25 with per-language analyzers and skip the embedding bill, accepting misses on cross-language queries." }
+      ],
+      "takeaway": "Lexical retrieval cannot cross a vocabulary gap."
+    }
+  ],
+  "quiz": [
+    { "id": "w05-t02-q1", "type": "single", "tag": "concept", "q": "In BM25, what does raising `k1` do?", "options": ["Penalises long documents more", "Raises the IDF of rare terms", "Switches scoring to cosine similarity", "Lets repeated occurrences of a term keep adding score for longer"], "answer": 3, "explain": "`k1` controls term-frequency saturation. Length penalty is `b`, IDF comes from index statistics, and BM25 does not use cosine similarity." },
+    { "id": "w05-t02-q2", "type": "multi", "tag": "tradeoff", "q": "Select the conditions that favour keeping BM25 in the stack.", "options": ["Queries contain product codes and names", "You need to show why a hit matched", "Every query is a conceptual paraphrase", "Out-of-domain robustness matters"], "answers": [0, 1, 3], "explain": "Exact tokens, explainability and out-of-domain robustness favour lexical retrieval. Pure paraphrase workloads favour dense retrieval, though a hybrid leg can still help." },
+    { "id": "w05-t02-q3", "type": "match", "tag": "concept", "q": "Match each term to its role.", "pairs": [{ "l": "`k1`", "r": "Term-frequency saturation" }, { "l": "`b`", "r": "Document length normalisation" }, { "l": "SPLADE", "r": "Learned sparse term weights with expansion" }, { "l": "`@search.score`", "r": "Unbounded BM25 relevance value" }], "explain": "`k1` and `b` are the two BM25 controls, SPLADE learns sparse weights and the Azure BM25 score has no upper limit." }
+  ],
+  "flashcards": [
+    { "front": "What are the Azure BM25 defaults for `k1` and `b`?", "back": "`k1` is 1.2 and `b` is 0.75. BM25 is fixed on services created after July 2020." },
+    { "front": "What does SPLADE add to sparse retrieval?", "back": "Learned term weights with expansion terms, sparsity regularisation and log saturation, still served from an inverted index." },
+    { "front": "Why can identical BM25 queries reorder results?", "back": "Tied scores have undefined order, and each replica computes index statistics separately." }
+  ],
+  "related": ["w05-t03", "w05-t04", "w05-l1", "w04-t02"],
+  "refs": ["tr1", "tr5", "tr6", "r11", "r12", "r43", "tr2"]
+}

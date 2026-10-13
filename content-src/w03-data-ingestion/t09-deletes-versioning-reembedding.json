@@ -1,0 +1,110 @@
+{
+  "id": "w03-t09",
+  "order": 9,
+  "group": "Keeping it fresh",
+  "title": "Deletes, versioning and re-embedding",
+  "minutes": 9,
+  "difficulty": "advanced",
+  "summary": "Deletes need a visible tombstone, versions need a rule for what the index keeps, and re-embedding needs a second index and an alias, because vectors from different models cannot be mixed.",
+  "useIf": "Content is removed or superseded, a legal deletion deadline exists, or you will change embedding models during the life of the index.",
+  "avoidIf": "The corpus is a frozen archive that is never edited or re-embedded: a simple one-time build is enough.",
+  "explain": [
+    { "t": "p", "md": "**Deletes.** An indexer cannot see what the source silently removes. Blob has two soft-delete strategies: native blob soft delete (Blob Storage only, blob versioning must be off, retention well above the indexer interval) or a custom metadata flag such as `IsDeleted=true` followed by a physical delete. The policy must exist from the first run [[tr4]]. SQL uses `SoftDeleteColumnDeletionDetectionPolicy` [[tr5]] and Cosmos DB needs a top-level Boolean field [[tr6]]. Child chunks of a deleted parent are removed only when the data source has a deletion detection policy [[tr11]]. A reconciliation job is your proof that deletes happened." },
+    { "t": "p", "md": "**Versioning.** Decide whether the index holds only the latest version of a document or also history. Latest-only is simplest: replace on change. History needs fields such as `version` and `is_current` and a filter, and it raises ACL and storage questions." },
+    { "t": "p", "md": "**Re-embedding.** You cannot upgrade an embedding model in place, and vectors from different models are not comparable [[tr33]]. The query-time vectorizer must use the same model as the embedding skill [[tr12]]. So build a second index with the new model, keep both live while you validate, then repoint an **alias**, a service-level name that is separate from indexes [[tr10]]. Keep the old index through a rollback window. HNSW vectors consume memory quota, so two live copies roughly double that need [[tr41]]." },
+    { "t": "diagram", "id": "w03-t09-d1", "title": "Blue-green re-embedding behind an alias", "alt": "Applications query an alias that points at index v1. A backfill and dual-write fill index v2 with the new model, a quality gate checks it, and then the alias is repointed from v1 to v2.", "src": "flowchart LR\n  A[App queries] --> L[Alias docs-live]\n  L --> V1[(Index v1 old model)]\n  B[Backfill and dual-write] --> V2[(Index v2 new model)]\n  V2 --> Q[Quality gate]\n  Q --> C[Repoint alias]\n  C --> L" },
+    { "t": "callout", "kind": "note", "title": "Check retirement dates live", "md": "The retirement schedule page (updated 2026-09-21) lists text-embedding-3-large, 3-small and ada-002 as retiring 2028-02-09. An older page said ada-002 retired no earlier than April 30, 2026. Check the live schedule before quoting a date [[tr32]]." }
+  ],
+  "whereToUse": [
+    "Compliance-driven removal of documents within a stated deadline",
+    "Knowledge bases where policies are superseded and old versions must not be answered from",
+    "Changing the embedding model, dimensions or chunking strategy of a live index",
+    "Planning capacity for the period when two indexes are live",
+    "Release processes that need a tested rollback"
+  ],
+  "whenToUse": {
+    "use": [
+      "Use soft-delete flags or native soft delete with a policy set before the first run",
+      "Use blue-green with an alias for any user-facing re-embedding",
+      "Use dual-write or a checkpointed replay so changes made during the backfill reach the new index",
+      "Keep the old index through a rollback window and quality checks"
+    ],
+    "avoid": [
+      "Avoid relying on physical deletes in the source for indexers that cannot detect them",
+      "Avoid re-embedding in place: there is no mixed-model state that works",
+      "Avoid deleting the old index before the new one has passed evaluation"
+    ],
+    "flips": [
+      "Downtime is acceptable and the corpus is small: rebuild in place during a maintenance window",
+      "Memory headroom is tight: stage the cutover by partition or add capacity for the overlap, because two live HNSW copies roughly double the memory need",
+      "Retirement date approaches: schedule the migration with margin, not at the deadline"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Re-embedding approach", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["New index behind an alias (blue-green)", "User-facing, rollback needed", "Memory or cost cannot carry two copies", "Double vector storage during overlap"],
+      ["Second vector field in the same index", "Gradual cutover by query, same filters", "Index is near its memory quota", "Both vector sets held in one index"],
+      ["Rebuild in place in a maintenance window", "Small corpus, downtime accepted", "Users need continuity or rollback", "Downtime and no safe fallback"],
+      ["Soft delete then purge (deletes)", "Source can express a flag", "Source hard-deletes outside your control", "Convention must exist from the first run"],
+      ["Reconciliation by id comparison (deletes)", "Any source", "Huge id sets, instant deletion needed", "Periodic, extra listing cost"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Search returns nonsense after the model change", "cause": "The query vectorizer still uses the old model while the index holds new-model vectors", "fix": "Change the vectorizer with the index and test with known queries before the alias moves" },
+    { "symptom": "Deleted parent documents leave orphan chunks", "cause": "Projected child chunks are removed only if the data source has a deletion detection policy", "fix": "Add the policy and verify with a reconciliation count" },
+    { "symptom": "No way back after a bad cutover", "cause": "The old index was dropped right after the alias moved", "fix": "Keep it through a rollback window, then delete" },
+    { "symptom": "The build of the new index fails on capacity", "cause": "HNSW vectors use memory quota and two copies double the need", "fix": "Check vector index size before starting and plan capacity for both" }
+  ],
+  "scenarios": [
+    {
+      "id": "w03-t09-s1",
+      "title": "Model migration for a customer-facing index",
+      "situation": "A production assistant uses an index of 20 million chunks. A new embedding model improves retrieval on the evaluation set. The assistant cannot go down and a quick rollback must exist.",
+      "constraints": ["No downtime", "Rollback required", "Memory headroom exists for two copies", "Evaluation set available"],
+      "unknowns": ["How many changes arrive during the backfill?", "How long is the overlap affordable?"],
+      "question": "How do you migrate?",
+      "options": [
+        { "name": "New index with the new model behind an alias, dual-write during backfill, quality gate, then repoint", "verdict": "best", "why": "Users keep the old index until the new one passes evaluation, and rollback is a repoint.", "tradeoff": "Double vector storage and a dual-write path for a while." },
+        { "name": "Add a second vector field to the same index and switch queries by flag", "verdict": "good", "why": "Keeps one index and one set of filters, with gradual cutover.", "tradeoff": "One index carries both vector sets, so memory and cleanup are harder to reason about." },
+        { "name": "Rebuild in place during a weekend window", "verdict": "poor", "why": "It takes the service down and leaves no safe fallback if quality regresses.", "tradeoff": "Right for a small internal tool that tolerates downtime." }
+      ],
+      "flips": [
+        { "if": "Memory only fits one copy", "then": "Stage the migration by partition or add capacity for the overlap." },
+        { "if": "The corpus is a few thousand chunks", "then": "In-place rebuild is acceptable." }
+      ],
+      "takeaway": "Treat a model change like a database migration with a cutover and a way back."
+    },
+    {
+      "id": "w03-t09-s2",
+      "title": "A 24 hour removal deadline from Blob Storage",
+      "situation": "Documents stored in Blob Storage must disappear from search within 24 hours of a removal request. The indexer runs every hour. Blob versioning is enabled for other reasons.",
+      "constraints": ["24 hour deletion deadline", "Hourly indexer", "Blob versioning is on", "Audit wants proof"],
+      "unknowns": ["Who sets the flag and how is it audited?", "Are there copies in caches or exports?"],
+      "question": "How do you implement deletes?",
+      "options": [
+        { "name": "Custom metadata flag such as `IsDeleted=true`, indexer deletion policy, physical delete after the run, plus reconciliation", "verdict": "best", "why": "It works with versioning on, is visible to the indexer and leaves an audit trail.", "tradeoff": "The convention must be enforced and the physical delete must wait for the indexer." },
+        { "name": "Native blob soft delete", "verdict": "poor", "why": "Native soft delete needs blob versioning off, which is not the case here.", "tradeoff": "Right when versioning is off and retention exceeds the indexer interval." },
+        { "name": "Delete blobs directly and wait", "verdict": "poor", "why": "The indexer cannot see hard deletes by default, so entries stay in the index.", "tradeoff": "Right only with a reconciliation job that removes the orphans." }
+      ],
+      "flips": [
+        { "if": "Versioning can be turned off", "then": "Native soft delete with long retention is simpler." },
+        { "if": "Deadline shrinks to minutes", "then": "Delete from the index directly through the push API as part of the removal workflow." }
+      ],
+      "takeaway": "Pick the delete signal that your source and settings allow, and prove it with reconciliation."
+    }
+  ],
+  "quiz": [
+    { "id": "w03-t09-q1", "type": "single", "tag": "concept", "q": "What does an index alias let you do during re-embedding?", "options": ["Mix old and new vectors in one field", "Upgrade the embedding model in place", "Skip the quality check", "Repoint applications to a rebuilt index without code changes"], "answer": 3, "explain": "An alias is a service-level name you repoint to cut over. Mixing models in one field is invalid, in-place upgrades are not supported, and quality checks remain necessary.", "ref": "tr10" },
+    { "id": "w03-t09-q2", "type": "numeric", "tag": "numeric", "q": "Your live index uses 40 GB of vector index quota. You build an equal-size index with a new model and keep both live. What is the minimum vector quota you need, in GB?", "answer": 80, "tolerancePct": 0, "unit": "GB", "explain": "Two equal indexes need about 80 GB because HNSW graphs are held in memory. Real needs vary with the new model's dimensions and compression.", "ref": "tr41" },
+    { "id": "w03-t09-q3", "type": "multi", "tag": "diagnose", "q": "Which are true for blob delete handling in Azure AI Search?", "options": ["Deletes are not tracked by default", "Native soft delete requires blob versioning to be off", "The policy can be added any time and corrects history", "A custom metadata flag followed by a physical delete is supported"], "answers": [0, 1, 3], "explain": "Defaults ignore deletes, native soft delete needs versioning off, and a metadata flag is a supported strategy. The policy must exist from the first run, so it cannot correct history.", "ref": "tr4" }
+  ],
+  "flashcards": [
+    { "front": "Why can't you upgrade an embedding model in place?", "back": "Vectors from different models are not comparable. Azure says you need new embeddings, so build a new index and switch an alias." },
+    { "front": "Two soft-delete strategies for the Blob indexer?", "back": "Native blob soft delete (versioning off, long retention) or a metadata flag like `IsDeleted=true` then physical delete. Policy must exist from the first run." },
+    { "front": "What must match between the embedding skill and the index at query time?", "back": "The vectorizer's model must be the same as the embedding skill's model that produced the stored vectors." }
+  ],
+  "related": ["w03-t06", "w03-t08", "w03-t10", "w04-t12", "w04-t15"],
+  "refs": ["tr4", "tr5", "tr6", "tr10", "tr11", "tr12", "tr32", "tr33", "tr41"]
+}

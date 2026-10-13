@@ -1,0 +1,137 @@
+{
+  "id": "w05-t15",
+  "order": 15,
+  "group": "Advanced patterns",
+  "title": "RAG vs long context vs cache-augmented generation",
+  "minutes": 9,
+  "difficulty": "core",
+  "summary": "Three ways to put knowledge in front of a model: retrieve chunks per query, send the whole corpus every time, or preload and cache it. Corpus size, update rate and access model decide.",
+  "useIf": "You are deciding whether you need a retrieval stack at all, or whether a long prompt or a cached preload is enough.",
+  "avoidIf": "You would pick on a vendor's context-window headline alone, without testing accuracy at your corpus size and measuring cost per query.",
+  "explain": [
+    { "t": "p", "md": "**RAG** retrieves a few chunks per query. **Long context (LC)** puts the whole corpus in the prompt on every query. **Cache-augmented generation (CAG)** preloads a small, manageable knowledge set into the context and caches the runtime KV state, so no retrieval step runs per query. The CAG authors claim lower latency and fewer retrieval errors for constrained knowledge bases, and it is not suited to large or fast-changing corpora [[r22]]." },
+    { "t": "p", "md": "**Evidence.** Li et al. found that, when resourced enough, long-context models beat RAG on average, but RAG is much cheaper. Their **Self-Route** sends each query to RAG or LC based on the model's self-reflection and keeps accuracy near LC at lower cost [[r21]]. Anthropic's rule of thumb: a knowledge base under 200,000 tokens, about 500 pages, can go straight into the prompt [[r26]]." },
+    { "t": "p", "md": "**Why bigger windows are not free.** Accuracy is best when evidence sits at the start or end of the context and drops in the middle [[r24]]. NoLiMa tested 13 models at 32K tokens: 11 fell below 50% of their short-context baseline, and GPT-4o went from 99.3% to 69.7% [[r23]]. Chroma's Context Rot report (2025-07-14) found 18 LLMs less reliable as input grew, even on simple tasks [[r25]]." },
+    { "t": "dials", "id": "w05-t15-pick", "title": "Pick how to supply knowledge", "prompt": "Flip the dials to see which approach wins and why.",
+      "dials": [
+        { "id": "size", "label": "Corpus size", "values": [{ "id": "fits", "label": "Fits the window (under about 200k tokens)" }, { "id": "big", "label": "Larger than the window" }] },
+        { "id": "change", "label": "Update rate", "values": [{ "id": "stable", "label": "Stable for weeks" }, { "id": "fast", "label": "Changes daily or faster" }] },
+        { "id": "access", "label": "Access model", "values": [{ "id": "shared", "label": "Same documents for everyone" }, { "id": "peruser", "label": "Per-user permissions" }] }
+      ],
+      "options": [
+        { "id": "rag", "name": "RAG per query", "summary": "Retrieve and rerank a few chunks each time." },
+        { "id": "lc", "name": "Long context every query", "summary": "Send the corpus in the prompt on each request." },
+        { "id": "cag", "name": "Cache-augmented generation", "summary": "Preload the corpus and cache its KV state." }
+      ],
+      "scores": {
+        "rag": {
+          "size": { "fits": { "s": 0, "why": "Works, but adds a pipeline a prompt could replace." }, "big": { "s": 2, "why": "The way to reach a corpus that cannot fit." } },
+          "change": { "stable": { "s": 0, "why": "An index is fine, no special edge." }, "fast": { "s": 2, "why": "Incremental indexing keeps answers current." } },
+          "access": { "shared": { "s": 0, "why": "No special effect." }, "peruser": { "s": 2, "why": "Security filters trim results per caller before ranking." } }
+        },
+        "lc": {
+          "size": { "fits": { "s": 1, "why": "No retrieval stage to lose evidence, but tokens are paid every query." }, "big": { "s": -2, "why": "It does not fit, and accuracy drops with length." } },
+          "change": { "stable": { "s": 0, "why": "Works, with full token cost unless cached." }, "fast": { "s": 1, "why": "You always send current text." } },
+          "access": { "shared": { "s": 0, "why": "Simple when everyone sees everything." }, "peruser": { "s": 0, "why": "Assemble each user's documents, at high token cost." } }
+        },
+        "cag": {
+          "size": { "fits": { "s": 2, "why": "A small manageable corpus is its design case [[r22]]." }, "big": { "s": -2, "why": "Not suited to large corpora [[r22]]." } },
+          "change": { "stable": { "s": 1, "why": "Stable content keeps the cache valid." }, "fast": { "s": -2, "why": "Every update invalidates the cached state." } },
+          "access": { "shared": { "s": 1, "why": "One cached context serves everyone." }, "peruser": { "s": -2, "why": "A shared cache cannot hide documents per user (reasoned limit)." } }
+        }
+      },
+      "takeaway": "Corpus size and update rate pick the family. Per-user access pushes you toward retrieval with filters. Mixed workloads can add a Self-Route style router on top." }
+  ],
+  "whereToUse": [
+    "A small product manual or policy set that rarely changes, where CAG or a cached prompt can replace a pipeline",
+    "A large, changing knowledge base where retrieval stays necessary",
+    "Assistants with a mixed workload of lookups and whole-corpus summaries, where routing helps",
+    "Prototypes that should test a long prompt before building retrieval"
+  ],
+  "whenToUse": {
+    "use": ["Test a long or cached prompt first when the corpus is under about 200,000 tokens and stable", "Use RAG when the corpus is large, changing or permissioned", "Use routing when workloads split between lookups and global questions", "Measure accuracy at your corpus size, not on a vendor benchmark"],
+    "avoid": ["Stuffing a large corpus because the window allows it, without measuring accuracy", "CAG for fast-changing or per-user corpora", "RAG for a tiny stable corpus where it only adds failure points"],
+    "flips": ["Access becomes per user: retrieve with security filters", "Corpus passes the window: move to RAG", "Per-query token cost dominates: cache the prefix or retrieve", "Questions need the whole corpus at once: consider a graph or tree index"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["RAG", "Large, changing, permissioned corpora", "Questions need everything at once", "Retrieval misses, a pipeline to run"],
+      ["Long context", "Small corpus, simple build, no index to maintain", "Large corpus, high volume", "Token cost and accuracy loss with length [[r23]]"],
+      ["CAG", "Small, stable, shared knowledge", "Frequent updates, per-user access", "Cache invalidation on every change [[r22]]"],
+      ["Self-Route", "Mixed workloads", "Uniform simple traffic", "Router errors, two code paths [[r21]]"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Accuracy falls as the prompt grows, though the facts are present", "cause": "Position effects and long-context degradation: evidence in the middle is used less [[r24]]", "fix": "Order evidence at the start or end, shrink the context, or retrieve" },
+    { "symptom": "Users see answers about documents they cannot access", "cause": "A shared cached context contains documents for every role", "fix": "Use security-filtered retrieval, or one cache per permission scope" }
+  ],
+  "scenarios": [
+    {
+      "id": "w05-t15-s1",
+      "title": "One product manual, twice a year",
+      "situation": "A team supports one 120,000-token manual set. It is revised twice a year and every customer-facing agent may read all of it.",
+      "constraints": ["Corpus fits the window", "Stable", "Shared access"],
+      "unknowns": ["Does the platform offer prompt caching?", "Is passage-level citation required?"],
+      "question": "How do you supply the manual?",
+      "options": [
+        { "name": "Preload and cache it (CAG or a cached prompt) and measure accuracy against a RAG baseline", "verdict": "best", "why": "It is the design case for CAG: small, stable, shared knowledge, with no retrieval stage to lose evidence [[r22]].", "tradeoff": "Revisit when the manual grows or access becomes per role." },
+        { "name": "Full hybrid RAG with a reranker", "verdict": "good", "why": "Scales and gives chunk-level citations.", "tradeoff": "More components than this corpus needs today." },
+        { "name": "Send the manual uncached on every query", "verdict": "poor", "why": "You pay full token cost each time for content that never changes.", "tradeoff": "Acceptable for a prototype or very low volume." }
+      ],
+      "flips": [
+        { "if": "The manual grows beyond the window", "then": "Move to RAG." },
+        { "if": "Different customers may read different manuals", "then": "Use RAG with security filters, or one cache per permission scope, since a shared cache would leak content." }
+      ],
+      "takeaway": "Small, stable and shared favours preload and cache."
+    },
+    {
+      "id": "w05-t15-s2",
+      "title": "Three million tokens, edited daily",
+      "situation": "A wiki of about three million tokens changes every day. Employees see different spaces.",
+      "constraints": ["Corpus far exceeds the window", "Daily updates", "Per-user permissions"],
+      "unknowns": ["How fast must revocation apply?", "Are there whole-corpus questions?"],
+      "question": "Which approach?",
+      "options": [
+        { "name": "Hybrid RAG with incremental indexing and security filters", "verdict": "best", "why": "Size, update rate and permissions each point to retrieval.", "tradeoff": "Pipeline, ACL sync and retrieval failures to monitor." },
+        { "name": "CAG with a nightly rebuilt cache", "verdict": "poor", "why": "It does not fit the window, goes stale daily and a shared cache cannot hide documents.", "tradeoff": "Right for a small, stable, shared corpus." },
+        { "name": "Long context with the user's visible pages", "verdict": "good", "why": "Respects permissions in principle.", "tradeoff": "Does not fit and degrades with length." }
+      ],
+      "flips": [
+        { "if": "Questions ask for themes across the whole wiki", "then": "Add a graph or tree index for those." },
+        { "if": "The wiki shrinks to a small, stable set of public pages", "then": "Preloading with a cache becomes viable, and simple RAG is still the safer default if updates continue." }
+      ],
+      "takeaway": "Large, changing and permissioned means retrieval."
+    },
+    {
+      "id": "w05-t15-s3",
+      "title": "Mixed lookups and whole-document tasks",
+      "situation": "An assistant over a 400,000-token legal binder handles 80% quick lookups and 20% 'summarise everything about clause X' tasks. Cost per query matters.",
+      "constraints": ["Mixed workload", "Cost sensitive", "Shared access, stable binder"],
+      "unknowns": ["Can a router classify queries reliably?", "How long can the model's window stay accurate?"],
+      "question": "How do you split the work?",
+      "options": [
+        { "name": "Route per query: RAG for lookups and a cached long-context pass for whole-document tasks, validated on a golden set", "verdict": "best", "why": "Self-Route shows routing keeps accuracy near LC at lower cost [[r21]], and the stable binder suits a cached prefix.", "tradeoff": "A router to maintain and two paths to test." },
+        { "name": "Long context for every query", "verdict": "poor", "why": "Cost scales with volume, and accuracy drops with length [[r23]].", "tradeoff": "Fine for a few high-value queries a day." },
+        { "name": "RAG for everything", "verdict": "good", "why": "Cheap and simple.", "tradeoff": "Whole-document tasks miss evidence outside top-k." }
+      ],
+      "flips": [
+        { "if": "The router misroutes often", "then": "Fall back to RAG with a larger k for the global tasks." },
+        { "if": "Nearly all queries become whole-document tasks", "then": "Use the cached long-context pass as the default and keep RAG only for quick lookups." }
+      ],
+      "takeaway": "Route when the workload splits."
+    }
+  ],
+  "quiz": [
+    { "id": "w05-t15-q1", "type": "single", "tag": "tradeoff", "q": "A team proposes CAG for HR policies where each employee may see a different subset. What is the main problem?", "options": ["CAG cannot use KV caches", "CAG needs fine-tuning", "CAG forbids citations", "A shared cached context cannot hide documents per user"], "answer": 3, "explain": "A shared preloaded context contains every document, so per-user trimming is impossible. This is a reasoned limit. Use security-filtered retrieval instead." },
+    { "id": "w05-t15-q2", "type": "numeric", "tag": "numeric", "q": "A 150,000-token corpus is sent uncached on every query. A RAG pipeline sends 6,000 tokens per query. How many times more input tokens does the long-context design send per query?", "answer": 25, "tolerancePct": 2, "unit": "times", "hint": "Divide 150,000 by 6,000.", "explain": "150,000 / 6,000 = 25 times as many input tokens. Prompt caching would discount the repeated prefix, which changes cost but not the accuracy risks of long contexts." }
+  ],
+  "flashcards": [
+    { "front": "What is cache-augmented generation?", "back": "Preload a small, manageable knowledge set into the context and cache its KV state, so no retrieval runs per query." },
+    { "front": "What does Self-Route do?", "back": "Routes each query to RAG or long context based on model self-reflection, keeping accuracy near long context at lower cost." },
+    { "front": "What did NoLiMa find at 32K tokens?", "back": "11 of 13 models fell below 50% of their short-context baseline. GPT-4o dropped from 99.3% to 69.7%." }
+  ],
+  "related": ["w05-l6", "w05-t12", "w02-t11", "w02-t14", "w07-t16"],
+  "refs": ["r21", "r22", "r23", "r24", "r25", "r26"]
+}

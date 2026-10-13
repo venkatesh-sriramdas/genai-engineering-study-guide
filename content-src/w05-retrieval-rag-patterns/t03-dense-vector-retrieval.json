@@ -1,0 +1,95 @@
+{
+  "id": "w05-t03",
+  "order": 3,
+  "group": "Baseline",
+  "title": "Dense vector retrieval",
+  "minutes": 7,
+  "difficulty": "core",
+  "summary": "Dense retrieval embeds the query and every chunk into vectors and returns the nearest chunks. It matches meaning rather than words, and it always returns neighbours, relevant or not.",
+  "useIf": "Users paraphrase, describe symptoms in their own words or search across languages, and the documents use different vocabulary.",
+  "avoidIf": "Queries hinge on rare entities, codes or exact strings and you have no keyword leg beside the vectors.",
+  "explain": [
+    { "t": "p", "md": "A **bi-encoder** embedding model maps text to a vector. Chunks are embedded once at ingestion. At query time the query goes through the same model and an approximate nearest neighbour (ANN) index returns the closest chunks by cosine similarity or another metric. Because query and chunk never see each other inside the model, millions of chunks can be searched fast [[tr7]]." },
+    { "t": "diagram", "id": "w05-t03-d1", "title": "Dense retrieval at query time", "alt": "A query is embedded, searched in a vector index, and the nearest chunks come back with similarity scores.", "src": "sequenceDiagram\n  participant U as User\n  participant E as Embedding model\n  participant I as Vector index\n  U->>E: Query text\n  E->>I: Query vector\n  I-->>U: Top k chunks and scores" },
+    { "t": "p", "md": "**Strengths.** Synonyms, paraphrase and conceptual questions match without shared words. Azure puts it this way: the advantage of vector search is finding information that is conceptually similar to the query even when no keyword matches [[r43]]." },
+    { "t": "p", "md": "**Weaknesses.** In the EntityQuestions study, dense retrievers drastically underperformed sparse methods on simple entity-rich questions, and generalised only to common entities unless the question pattern was seen in training [[tr2]]. BEIR found dense models often weaker than BM25 out of domain [[r11]]. Two operational traps follow. First, **nearest neighbours always exist**, so a gibberish query still returns k chunks. You need a threshold or an abstention rule. Azure's vector `threshold` (preview in `2026-08-01-preview`) drops weak matches before fusion even when fewer than `k` remain [[r35]]. Second, scores are model specific: Azure documents cosine similarity from 0.333 to 1.00, and a cutoff tuned for one embedding model is wrong for another [[r1]]." },
+    { "t": "callout", "kind": "gotcha", "title": "Clean the query like the chunks", "md": "Apply the same text normalisation to the query that you applied to chunks before embedding, for example lowercasing. A mismatch quietly lowers similarity [[r8]]." }
+  ],
+  "whereToUse": [
+    "Help-centre and FAQ search where users describe problems in their own words",
+    "Cross-language retrieval with a multilingual embedding model",
+    "The vector leg of hybrid search, paired with BM25",
+    "Recommendation of related documents or similar tickets"
+  ],
+  "whenToUse": {
+    "use": ["Paraphrase and vocabulary mismatch are common", "You can test several embedding models on your own queries", "Documents are prose rather than codes or tables", "You have a plan for thresholds and abstention"],
+    "avoid": ["Queries are mostly identifiers, names or exact phrases", "The domain is highly specialised and the embedding model has not seen it", "You cannot afford re-embedding when you change models"],
+    "flips": ["Exact-match failures appear in the logs: add a BM25 leg and fuse", "Domain jargon is rare: evaluate a domain-tuned or larger model on labelled queries", "Weak matches reach the model: add a vector threshold or a reranker-based cutoff"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Dense only", "Paraphrase, conceptual, cross-language queries", "Rare entities, codes, exact strings", "Always returns k hits, even for no-answer queries"],
+      ["BM25 only", "Exact tokens, out-of-domain, explainability", "Vocabulary mismatch", "Misses paraphrases entirely"],
+      ["Hybrid", "Mixed query traffic", "Budget allows only one retrieval", "Two searches and a fusion step"],
+      ["Dense plus reranker", "Shortlist is good but order is poor", "Relevant chunk is outside the shortlist", "Per-query reranker cost"],
+      ["Fine-tuned embeddings", "Stable domain with labelled pairs", "No training data, fast-changing vocabulary", "Training and re-embedding effort"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A query for a part number returns thematically related parts", "cause": "The embedding blurs rare tokens into a neighbourhood of similar text", "fix": "Add a keyword leg and fuse, or route identifier-shaped queries to BM25" },
+    { "symptom": "Nonsense questions still produce confident answers", "cause": "Nearest-neighbour search returns k results regardless of relevance", "fix": "Apply a vector threshold or a reranker cutoff and let the system abstain" },
+    { "symptom": "Scores shift after an embedding model upgrade and cutoffs break", "cause": "Similarity distributions are specific to the model", "fix": "Recalibrate thresholds on a labelled set whenever the model or version changes" }
+  ],
+  "scenarios": [
+    {
+      "id": "w05-t03-s1",
+      "title": "FAQ bot over two thousand questions",
+      "situation": "A consumer product has a stable FAQ of about two thousand entries. Customers phrase questions in many ways, and the FAQ never contains codes.",
+      "constraints": ["Small corpus", "Paraphrase-heavy queries", "Low volume, modest budget"],
+      "unknowns": ["Are there product names or SKUs in queries?", "Is a no-answer path required?"],
+      "question": "Which retrieval design fits?",
+      "options": [
+        { "name": "Dense retrieval with a similarity threshold and a fallback message", "verdict": "best", "why": "Paraphrase is where dense retrieval shines, the corpus is small and a threshold handles no-answer queries.", "tradeoff": "Threshold needs calibration on real queries and recalibration if the model changes." },
+        { "name": "Hybrid with semantic ranker", "verdict": "good", "why": "Handles any identifiers that appear later.", "tradeoff": "More cost and moving parts than this corpus needs today." },
+        { "name": "BM25 only", "verdict": "poor", "why": "Customer wording rarely matches FAQ wording.", "tradeoff": "Right when users search with exact product names or error codes." }
+      ],
+      "flips": [
+        { "if": "Customers start pasting order numbers or SKUs", "then": "Add a BM25 leg and fuse." },
+        { "if": "The FAQ grows to millions of entries and memory cost becomes the main concern", "then": "Keep dense retrieval but compress vectors with quantization and test recall, instead of adding a second engine." }
+      ],
+      "takeaway": "Paraphrase traffic is the dense sweet spot."
+    },
+    {
+      "id": "w05-t03-s2",
+      "title": "Patent-style corpus with rare terms",
+      "situation": "Analysts search a large corpus of technical filings. Queries contain rare compound names and numbered claims alongside conceptual descriptions.",
+      "constraints": ["Large corpus", "High recall requirement", "Labelled queries available"],
+      "unknowns": ["How rare are the entities?", "Is the embedding model trained on this domain?"],
+      "question": "Can you ship dense retrieval alone?",
+      "options": [
+        { "name": "Hybrid retrieval and measure recall@k against dense-only on the labelled queries", "verdict": "best", "why": "Rare entities are the known weak spot of dense retrievers [[tr2]], and the labelled set tells you how much the keyword leg adds.", "tradeoff": "Two retrievals per query and a fusion step to tune." },
+        { "name": "Dense only with a larger embedding model", "verdict": "poor", "why": "A bigger model can still fail on rare strings, and you pay more for every re-embedding.", "tradeoff": "Reasonable if the evaluation shows no gain from a keyword leg." },
+        { "name": "BM25 only", "verdict": "good", "why": "Strong on the rare terms and out of domain.", "tradeoff": "Misses conceptual descriptions with different vocabulary." }
+      ],
+      "flips": [
+        { "if": "Evaluation shows dense-only matches hybrid recall", "then": "Drop the keyword leg and save a retrieval." },
+        { "if": "Recall on rare compound names is the weak slice", "then": "Keep the keyword leg and weight it up for those queries; a larger embedding model rarely fixes exact-token misses." }
+      ],
+      "takeaway": "Measure the keyword leg's lift before you drop it."
+    }
+  ],
+  "quiz": [
+    { "id": "w05-t03-q1", "type": "single", "tag": "diagnose", "q": "A vector-only assistant answers a nonsense question with a confident answer from an unrelated chunk. What is the most direct cause?", "options": ["The ANN index is corrupt", "The embedding model is too small", "Nearest-neighbour search always returns k results and nothing stops weak ones", "BM25 was disabled"], "answer": 2, "explain": "Dense search returns the nearest vectors whatever their distance. A threshold or abstention rule is what filters them. Index corruption and model size are not required to produce this behaviour, and BM25 is not part of a vector-only design." },
+    { "id": "w05-t03-q2", "type": "single", "tag": "flip", "q": "Which change in traffic most clearly argues for adding a keyword leg to a dense retriever?", "options": ["More queries containing part numbers and error codes", "Longer natural-language questions", "More users", "Larger chunks"], "answer": 0, "explain": "Exact tokens are the dense blind spot [[tr2]]. Longer questions and more users do not change retrieval mode, and chunk size is a separate dial." },
+    { "id": "w05-t03-q3", "type": "multi", "tag": "tradeoff", "q": "Select the true statements about thresholds on vector similarity.", "options": ["They are specific to the embedding model", "They can drop weak matches before fusion", "A threshold tuned on one model carries over to another unchanged", "They remove the need for evaluation"], "answers": [0, 1], "explain": "Similarity distributions depend on the model, and Azure's preview vector threshold drops weak matches before fusion [[r35]]. A threshold does not transfer across models and still needs a labelled set to tune." }
+  ],
+  "flashcards": [
+    { "front": "Why does dense retrieval return results for a nonsense query?", "back": "Nearest-neighbour search always returns the k closest vectors. Only a threshold or abstention rule can stop weak ones." },
+    { "front": "What did EntityQuestions show about dense retrievers?", "back": "They drastically underperformed sparse methods on simple entity-rich questions, generalising only to common entities." },
+    { "front": "Why must the query be cleaned like the chunks?", "back": "A normalisation mismatch between query and chunk text, such as casing, quietly lowers similarity." }
+  ],
+  "related": ["w05-t02", "w05-t04", "w05-t06", "w04-t12", "w04-t15", "w05-l1"],
+  "refs": ["tr2", "tr7", "r8", "r11", "r35", "r43", "r1"]
+}

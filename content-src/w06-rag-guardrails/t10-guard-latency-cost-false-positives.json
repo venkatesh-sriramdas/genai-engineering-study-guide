@@ -1,0 +1,109 @@
+{
+  "id": "w06-t10",
+  "order": 10,
+  "group": "Alternatives and operations",
+  "title": "Guard latency, cost and false positives",
+  "minutes": 9,
+  "difficulty": "advanced",
+  "summary": "Every guard adds latency and cost and blocks some innocent requests. You manage that by running independent guards in parallel, tiering them by risk, and measuring false positives in shadow mode before you enforce.",
+  "useIf": "You are adding guards to a live assistant and must keep response time, spend and wrongful blocks inside agreed budgets.",
+  "avoidIf": "You treat a guard's accuracy claims as your measured quality: only your own labelled traffic tells you the real error rates.",
+  "explain": [
+    { "t": "p", "md": "**Latency.** None of the sources read publishes guard latency, so measure it. As an author estimate, a classifier call adds tens to a few hundred milliseconds, and an LLM judge adds a full model call of one to several seconds. Sequential guards add up. Independent guards run in parallel add only the slowest. Streaming adds a choice: default buffering filters each chunk, while the asynchronous filter removes filter latency but signals a stop only within about 1,000 characters [[r9]]." },
+    { "t": "p", "md": "**Tiering.** Order checks from cheap and deterministic (allow lists, schemas, regular expressions) to managed classifiers to expensive LLM or claim-level checks. Invoke the costly tier only on high-risk routes or borderline scores. Define what happens on a **timeout**: fail closed for high-risk actions, fail open with a logged alert for low-risk ones. Prompt Shields, for example, takes at most five documents per call and 10K characters per prompt, so batching shapes both latency and cost [[r3]] [[r10]]." },
+    { "t": "formula", "title": "Why most blocks can be false alarms at low base rates", "expr": "precision = (TPR x b) / (TPR x b + FPR x (1 - b))", "vars": [{ "k": "b", "v": "Share of requests that are truly harmful (base rate)" }, { "k": "TPR", "v": "Share of harmful requests the guard catches" }, { "k": "FPR", "v": "Share of benign requests the guard wrongly flags" }], "example": "With b = 1 percent, TPR = 95 percent and FPR = 2 percent, per 10,000 requests: 95 true blocks and 198 false blocks, so precision is about 32 percent." },
+    { "t": "p", "md": "**Measure before you enforce.** Run the guard in shadow mode, log what it would do, and review a sample per category and language. Track precision, recall, block rate, override or appeal rate, p95 added latency and cost per thousand requests. Several Azure features were tested on English only, so slice by language [[r10]]. The Microsoft Learn module on Content Safety and the DeepLearning.AI guardrails course give hands-on practice [[r26]] [[r27]]. Choose the action by the cost of a false positive: block, annotate, repair or escalate." }
+  ],
+  "whereToUse": [
+    "Setting latency budgets for a RAG or agent request path",
+    "Deciding which guards run for every request and which only for risky routes",
+    "Launch reviews: shadow-mode results before turning on blocking",
+    "Monitoring: block-rate and override-rate dashboards with alerts on drift",
+    "Cost reviews where LLM-based guards double the model spend"
+  ],
+  "whenToUse": {
+    "use": [
+      "Use parallel execution for independent input guards and retrieval",
+      "Use tiering so expensive checks see only risky or borderline traffic",
+      "Use shadow mode and labelled sets to measure precision and recall per language",
+      "Use annotate or repair actions when false positives would be costly"
+    ],
+    "avoid": [
+      "Avoid chaining independent guards in sequence",
+      "Avoid enforcing a new guard before measuring its false positive rate",
+      "Avoid one global threshold for all languages and categories"
+    ],
+    "flips": [
+      "Harm per miss is very high and volume is low: run every guard sequentially and accept the latency",
+      "Latency budget is under one second: keep deterministic checks inline and push model-based checks to async review",
+      "False positives dominate complaints: tune thresholds per category or change the action from block to annotate"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Execution pattern", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Sequential guards", "Low volume, high risk, relaxed latency", "Tight latency", "Latency is the sum of all guards"],
+      ["Parallel guards", "Independent checks, tight latency", "A later guard depends on an earlier result", "Latency is the slowest guard, wasted work when one blocks"],
+      ["Tiered guards", "Mixed risk traffic, cost sensitive", "Everything is high risk", "Routing logic and borderline-score tuning"],
+      ["Asynchronous or buffered output filter", "Streaming UX", "Zero tolerance for brief exposure (async)", "Async shows text before the stop signal"],
+      ["Post-hoc audit only", "Low risk analytics", "Immediate harm", "Detects after the fact only"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Block rate jumps after a platform or model update", "cause": "The guard model or its thresholds changed behaviour", "fix": "Alert on block-rate drift, replay a labelled set after updates and shadow new versions first" },
+    { "symptom": "p95 latency grows although guards run in parallel", "cause": "The slowest guard sets the tail and has no timeout policy", "fix": "Set per-guard timeouts with fail-closed or fail-open rules by risk" },
+    { "symptom": "Users complain about wrongful refusals in one language", "cause": "Thresholds were tuned on English traffic", "fix": "Measure per-language precision and tune or change action per language" },
+    { "symptom": "Guard spend rivals model spend", "cause": "An LLM judge runs on every request", "fix": "Tier: run it only on high-risk or borderline cases" }
+  ],
+  "scenarios": [
+    {
+      "id": "w06-t10-s1",
+      "title": "Voice assistant with a 1.5 second budget",
+      "situation": "A voice assistant must start speaking within 1.5 seconds. It uses retrieval and a model. Harm is moderate and responses are short.",
+      "constraints": ["1.5 second latency budget", "Short outputs", "Moderate harm", "Retrieval takes about 400 ms"],
+      "unknowns": ["How slow is each guard at p95?", "Is a stop mid-utterance acceptable?"],
+      "question": "How do you arrange the guards?",
+      "options": [
+        { "name": "Deterministic checks inline, input classifier in parallel with retrieval, buffered output filter, LLM judge only on audited samples", "verdict": "best", "why": "Parallel input checks hide behind retrieval and short outputs make buffering cheap.", "tradeoff": "Claim-level checks happen offline, not in the loop." },
+        { "name": "Run every guard sequentially including an LLM judge", "verdict": "poor", "why": "A judge adds seconds, breaking the budget.", "tradeoff": "Right for a low-volume, high-risk text workflow with relaxed latency." },
+        { "name": "Skip guards and audit afterwards", "verdict": "good", "why": "Zero added latency.", "tradeoff": "Harm reaches users before detection, acceptable only for very low risk." }
+      ],
+      "flips": [
+        { "if": "Budget relaxes to 4 seconds", "then": "Add an LLM or NLI check on high-risk intents." },
+        { "if": "Harm per miss rises sharply", "then": "Buffer output and accept more latency." }
+      ],
+      "takeaway": "Hide cheap guards behind work you already do, and push heavy ones off the critical path."
+    },
+    {
+      "id": "w06-t10-s2",
+      "title": "Public chat with a 0.5 percent harmful rate",
+      "situation": "A high-volume consumer chat sees about one harmful request in 200. A classifier with 95 percent recall and a 2 percent false positive rate is proposed in blocking mode.",
+      "constraints": ["High volume", "Base rate 0.5 percent", "Guard TPR 95 percent, FPR 2 percent", "Wrongful blocks drive complaints"],
+      "unknowns": ["What does a wrongful block cost in churn?", "Can users appeal?"],
+      "question": "How do you roll it out?",
+      "options": [
+        { "name": "Shadow mode first, review sampled blocks per category and language, then tune thresholds and use annotate or step-up friction for borderline scores", "verdict": "best", "why": "At 0.5 percent base rate most blocks would hit benign users, so measure and soften the action first.", "tradeoff": "A delay before full enforcement." },
+        { "name": "Enable blocking immediately", "verdict": "poor", "why": "About 4 of 5 blocks would be wrong: 0.5 percent of 10,000 is 50 harmful, 47.5 caught, versus 199 false blocks.", "tradeoff": "Right when the base rate is high or harm per miss is extreme." },
+        { "name": "Raise the threshold until no complaints remain", "verdict": "good", "why": "Quickly reduces false positives.", "tradeoff": "Recall drops and you will not know by how much without a labelled set." }
+      ],
+      "flips": [
+        { "if": "Harm per miss is severe (self-harm content to minors)", "then": "Accept more false positives and add human escalation." },
+        { "if": "The base rate is 20 percent", "then": "Precision rises sharply and blocking is more defensible." }
+      ],
+      "takeaway": "Compute precision from the base rate before you choose block."
+    }
+  ],
+  "quiz": [
+    { "id": "w06-t10-q1", "type": "numeric", "tag": "numeric", "q": "Base rate 1 percent, TPR 95 percent, FPR 2 percent. Of all blocks, what percentage are true positives (precision)?", "answer": 32, "tolerancePct": 5, "unit": "percent", "hint": "Per 10,000 requests: 95 true blocks, 198 false blocks.", "explain": "True blocks: 10,000 x 1% x 95% = 95. False blocks: 9,900 x 2% = 198. Precision = 95 / 293 = about 32 percent.", "ref": "r1" },
+    { "id": "w06-t10-q2", "type": "single", "tag": "tradeoff", "q": "Three independent guards of 100 ms, 200 ms and 300 ms run in parallel. What is the added latency?", "options": ["About 300 ms", "About 600 ms", "About 100 ms", "About 200 ms"], "answer": 0, "explain": "Parallel independent guards add about the slowest: 300 ms. Sequential execution would add 600 ms.", "ref": "r9" },
+    { "id": "w06-t10-q3", "type": "multi", "tag": "flip", "q": "Which practices reduce cost and wrongful blocks together?", "options": ["Tier guards so LLM judges see only risky or borderline traffic", "Shadow mode before enforcing", "One global threshold for every language", "Per-language precision measurement"], "answers": [0, 1, 3], "explain": "Tiering, shadow mode and per-language measurement address cost and false positives. A single global threshold hides language-specific error rates.", "ref": "r10" }
+  ],
+  "flashcards": [
+    { "front": "Why do most blocks hit benign users at low base rates?", "back": "Benign traffic dwarfs harmful traffic, so even a 2% false positive rate produces more false blocks than true ones when harm is about 1%." },
+    { "front": "What does tiering guards mean?", "back": "Order checks from cheap deterministic ones to classifiers to LLM judges, running costly ones only for high-risk or borderline cases." },
+    { "front": "What is shadow mode?", "back": "Run the guard and log its decisions without acting, so you can measure false positives per category and language before enforcing." }
+  ],
+  "related": ["w06-t01", "w06-t02", "w06-t07", "w06-l5", "w14-t13", "w16-t10"],
+  "refs": ["r1", "r3", "r9", "r10", "r26", "r27"]
+}

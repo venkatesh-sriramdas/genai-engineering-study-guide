@@ -1,0 +1,125 @@
+{
+  "id": "w18-t11",
+  "order": 11,
+  "group": "Specialised agents",
+  "title": "AG-UI",
+  "minutes": 7,
+  "difficulty": "core",
+  "summary": "AG-UI is an open, event-based protocol between a user-facing app and an agent backend. It streams text, tool calls, state and human-in-the-loop pauses so any frontend can work with any agent runtime.",
+  "useIf": "You need a rich agent UI (streaming, tool rendering, shared state, approvals) and want a frontend that is not tied to one agent framework.",
+  "avoidIf": "You only stream plain chat text from one backend to one frontend and a provider's streaming API already covers it.",
+  "explain": [
+    { "t": "p", "md": "**AG-UI** (Agent-User Interaction Protocol) is an open, lightweight, event-based protocol that standardizes how agents connect to user-facing applications. It sits beside two other protocols: **MCP** connects agents to tools and data, **A2A** connects agents to other agents, and AG-UI connects an agent backend to the human-facing app [[tr5]]. It is not A2UI, a separate generative UI specification for agents that deliver UI widgets [[tr5]]." },
+    { "t": "p", "md": "Everything is a stream of typed events. Categories are lifecycle, text message, tool call, state management, activity, subagent, special and draft events, plus reasoning events [[r39]]. `RunStarted` and either `RunFinished` or `RunError` are mandatory and bound every run. Step events are optional. Text arrives as `TextMessageStart`, `TextMessageContent` and `TextMessageEnd`. Tools arrive as `ToolCallStart`, `ToolCallArgs`, `ToolCallEnd` and `ToolCallResult`. State arrives as a `StateSnapshot` and then `StateDelta` events, which are JSON Patch operations (RFC 6902), so the UI applies small patches and can request a fresh snapshot if it drifts [[r39]]." },
+    { "t": "diagram", "id": "w18-t11-d1", "title": "An interrupt-aware run", "alt": "The agent starts a run and streams events. It finishes the first run with an interrupt outcome. The user resolves it and the client starts a second run that carries a resume array. The second run finishes with success.", "src": "sequenceDiagram\n  participant C as Client app\n  participant A as Agent\n  C->>A: RunAgentInput\n  A-->>C: RunStarted r1\n  A-->>C: TextMessage and ToolCall events\n  A-->>C: RunFinished outcome interrupt\n  Note over C: User approves or edits\n  C->>A: RunAgentInput with resume\n  A-->>C: RunStarted r2\n  A-->>C: RunFinished outcome success" },
+    { "t": "p", "md": "**Human in the loop.** A `RunFinished` with `outcome.type` of `interrupt` pauses the agent for human input. The client resumes by starting a new run whose input carries a `resume` array that addresses every open interrupt [[r39]] [[tr10]]. **Transport** is not fixed: SSE, webhooks and WebSockets all work, and the standard `HttpAgent` client supports HTTP SSE and a binary protocol [[tr6]]. Microsoft Agent Framework documents an AG-UI integration for remote agent hosting, SSE streaming, session management, approvals and state sync. It lists seven showcase scenarios, and support varies by SDK [[r40]]." }
+  ],
+  "whereToUse": [
+    "Web or mobile apps that stream agent output and render tool calls as UI",
+    "Approval flows where the user confirms an action before the agent proceeds",
+    "Co-editing experiences with shared state between app and agent",
+    "Products that want one frontend across several agent frameworks or backends",
+    "Agent Framework services exposed to browsers through the AG-UI integration"
+  ],
+  "whenToUse": {
+    "use": [
+      "The UI needs more than text: tool progress, state sync, approvals, generative UI",
+      "More than one frontend or backend will exist over time",
+      "You want standard events so UI components and agents are interchangeable"
+    ],
+    "avoid": [
+      "A single static chat box with one backend and no tool or state rendering",
+      "Agent-to-agent calls, which belong to A2A",
+      "Tool or data connectivity, which belongs to MCP"
+    ],
+    "flips": [
+      "Second frontend or a framework swap appears: a standard protocol starts to pay for itself",
+      "Approvals must survive reloads: use the interrupt and resume lifecycle",
+      "Your SDK lacks AG-UI support: check the language-specific status before committing"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["AG-UI", "Rich agent UI with approvals, tool and state events, several backends", "Plain text chat only", "Another protocol to learn, SDK support varies"],
+      ["Provider streaming API directly", "One provider and a simple chat", "You need cross-framework UI, state sync or approvals", "Ties UI to that provider's event shapes"],
+      ["Custom SSE or WebSocket JSON", "Full control and a small scope", "Teams grow, UI libraries cannot be reused", "You own the schema, tests and docs"],
+      ["A2A", "Agent-to-agent delegation", "Driving a UI", "Wrong layer for the frontend"],
+      ["MCP", "Connecting tools and data", "Streaming UI state", "Wrong layer for the frontend"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "UI shows stale or wrong state after many updates", "cause": "A missed or out-of-order `StateDelta` left the client state drifting", "fix": "Apply patches in order, detect inconsistencies and request a fresh `StateSnapshot`." },
+    { "symptom": "A run never ends in the UI", "cause": "The stream closed without `RunFinished` or `RunError`, so the client cannot tell completion from failure", "fix": "Always emit one terminal event per run and treat a stream end without one as an error." },
+    { "symptom": "Approval is lost when the user reloads the page", "cause": "The agent waited on an open connection instead of finishing with an interrupt", "fix": "End the run with an interrupt outcome and resume with a new run carrying `resume` entries for every open interrupt." }
+  ],
+  "scenarios": [
+    {
+      "id": "w18-t11-s1",
+      "title": "Approval flow across two frontends",
+      "situation": "An agent built on Microsoft Agent Framework must ask a user to approve a payment before it proceeds. The company plans a web app first and a mobile app later.",
+      "constraints": ["Human approval before consequential steps", "Two frontends planned", "Agent Framework backend"],
+      "unknowns": ["What does the language SDK support?", "How long can approvals stay pending?"],
+      "question": "How do you connect the UI?",
+      "options": [
+        { "name": "Provider streaming API directly in each app", "verdict": "good", "why": "Simple for a text chat.", "tradeoff": "Each frontend re-implements approval and tool rendering against provider-specific events." },
+        { "name": "AG-UI integration with an interrupt for approval", "verdict": "best", "why": "Standard events and the interrupt and resume lifecycle serve both frontends and the Agent Framework documents the integration.", "tradeoff": "Learn another protocol and check SDK support for your language." },
+        { "name": "A2A between the app and the agent", "verdict": "poor", "why": "A2A is agent-to-agent, not the app-to-agent layer.", "tradeoff": "Right when another agent, not a UI, calls this agent." }
+      ],
+      "flips": [
+        { "if": "Only one web app is planned and no approvals", "then": "A direct streaming API may be enough." },
+        { "if": "Your SDK has no AG-UI support", "then": "Evaluate custom events or wait." }
+      ],
+      "takeaway": "Approvals plus several frontends favour a standard UI protocol."
+    },
+    {
+      "id": "w18-t11-s2",
+      "title": "Single chat box prototype",
+      "situation": "A team ships a minimal internal prototype: a chat box that shows streamed text from one model provider. No tools render, no state is shared.",
+      "constraints": ["One frontend", "Text only", "Short timeline"],
+      "unknowns": ["Will tools or approvals appear soon?", "Will the backend change?"],
+      "question": "Do you adopt AG-UI for the prototype?",
+      "options": [
+        { "name": "Use the provider's streaming API and keep the door open", "verdict": "best", "why": "It is the smallest thing that works and the scope is text only.", "tradeoff": "You may migrate events later if the UI grows." },
+        { "name": "Adopt AG-UI for everything from day one", "verdict": "good", "why": "Future proof if the UI grows.", "tradeoff": "Extra setup and concepts for a text-only prototype." },
+        { "name": "Build a custom event schema first", "verdict": "poor", "why": "It recreates what AG-UI already defines and creates a schema you must maintain.", "tradeoff": "Right only if you need events AG-UI cannot express and accept the cost." }
+      ],
+      "flips": [
+        { "if": "Tool rendering or approvals are added", "then": "Move to AG-UI before building custom events." },
+        { "if": "A second backend appears", "then": "A standard protocol keeps the UI portable." }
+      ],
+      "takeaway": "Match protocol weight to UI scope."
+    },
+    {
+      "id": "w18-t11-s3",
+      "title": "Long approval wait, flaky networks",
+      "situation": "An agent plans a multi-step change and needs a manager's approval that may take hours. Users work from mobile networks and reload often.",
+      "constraints": ["Waits of hours", "Unreliable connections", "Approval must not be lost"],
+      "unknowns": ["Where is run state stored?", "Who may resolve an interrupt?"],
+      "question": "How do you model the wait?",
+      "options": [
+        { "name": "Keep the stream open until the manager responds", "verdict": "poor", "why": "Hours-long open connections break on mobile networks and reloads, which loses the approval.", "tradeoff": "Fine for waits of a few seconds on a stable connection." },
+        { "name": "Poll a custom approval endpoint while the run stays open", "verdict": "good", "why": "Works but needs custom plumbing.", "tradeoff": "You build and secure a parallel channel and run state." },
+        { "name": "Finish the run with an interrupt outcome and resume with a new run", "verdict": "best", "why": "The pause is durable: the client later starts a run with a `resume` array addressing each open interrupt.", "tradeoff": "Your backend must persist the interrupt and validate who resolves it." }
+      ],
+      "flips": [
+        { "if": "Waits are a few seconds", "then": "An inline confirmation in the same run is simpler." },
+        { "if": "Approvers use another tool", "then": "Resolve the interrupt through your backend and let the client resume." }
+      ],
+      "takeaway": "Make long pauses durable: end the run, resume with a new one."
+    }
+  ],
+  "quiz": [
+    { "id": "w18-t11-q1", "type": "single", "tag": "concept", "q": "Which events are mandatory for every AG-UI run?", "options": ["`StateSnapshot` and a matching `StateDelta` for each snapshot", "`RunStarted` plus one terminal event", "`StepStarted` and `StepFinished`", "`TextMessageStart` and `TextMessageEnd`"], "answer": 1, "explain": "RunStarted and one terminal event (RunFinished or RunError) form the run boundaries. Step, text and state events are optional.", "ref": "r39" },
+    { "id": "w18-t11-q2", "type": "order", "tag": "order", "q": "Order the interrupt and resume lifecycle.", "items": ["Agent emits RunStarted and streams events", "Agent finishes with outcome interrupt", "User resolves the interrupt", "Client starts a new run with a resume array", "New run ends with outcome success"], "explain": "The first run ends with an interrupt. After the human responds, the client begins a new run whose input carries `resume` for every open interrupt.", "ref": "tr10" },
+    { "id": "w18-t11-q3", "type": "match", "tag": "concept", "q": "Match each protocol to the link it connects.", "pairs": [{ "l": "AG-UI", "r": "User-facing app and agent backend" }, { "l": "MCP", "r": "Agent and tools or data" }, { "l": "A2A", "r": "Agent and another agent" }], "explain": "The three open protocols sit at different layers, so they combine instead of competing.", "ref": "tr5" }
+  ],
+  "flashcards": [
+    { "front": "What format do `StateDelta` events use?", "back": "JSON Patch operations (RFC 6902). The UI applies them in order and can request a fresh `StateSnapshot` if state drifts." },
+    { "front": "How does AG-UI model a human-in-the-loop pause?", "back": "`RunFinished` with outcome `interrupt`. The client resumes by starting a new run whose input includes a `resume` array." },
+    { "front": "Which transports can carry AG-UI events?", "back": "It is transport agnostic: SSE, webhooks and WebSockets work, and `HttpAgent` supports HTTP SSE and a binary protocol." }
+  ],
+  "related": ["w18-l5", "w11-t25", "w11-t16", "w08-t01", "w09-t02", "w01-t13"],
+  "refs": ["r39", "r40", "tr5", "tr6", "tr10"]
+}

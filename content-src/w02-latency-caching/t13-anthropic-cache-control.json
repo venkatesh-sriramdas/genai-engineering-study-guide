@@ -1,0 +1,115 @@
+{
+  "id": "w02-t13",
+  "order": 13,
+  "group": "Prompt caching",
+  "title": "Anthropic cache_control",
+  "minutes": 9,
+  "difficulty": "advanced",
+  "summary": "Anthropic caches only what you mark. Automatic caching adds one top-level marker that follows the conversation. Explicit caching places up to four breakpoints. Entries last 5 minutes or 1 hour, and writes cost more than reads.",
+  "useIf": "You call Claude models directly or through Bedrock or Foundry and want to control exactly which prefix is cached and for how long.",
+  "avoidIf": "Reuse is sparse, so writes would never be read, or the prefix is under the model's minimum size.",
+  "explain": [
+    { "t": "p", "md": "The cached prefix is built in this order: `tools`, then `system`, then `messages`. **Automatic caching** is one top-level `cache_control: {\"type\": \"ephemeral\"}`. The breakpoint moves to the last cacheable block as the conversation grows, so you need not update markers. **Explicit caching** puts `cache_control` on individual blocks, with up to 4 breakpoints in a request. The automatic marker uses one of those slots, and the two can be combined [[r3]]." },
+    { "t": "code", "lang": "json", "title": "Explicit breakpoint with a 1-hour entry", "code": "{\n  \"model\": \"<model>\",\n  \"max_tokens\": 1024,\n  \"system\": [\n    { \"type\": \"text\",\n      \"text\": \"<long policy and reference text>\",\n      \"cache_control\": { \"type\": \"ephemeral\", \"ttl\": \"1h\" } }\n  ],\n  \"messages\": [ { \"role\": \"user\", \"content\": \"<question>\" } ]\n}", "caption": "Omit ttl for the default 5 minute entry." },
+    { "t": "table", "caption": "Prices, lifetimes and minimums (checked 2026-10-13)", "head": ["Item", "Value"], "rows": [
+      ["5-minute write", "1.25x base input. Refreshed free on each use"],
+      ["1-hour write (`ttl: \"1h\"`)", "2x base input"],
+      ["Read (hit)", "0.1x, or 0.05x on Opus 5.5 and Sonnet 5.5, or 0.025x on Fable 5.1 and Mythos 5.1. Multipliers stack with Batch and long-context pricing"],
+      ["Minimum size", "512 tokens on the newest models, 1,024 on Opus 4.8, Sonnet 5, Sonnet 4.6 and 4.5, 2,048 on Opus 4.7, 4,096 on Opus 4.6, 4.5 and Haiku 4.5. Shorter prompts run uncached with no error"],
+      ["Isolation", "Per workspace on the Claude API and Foundry. Organisation level on Bedrock and Google Cloud"]
+    ] },
+    { "t": "p", "md": "**Reading usage.** `cache_creation_input_tokens` counts tokens written, `cache_read_input_tokens` counts tokens read, and `input_tokens` counts only tokens after the last breakpoint. Total input is the sum of the three. The creation total splits into `ephemeral_5m_input_tokens` and `ephemeral_1h_input_tokens` [[r3]]." },
+    { "t": "p", "md": "**Lookback.** A breakpoint checks only 20 block positions back for an earlier write, so add a second breakpoint when one turn adds 20 or more blocks. An entry exists only once the first response begins, so parallel requests with the same prefix should wait for it [[r3]]." },
+    { "t": "callout", "kind": "gotcha", "title": "What invalidates what", "md": "A change to tool definitions invalidates everything. Toggling web search or citations, or `speed: \"fast\"`, invalidates system and messages. A change to `tool_choice` or images invalidates messages, as do thinking parameters and `output_config.effort`. A breakpoint on content that changes every request, such as a timestamp, writes every time and never reads [[r3]]." }
+  ],
+  "whereToUse": [
+    "Agents that resend a growing conversation with tool results (automatic caching)",
+    "Large reference documents or policies reused by many questions (explicit breakpoint after the document)",
+    "Assistants where tools, system and history change at different rates (up to 4 breakpoints)",
+    "Per-tenant prefixes with gaps over 5 minutes (1-hour entries)",
+    "Bedrock deployments of Claude models, which use checkpoints with 5 minute or 1 hour TTLs [[r4]]"
+  ],
+  "whenToUse": {
+    "use": [
+      "The prefix is above the model minimum and reused at least twice per lifetime",
+      "You can keep tools, then system, then messages in a stable order",
+      "Gaps between requests are under 5 minutes (default) or under an hour (1-hour entry)"
+    ],
+    "avoid": [
+      "A prefix reused once: the 1.25x write costs 25% more than no caching",
+      "Fan-out of parallel requests that all arrive before the first entry exists",
+      "Changing tools, thinking settings or effort between turns, which invalidates entries"
+    ],
+    "flips": [
+      "Gaps between 5 and 60 minutes: use the 1-hour entry, which breaks even at three requests",
+      "Steady traffic under 5 minute spacing: keep the default, since each use refreshes it free",
+      "Turns add 20 or more blocks: add a second breakpoint inside the lookback window"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with other configurations",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Automatic caching", "Append-only conversations, little setup", "Parts change at different rates", "Marker moves with the conversation, one slot used"],
+      ["Explicit breakpoints", "Tools, system and history change at different rates", "You forget to update them", "Lookback limit of 20 blocks"],
+      ["5-minute entry (default)", "Steady traffic under 5 minute gaps", "Gaps longer than 5 minutes", "Silent expiry"],
+      ["1-hour entry", "Gaps of 5 to 60 minutes", "Sparse or one-off reuse", "2x write premium"],
+      ["No caching", "One-off or sparse prompts", "Steady reuse", "Pays full input price"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Both cache usage fields are zero on a long prompt", "cause": "The prompt is below the model's minimum, or a marker sits on a block that changes every request", "fix": "Check the model's minimum and mark the last stable block, not a timestamped one [[r3]]" },
+    { "symptom": "A 50-way parallel run pays a write on every request", "cause": "An entry exists only after the first response begins", "fix": "Send one request, wait for its response to start, then fan out [[r3]]" },
+    { "symptom": "Hits drop after a tool or effort change", "cause": "Tool definitions, `tool_choice`, thinking or effort settings invalidate cached layers", "fix": "Freeze tools and settings per session, and change them only at a session boundary [[r3]]" }
+  ],
+  "scenarios": [
+    {
+      "id": "w02-t13-s1",
+      "title": "Fan-out of 50 sub-requests",
+      "situation": "An orchestrator sends 50 analysis requests at once. Each starts with the same 20,000-token brief, then a short, different instruction. Caching is enabled with a marker after the brief.",
+      "constraints": ["Writes cost 1.25x", "All requests are sent in the same second", "The brief is above the model minimum"],
+      "unknowns": ["Can the first request run a second ahead of the rest?", "Is total wall time tight?"],
+      "question": "How do you send them?",
+      "options": [
+        { "name": "Send all 50 together", "verdict": "poor", "why": "No entry exists yet, so each request writes the brief at 1.25x and none reads it.", "tradeoff": "Right only when the requests are unrelated or latency to the first token cannot wait." },
+        { "name": "Send one, wait for its response to begin, then send the other 49", "verdict": "best", "why": "One write at 1.25x, then 49 reads at 0.1x. The cost is about 6.2x of one request instead of 62.5x.", "tradeoff": "The first request delays the others by one time to first token." },
+        { "name": "Turn caching off for this run", "verdict": "good", "why": "It costs 50x with no premium surprises.", "tradeoff": "It gives up an 80% or better saving." }
+      ],
+      "flips": [
+        { "if": "The 50 requests are spread over minutes", "then": "No wait is needed. Reads begin after the first write." },
+        { "if": "The brief is shorter than the model minimum", "then": "Caching does nothing. Shorten the fan-out or accept full price." }
+      ],
+      "takeaway": "A cache entry exists only after the first response begins. Warm it first."
+    },
+    {
+      "id": "w02-t13-s2",
+      "title": "Agent loop with long tool results",
+      "situation": "An agent loops for up to 40 turns. Each turn adds 25 content blocks (tool calls and results). Caching is automatic. Hit rate falls to near zero after turn two even though nothing else changes.",
+      "constraints": ["Automatic caching, one marker", "Turns add more than 20 blocks", "Tools and settings are stable"],
+      "unknowns": ["Where does the earlier write sit relative to the new marker?", "Can blocks be consolidated?"],
+      "question": "What is the fix?",
+      "options": [
+        { "name": "Raise the TTL to 1 hour", "verdict": "poor", "why": "Lifetime is not the problem. The lookback cannot find the earlier write.", "tradeoff": "Right when gaps between turns exceed 5 minutes." },
+        { "name": "Add an explicit breakpoint within 20 blocks of the previous one", "verdict": "best", "why": "The breakpoint looks back only 20 block positions, so an extra marker keeps the earlier write reachable.", "tradeoff": "It uses another of the 4 breakpoint slots and needs code to place it." },
+        { "name": "Disable caching", "verdict": "good", "why": "It removes the surprise.", "tradeoff": "You pay full price on a growing history." }
+      ],
+      "flips": [
+        { "if": "Tool results can be summarised into fewer blocks", "then": "Fewer blocks per turn may keep you inside the 20 block window." },
+        { "if": "A tool list changes mid-loop", "then": "That invalidates everything, so fix the tool list first." }
+      ],
+      "takeaway": "Lookback is 20 blocks. Plan breakpoints for turns that add many."
+    }
+  ],
+  "quiz": [
+    { "id": "w02-t13-q1", "type": "numeric", "tag": "numeric", "q": "With a 1-hour entry (2x write, 0.1x read), how many times the cost of one uncached request do three requests for the same prefix cost in total?", "answer": 2.2, "tolerancePct": 2, "unit": "x of one uncached request", "hint": "2 + 0.1 x 2", "explain": "One write at 2x plus two reads at 0.1x is 2.2x, versus 3x uncached. At two requests it is 2.1x versus 2x, so the 1-hour entry breaks even at three.", "difficulty": 2, "ref": "r3" },
+    { "id": "w02-t13-q2", "type": "single", "tag": "diagnose", "q": "Usage shows input_tokens 6,000, cache_creation_input_tokens 0 and cache_read_input_tokens 0 for a 6,000-token prompt that carries a cache marker. What is the likely cause?", "options": ["The model's minimum cacheable size exceeds the prompt, or the marked block changes every request", "The cache is full", "The marker is on the system prompt, which cannot be cached", "The request was served from the 1-hour entry"], "answer": 0, "explain": "Zero in both cache fields means nothing was cached. Shorter-than-minimum prompts run uncached silently, and a marker on changing content writes nothing reusable. System prompts can be cached, and a 1-hour hit would show a read.", "difficulty": 2, "ref": "r3" },
+    { "id": "w02-t13-q3", "type": "multi", "tag": "bug", "q": "Which changes invalidate cached layers on Anthropic?", "options": ["Changing tool definitions", "Changing tool_choice", "Changing the user's question at the end", "Toggling thinking parameters or output_config.effort"], "answers": [0, 1, 3], "explain": "Tool definitions invalidate everything, while tool_choice and thinking or effort settings invalidate the messages layer. The last user turn sits after the breakpoint, so changing it does not invalidate the prefix.", "difficulty": 3, "ref": "r3" }
+  ],
+  "flashcards": [
+    { "front": "How many cache breakpoints can an Anthropic request have, and what is the lookback?", "back": "Up to 4 breakpoints, and each looks back 20 block positions for an earlier write. Add a breakpoint when a turn adds 20 or more blocks." },
+    { "front": "What do the Anthropic multipliers look like?", "back": "5-minute write 1.25x, 1-hour write 2x, read 0.1x (0.05x or 0.025x on some models). They stack with Batch pricing." },
+    { "front": "What does input_tokens mean in Anthropic usage?", "back": "Only tokens after the last cache breakpoint. Total input is input_tokens plus cache read plus cache creation." }
+  ],
+  "related": ["w02-t11", "w02-t12", "w02-t14", "w02-l4"],
+  "refs": ["r3", "r4"]
+}

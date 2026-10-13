@@ -1,0 +1,96 @@
+{
+  "id": "w14-t14",
+  "order": 14,
+  "group": "Operating",
+  "title": "CI gates and regression testing",
+  "minutes": 9,
+  "difficulty": "core",
+  "summary": "A gate is a rule plus a noise budget. Compare against a baseline with an interval or significance test instead of a fixed threshold, run a small fast suite per pull request and a large one nightly, block on safety and regression suites, and control evaluation cost.",
+  "useIf": "Prompts, models, retrievers or tools change often and you need to stop regressions before they ship.",
+  "avoidIf": "You gate on one noisy run against a fixed score, or you block merges on capability suites that are meant to start low.",
+  "explain": [
+    { "t": "p", "md": "Three gate types exist. A **fixed threshold** fails below a score. A **baseline comparison** fails only if the candidate is significantly worse than the current version. An **advisory** gate reports without blocking. Because outputs vary, a fixed threshold on one run flakes; the baseline plus an interval is steadier. Foundry's compare view runs t-tests and marks a change strong at p <= 0.001 and weak at 0.001 < p <= 0.05 [[r39]]. The `microsoft/ai-agent-evals` GitHub Action (preview, checked 2026-10-13) outputs confidence intervals and a significance test and, if you give no `baseline-agent-id`, treats the first agent as the baseline [[r9]]." },
+    { "t": "code", "lang": "yaml", "title": "Foundry agent evaluation step (preview action)", "code": "- name: Run Evaluation\n  uses: microsoft/ai-agent-evals@v3-beta\n  with:\n    azure-ai-project-endpoint: \"<project-endpoint>\"\n    deployment-name: \"<judge-deployment>\"\n    agent-ids: \"my-agent:2,my-agent:1\"   # name:version, comma separated\n    baseline-agent-id: \"my-agent:1\"      # optional\n    data-path: ${{ github.workspace }}/evals/golden.jsonl", "caption": "An Azure DevOps version is also preview [[r9]]." },
+    { "t": "diagram", "id": "w14-t14-d1", "title": "Which suite runs where", "alt": "A pull request runs a fast suite of assertions and a small golden slice. A nightly run uses the full set with repeated trials and a baseline comparison. A release gate adds safety and regression suites and blocks on failure.", "src": "flowchart LR\n  PR[Pull request] --> F[Fast suite]\n  F --> M{Pass?}\n  M -->|yes| N[Nightly full run]\n  M -->|no| X[Block merge]\n  N --> B[Baseline compare]\n  B --> R[Release gate: safety and regression]" },
+    { "t": "p", "md": "Block on **safety and regression** suites. Keep **capability** suites advisory: Anthropic notes capability evals start at a low pass rate and regression evals should sit near 100% [[r17]]. Hamel Husain adds that unlike unit tests you do not need 100%, since the pass rate is a product decision about tolerated failures, and that fast assertions should run on every change [[tr6]]. Tools such as promptfoo (config-driven, CI integration [[r27]]) and DeepEval (`deepeval test run`, default metric threshold 0.5 [[r28]]) fit the pipeline. OpenAI announced on 2026-06-03 that its Evals platform becomes read-only on 2026-10-31 and is scheduled to shut down on 2026-11-30, and points to Promptfoo as the migration path [[r19]]." },
+    { "t": "p", "md": "**Flaky gates.** Repeat trials and compare paired. Remember that clean runs are weaker evidence than they look: with zero failures in n runs, the rule of three bounds the 95% upper limit on the failure rate near 3/n, so 30 passes in 30 allows a failure rate up to about 10% [[tr9]]. **Cost.** Judge calls scale with items x evaluators x trials. Levers: a small PR suite, a large nightly one, composite evaluators that batch criteria, sampling, a validated cheaper judge and caching unchanged targets. Foundry's target cost view excludes evaluator model usage [[r39]]." }
+  ],
+  "whereToUse": [
+    "Pull request checks on prompts, tool schemas and retrieval settings",
+    "Nightly regression runs with repeated trials and baseline comparison",
+    "Model-version upgrades, to prove parity before switching",
+    "Release gates that combine safety and regression suites",
+    "Rollback criteria, using the same suite on the previous version"
+  ],
+  "whenToUse": {
+    "use": ["Changes ship weekly or faster", "A stable regression set exists", "Failures have a defined cost"],
+    "avoid": ["Hard-failing on a fixed score from a single noisy run", "Running every evaluator and trial on every PR", "Blocking on capability suites"],
+    "flips": ["Judge cost dominates: shrink the PR suite, batch criteria and run the full set nightly", "A safety rule is absolute: zero tolerance on named cases, no statistics", "Sets are tiny: widen the tolerance band or gather more cases before blocking"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Baseline comparison with significance", "Noisy outputs, close versions", "Tiny sets", "Needs repeated runs"],
+      ["Fixed threshold", "Deterministic checks and safety cases", "Stochastic scores on small sets", "Flaky, trust erodes"],
+      ["Advisory dashboard", "Capability suites, early work", "Safety regressions must stop", "Ignored in practice"],
+      ["Manual release review", "Rare, high-stakes releases", "Frequent changes", "Slow, inconsistent"],
+      ["Canary with rollback", "Real-user signal matters", "Harm before detection", "Users see regressions"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Engineers rerun the pipeline until it goes green", "cause": "A flaky gate: one noisy run against a fixed threshold", "fix": "Repeat trials, use a baseline with an interval and quarantine flaky items instead of retrying blindly" },
+    { "symptom": "A segment regressed but the gate passed", "cause": "Only the overall average was gated", "fix": "Report per-segment results and gate the highest-risk slices separately" },
+    { "symptom": "The evaluation bill rivals inference cost", "cause": "Every PR runs all items, evaluators and trials", "fix": "Run a small PR suite, a nightly full suite, batch criteria and sample" }
+  ],
+  "scenarios": [
+    {
+      "id": "w14-t14-s1",
+      "title": "30 merges a day, noisy judge",
+      "situation": "A team has a 150-item golden set scored by a judge model. Thirty pull requests merge daily. The nightly run takes 40 minutes. The judge noise makes scores move by 3 points between identical runs.",
+      "constraints": ["High merge rate", "Judge noise about 3 points", "Capped judge spend"],
+      "unknowns": ["Which checks are deterministic?", "What regressions have hurt before?"],
+      "question": "How do you design the gate?",
+      "options": [
+        { "name": "Deterministic and code checks per PR, full set nightly with repeated trials and a baseline comparison", "verdict": "best", "why": "Fast checks catch common breakage and the noisy judge is only used where an interval can absorb its noise.", "tradeoff": "Some regressions show up a day later." },
+        { "name": "Full judged suite on every PR with a fixed 85% threshold", "verdict": "poor", "why": "3 points of noise will flake the gate and the cost is high.", "tradeoff": "A fixed threshold suits deterministic code checks." },
+        { "name": "Advisory dashboard only", "verdict": "good", "why": "Zero friction.", "tradeoff": "Nothing stops a bad change from merging." }
+      ],
+      "flips": [
+        { "if": "Merges drop to a few a week", "then": "Run the full suite on every PR." },
+        { "if": "Judge noise is cut by calibration and a binary rubric", "then": "A tighter threshold becomes feasible." }
+      ],
+      "takeaway": "Match the gate to its noise."
+    },
+    {
+      "id": "w14-t14-s2",
+      "title": "A prompt change touches the safety policy",
+      "situation": "An engineer edits the system prompt section that refuses harmful requests. A set of 60 confirmed attack prompts exists from earlier red teaming. A single bypass is unacceptable.",
+      "constraints": ["Absolute safety requirement", "60 named attack cases", "Fast feedback needed"],
+      "unknowns": ["How are bypasses detected?", "Can the attacks be replayed deterministically?"],
+      "question": "What gate protects this change?",
+      "options": [
+        { "name": "Hard block if any named attack case is bypassed, plus a scheduled red team scan after merge", "verdict": "best", "why": "An absolute requirement on named cases needs no statistics, and the scan looks for new bypasses.", "tradeoff": "Occasional false blocks from a noisy attack classifier need human triage." },
+        { "name": "Block only if the average attack score drops significantly", "verdict": "poor", "why": "Averaging allows individual bypasses to pass.", "tradeoff": "Averages suit broad quality metrics, not absolute rules." },
+        { "name": "Review the diff by hand and skip the suite", "verdict": "good", "why": "Humans can see intent.", "tradeoff": "It misses behavioural regressions that a replay catches." }
+      ],
+      "flips": [
+        { "if": "Attack classification is noisy", "then": "Rerun failing cases several times and triage by hand." },
+        { "if": "New attacks are found", "then": "Add them to the named set." }
+      ],
+      "takeaway": "Absolute rules need hard gates, not averages."
+    }
+  ],
+  "quiz": [
+    { "id": "w14-t14-q1", "type": "numeric", "tag": "numeric", "q": "A candidate passes 30 of 30 gate runs with no failures. By the rule of three, what is the approximate 95% upper bound on its failure rate, in percent?", "answer": 10, "tolerancePct": 5, "unit": "%", "hint": "About 3 divided by n.", "explain": "3 / 30 = 0.10, so a failure rate up to about 10% is still consistent with 30 clean runs." },
+    { "id": "w14-t14-q2", "type": "single", "tag": "diagnose", "q": "Engineers keep rerunning a failing evaluation job until it passes. The suite scores a stochastic agent with a fixed 85% threshold on one run. What is the root cause?", "options": ["Too many unit tests", "The golden set is too large", "The agent has too few tools", "A fixed threshold on a single noisy run makes the gate flaky"], "answer": 3, "explain": "A single stochastic run compared with a fixed cut-off will cross it by chance. Repeat trials and use a baseline with an interval. Set size or tool count does not explain intermittent failures." },
+    { "id": "w14-t14-q3", "type": "multi", "tag": "tradeoff", "q": "Which sound gate practices fit a pipeline with a noisy judge? Select all that apply.", "options": ["Block releases on safety and regression suites", "Keep capability suites advisory", "Gate on a single run against a fixed 90% score", "Run a small suite per PR and the full suite nightly"], "answers": [0, 1, 3], "explain": "Safety and regression suites protect existing behaviour, capability suites are exploratory, and a small PR suite plus a nightly full run controls cost. A single-run fixed threshold flakes." }
+  ],
+  "flashcards": [
+    { "front": "Which suites should block a release?", "back": "Safety and regression suites. Capability suites start at a low pass rate, so keep them advisory." },
+    { "front": "What does the rule of three say?", "back": "With zero failures in n runs, the 95% upper bound on the failure rate is about 3/n. Thirty clean runs still allow roughly a 10% failure rate." },
+    { "front": "How does the microsoft/ai-agent-evals action report results?", "back": "It compares agent versions (name:version, comma separated) and outputs confidence intervals and a significance test. The first agent is the baseline unless baseline-agent-id is set. Preview." }
+  ],
+  "related": ["w14-t12", "w14-t09", "w14-t13", "w18-t03", "w16-t01", "w14-l6"],
+  "refs": ["r9", "r17", "r19", "r27", "r28", "r39", "tr6", "tr9"]
+}

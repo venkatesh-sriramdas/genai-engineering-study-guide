@@ -1,0 +1,97 @@
+{
+  "id": "w10-t10",
+  "order": 10,
+  "group": "Reasoning loops",
+  "title": "Loop guards, budgets and stop conditions",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "Any loop that can call a model needs brakes owned by the harness: a step cap, a token and cost budget, a deadline and repeat detection. Each brake ends the run with an explicit stop reason and a usable partial result.",
+  "useIf": "A model chooses its own next step, calls tools that cost money or time, or talks to other agents in a loop.",
+  "avoidIf": "Never skip it for an agent loop. Skip only for a fixed chain, whose length is already bounded by your code.",
+  "explain": [
+    { "t": "p", "md": "A loop that depends on a model to decide when to stop will sometimes not stop. Anthropic notes it is common to include stopping conditions such as a maximum number of iterations to keep control [[r1]], and Microsoft tells you to set iteration limits to guard against infinite tool-call loops [[r9]]. Frameworks expose the brake under different names. The OpenAI Agents SDK raises `MaxTurnsExceeded` when `max_turns` is passed, and `max_turns=None` disables the limit [[tr3]]. LangGraph's recursion limit caps super-steps per run and raises `GraphRecursionError`; from version 1.0.6 the default is 1000 steps, which is a safety net, not a budget [[tr4]]. Group chat in Agent Framework has `MaximumIterationCount` [[tr1]], handoff autonomous mode takes a `turnLimit` [[r11]], and Magentic exposes max rounds, max stalls and max resets [[r10]]." },
+    { "t": "diagram", "id": "w10-t10-d1", "title": "Brakes checked before every step", "alt": "Before each loop step the harness checks step count, token and cost budget, deadline and repetition. If any brake fires, the run stops with a reason and a partial result.", "src": "flowchart TB\n  S[Next step requested] --> C{Brakes}\n  C -->|steps over cap| X[Stop: max_steps]\n  C -->|tokens or cost over budget| Y[Stop: budget]\n  C -->|past deadline| Z[Stop: deadline]\n  C -->|same call repeated| W[Stop: repeat]\n  C -->|all clear| R[Run step]\n  R --> S" },
+    { "t": "code", "lang": "python", "title": "Brakes in the harness, not the prompt", "code": "def check_brakes(run, limits):\n    if run.steps >= limits.max_steps:\n        return 'max_steps'\n    if run.input_tokens + run.output_tokens >= limits.max_tokens:\n        return 'budget'\n    if run.cost >= limits.max_cost:\n        return 'budget'\n    if run.elapsed >= limits.deadline:\n        return 'deadline'\n    if run.same_call_count >= limits.max_repeats:\n        return 'repeat'\n    return None   # keep going\n\ndef step(run, limits):\n    reason = check_brakes(run, limits)\n    if reason:\n        return finish(run, stop_reason=reason, partial=run.best_so_far)\n    return run_next_step(run)", "caption": "Return a stop reason and the best partial result so callers can retry, escalate or show it." },
+    { "t": "p", "md": "Count the right tokens. Reasoning tokens are billed as output, and OpenAI advises reserving at least 25,000 tokens for reasoning plus output when starting out, because hitting `max_output_tokens` returns `status: incomplete` and can happen before any visible output [[r34]]. Count input tokens as well: in a naive loop, input dominates because every step resends the history." },
+    { "t": "callout", "kind": "gotcha", "title": "A cap is not an outcome", "md": "Throwing an exception when the cap fires discards the work. Return a typed stop reason, the best partial result and the trace, then let policy decide: retry with a bigger budget, ask a person, or show the partial answer with a warning." }
+  ],
+  "whereToUse": [
+    "Every agent loop with tool calls, whether ReAct, plan-and-execute or reflection",
+    "Group chats and handoff meshes, where several agents can keep passing control",
+    "Autonomous background runs that no one watches in real time",
+    "Per-user or per-tenant spend limits on agentic features",
+    "Evaluation harnesses, so a stuck test case cannot burn the whole budget"
+  ],
+  "whenToUse": {
+    "use": ["A model decides when to continue", "Tools or model calls cost money or time", "Runs are unattended or multi-agent"],
+    "avoid": ["Using only a huge default cap and calling it a budget", "Relying on a prompt line such as stop after five tries", "Setting the cap so low that normal tasks hit it and users see failures"],
+    "flips": ["Normal runs hit the cap often: raise it or fix the loop, then keep repeat and budget brakes", "Cost is the main risk: budget by cost, not steps", "Runs are interactive: add a short deadline and stream partial progress"]
+  },
+  "alternatives": {
+    "title": "Kinds of brake",
+    "head": ["Brake", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Step or turn cap", "You need a hard, simple bound", "Steps vary a lot in cost", "Cheap, blunt"],
+      ["Token or cost budget", "Spend is the risk", "Counted late or only on output tokens", "Needs metering in the harness"],
+      ["Wall-clock deadline", "A user or SLA waits", "Slow tools make it fire for the wrong reason", "Partial work needs handling"],
+      ["Repeat or no-progress detection", "Loops are stuck, not long", "Legitimate retries look like repeats", "Needs a signature of calls and state"],
+      ["Prompt instruction only", "Never the only one", "Always: the model can ignore it", "No enforcement"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A stuck agent runs for hours before anyone notices", "cause": "The only brake is a very high default cap, such as 1000 steps in LangGraph [[tr4]]", "fix": "Set a task-specific step cap, a cost budget and a deadline, and alert on stop reasons." },
+    { "symptom": "Runs end with an incomplete status and no text", "cause": "The output limit was consumed by reasoning tokens [[r34]]", "fix": "Reserve headroom for reasoning plus output and treat incomplete as a stop reason with a retry policy." },
+    { "symptom": "The cap fires and the user sees a raw error", "cause": "The exception was not turned into a result", "fix": "Return the stop reason and the partial result, then route to retry, escalate or warn." }
+  ],
+  "scenarios": [
+    {
+      "id": "w10-t10-s1",
+      "title": "Unattended agent with paid tools",
+      "situation": "A scheduled agent calls paid third-party tools and a large model. No one watches it, and a runaway loop would show up first on the invoice.",
+      "constraints": ["Unattended runs", "Per-call tool cost", "Failures are found late"],
+      "unknowns": ["What is a normal run's step count and cost?", "Who gets alerted when a stop reason fires?"],
+      "question": "Which brakes do you set?",
+      "options": [
+        { "name": "Step cap near 2x normal, a cost budget per run, a deadline, repeat detection and alerts on every stop reason", "verdict": "best", "why": "Layered brakes catch different failures, and tying them to normal behaviour keeps false stops rare.", "tradeoff": "You must measure normal runs first and tune thresholds over time." },
+        { "name": "Only a step cap at the framework default", "verdict": "poor", "why": "A default such as 1000 super-steps lets a runaway spend a lot before it trips.", "tradeoff": "A framework default suits a throwaway script where cost does not matter." },
+        { "name": "A cost budget only", "verdict": "good", "why": "It bounds spend directly.", "tradeoff": "A cheap-but-stuck loop can still run for a long time and block resources." }
+      ],
+      "flips": [
+        { "if": "Tools are free and runs are short", "then": "A step cap and deadline are enough." },
+        { "if": "Runs are billed to different tenants", "then": "Apply budgets per tenant as well as per run." }
+      ],
+      "takeaway": "Brake on what hurts: cost, time and repetition, not only steps."
+    },
+    {
+      "id": "w10-t10-s2",
+      "title": "Interactive chat agent",
+      "situation": "A chat agent answers questions with up to a handful of tool calls. Users stay only for about thirty seconds, and a few conversations contain odd inputs that make the agent circle.",
+      "constraints": ["Interactive, latency sensitive", "Tool calls are cheap", "Rare but visible loops"],
+      "unknowns": ["What does a typical run's step count look like?", "Can partial answers be shown?"],
+      "question": "How do you set the guards?",
+      "options": [
+        { "name": "Low step cap, a thirty-second deadline, repeat detection and a graceful fallback message with the partial result", "verdict": "best", "why": "It matches the user's patience and turns loops into a clear message instead of a hang.", "tradeoff": "A few legitimate long tasks will hit the cap, so track them." },
+        { "name": "No cap, trust the model to finish", "verdict": "poor", "why": "A circling model never gets cut off, and the user waits for nothing.", "tradeoff": "Only acceptable in a controlled demo." },
+        { "name": "A generous cap of 50 steps with no deadline", "verdict": "good", "why": "Rarely interrupts a legitimate task.", "tradeoff": "A loop can burn a minute of wall-clock before it stops." }
+      ],
+      "flips": [
+        { "if": "Tasks are known to be long, such as research", "then": "Move the run to the background with progress updates and larger budgets." },
+        { "if": "Users abandon at fifteen seconds", "then": "Tighten the deadline and stream partial progress sooner." }
+      ],
+      "takeaway": "Tune brakes to the user's patience and to normal run shape."
+    }
+  ],
+  "quiz": [
+    { "id": "w10-t10-q1", "type": "numeric", "tag": "numeric", "q": "A naive loop starts with a 2,000 token prompt. Each step appends 1,500 tokens of call and result, and every model call rereads the full context. How many input tokens are read across 10 steps in total?", "answer": 87500, "tolerancePct": 1, "unit": "tokens", "hint": "Step k reads 2,000 + 1,500 x (k - 1) tokens.", "explain": "Sum over k = 1 to 10: 10 x 2,000 + 1,500 x (0 + 1 + ... + 9) = 20,000 + 1,500 x 45 = 87,500. Growth is quadratic, which is why budgets must count input tokens and why trimming and caching matter." },
+    { "id": "w10-t10-q2", "type": "multi", "tag": "bug", "q": "Which of these loop designs have a real bug or gap?", "options": ["The only brake is a prompt line telling the model to stop after five tries", "The harness raises an exception on max steps and drops the partial result", "A cost budget is checked before each step and returns a stop reason", "max_turns is set to None in production to avoid failures"], "answers": [0, 1, 3], "explain": "A prompt line cannot enforce a stop, dropping partial work wastes the spend, and disabling the turn limit removes the brake [[tr3]]. Checking a budget before each step and returning a reason is the sound design.", "ref": "tr3", "difficulty": 2 },
+    { "id": "w10-t10-q3", "type": "single", "tag": "diagnose", "q": "A reasoning-model agent frequently returns status incomplete with no visible text. What is the most likely cause?", "options": ["The tools are down", "The output token limit was used up by reasoning tokens", "The step cap is too high", "Temperature is too low"], "answer": 1, "explain": "Reasoning tokens count as output, so a tight max_output_tokens can be exhausted before any visible output appears. OpenAI advises reserving at least 25,000 tokens when starting out. [[r34]]", "ref": "r34", "difficulty": 2 }
+  ],
+  "flashcards": [
+    { "front": "What does LangGraph's recursion limit count, and what is the default?", "back": "Maximum super-steps per run, raising GraphRecursionError at the limit. The default is 1000 steps from version 1.0.6 [[tr4]]." },
+    { "front": "What does the OpenAI Agents SDK do at max_turns?", "back": "It raises MaxTurnsExceeded. Passing max_turns=None disables the limit [[tr3]]." },
+    { "front": "What should a brake return besides stopping?", "back": "A typed stop reason and the best partial result, so policy can retry, escalate or warn." },
+    { "front": "Why count input tokens in a budget?", "back": "A naive loop resends the whole history each step, so input tokens usually dominate and grow roughly quadratically." }
+  ],
+  "related": ["w10-l2", "w10-t07", "w10-t14", "w10-t15", "w10-t21"],
+  "refs": ["r1", "r9", "r10", "r11", "r34", "tr1", "tr3", "tr4"]
+}

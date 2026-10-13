@@ -1,0 +1,108 @@
+{
+  "id": "w14-t11",
+  "order": 11,
+  "group": "Agents and safety",
+  "title": "Agent trajectory and tool-call evaluation",
+  "minutes": 9,
+  "difficulty": "advanced",
+  "summary": "An agent run is a trajectory: model steps, tool calls with arguments, tool results and a final answer. Grade the outcome first, then add process checks on tool selection, arguments and output use so a failure points at a step. Rigid expected sequences punish valid alternatives.",
+  "useIf": "An agent chooses tools and takes multiple steps, and you need to know both whether it succeeded and where it went wrong.",
+  "avoidIf": "The task has many valid paths and you are tempted to demand one exact tool sequence.",
+  "explain": [
+    { "t": "p", "md": "A **trajectory** is the ordered record of an agent run. You can grade it at two levels. **Outcome** grading checks the end state: did the booking exist, was the file changed, was the ticket closed. tau-bench grades by comparing the final database state with the annotated goal state [[r23]]. **Process** grading checks steps: was the right tool chosen, were the arguments correct, did the agent use the tool's output." },
+    { "t": "p", "md": "Anthropic recommends grading the outcome, and the transcript where useful, with code-based, model-based or human graders. It warns that a rigid grader can mark a valid alternative wrong: a model found a policy loophole on a tau2-bench flight task and was scored as failing. It also says to isolate each trial in a clean environment, because shared state causes correlated failures [[r17]]." },
+    { "t": "diagram", "id": "w14-t11-d1", "title": "A trajectory and its checks", "alt": "A task leads to a plan, tool calls and a final answer. Process checks attach to tool selection, arguments and output use. An outcome check compares the end state.", "src": "flowchart LR\n  T[Task] --> P[Plan]\n  P --> C1[Tool call 1]\n  C1 --> C2[Tool call 2]\n  C2 --> A[Final answer]\n  C1 -.-> K1[Selection and arguments]\n  C2 -.-> K2[Output use]\n  A -.-> K3[Outcome check]" },
+    { "t": "table", "caption": "What to grade", "head": ["Check", "Catches", "Misses", "Example tooling"], "rows": [
+      ["**Outcome (end state)**", "Real task failure, loopholes handled fairly", "Which step failed", "Code check on environment state"],
+      ["**Tool selection**", "Wrong tool for the intent", "Right tool, wrong inputs", "Foundry Tool Selection; DeepEval Tool Correctness"],
+      ["**Argument accuracy**", "Bad parameters, missing fields", "Poor use of results", "Tool Input Accuracy; Argument Correctness"],
+      ["**Output utilisation**", "Ignoring or misreading a result", "Wrong tool choice", "Tool Output Utilization"],
+      ["**Efficiency and plan**", "Loops, wasted steps", "Outcome quality", "Task Navigation Efficiency, Step Efficiency"],
+      ["**Transcript judge**", "Policy or tone violations", "Mechanical errors", "Task Adherence, Intent Resolution"]
+    ] },
+    { "t": "p", "md": "Foundry splits agent evaluators into system level (Task Completion, Customer Satisfaction, Task Adherence, Task Navigation Efficiency, Intent Resolution) and process level (Tool Call Accuracy, Tool Selection, Tool Input Accuracy, Tool Output Utilization, Tool Call Success). Navigation efficiency needs a ground-truth tool sequence. Most of these are preview as checked on 2026-10-13, and some tools have limited support [[r3]]. DeepEval offers trajectory metrics (Task Completion, Step Efficiency, Plan Adherence, Plan Quality) and component metrics [[r28]]. Agent Framework's `LocalEvaluator` has `tool_called_check` for a cheap deterministic test [[r10]]." }
+  ],
+  "whereToUse": [
+    "Tool-using assistants where a wrong call changes real data",
+    "Multi-agent workflows where you must find which agent or step failed",
+    "Regression suites for agents with stable, checkable tool schemas",
+    "Policy-bound flows (refunds, access requests) where order matters",
+    "Production traces, to pick runs with loops or errors for triage"
+  ],
+  "whenToUse": {
+    "use": ["An end state is checkable in a sandbox", "A step-level failure would otherwise be hidden", "The tool set has a stable schema"],
+    "avoid": ["Requiring one exact trajectory when several are valid", "Reusing mutable environment state across trials", "Running tool evaluators on tools with limited support"],
+    "flips": ["The policy mandates an order (identity check before refund): assert the sequence", "Many valid paths: grade outcome and a few invariants (never call X before Y)", "Tools unsupported by built-in evaluators: write code-based graders"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Outcome-only grading", "Several valid paths", "You must locate the failing step", "Low debuggability"],
+      ["Exact trajectory match", "A policy fixes the order", "Paths vary", "False failures"],
+      ["Step-level evaluators", "You need to localise faults", "Tools lack evaluator support", "Judge cost, preview status"],
+      ["Transcript LLM judge", "Policy and tone", "Mechanical correctness", "Judge bias"],
+      ["Human trace review", "Finding new failure types", "Volume is high", "Slow"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A correct, creative run is marked a failure", "cause": "The grader demanded one expected tool sequence", "fix": "Grade the outcome and invariants, not the exact path" },
+    { "symptom": "Trials pass or fail together, in clusters", "cause": "Shared mutable state between runs", "fix": "Start each trial from a clean environment" },
+    { "symptom": "Tool metrics look strangely high or low", "cause": "The agent uses tools with limited evaluator support", "fix": "Check the tool coverage list and fall back to outcome or custom checks" }
+  ],
+  "scenarios": [
+    {
+      "id": "w14-t11-s1",
+      "title": "Refund agent with a mandatory policy order",
+      "situation": "A refund agent must verify identity, check the order, then issue the refund, in that order, by company policy. Real money moves, and a sandbox mirrors the order system.",
+      "constraints": ["Strict order required", "High harm", "Sandbox available"],
+      "unknowns": ["Can the refund state be read in the sandbox?", "Which violations are unacceptable?"],
+      "question": "What do you grade?",
+      "options": [
+        { "name": "Outcome check on sandbox state plus assertions on the required order and arguments", "verdict": "best", "why": "Policy fixes the order, so the order is a requirement, and the outcome check confirms the right refund occurred.", "tradeoff": "Brittle if policy changes, so update assertions with the policy." },
+        { "name": "A transcript judge scoring overall helpfulness", "verdict": "poor", "why": "A helpful but non-compliant run could pass.", "tradeoff": "Good for tone or satisfaction checks on top of the hard rules." },
+        { "name": "Outcome only", "verdict": "good", "why": "Catches wrong refunds.", "tradeoff": "A correct refund issued without verifying identity would pass." }
+      ],
+      "flips": [
+        { "if": "Policy allows verification in any order", "then": "Drop the order assertion and keep invariants." },
+        { "if": "Refunds cannot be sandboxed", "then": "Mock the tool and check arguments only." }
+      ],
+      "takeaway": "When policy fixes the order, assert it."
+    },
+    {
+      "id": "w14-t11-s2",
+      "title": "Open-ended research agent with Bing and search tools",
+      "situation": "A research agent searches the web and an index, then writes a briefing. Many tool sequences are valid. Foundry evaluators have limited support for these tools, and judge budget is modest.",
+      "constraints": ["Many valid paths", "Limited tool evaluator support", "Modest budget"],
+      "unknowns": ["How is briefing quality defined?", "Which failures are most costly?"],
+      "question": "How do you evaluate it?",
+      "options": [
+        { "name": "Rubric judge on the briefing plus invariants (no unsupported claims, cites sources) and sampled trace review", "verdict": "best", "why": "It grades what matters without forcing a path and avoids evaluators documented as limited for these tools.", "tradeoff": "Judge cost and calibration work, and step-level debugging is manual." },
+        { "name": "Exact expected trajectory per query", "verdict": "poor", "why": "Valid alternative paths would be marked wrong.", "tradeoff": "Right for a fixed-workflow agent." },
+        { "name": "Built-in `tool_call_accuracy` on every run", "verdict": "good", "why": "A step-level signal.", "tradeoff": "Documented as limited for these tools, so scores can mislead." }
+      ],
+      "flips": [
+        { "if": "The agent moves to function tools or MCP", "then": "Add the built-in tool evaluators." },
+        { "if": "A source list is required", "then": "Add code checks that cited URLs were retrieved." }
+      ],
+      "takeaway": "Many paths mean grade outcomes and invariants."
+    }
+  ],
+  "quiz": [
+    { "id": "w14-t11-q1", "type": "single", "tag": "tradeoff", "q": "An agent solves a task by an unexpected but valid tool sequence and fails your exact-trajectory test. What is the better design?", "options": ["Add the new sequence to the expected list forever", "Lower the pass threshold", "Remove the test", "Grade the outcome, plus invariants such as never calling a tool before verification"], "answer": 3, "explain": "Outcome and invariants allow valid alternatives while enforcing what matters. Listing sequences forever does not scale, and lowering the threshold or removing the test hides real failures." },
+    { "id": "w14-t11-q2", "type": "single", "tag": "diagnose", "q": "Trial results cluster: when one trial fails, the next several fail as well, though the agent code is unchanged. What is the likely cause?", "options": ["Trials share mutable environment state", "The judge is biased toward short answers", "Tool Selection is mislabelled", "The dataset is too small"], "answer": 0, "explain": "Shared state creates correlated failures. Isolating each trial in a clean environment is the fix. The other causes do not create clustered failures across trials." },
+    { "id": "w14-t11-q3", "type": "match", "tag": "concept", "q": "Match each check to what it catches.", "pairs": [
+      { "l": "Outcome check", "r": "The task did not reach the right end state" },
+      { "l": "Tool selection", "r": "The agent picked the wrong tool for the intent" },
+      { "l": "Tool input accuracy", "r": "Right tool, wrong or missing arguments" },
+      { "l": "Tool output utilisation", "r": "The agent ignored or misread a tool result" }
+    ], "explain": "Process checks localise a step. The outcome check tells you whether the user got what they needed." }
+  ],
+  "flashcards": [
+    { "front": "Outcome vs process grading for agents?", "back": "Outcome checks the end state. Process checks tool selection, arguments and output use. Grade outcome first, add process checks to localise failures." },
+    { "front": "Why avoid demanding one exact tool sequence?", "back": "Several paths can be valid, and a rigid grader marks correct runs wrong. Anthropic cites a model finding a policy loophole on a tau2-bench task and being graded wrong." },
+    { "front": "Why isolate each trial in a clean environment?", "back": "Shared state creates correlated failures between trials, so results stop being independent." }
+  ],
+  "related": ["w14-t08", "w14-t12", "w14-t03", "w10-t06", "w14-l5"],
+  "refs": ["r3", "r10", "r17", "r23", "r28"]
+}

@@ -1,0 +1,115 @@
+{
+  "id": "w11-t14",
+  "order": 14,
+  "group": "Workflows",
+  "title": "Executors, edges and supersteps",
+  "minutes": 10,
+  "difficulty": "core",
+  "summary": "A workflow is a directed graph: executors are the nodes, edges route typed messages between them. Execution proceeds in supersteps: all ready executors run in parallel, wait at a barrier, then the next messages are delivered.",
+  "useIf": "You want explicit order, branching, fan-out and fan-in, with deterministic ordering and clean checkpoint boundaries.",
+  "avoidIf": "The path is unknown in advance, or one agent loop can do the job without an explicit graph.",
+  "explain": [
+    { "t": "p", "md": "**Executors** derive from `Executor` with handler methods (`@handler` in Python, `[MessageHandler]` on a `partial` class in C#) or are plain functions (`@executor`, `BindExecutor`). In Python `WorkflowContext[Sent, Yielded]` types what the handler sends downstream with `ctx.send_message()` and what it yields as workflow output with `ctx.yield_output()`; for example `WorkflowContext[Never, str]` is an output-only handler. Do not mix annotations with explicit `@handler(input=..., output=..., workflow_output=...)` parameters [[tr15]]. Agents join the graph through `AgentExecutor` or directly as nodes." },
+    { "t": "table", "caption": "Edge types", "head": ["Edge", "Python builder", ".NET builder", "Use"], "rows": [
+      ["Direct", "`add_edge(a, b)`", "`AddEdge(a, b)`", "Linear pipelines"],
+      ["Conditional", "`add_edge(a, b, condition=fn)`", "`AddEdge(a, b, condition: fn)`", "Binary routing"],
+      ["Switch-case", "`add_switch_case_edge_group(a, [Case(...), Default(...)])`", "`AddSwitch(a, sw => sw.AddCase(...).WithDefault(...))`", "Multi-branch routing"],
+      ["Multi-selection (fan-out)", "`add_multi_selection_edge_group(a, targets, selection_func=...)`", "`AddFanOutEdge(...)`", "Parallel subset of targets"],
+      ["Fan-in", "`add_fan_in_edges([w1, w2], agg)`", "`AddFanInBarrierEdge([w1, w2], agg)`", "Aggregate parallel results"]
+    ] },
+    { "t": "p", "md": "**Supersteps** follow a modified Pregel (bulk synchronous parallel) model. Each superstep collects pending messages, routes them over edges, runs all target executors concurrently, waits at a barrier, then queues new messages. That gives a deterministic order and a checkpoint boundary after every step. Consequence: if a fan-out has one branch that is a chain and another that is one slow executor, the chain stalls at the barrier; merge steps into one executor for truly independent paths [[tr14]]. **Builders are mutable, built workflows are immutable**, and executor or agent instances shared across workflows share mutable state, so build fresh instances per workflow [[tr14]]." },
+    { "t": "diagram", "id": "w11-t14-d1", "title": "One superstep", "alt": "Pending messages are routed over edges, target executors run concurrently, a barrier waits for all, then new messages and a checkpoint are produced for the next superstep.", "src": "flowchart LR\n  P[Pending messages] --> R[Route over edges]\n  R --> E1[Executor A]\n  R --> E2[Executor B]\n  E1 --> B[Barrier]\n  E2 --> B\n  B --> C[Checkpoint and new messages]\n  C --> P" },
+    { "t": "tabs", "tabs": [
+      { "label": "C#", "blocks": [ { "t": "code", "lang": "csharp", "code": "internal sealed partial class Upper() : Executor(\"Upper\")\n{\n    [MessageHandler]\n    private ValueTask<string> HandleAsync(string message, IWorkflowContext ctx)\n        => ValueTask.FromResult(message.ToUpperInvariant());   // return value is sent on\n}\n\nvar upper = new Upper();\nWorkflowBuilder builder = new(upper);\nbuilder.AddEdge(upper, validator);\nbuilder.AddFanInBarrierEdge(sources: [w1, w2, w3], target: aggregator);\nvar workflow = builder.Build();\n\nStreamingRun run = await InProcessExecution.RunStreamingAsync(workflow, input);\nawait foreach (WorkflowEvent e in run.WatchStreamAsync())\n    if (e is WorkflowOutputEvent o) Console.WriteLine(o.Data);" } ] },
+      { "label": "Python", "blocks": [ { "t": "code", "lang": "python", "code": "class Upper(Executor):\n    @handler\n    async def to_upper(self, text: str, ctx: WorkflowContext[str]) -> None:\n        await ctx.send_message(text.upper())\n\nworkflow = (\n    WorkflowBuilder(start_executor=detector, output_from=[finalize])\n    .add_edge(detector, assistant, condition=lambda m: not is_spam(m))\n    .add_edge(detector, spam_handler, condition=lambda m: is_spam(m))\n    .add_edge(assistant, finalize)\n    .build()\n)\nasync for event in workflow.run(input_message, stream=True):\n    if event.type == 'output':\n        print(event.data)\nevents = await workflow.run(input_message)      # non-streaming\nprint(events.get_outputs())" } ] }
+    ] },
+    { "t": "callout", "kind": "gotcha", "title": "A throwing edge condition fails the run", "md": "In a switch-case group the default target runs only when every predicate returns false. If a predicate raises, the workflow fails and the message is not routed to the default. Catch parse errors in the condition and fail closed (return false) [[tr16]]." }
+  ],
+  "whereToUse": [
+    "Pipelines with branches: classify, route, handle, finalize",
+    "Parallel analysis with aggregation (fan-out then fan-in)",
+    "Mixed deterministic and model nodes, such as rules as functions and judgment as agents",
+    "Anything that must be checkpointed per step and resumed"
+  ],
+  "whenToUse": {
+    "use": [
+      "You can name the steps and the conditions between them",
+      "Several branches should run in parallel with a defined merge",
+      "Auditors want a trace of which executor ran in which superstep"
+    ],
+    "avoid": [
+      "Open-ended tasks where the model should choose the path",
+      "Tiny scripts where an ordinary function call chain is clearer",
+      "Independent branches of unequal length inside one fan-out: the barrier makes the short path wait"
+    ],
+    "flips": [
+      "A branch is a long chain beside a short one: merge the chain into one executor or split into separate workflows",
+      "You need output from early steps for a UI: designate them with `intermediate_output_from` instead of final output"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Graph workflow", "Explicit order, fan-out, checkpoints", "Path unknown", "Design and typing effort"],
+      ["Functional workflow (Python, experimental)", "Native `if`, loops and `asyncio.gather`", "You need graph-level checkpoints or the .NET SDK", "Experimental; checkpointing is per-`@step` result caching"],
+      ["Built-in orchestration", "A standard multi-agent shape", "Custom state or edges", "Less control"],
+      ["Agent with tools", "Open-ended", "Provable order", "Variance"],
+      ["Plain code", "Everything is deterministic", "You need pause, resume and agent nodes", "You rebuild persistence"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A fast branch waits for a slow one", "cause": "The superstep barrier waits for every executor in the step", "fix": "Merge chained steps into one executor, or restructure the graph" },
+    { "symptom": "Python 1.0 samples break: executors are referenced by string names", "cause": "Since 1.0.0b260210 builder methods take instances, not string names", "fix": "Pass executor instances to `add_edge` and friends" },
+    { "symptom": "Two workflows share mutable state unexpectedly", "cause": "Executor or agent instances were reused across workflows", "fix": "Build fresh executor and agent instances per workflow" }
+  ],
+  "scenarios": [
+    {
+      "id": "w11-t14-s1",
+      "title": "Triage with parallel enrichment",
+      "situation": "Incoming claims are classified, then three enrichment calls (policy lookup, fraud score, document summary) run, then an adjuster agent decides. Fraud score takes 8 seconds; the others 1 to 2.",
+      "constraints": ["Parallel enrichment", "One aggregation point", "Latency target 12 seconds"],
+      "unknowns": ["Can the summary start before classification ends?", "Is any enrichment optional?", "What if one call fails?"],
+      "question": "How do you model the enrichment?",
+      "options": [
+        { "name": "Fan-out edge to the three enrichers, fan-in barrier edge to the adjuster", "verdict": "best", "why": "They run concurrently in one superstep, so the step costs the slowest call (about 8 seconds), not the sum (about 11).", "tradeoff": "The adjuster waits for the slowest, and a failure needs explicit handling." },
+        { "name": "Chain the three enrichers with direct edges", "verdict": "poor", "why": "Sequential supersteps add latency: about 11 seconds before the adjuster even starts.", "tradeoff": "Right when each step depends on the previous one's output." },
+        { "name": "One executor that calls all three with `asyncio.gather`", "verdict": "good", "why": "Same latency, fewer nodes.", "tradeoff": "You lose per-step events, checkpoints and observability for each enrichment." }
+      ],
+      "flips": [
+        { "if": "Fraud score is optional and slow", "then": "Make it a separate branch that finishes later, or time-box it inside its executor." },
+        { "if": "Each enrichment needs its own retry policy", "then": "Keep them as separate executors." }
+      ],
+      "takeaway": "Fan-out costs the slowest branch; chains cost the sum."
+    },
+    {
+      "id": "w11-t14-s2",
+      "title": "Routing on a model's classification",
+      "situation": "An agent returns JSON saying Spam, NotSpam or Uncertain. Malformed JSON sometimes occurs. Each outcome goes to a different handler.",
+      "constraints": ["Three outcomes", "Malformed output possible", "Uncertain must reach a person"],
+      "unknowns": ["How often is the JSON malformed?", "Is an exception acceptable?"],
+      "question": "How do you route?",
+      "options": [
+        { "name": "A switch-case group with explicit cases and a default to the human-review handler, with conditions that fail closed on parse errors", "verdict": "best", "why": "Default catches Uncertain and any case where all predicates are false, and parse errors return false instead of raising.", "tradeoff": "More code per condition; remember a raising predicate fails the run." },
+        { "name": "Two conditional edges for Spam and NotSpam only", "verdict": "poor", "why": "Uncertain output has no edge and the message goes nowhere.", "tradeoff": "Fine for a strictly binary classifier with validated output." },
+        { "name": "Let each handler decide whether to act", "verdict": "good", "why": "Simple to start.", "tradeoff": "Routing logic scatters and is hard to audit." }
+      ],
+      "flips": [
+        { "if": "The classifier uses structured output with a schema", "then": "Parse errors become rare and simple conditions suffice." },
+        { "if": "More than one handler may apply", "then": "Use a multi-selection edge group." }
+      ],
+      "takeaway": "Design the default path first; unknown outputs need somewhere safe to go."
+    }
+  ],
+  "quiz": [
+    { "id": "w11-t14-q1", "type": "numeric", "tag": "numeric", "q": "A fan-out sends work to three executors taking 1.5, 2 and 8 seconds, then a fan-in aggregator takes 1 second. In one run with a superstep barrier, what is the minimum time to the aggregator's completion, in seconds?", "answer": 9, "tolerancePct": 0, "unit": "s", "explain": "The superstep waits for the slowest executor (8 s), then the next superstep runs the aggregator (1 s): 9 s. A sequential chain would take 11.5 + 1 = 12.5 s.", "ref": "tr14" },
+    { "id": "w11-t14-q2", "type": "single", "tag": "concept", "q": "Which statement about supersteps is correct?", "options": ["Executors in a superstep run one at a time in insertion order", "Checkpoints are written only when the workflow ends", "Edges are evaluated lazily during executor runs", "All ready executors run concurrently and wait at a barrier before messages for the next superstep are delivered"], "answer": 3, "explain": "The modified Pregel model runs targets concurrently, then a barrier, then new messages. Checkpoints are created at the end of each superstep.", "ref": "tr14" }
+  ],
+  "flashcards": [
+    { "front": "What does `WorkflowContext[Sent, Yielded]` express?", "back": "The types an executor sends downstream (`send_message`) and yields as workflow output (`yield_output`); `Never` marks no downstream messages." },
+    { "front": "Name the five edge types.", "back": "Direct, conditional, switch-case, multi-selection (fan-out) and fan-in." },
+    { "front": "Why can a fast branch be slow?", "back": "Supersteps have a barrier, so a fan-out step finishes only when the slowest executor finishes." }
+  ],
+  "related": ["w11-t15", "w11-t16", "w11-t23", "w10-t04"],
+  "refs": ["tr14", "tr15", "tr16"]
+}

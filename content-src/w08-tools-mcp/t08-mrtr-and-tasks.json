@@ -1,0 +1,93 @@
+{
+  "id": "w08-t08",
+  "order": 8,
+  "group": "Client features",
+  "title": "Multi round-trip requests and Tasks",
+  "minutes": 9,
+  "difficulty": "advanced",
+  "summary": "Multi Round-Trip Requests (MRTR) let a stateless server pause a call to ask for input by returning `input_required`. The Tasks extension gives long-running work a durable handle that clients poll.",
+  "useIf": "A tool needs a human answer mid-call (MRTR), or work outlasts a connection and must survive disconnects (Tasks).",
+  "avoidIf": "The call finishes in seconds with all inputs known, or the client does not support the extension and a start-and-poll pair of tools is simpler.",
+  "explain": [
+    { "t": "p", "md": "In 2026-07-28 a server can no longer push requests to the client. It answers a request with `resultType: \"input_required\"`, an `inputRequests` map (elicitation, sampling or roots requests keyed by server-chosen ids) and an optional `requestState`. The client gathers the answers and **retries the original request** with `inputResponses`, the unchanged `requestState` and a new JSON-RPC id. It applies only to `tools/call`, `resources/read` and `prompts/get`. The retry is self-contained, so any server instance can handle it [[r3]] [[r1]]." },
+    { "t": "callout", "kind": "warn", "title": "requestState is attacker-controlled input", "md": "It passes through the client. If it influences authorization or logic the server MUST protect its integrity (HMAC or AEAD) and reject failures. It SHOULD bind the principal, a short expiry and the request identity. That bounds replay but does not make it single-use, so one-time actions need server-side enforcement. Retries carrying it MUST NOT be cached." },
+    { "t": "p", "md": "The **Tasks extension** (`io.modelcontextprotocol/tasks`, SEP-2663) handles long work. The client opts in through its per-request `extensions` capability. For each request the server decides whether to return a `CreateTaskResult` (`resultType: \"task\"`) with a `taskId`, status, `ttlMs` and `pollIntervalMs`. The client calls `tasks/get` until a terminal state. If the task needs input it enters `input_required` and the client answers with `tasks/update`. `tasks/cancel` is cooperative. `tasks/result` and `tasks/list` were removed. In 2025-11-25 Tasks were experimental core (SEP-1686) [[r7]] [[r31]]." },
+    { "t": "diagram", "id": "w08-t08-d1", "title": "Task states", "alt": "A task starts as working, may move to input_required and back, and ends as completed, failed or cancelled.", "src": "stateDiagram-v2\n  [*] --> working\n  working --> input_required\n  input_required --> working\n  working --> completed\n  working --> failed\n  working --> cancelled\n  completed --> [*]\n  failed --> [*]\n  cancelled --> [*]" },
+    { "t": "table", "caption": "Ways to wait", "head": ["Pattern", "Server state", "Survives disconnect", "Fits"], "rows": [["Block the request", "None", "No", "Seconds"], ["MRTR `input_required`", "None, state rides in `requestState`", "No, the retry is a new request", "Short human input"], ["Tasks extension", "Durable task record", "Yes, by `taskId`", "Minutes to hours, approvals"], ["Start and poll tools", "Your own job store", "Yes, by explicit handle", "Clients without the extension"]] }
+  ],
+  "whereToUse": [
+    "A deploy tool that asks the user to confirm the target environment midway (MRTR)",
+    "Batch imports, CI pipelines or model training that run for minutes (Tasks)",
+    "Approval gates where a person may answer hours later (Tasks with `input_required`)",
+    "Autoscaled fleets with no sticky routing that still need mid-call questions (MRTR)"
+  ],
+  "whenToUse": {
+    "use": ["Use MRTR when the question is short and the answer comes in the same sitting", "Use Tasks when work outlives connections or timeouts", "Use start and poll tools when clients lack the Tasks extension", "Return `input_required` rather than blocking on a held stream"],
+    "avoid": ["Trusting `requestState` without an integrity check", "Using Tasks for sub-second calls", "Assuming every client supports the extension"],
+    "flips": ["Client does not declare the extension: return a handle from a start tool and poll with a status tool", "The wait can be hours: prefer Tasks over repeated MRTR retries"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["MRTR", "Short input, stateless fleet", "Work runs for minutes", "Retry must re-run setup work"],
+      ["Tasks extension", "Long work, reconnects, status", "Client lacks the extension", "Durable store and polling logic"],
+      ["Start and poll tools", "Any client", "You need native status and cancel", "You own handle auth and lifetime"],
+      ["Platform background mode", "A platform limit applies, such as the 100 second non-streaming MCP call limit in Foundry [[r15]]", "You need portability", "Vendor specific"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A user changes a price in `requestState` and the server honours it", "cause": "State was trusted without an integrity check", "fix": "Sign or encrypt with HMAC or AEAD and bind principal, expiry and request identity" },
+    { "symptom": "A client loops on a retry with the same JSON-RPC id", "cause": "The retry is an independent request and must use a new id", "fix": "Generate a fresh id and echo `requestState` unchanged" },
+    { "symptom": "Task results are lost after a restart", "cause": "The task record lived in process memory", "fix": "Persist tasks durably and honour `ttlMs`, since the creation response promises a durable record" }
+  ],
+  "scenarios": [
+    {
+      "id": "w08-t08-s1",
+      "title": "A ten-minute batch import",
+      "situation": "A tool starts an import that takes about ten minutes. Users are on mobile networks that drop often. The server supports the Tasks extension.",
+      "constraints": ["Duration is ten minutes", "Connections are unreliable", "Extension supported"],
+      "unknowns": ["Do clients declare the Tasks extension?", "How long must results stay retrievable?"],
+      "question": "How should the tool report progress and results?",
+      "options": [
+        { "name": "Return a task and let the client poll `tasks/get`", "verdict": "best", "why": "A durable `taskId` survives disconnects, and status and cancel are built in.", "tradeoff": "Needs a durable task store and clients that opted in." },
+        { "name": "Start and status tools with an explicit job id", "verdict": "good", "why": "Works in every client.", "tradeoff": "You build status, cancel and handle authorization yourself." },
+        { "name": "Hold one blocking call until the import ends", "verdict": "poor", "why": "Proxies and clients time out, and a dropped connection loses the result.", "tradeoff": "Fine for work under a few seconds." }
+      ],
+      "flips": [
+        { "if": "Clients do not declare the extension", "then": "Fall back to start and status tools." },
+        { "if": "The import takes two seconds", "then": "Return the result directly." }
+      ],
+      "takeaway": "Long work needs a handle that outlives the connection."
+    },
+    {
+      "id": "w08-t08-s2",
+      "title": "A confirmation inside an autoscaled fleet",
+      "situation": "A tool must confirm a target environment before deploying. The server runs on many instances behind a plain load balancer with no sticky routing. The user answers within seconds.",
+      "constraints": ["No sticky routing", "Answer in seconds", "Any instance may handle the retry"],
+      "unknowns": ["Does the client declare elicitation?", "What must the retry re-validate?"],
+      "question": "How do you ask the question?",
+      "options": [
+        { "name": "Return `input_required` with an elicitation and an integrity-protected `requestState`", "verdict": "best", "why": "No server memory is needed, so any instance can finish the call on retry.", "tradeoff": "The retry repeats validation and you must sign the state." },
+        { "name": "Create a task and move it to `input_required`", "verdict": "good", "why": "Durable and handles slow answers.", "tradeoff": "Heavier, needs a store and extension support for a quick question." },
+        { "name": "Keep the connection open and push a request on a held stream", "verdict": "poor", "why": "Server-initiated requests are no longer supported in 2026-07-28 and a held stream pins the instance.", "tradeoff": "Only the 2025-11-25 stateful model allowed this, with sticky sessions." }
+      ],
+      "flips": [
+        { "if": "The answer may take hours", "then": "Use a task so no connection or retry loop waits." },
+        { "if": "The deploy token must be single-use", "then": "Enforce one-time use server-side, since signed state can be replayed." }
+      ],
+      "takeaway": "Put the state in the request, then prove it was not altered."
+    }
+  ],
+  "quiz": [
+    { "id": "w08-t08-q1", "type": "order", "tag": "order", "q": "Order the MRTR exchange for an elicitation during `tools/call`.", "items": ["Client sends `tools/call` with id 1", "Server returns `input_required` with `inputRequests` and `requestState`", "Client collects the user's answer", "Client retries `tools/call` with a new id, `inputResponses` and the same `requestState`", "Server returns a complete result"], "explain": "The first request ends with `input_required`. The client gathers input and retries as an independent request with a new id, echoing `requestState` unchanged, and the server finishes the call." },
+    { "id": "w08-t08-q2", "type": "single", "tag": "security", "q": "`requestState` carries a discount level that affects billing. What must the server do?", "options": ["Nothing, because only the server reads it", "Protect its integrity with HMAC or AEAD and verify on receipt", "Let the client sign it", "Cache it per user"], "answer": 1, "explain": "It is attacker-controlled input passing through the client. If it influences authorization or business logic the server MUST protect integrity and reject failures. The client cannot be the signer, and results of retries must not be cached." }
+  ],
+  "flashcards": [
+    { "front": "What does a server return to ask for input in 2026-07-28?", "back": "`resultType: \"input_required\"` with `inputRequests` and optionally `requestState`. The client retries with `inputResponses`, the same state and a new id." },
+    { "front": "Which requests can return `input_required`?", "back": "Only `tools/call`, `resources/read` and `prompts/get`." },
+    { "front": "What does the Tasks extension add?", "back": "A durable `taskId` with statuses working, input_required, completed, failed, cancelled and methods `tasks/get`, `tasks/update`, `tasks/cancel`. Extension id `io.modelcontextprotocol/tasks`." }
+  ],
+  "related": ["w08-t06", "w08-t10", "w08-t09", "w08-l04"],
+  "refs": ["r3", "r7", "r1", "r15", "r31"]
+}

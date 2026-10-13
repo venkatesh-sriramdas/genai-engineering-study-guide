@@ -1,0 +1,137 @@
+{
+  "id": "w14-l4",
+  "order": 4,
+  "title": "Judge the judge",
+  "kind": "problem",
+  "minutes": 18,
+  "brief": "Your scorer is a model, and models have habits. The decision you are making, the availability of reference answers and the cost of a wrong verdict are unspecified. Set up the judge so that a change in score means something.",
+  "blocks": [
+    { "t": "h", "text": "A judge is an instrument with measurable habits", "level": 2 },
+    { "t": "stats", "items": [
+      { "label": "Agreement with humans", "value": "over 80%", "note": "GPT-4 reached 85% against 81% among humans in the non-tie setup. Measured on 2023 models." },
+      { "label": "Consistency after swapping order", "value": "65.0%, 46.2%, 23.8%", "note": "GPT-4, GPT-3.5 and Claude-v1 with the default prompt. Newer judges are likely better, but no measurement was found on 2026-10-13." },
+      { "label": "Math grading failures, out of 20", "value": "14, then 6, then 3", "note": "Default judge, then chain-of-thought, then a reference-guided judge" },
+      { "label": "Order flipped a ranking", "value": "66 of 80", "note": "Vicuna-13B beat ChatGPT on 66 of 80 queries once answer order changed, with ChatGPT as judge" },
+      { "label": "Few-shot judge", "value": "65.0% to 77.5%", "note": "GPT-4 consistency gain, at about 4 times the prompt cost" }
+    ] },
+    { "t": "table", "caption": "Judge formats and where each is exposed [[r21]] [[r18]] [[r16]]", "head": ["Format", "Strength", "Exposed to", "Cost"], "highlightCol": 1, "rows": [
+      ["Pointwise 1 to 5 score", "Cheap, one call per item", "Scale drift and compression, verbosity bias, uncalibrated scales", "1 call"],
+      ["Pairwise comparison", "More reliable than absolute scores when ranking two systems", "Position bias, fixed by swapping order", "2 calls per pair with swap"],
+      ["Reference-guided grading", "Checkable tasks: math failures fell from 14 to 3 of 20", "Needs a reference for every item", "1 call, longer prompt"],
+      ["Binary pass/fail with critique, calibrated", "OpenAI guidance prefers pairwise or pass/fail to fine-grained scores. Husain calibrates with one expert's critiques.", "Needs an accountable expert and a labelled sample", "1 call plus calibration time"],
+      ["Panel of judges from different families", "Dilutes self-preference, and disagreement flags items for review", "Multiplies calls and still shares some biases", "n calls"]
+    ] },
+    { "t": "dials", "id": "w14-l4-judge", "title": "Pick the judge setup", "prompt": "Flip the decision, the reference and the stakes. The ranking shows which setup carries the least risk.", "dials": [
+      { "id": "decision", "label": "Decision", "values": [{ "id": "rank", "label": "Rank two systems" }, { "id": "gate", "label": "Gate one system" }] },
+      { "id": "ref", "label": "Reference answers", "values": [{ "id": "yes", "label": "Exist" }, { "id": "no", "label": "Do not exist" }] },
+      { "id": "stakes", "label": "Cost of a wrong verdict", "values": [{ "id": "low", "label": "Low, budget matters" }, { "id": "high", "label": "High" }] }
+    ], "options": [
+      { "id": "point", "name": "Pointwise 1 to 5", "summary": "One absolute score per answer." },
+      { "id": "pair", "name": "Pairwise with order swap", "summary": "Compare two answers in both orders." },
+      { "id": "refjudge", "name": "Reference-guided pass/fail", "summary": "Grade against a known correct answer." },
+      { "id": "calib", "name": "Calibrated binary judge", "summary": "Pass/fail tuned to an expert's critiques." },
+      { "id": "panel", "name": "Panel from different families", "summary": "Several judges, disagreement flagged." }
+    ], "scores": {
+      "point": {
+        "decision": { "rank": { "s": -1, "why": "Absolute scores drift and compress, so close systems tie." }, "gate": { "s": 0, "why": "Workable with a threshold, though unanchored 1 to 5 scales are noisy." } },
+        "ref": { "yes": { "s": -1, "why": "A reference is available and this format does not use it." }, "no": { "s": 1, "why": "Works with no reference, which is why it is the default." } },
+        "stakes": { "low": { "s": 1, "why": "Cheapest: one call per item." }, "high": { "s": -2, "why": "Uncalibrated scores are risky when verdicts matter." } }
+      },
+      "pair": {
+        "decision": { "rank": { "s": 2, "why": "Pairwise is more reliable for ranking, and swapping removes position bias." }, "gate": { "s": -1, "why": "It needs a comparison partner, not a threshold." } },
+        "ref": { "yes": { "s": 0, "why": "References can be added, but are not required." }, "no": { "s": 1, "why": "Compares two answers, so no reference is needed." } },
+        "stakes": { "low": { "s": 0, "why": "Swapping doubles the calls." }, "high": { "s": 1, "why": "Counting only wins that hold in both orders is conservative." } }
+      },
+      "refjudge": {
+        "decision": { "rank": { "s": 0, "why": "Works, though it scores each system alone." }, "gate": { "s": 2, "why": "Pass/fail against a reference maps cleanly to a threshold." } },
+        "ref": { "yes": { "s": 2, "why": "Reference-guided grading cut math failures from 14 to 3 of 20." }, "no": { "s": -2, "why": "Nothing to guide the judge with." } },
+        "stakes": { "low": { "s": 0, "why": "Longer prompts cost a little more." }, "high": { "s": 1, "why": "Strong on verifiable tasks, where errors are checkable." } }
+      },
+      "calib": {
+        "decision": { "rank": { "s": 0, "why": "Binary verdicts lose fine ordering, though win counts still rank." }, "gate": { "s": 2, "why": "Pass/fail with a threshold and written critiques is the OpenAI and Husain advice." } },
+        "ref": { "yes": { "s": 0, "why": "A reference is optional here." }, "no": { "s": 1, "why": "Anchored by expert critiques instead of references." } },
+        "stakes": { "low": { "s": -1, "why": "Calibration needs expert time that low stakes do not repay." }, "high": { "s": 2, "why": "Measured true positive and true negative rates are what high stakes need." } }
+      },
+      "panel": {
+        "decision": { "rank": { "s": 1, "why": "Averaging across families dilutes self-preference." }, "gate": { "s": 0, "why": "Needs a rule for combining verdicts into one threshold." } },
+        "ref": { "yes": { "s": 0, "why": "Each judge can use the reference, with no special gain." }, "no": { "s": 1, "why": "Different families cross-check each other when nothing else anchors them." } },
+        "stakes": { "low": { "s": -2, "why": "Several calls on every item." }, "high": { "s": 2, "why": "Disagreement between judges flags items for human review." } }
+      }
+    }, "takeaway": "Rank with pairwise, gate with calibrated pass/fail, and use references wherever the answer is checkable." },
+    { "t": "diagram", "id": "w14-l4-d1", "title": "The judge calibration loop", "alt": "An expert labels a sample, a judge prompt is drafted and run, true positive and true negative rates are computed, disagreements drive prompt refinement until agreement is acceptable, then the judge is frozen and re-checked on a fresh human sample.", "src": "flowchart TB\n  L[\"Expert labels a sample\"] --> D[\"Draft judge prompt\"]\n  D --> R[\"Run judge on the sample\"]\n  R --> M[\"Compute TPR and TNR\"]\n  M --> Q{\"Agree enough?\"}\n  Q -->|No| X[\"Read disagreements, refine prompt\"]\n  X --> R\n  Q -->|Yes| F[\"Freeze judge version\"]\n  F --> W[\"Re-check on a fresh sample\"]", "caption": "Husain's critique shadowing reached over 90% agreement in three iterations on his example. Report TPR and TNR, not raw agreement, when classes are imbalanced." },
+    { "t": "failure", "title": "Judge failure modes", "items": [
+      { "symptom": "The pairwise winner flips when the answer slots swap", "cause": "Position bias: most judges favour the first slot", "fix": "Run both orders and count a win only when it holds both ways. Report the share of inconsistent pairs." },
+      { "symptom": "The longest answer keeps winning", "cause": "Verbosity bias. In the MT-Bench repetitive-list attack, Claude-v1 and GPT-3.5 failed 91.3% of the time and GPT-4 8.7%.", "fix": "Control for length, penalize padding in the rubric and test the judge with padded answers." },
+      { "symptom": "Your own model scores high on a judge from its own family", "cause": "Self-preference: judges recognize their own outputs and favour them", "fix": "Use a different family from the generator or a panel, and spot check against a human sample." },
+      { "symptom": "Agreement is 92% and the judge never flags failures", "cause": "Imbalanced labels, so raw agreement hides a low true negative rate", "fix": "Report TPR and TNR, and keep failure examples in the calibration sample." },
+      { "symptom": "A move from 4.2 to 4.4 is celebrated", "cause": "No interval, and an uncalibrated 1 to 5 scale", "fix": "Use binary criteria with a threshold, a paired comparison and a confidence interval before acting." },
+      { "symptom": "Scores shift after the judge model is upgraded", "cause": "A different model brings different habits", "fix": "Pin the judge version, recalibrate against the human sample and rerun the baseline whenever the judge changes." }
+    ] },
+    { "t": "accordion", "items": [
+      { "title": "Go deeper: G-Eval and rubric judges", "blocks": [
+        { "t": "p", "md": "G-Eval combines chain-of-thought with a form-filling prompt that ends in a score. With GPT-4 it reached a Spearman correlation of 0.514 with humans on summarization, and its authors flag a bias toward LLM-generated text. DeepEval implements it as `GEval` [[r22]] [[r28]]." }
+      ] },
+      { "title": "Go deeper: more than three biases", "blocks": [
+        { "t": "p", "md": "The CALM framework quantifies 12 biases in LLM judges, not only position and verbosity [[r44]]. MT-Bench found GPT-4 favoured itself with about a 10% higher win rate and Claude-v1 about 25%, but called the evidence inconclusive [[r21]]. A later study found judges can recognize their own outputs, and self-recognition correlated linearly with self-preference after fine-tuning [[r32]]. Fixes proposed for order effects include Multiple Evidence Calibration, Balanced Position Calibration and human-in-the-loop calibration [[r31]]." }
+      ] },
+      { "title": "Go deeper: judge cost arithmetic and custom judges", "blocks": [
+        { "t": "p", "md": "Swapping order doubles the calls, and a few-shot judge costs about 4 times the prompt tokens. OpenAI advises validating agreement against human labels before optimizing cost or latency, asking the judge to reason before it scores, and preferring pairwise comparison or pass/fail for more reliability [[r18]]." },
+        { "t": "p", "md": "In Foundry, `builtin.output_quality` and `builtin.tool_use_quality` batch several criteria into one judge call (preview, 2026-10-13) [[r3]]. A prompt-based custom evaluator (preview) returns JSON with a `result` and a `reason`, which lets you ship a calibrated judge as a first-class evaluator [[r41]]." }
+      ] }
+    ] }
+  ],
+  "quiz": [
+    {
+      "id": "w14-l4-q1", "type": "single", "tag": "diagnose", "difficulty": 2, "ref": "r21",
+      "q": "The stored answers are identical in both runs. Only the slot order changed. Which cause best fits?",
+      "code": { "lang": "text", "code": "run 1: prompt B in slot 1 -> B wins 68% of 200 comparisons\nrun 2: prompt B in slot 2 -> B wins 49% of 200 comparisons" },
+      "options": [
+        "Position bias: the judge favours whichever answer sits in slot 1",
+        "Verbosity bias: prompt B writes longer answers than prompt A",
+        "Self-preference: the judge shares a model family with the generator",
+        "Sampling temperature in the generator changed between the two runs"
+      ],
+      "answer": 0,
+      "explain": "Only the slot moved, and B's win rate fell from 68% to about chance, so the slot drove the verdict. Verbosity bias and self-preference follow the answer, so B would keep winning after the swap. The generator is not involved because the stored answers were re-judged unchanged. The swap-and-agree rule exists to catch exactly this."
+    },
+    {
+      "id": "w14-l4-q2", "type": "multi", "tag": "tradeoff", "difficulty": 2, "ref": "r16",
+      "q": "Select the mitigations that research or vendor guidance supports for judge reliability.",
+      "options": [
+        "Run each pair in both orders and count a win only when it holds in both",
+        "Give the judge a reference answer on tasks with a checkable solution",
+        "Calibrate against pass/fail labels and critiques from one accountable domain expert",
+        "Use a judge from the same model family as the generator so that style matches"
+      ],
+      "answers": [0, 1, 2],
+      "explain": "Swapping order addresses position bias, and a reference-guided judge cut math failures from 14 to 3 of 20 [[r21]]. Calibrating to one expert's critiques is the critique shadowing method [[r16]]. The fourth option backfires: a judge that recognizes its own family's style favours it, which is self-preference [[r32]]."
+    },
+    {
+      "id": "w14-l4-q3", "type": "numeric", "tag": "numeric", "difficulty": 2, "ref": "r16",
+      "q": "A judge is checked on 100 items. 90 are truly passing and 10 are truly failing. It labels 88 of the 90 passing items correctly and 3 of the 10 failing items correctly. Treating failing as the negative class, what is its true negative rate, in percent?",
+      "answer": 30, "tolerancePct": 1, "unit": "percent", "hint": "True negative rate = failing items the judge flagged divided by all truly failing items.",
+      "explain": "The judge flags 3 of 10 true failures, so the true negative rate is 30%. Raw agreement is (88 + 3) / 100 = 91%, which looks healthy while 7 of 10 real failures slip through. This is why imbalanced classes need TPR and TNR."
+    },
+    {
+      "id": "w14-l4-q4", "type": "single", "tag": "flip", "difficulty": 3, "ref": "r18",
+      "q": "You must gate one prompt change against a threshold. A domain expert has one day to give labels and there are no reference answers. Which judge setup fits best?",
+      "options": [
+        "A pointwise 1 to 10 score averaged over the whole set and compared with the last release's average",
+        "A pairwise judge comparing the new prompt with the old one, always in the same fixed order, as the gate",
+        "A binary pass/fail judge calibrated to the expert's labelled critiques, with a stated threshold",
+        "Two pointwise judges from different families whose fine-grained scores are averaged into one gate value"
+      ],
+      "answer": 2,
+      "explain": "Gating one system favours pass/fail with a threshold, and the expert's critiques are the input that calibrates it [[r16]] [[r18]]. Averaged 1 to 10 scores are the uncalibrated scale Husain warns against. A fixed-order pairwise judge is exposed to position bias and compares rather than gates. Averaging two fine-grained scores reduces noise a little but leaves the scale uncalibrated."
+    }
+  ],
+  "defend": null,
+  "refs": ["r3", "r16", "r18", "r21", "r22", "r28", "r31", "r32", "r41", "r44"],
+  "takeaways": [
+    "A judge is a model with measurable habits: position, verbosity and self-preference bias.",
+    "Swap order, use references where answers are checkable, and calibrate against one accountable expert.",
+    "Report true positive and true negative rates, not raw agreement.",
+    "Rank two systems with pairwise comparison. Gate one system with calibrated pass/fail.",
+    "Pin the judge version and recalibrate when it changes."
+  ]
+}

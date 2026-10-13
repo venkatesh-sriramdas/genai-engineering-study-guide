@@ -1,0 +1,130 @@
+{
+  "id": "w13-t10",
+  "order": 10,
+  "group": "Multimodal retrieval",
+  "title": "Multimodal embeddings",
+  "minutes": 7,
+  "difficulty": "core",
+  "summary": "A multimodal embedding model puts text and images into one vector space, so a text query can retrieve images and an image can retrieve look-alikes. You get similarity but no explanation or citation text.",
+  "useIf": "Users search by example image, or you need look-alike retrieval without an LLM call per image at index time.",
+  "avoidIf": "Answers need citable text or reasons. Verbalizing the image into text is the better path.",
+  "explain": [
+    { "t": "p", "md": "A **multimodal embedding** model maps images and text into the same vector space. A text query and a matching photo land close together, and two similar photos land close to each other. Each item gets one vector, scored by cosine similarity. That makes cross-modal search cheap: no LLM at index time, and image-to-vector queries work. The cost is that a vector explains nothing, so you cannot show why a result matched or quote it as a citation [[r12]]." },
+    { "t": "p", "md": "At query time you embed the query with the same model and take the nearest neighbours: a text query finds images and an image query finds look-alikes. Use one model version per corpus. Single-vector models keep one vector per item. Multi-vector output, which `jina-embeddings-v4` also offers, keeps many vectors per item and trades storage for finer matching [[r23]]." },
+    { "t": "table", "caption": "Models and documented limits (checked 2026-10-13)", "head": ["Model", "Inputs and dimensions", "Limits and notes"], "rows": [
+      ["Azure Vision multimodal embeddings", "Image and text, 1,024 dimensions", "Image under 20 MB, 10 x 10 to 16,000 x 16,000 px. Text 1 to 70 words. `2023-04-15` is multilingual, `2022-04-11` English only [[r13]]"],
+      ["Cohere `embed-v4.0`", "Text, images, mixed PDFs. 256, 512, 1024 or 1536 (default)", "128k context [[r22]]"],
+      ["Cohere `embed-v5.0-pro` and `-fast`", "Same modalities. 256 to 2048, default 2048", "Newer than the v4.0 that older write-ups cite [[r22]]"],
+      ["`jina-embeddings-v4`", "3.8 billion parameters, single-vector and multi-vector output, LoRA adapters", "Introduced the Jina-VDR benchmark [[r23]]"]
+    ] },
+    { "t": "diagram", "id": "w13-t10-d1", "title": "One space for text and images", "alt": "Images are embedded at index time. Text or image queries are embedded with the same model and matched by nearest neighbour search.", "src": "flowchart LR\n  I[Images] --> M[Embedding model]\n  M --> X[(Vector index)]\n  Q1[Text query] --> M\n  Q2[Image query] --> M\n  M --> N[Nearest neighbours]\n  N --> X" },
+    { "t": "formula", "title": "Index size", "expr": "bytes = items x dimensions x bytes_per_value", "vars": [{ "k": "float32", "v": "4 bytes per value (assumed here)" }], "example": "10 million images at 1,024 dimensions is 10M x 1,024 x 4 = **40.96 GB**. At 512 dimensions it is **20.48 GB**. Compare a multi-vector page index in the page-image topic." },
+    { "t": "callout", "kind": "gotcha", "title": "Do not mix versions or compare raw scores", "md": "Vectors from different models are not comparable, and Azure Vision relevance scores do not compare across queries. Re-embed the whole corpus when you change model version, and rank within each query [[r13]]." }
+  ],
+  "whereToUse": [
+    "Visual product and look-alike search with a photo as the query",
+    "Searching image libraries with text descriptions",
+    "Azure AI Search indexes using the direct embedding skill [[r12]]",
+    "Mixed corpora where some assets are images without usable text"
+  ],
+  "whenToUse": {
+    "use": [
+      "Image-to-image or text-to-image similarity is the product",
+      "You cannot afford an LLM call per image at index time",
+      "A cheap first-stage retriever feeds a later rerank"
+    ],
+    "avoid": [
+      "You must justify a result with quoted text",
+      "Queries are long passages: Azure Vision text input is 1 to 70 words",
+      "You expect scores to be comparable across queries or model versions"
+    ],
+    "flips": [
+      "Citations required: add a verbalization path next to the embeddings",
+      "Storage is tight: choose a smaller supported dimension and re-measure recall",
+      "Mixed PDFs with charts: test a model that accepts mixed documents, or page-image retrieval"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Single-vector multimodal embedding", "Look-alike and image queries", "Citations or reasons needed", "Vectors, no explanation"],
+      ["Caption then embed text", "Citable text and hybrid search", "Index-time LLM cost is prohibitive", "One LLM call per image"],
+      ["Multi-vector page images", "Figure-heavy pages where parsing fails", "Tight index budget", "About 30 times a text vector per page"],
+      ["Parse then text-embed", "Prose and simple tables", "Meaning lives in figures", "Parsing errors"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Similarity scores look arbitrary across queries", "cause": "Azure Vision relevance scores do not compare across queries", "fix": "Use per-query ranks and thresholds tuned on a golden set." },
+    { "symptom": "Results degrade after a model upgrade", "cause": "New and old vectors were mixed in one index, and they are not comparable", "fix": "Re-embed into a new index and switch an alias." },
+    { "symptom": "Image search finds look-alikes but cannot say why", "cause": "Embeddings carry no explanation or citation text", "fix": "Add a verbalization path for the same corpus." }
+  ],
+  "scenarios": [
+    {
+      "id": "w13-t10-s1",
+      "title": "Find products from a photo",
+      "situation": "A marketplace lets shoppers upload a photo to find similar items. The catalogue has 20 million images. Latency is tight and nobody needs a written reason.",
+      "constraints": ["Image queries", "Large corpus", "No citation text needed"],
+      "unknowns": ["Which languages are in text queries?", "What is the recall target?"],
+      "question": "How do you index?",
+      "options": [
+        { "name": "Embed images with a multimodal embedding model and search by vector", "verdict": "best", "why": "Image-to-vector queries and look-alike search are the use case, and no LLM runs at index time [[r12]].", "tradeoff": "No explanation for a match." },
+        { "name": "Caption every image and search the text", "verdict": "poor", "why": "Captions lose visual nuance, make photo queries awkward and cost one LLM call per image.", "tradeoff": "Right when users need text results and citations." },
+        { "name": "Page-image multi-vector retrieval", "verdict": "good", "why": "Strong for pages with text.", "tradeoff": "Far larger index and designed for documents, not product photos." }
+      ],
+      "flips": [
+        { "if": "Shoppers also type long descriptions", "then": "Add a text field and hybrid search." },
+        { "if": "Regulators require explanations", "then": "Add captions or attributes for citation." }
+      ],
+      "takeaway": "Photo queries want shared-space vectors."
+    },
+    {
+      "id": "w13-t10-s2",
+      "title": "Model version upgrade",
+      "situation": "A live index of 50 million images uses an older embedding model version. The team wants the multilingual version, and the index serves traffic daily.",
+      "constraints": ["Live traffic", "Vectors from different models are not comparable", "Large corpus"],
+      "unknowns": ["How long does re-embedding take?", "Can traffic tolerate a staged cutover?"],
+      "question": "How do you migrate?",
+      "options": [
+        { "name": "Build a new index with the new model, then switch traffic by alias", "verdict": "best", "why": "Old and new vectors cannot be compared, so the whole corpus must be re-embedded, and a swap avoids mixed results [[r13]].", "tradeoff": "Temporary double storage and embedding cost." },
+        { "name": "Embed new images with the new model into the old index", "verdict": "poor", "why": "It mixes incomparable vectors and corrupts ranking.", "tradeoff": "Never right within one index." },
+        { "name": "Embed queries with the new model against the old index", "verdict": "poor", "why": "Query and index vectors come from different spaces.", "tradeoff": "Works only if both use the same model version." }
+      ],
+      "flips": [
+        { "if": "Corpus is small", "then": "A short maintenance window with an in-place rebuild is fine." },
+        { "if": "Recall must be proven first", "then": "Run both indexes in parallel on a golden set before the switch." }
+      ],
+      "takeaway": "A model change is an index rebuild."
+    },
+    {
+      "id": "w13-t10-s3",
+      "title": "Shrinking a 100 million item index",
+      "situation": "A media archive embeds 100 million items with `embed-v4.0` at the default 1536 dimensions. Storage cost is too high.",
+      "constraints": ["Supported sizes 256, 512, 1024, 1536", "Recall target exists", "float32 storage"],
+      "unknowns": ["What recall is acceptable?", "Is quantization available?"],
+      "question": "What do you do first?",
+      "options": [
+        { "name": "Test 512 and 1024 on a golden set and choose the smallest that meets recall", "verdict": "best", "why": "100M x 1,536 x 4 B is about 614 GB, against about 205 GB at 512, so measurement can cut cost by two thirds.", "tradeoff": "You need a golden set and a re-embed." },
+        { "name": "Keep 1536 and buy more storage", "verdict": "good", "why": "No risk to recall.", "tradeoff": "Pays about 3 times the storage for possibly unneeded precision." },
+        { "name": "Choose 256 dimensions without testing", "verdict": "poor", "why": "Recall may fall below target and you only find out in production.", "tradeoff": "Fine if a test shows it meets the target." }
+      ],
+      "flips": [
+        { "if": "Recall must be near perfect", "then": "Stay at a higher size and look at other compression." },
+        { "if": "Cost of misses is low", "then": "Go smaller." }
+      ],
+      "takeaway": "Measure recall by dimension before paying for storage."
+    }
+  ],
+  "quiz": [
+    { "id": "w13-t10-q1", "type": "numeric", "tag": "numeric", "q": "How many gigabytes does an index of 2 million 1,024-dimension float32 vectors need (decimal GB, vectors only)?", "answer": 8.19, "tolerancePct": 2, "unit": "GB", "explain": "2,000,000 x 1,024 x 4 bytes = 8,192,000,000 bytes, about 8.19 GB." },
+    { "id": "w13-t10-q2", "type": "single", "tag": "diagnose", "q": "After upgrading the embedding model, new images rank oddly against old ones. Why?", "options": ["Vectors from different models are not comparable", "Cosine similarity stops working above 1,000 items", "Text queries cannot match images", "The index ran out of dimensions"], "answer": 0, "explain": "The docs warn that vectors from different models are not comparable, so rebuild the index. Cosine works at any size, cross-modal search is the point, and dimensions are a model property." },
+    { "id": "w13-t10-q3", "type": "multi", "tag": "concept", "q": "Which are documented properties of Azure Vision multimodal embeddings?", "options": ["1,024 dimensions", "Text input of 1 to 70 words", "Relevance scores comparable across queries", "Model `2022-04-11` is English only"], "answers": [0, 1, 3], "explain": "Scores are not comparable across queries, so the third option is false." }
+  ],
+  "flashcards": [
+    { "front": "What is the main strength and limit of single-vector multimodal embeddings?", "back": "Strength: text-to-image and image-to-image search with no LLM at index time. Limit: no explanation or citation text for a match." },
+    { "front": "What are Azure Vision multimodal embedding limits?", "back": "1,024 dimensions, image under 20 MB and 10 x 10 to 16,000 x 16,000 px, text 1 to 70 words. Scores are not comparable across queries or model versions." },
+    { "front": "Which dimensions does Cohere `embed-v4.0` offer?", "back": "256, 512, 1024 or 1536 (default), with 128k context and text, images and mixed PDFs. `embed-v5.0-pro` and `-fast` offer up to 2048." }
+  ],
+  "related": ["w13-t11", "w13-t12", "w13-l3", "w04-t12", "w04-t13"],
+  "refs": ["r12", "r13", "r22", "r23"]
+}

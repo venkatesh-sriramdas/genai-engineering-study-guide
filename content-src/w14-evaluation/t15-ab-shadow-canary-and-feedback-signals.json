@@ -1,0 +1,130 @@
+{
+  "id": "w14-t15",
+  "order": 15,
+  "group": "Operating",
+  "title": "A/B, shadow, canary and feedback signals",
+  "minutes": 9,
+  "difficulty": "advanced",
+  "summary": "Online experiments test a new version on live traffic. Shadow traffic hides it from users, a canary exposes a small share, an A/B test randomises users to measure outcomes, and feedback signals feed triage. Pick by harm if the new version is worse, traffic volume and what quality signal exists without references.",
+  "useIf": "Offline results look good but only real traffic can show user outcomes, drift or rare failures.",
+  "avoidIf": "Harm from the worse version is high and you have no safe exposure path, or traffic is too low to detect the effect you care about.",
+  "explain": [
+    { "t": "p", "md": "Online methods trade safety for realism. **Shadow** copies live requests to the new version and discards its answers, so users see nothing, but you get no user reaction. **Canary** sends a small share of users to the new version. An **A/B test** randomises users between versions and compares outcome metrics. **Continuous evaluation** scores sampled traffic with judges. **Feedback** (thumbs, edits, retries, escalations) is cheap, biased toward vocal users and best used to find new test cases. LangSmith automation rules, for example, can add low-feedback traces to a dataset [[r29]]." },
+    { "t": "flow", "title": "Progressive exposure", "direction": "h", "steps": [
+      { "title": "Offline gate", "md": "Golden set, safety and regression suites pass.", "tag": "no users" },
+      { "title": "Shadow", "md": "Mirror a share of traffic. Score outputs. Users see nothing.", "tag": "no exposure" },
+      { "title": "Canary", "md": "A small share of users. Stop-loss on safety, escalation, latency and cost.", "tag": "limited" },
+      { "title": "A/B", "md": "Randomised split to measure outcomes with enough samples.", "tag": "measured" },
+      { "title": "Roll out or roll back", "md": "Decide on the pre-agreed guardrails, not the best-looking chart.", "tag": "decide" }
+    ] },
+    { "t": "p", "md": "Azure Machine Learning traffic mirroring copies a share of live requests to a new deployment without changing client responses. The mirrored share is capped at 50%, an endpoint can hold one shadow deployment, it is not supported on Kubernetes online endpoints, and the default endpoint bandwidth quota is 5 MBps [[r36]]. No Foundry-native shadow feature turned up in a Microsoft Learn search on 2026-10-13, so for LLM apps expect to mirror at the gateway or in your own router. Foundry continuous evaluation (preview) uses Random or Intelligent sampling, defaults to 100 runs per hour and needs the Foundry User role on the project's managed identity [[r7]]. Intelligent sampling dedupes, filters broken traces and picks diverse ones without extra model calls [[r40]]. Online scoring runs asynchronously and uses judges because live traffic has no ground truth [[r30]]." },
+    { "t": "formula", "title": "Samples per arm for an A/B test (two proportions, unpaired)", "expr": "n = 2 x (1.96 + 0.84)^2 x p(1 - p) / d^2", "vars": [
+      { "k": "p", "v": "baseline success rate" },
+      { "k": "d", "v": "smallest difference worth detecting" },
+      { "k": "1.96, 0.84", "v": "z for alpha 0.05 two-sided and for power 0.80" }
+    ], "example": "Near p = 0.80: d = 10 points needs about 251 per arm, d = 5 points about 1,004, d = 3 points about 2,788 (computed estimate with the same variance in both arms; 80% against 70% with each arm's own variance needs about 290; paired designs need fewer)." },
+    { "t": "table", "caption": "Choosing a method", "head": ["Method", "User exposure", "Gives you", "Cannot tell you"], "rows": [
+      ["Shadow", "None", "Output quality on real inputs", "User reaction, outcomes"],
+      ["Canary", "Small share", "Early harm detection", "Small effects"],
+      ["A/B", "Half or a chosen share", "Causal outcome effect", "Anything without enough samples"],
+      ["Sampled online scoring", "None", "Drift and quality trend", "Causality"],
+      ["Feedback signals", "None", "Triage candidates", "Representative quality"]
+    ] }
+  ],
+  "whereToUse": [
+    "Swapping a model version where harm is possible",
+    "Changing prompts, retrieval or tools that alter user outcomes",
+    "Drift monitoring through sampled online scoring",
+    "Turning thumbs-down and retries into new offline cases",
+    "Cost and latency comparisons under real load"
+  ],
+  "whenToUse": {
+    "use": ["Offline gates pass and you need real-world evidence", "You can define stop-loss metrics and rollback", "Traffic is large enough for the effect you care about"],
+    "avoid": ["Shadowing agents with write tools without mocking the side effects", "Stopping an A/B test early because the chart looks good", "Using thumbs-up rate as the only success metric"],
+    "flips": ["Harm if worse is high: shadow first, then a tiny canary", "Traffic is low: skip A/B, use canary plus sampled human review", "Content cannot be read: score metadata and safety signals only"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Shadow traffic", "Harm is high, you want zero exposure", "You need user outcome data", "Doubled model cost, tool side effects"],
+      ["Canary", "Early warning on a limited share", "Detecting small effects", "A small group sees the worse version"],
+      ["A/B test", "Measuring real outcomes", "Low traffic or high harm", "Needs thousands of samples for small gaps"],
+      ["Sampled online scoring", "Watching drift without references", "Content is unreadable", "Judge tokens and privacy review"],
+      ["Feedback signals", "Triage and new test cases", "Measuring quality overall", "Skewed toward vocal users"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "The shadow agent sends duplicate emails or writes duplicate records", "cause": "Mirrored requests executed real write tools", "fix": "Run the shadow with read-only or mocked tools, and compare tool calls instead of executing them" },
+    { "symptom": "Thumbs-down jumped after a release, but offline metrics are flat", "cause": "A UI or latency change moved feedback, not the model", "fix": "Segment by version, check latency and compare with a control group" },
+    { "symptom": "An A/B test declared a winner after two days, then reversed", "cause": "Peeking and stopping early on noisy data", "fix": "Fix the sample size and duration in advance, and decide against guardrail metrics" }
+  ],
+  "scenarios": [
+    {
+      "id": "w14-t15-s1",
+      "title": "Financial guidance, new model version",
+      "situation": "An assistant gives account guidance to retail customers, 20,000 requests a day. A new model version passes the offline suite. A wrong answer has regulatory consequences.",
+      "constraints": ["High harm if worse", "20,000 requests a day", "Rollback must be fast"],
+      "unknowns": ["Can requests be mirrored at a gateway?", "Which stop-loss metrics apply?"],
+      "question": "How do you roll the new version out?",
+      "options": [
+        { "name": "Shadow with sampled scoring, then a 1% canary with stop-loss, then A/B if needed", "verdict": "best", "why": "Shadow exposes no one, and the canary adds real outcomes behind guardrails.", "tradeoff": "Slower rollout, doubled model cost during shadow and gateway work to mirror." },
+        { "name": "A/B test at 50% from day one", "verdict": "poor", "why": "Half the customers could see a worse version of regulated guidance.", "tradeoff": "Right when harm is low and rollback is instant." },
+        { "name": "Big-bang release with monitoring", "verdict": "good", "why": "Fast and simple.", "tradeoff": "All users exposed before any real evidence and slow to detect harm." }
+      ],
+      "flips": [
+        { "if": "Mirroring is not possible", "then": "Start with a very small canary and sampled human review." },
+        { "if": "The change is only a cost-saving model swap with equal offline results", "then": "A shorter canary may be enough." }
+      ],
+      "takeaway": "High harm means shadow first, then a tiny canary."
+    },
+    {
+      "id": "w14-t15-s2",
+      "title": "Copy assistant, millions of requests, low harm",
+      "situation": "A marketing copy assistant handles two million requests a day. Rollback is a flag flip. The team wants to know whether a new prompt raises the share of drafts users accept.",
+      "constraints": ["Low harm", "Huge traffic", "Instant rollback", "Outcome metric exists"],
+      "unknowns": ["What acceptance rate and difference matter?", "Is assignment sticky per user?"],
+      "question": "Which online method do you use?",
+      "options": [
+        { "name": "A/B test with sticky assignment, preset sample size and guardrail metrics", "verdict": "best", "why": "Traffic supports small effects, the outcome metric is direct and rollback is cheap.", "tradeoff": "Some users see the worse prompt for the test duration." },
+        { "name": "Shadow only", "verdict": "poor", "why": "It cannot measure acceptance because no user sees the draft.", "tradeoff": "Shadow is right when exposure is unacceptable." },
+        { "name": "Judge-scored sampling only", "verdict": "good", "why": "No exposure and gives a quality trend.", "tradeoff": "Judge preference may not match what users accept." }
+      ],
+      "flips": [
+        { "if": "Drafts could contain legal claims", "then": "Add a canary stage and safety guardrails first." },
+        { "if": "Traffic is 200 requests a day", "then": "An A/B test would take too long, so use a canary and sampled review." }
+      ],
+      "takeaway": "Big traffic and low harm make A/B the best-evidence method."
+    },
+    {
+      "id": "w14-t15-s3",
+      "title": "Internal tool, 200 requests a day",
+      "situation": "An internal HR assistant gets about 200 requests a day from 80 employees. The team wants to know if a new retrieval setting helps. Mistakes are embarrassing but not costly.",
+      "constraints": ["Low traffic", "Low harm", "Small user base"],
+      "unknowns": ["What effect size matters?", "Are users willing to give feedback?"],
+      "question": "How do you evaluate the change online?",
+      "options": [
+        { "name": "Canary by user group for two weeks with sampled review and an offline replay on logged queries", "verdict": "best", "why": "Traffic is too low for a powered A/B, so combine a controlled exposure with offline replay of real queries.", "tradeoff": "It will detect only large differences." },
+        { "name": "A/B test aiming to detect a 3-point difference", "verdict": "poor", "why": "It needs thousands of samples per arm, far beyond 200 requests a day.", "tradeoff": "Useful at millions of requests." },
+        { "name": "Roll out and read thumbs-down counts", "verdict": "good", "why": "Cheap.", "tradeoff": "Sparse, biased feedback." }
+      ],
+      "flips": [
+        { "if": "The team only needs to avoid harm", "then": "Run a shadow replay and skip the live exposure." },
+        { "if": "User base grows tenfold", "then": "Revisit a powered A/B test." }
+      ],
+      "takeaway": "Low traffic cannot power small-effect tests."
+    }
+  ],
+  "quiz": [
+    { "id": "w14-t15-q1", "type": "single", "tag": "tradeoff", "q": "A new model version must be tested on real inputs, but no customer may see its answers. Which method fits?", "options": ["A/B test", "Canary", "Shadow traffic", "Thumbs-up collection"], "answer": 2, "explain": "Shadow traffic mirrors requests and discards the new version's responses. A/B and canary expose users, and thumbs need users to see answers." },
+    { "id": "w14-t15-q2", "type": "numeric", "tag": "numeric", "q": "Using n = 2 x (1.96 + 0.84)^2 x p(1 - p) / d^2 with p = 0.80 and d = 0.10, about how many samples per arm are needed?", "answer": 251, "tolerancePct": 3, "hint": "2 x 7.84 x 0.16 / 0.01.", "explain": "2 x 7.84 x 0.16 = 2.509, divided by 0.01 gives about 251 per arm. Halving the difference to 0.05 quadruples it to about 1,004." },
+    { "id": "w14-t15-q3", "type": "single", "tag": "bug", "q": "This shadow plan mirrors production traffic to a new agent version. What is the risk?", "code": { "lang": "text", "code": "mirror: 20% of requests -> agent v2 (shadow)\nagent v2 tools: send_email, update_ticket, search_kb\nresponses from v2: discarded" }, "options": ["Mirroring above 10% is disallowed", "Discarding responses breaks logging", "v2 will execute its write tools, causing real side effects", "Shadow requires fewer tools"], "answer": 2, "explain": "Discarding the response does not stop write tools from running. Use read-only or mocked tools in shadow and compare tool calls instead. The mirror share is not the problem here." }
+  ],
+  "flashcards": [
+    { "front": "Shadow vs canary?", "back": "Shadow mirrors requests to the new version and discards its answers, so users see nothing. Canary sends a small share of users to the new version, so some are exposed." },
+    { "front": "Azure ML traffic mirroring limits?", "back": "Maximum mirrored share 50%, one shadow deployment per endpoint, not supported on Kubernetes online endpoints. No Foundry-native shadow feature found on 2026-10-13." },
+    { "front": "What are feedback signals good for?", "back": "Triage. Thumbs, edits, retries and escalations are cheap but biased toward vocal users, so use them to find new test cases, not as the only metric." }
+  ],
+  "related": ["w14-t02", "w14-t14", "w14-t12", "w15-t11", "w16-t01", "w14-l6"],
+  "refs": ["r36", "r7", "r40", "r30", "r29", "tr6"]
+}

@@ -1,0 +1,148 @@
+{
+  "id": "w12-t19",
+  "order": 19,
+  "group": "Identity and governance",
+  "title": "Runtime choice matrix",
+  "minutes": 9,
+  "difficulty": "advanced",
+  "summary": "Choose the agent runtime by control, effort, protocol needs, isolation and where code must run: a Foundry prompt agent, a hosted agent, self-hosting on AKS or Container Apps with registration, or a Copilot Studio agent.",
+  "useIf": "You must justify where an agent runs and what each option costs in control, operations and governance.",
+  "avoidIf": "The runtime is already fixed by policy and you only need to wire identity or governance.",
+  "explain": [
+    { "t": "p", "md": "The same agent can run in four homes. A **prompt agent** is config only and Foundry runs it with no code or compute to manage [[r1]]. A **hosted agent** is your code on per-session VM-isolated sandboxes with a dedicated Entra identity and endpoint [[r2]]. **Self-hosting on AKS or Container Apps** keeps code on infrastructure you run, and you register it for governance: Foundry Control Plane puts API Management in front as a proxy, and Agent 365 uses the SDK or registry sync [[r23]] [[r13]]. A **Copilot Studio** agent is built in a graphical, low-code studio and published to channels such as Teams, Microsoft Copilot, websites and mobile apps [[tr4]]." },
+    { "t": "diagram", "id": "w12-t19-d1", "title": "Runtime decision tree", "alt": "If code must run outside Foundry choose self-hosting with registration. If makers build it choose Copilot Studio. If developers build it and need custom code, protocols or files choose a hosted agent, otherwise a prompt agent.", "src": "flowchart TB\n  Q1{Must code run outside Foundry?} -->|Yes| SH[Self-host on AKS or Container Apps, register it]\n  Q1 -->|No| Q2{Who builds it?}\n  Q2 -->|Makers, low-code| CS[Copilot Studio agent]\n  Q2 -->|Developers| Q3{Custom code, protocols or files?}\n  Q3 -->|Yes| HA[Hosted agent]\n  Q3 -->|No| PA[Prompt agent]" },
+    { "t": "p", "md": "Each home trades the same four dials. **Control**: configuration only, your own code, total control, or low-code with harness choices. **Effort**: a prompt agent has nothing to run, a hosted agent has code but no cluster, and a self-hosted agent adds scaling, identity wiring, session persistence and patching (inference). **Protocols and isolation**: hosted agents offer Responses, Invocations, WebSocket, Activity and A2A inside per-session VM-isolated sandboxes, while self-hosting leaves both to you. **Governance**: Foundry identity and tracing for Foundry agents, registration for self-hosted ones, and the Agent 365 registry for Copilot Studio agents [[r16]]." },
+    { "t": "table", "caption": "Status caveats on 2026-10-13", "head": ["Runtime", "Status note"], "rows": [
+      ["Prompt agent", "Agents (core) GA [[r9]]"],
+      ["Hosted agent", "No explicit GA statement found: UNVERIFIED. Long-running resilience is preview [[tr2]]"],
+      ["Self-hosted with registration", "Your platform. Agent 365 GA since 2026-05-01, some modes and discovery preview [[r20]]"],
+      ["Copilot Studio", "App creation experience is preview [[tr4]]"]
+    ] },
+    { "t": "dials", "id": "w12-t19-pick", "title": "Pick a runtime", "prompt": "Flip the three dials to see which runtime leads and why.", "dials": [
+      { "id": "control", "label": "Control needed", "values": [ { "id": "config", "label": "Configuration is enough" }, { "id": "code", "label": "Custom code, protocols or files" } ] },
+      { "id": "builder", "label": "Who builds it", "values": [ { "id": "devs", "label": "Developers" }, { "id": "makers", "label": "Makers, low-code" } ] },
+      { "id": "where", "label": "Where it may run", "values": [ { "id": "managed", "label": "Microsoft-managed runtime is fine" }, { "id": "mine", "label": "Must run on my infrastructure" } ] }
+    ], "options": [
+      { "id": "prompt", "name": "Prompt agent", "summary": "Config only, run by Foundry." },
+      { "id": "hosted", "name": "Hosted agent", "summary": "Your code in per-session sandboxes." },
+      { "id": "self", "name": "Self-host and register", "summary": "AKS or Container Apps plus registration." },
+      { "id": "cs", "name": "Copilot Studio", "summary": "Low-code agent for Microsoft 365 channels." }
+    ], "scores": {
+      "prompt": {
+        "control": { "config": { "s": 2, "why": "Instructions, model and tools cover it [[r1]]." }, "code": { "s": -2, "why": "No place for custom runtime code." } },
+        "builder": { "devs": { "s": 1, "why": "SDK or REST definitions fit CI/CD." }, "makers": { "s": 1, "why": "Portal authoring needs no code." } },
+        "where": { "managed": { "s": 2, "why": "Foundry runs it." }, "mine": { "s": -2, "why": "It cannot run on your own hosts." } }
+      },
+      "hosted": {
+        "control": { "config": { "s": -1, "why": "Container effort for a config-level need." }, "code": { "s": 2, "why": "Your framework, protocols and `$HOME` state [[r2]]." } },
+        "builder": { "devs": { "s": 2, "why": "Developers bring code and ship an image or .zip." }, "makers": { "s": -2, "why": "Needs engineering skills." } },
+        "where": { "managed": { "s": 2, "why": "Foundry provisions per-session compute." }, "mine": { "s": -2, "why": "It runs on Foundry-managed sandboxes, not your hosts." } }
+      },
+      "self": {
+        "control": { "config": { "s": -2, "why": "Heavy for a configuration-level need." }, "code": { "s": 2, "why": "Total control of code and protocols." } },
+        "builder": { "devs": { "s": 1, "why": "Developers and platform engineers run it." }, "makers": { "s": -2, "why": "Not a maker tool." } },
+        "where": { "managed": { "s": -1, "why": "You take on operations you could avoid." }, "mine": { "s": 2, "why": "Code stays on your infrastructure and registration adds governance [[r23]]." } }
+      },
+      "cs": {
+        "control": { "config": { "s": 1, "why": "Describe the agent, connect knowledge and tools [[tr4]]." }, "code": { "s": -2, "why": "Low-code studio with harness choices, not arbitrary code." } },
+        "builder": { "devs": { "s": 0, "why": "Professional makers get depth, but code is not the model." }, "makers": { "s": 2, "why": "Built for makers [[tr4]]." } },
+        "where": { "managed": { "s": 1, "why": "Microsoft-managed and published to channels." }, "mine": { "s": -2, "why": "It does not run on your hosts." } }
+      }
+    }, "takeaway": "Start from where code may run and who builds it, then add control only as far as the requirement demands." }
+  ],
+  "whereToUse": [
+    "Architecture reviews that decide the runtime for a new agent",
+    "Migration plans moving agents between runtimes without losing governance",
+    "Interview answers that must defend a runtime with dials and flip conditions",
+    "Platform standards that set a default and name the exceptions"
+  ],
+  "whenToUse": {
+    "use": [
+      "Default to the prompt agent for config-level needs, because it is the least to manage",
+      "Move to a hosted agent when you need your code, custom protocols or persistent files",
+      "Self-host when code must run on your infrastructure, then register it for governance",
+      "Choose Copilot Studio when makers own the agent and Microsoft 365 channels are the main surface"
+    ],
+    "avoid": [
+      "Hosting everything yourself by habit when a managed runtime meets the requirement",
+      "Choosing hosted agents on a policy that needs a documented GA label until you confirm status",
+      "Choosing by tool preference rather than by control, effort, protocols, isolation and governance"
+    ],
+    "flips": [
+      "A webhook or custom protocol requirement flips prompt agent to hosted agent",
+      "A residency or on-premises requirement flips hosted to self-hosted with registration",
+      "A maker team that owns the agent flips developer-built runtimes to Copilot Studio"
+    ]
+  },
+  "alternatives": {
+    "title": "Runtime options compared",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Prompt agent", "Config-level behavior, fastest path", "Custom code, files or protocols", "Limited control [[r1]]"],
+      ["Hosted agent", "Custom code on managed, isolated compute", "Code must stay off Foundry, or config suffices", "Compute per active session; GA label unconfirmed [[r2]]"],
+      ["Self-hosted on AKS or Container Apps", "Code must run on your infrastructure", "You want managed sessions and identity", "You operate everything; governance by registration [[r23]]"],
+      ["Copilot Studio agent", "Makers, Microsoft 365 channels, connectors", "Arbitrary code, custom protocols", "Different governance surface; some features preview [[tr4]]"],
+      ["Direct Responses API call", "Definition inside an existing app", "You want Foundry to host and publish it", "You host the caller [[r1]]"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Governance team cannot see an agent running on another cloud", "cause": "The agent was self-hosted and never registered", "fix": "Register it in Foundry Control Plane, use the Agent 365 SDK, or sync the registry [[r23]] [[r13]]." },
+    { "symptom": "Cost and ops grow after moving to self-hosting 'for control'", "cause": "No requirement forced it, and you now run scaling, identity wiring and patching", "fix": "Revisit the decision tree and move back to a managed runtime unless residency or infrastructure rules demand it." },
+    { "symptom": "A Copilot Studio agent appears twice in the registry", "cause": "Separate publisher records for the same agent exist by design", "fix": "Use the publisher filter and check each record's actions [[r16]]." }
+  ],
+  "scenarios": [
+    {
+      "id": "w12-t19-s1",
+      "title": "Business team builds its own agent",
+      "situation": "A business team with no developers wants an agent for Teams that calls approved connectors and a knowledge source.",
+      "constraints": ["Makers own it", "Microsoft 365 channels are the surface", "Governance team will review it"],
+      "unknowns": ["Which connectors are needed?", "Does it need custom code later?"],
+      "question": "Which runtime do you pick?",
+      "options": [
+        { "name": "Copilot Studio agent", "verdict": "best", "why": "A low-code studio for makers, published to Teams and Microsoft Copilot, and it appears in the Agent 365 registry.", "tradeoff": "Limited code control, and some features are preview." },
+        { "name": "Prompt agent in Foundry", "verdict": "good", "why": "No code and published to Teams.", "tradeoff": "Authoring is still engineer-oriented and uses a different governance surface." },
+        { "name": "Hosted agent", "verdict": "poor", "why": "It needs developers, a container and compute for a need that low-code covers.", "tradeoff": "Right when custom code or protocols appear." }
+      ],
+      "flips": [
+        { "if": "The agent needs custom code or webhooks", "then": "Hand it to developers on a hosted agent." },
+        { "if": "Agents must live in Foundry for tracing and evals", "then": "Prompt agent." }
+      ],
+      "takeaway": "Let the builder profile pick the home when control needs are modest."
+    },
+    {
+      "id": "w12-t19-s2",
+      "title": "Code must stay in the data center",
+      "situation": "An existing agent runs in the company's own data center because of a residency rule. The governance team wants it visible and controlled alongside the cloud agents.",
+      "constraints": ["Code cannot move", "Central governance is required", "Platform engineers are available"],
+      "unknowns": ["Does it speak A2A or an OpenAI-compatible API?", "Does it need governed Work IQ tools?"],
+      "question": "What do you do?",
+      "options": [
+        { "name": "Keep it on your infrastructure and register it (Control Plane, Agent 365 SDK or registry sync)", "verdict": "best", "why": "Code stays put, and registration gives inventory and access control.", "tradeoff": "You keep operating the runtime, and the capabilities differ by registration path." },
+        { "name": "Port it to a hosted agent with bring-your-own VNet", "verdict": "good", "why": "Managed sessions and identity while keeping network isolation.", "tradeoff": "The code and data path move into Azure, which the residency rule may forbid." },
+        { "name": "Rebuild it as a prompt agent", "verdict": "poor", "why": "Loses the custom code and moves the workload off premises.", "tradeoff": "Right only for simple agents with no residency rule." }
+      ],
+      "flips": [
+        { "if": "Residency allows an Azure region", "then": "Hosted agent becomes the lowest-ops path." },
+        { "if": "Only inventory is needed", "then": "Registry sync with no code change." }
+      ],
+      "takeaway": "Where code may run decides the home, and registration carries governance."
+    }
+  ],
+  "quiz": [
+    { "id": "w12-t19-q1", "type": "single", "tag": "flip", "q": "A residency rule says agent code must run in the company's data center, but central governance is required. What is the best fit?", "options": ["Hosted agent", "Prompt agent", "Self-host and register for governance", "Copilot Studio agent"], "answer": 2, "explain": "Self-hosting keeps code on your infrastructure, and registration (Control Plane, Agent 365 SDK or registry sync) gives governance. Hosted, prompt and Copilot Studio runtimes are Microsoft-managed.", "ref": "r23" },
+    { "id": "w12-t19-q2", "type": "match", "tag": "concept", "q": "Match each runtime to its defining trait.", "pairs": [
+      { "l": "Prompt agent", "r": "Config only, nothing to host" },
+      { "l": "Hosted agent", "r": "Your code in per-session VM-isolated sandboxes" },
+      { "l": "Self-hosted on AKS or Container Apps", "r": "Code on your infrastructure, registered for governance" },
+      { "l": "Copilot Studio agent", "r": "Low-code, built for makers" }
+    ], "explain": "These follow the Foundry overview, the hosted agents page, the Control Plane registration page and the Copilot Studio overview.", "ref": "r1" },
+    { "id": "w12-t19-q3", "type": "multi", "tag": "tradeoff", "q": "Which are legitimate reasons to leave the prompt agent for a hosted agent?", "options": ["You need webhook payloads", "You need persistent files across turns", "You want fewer things to operate", "You need to choose CPU and memory for sessions"], "answers": [0, 1, 3], "explain": "Webhooks, persistent files and compute control are the documented reasons. Wanting fewer things to operate points the other way, toward the prompt agent.", "ref": "r2" }
+  ],
+  "flashcards": [
+    { "front": "Decision order for the runtime choice?", "back": "First: must code run outside Foundry? Then: who builds it (makers or developers)? Then: custom code, protocols or files needed? Prompt agent unless a requirement forces more." },
+    { "front": "How does a self-hosted agent get governance?", "back": "Register it in Foundry Control Plane (API Management proxy), add the Agent 365 SDK, or use registry sync for connected platforms. You still host and run it." },
+    { "front": "Which runtime lacks a documented GA label as of 2026-10-13?", "back": "Hosted agents: no separate GA row and no explicit GA statement found (UNVERIFIED). Voice-based agents are preview." }
+  ],
+  "related": ["w12-t01", "w12-t03", "w12-t07", "w12-t17", "w11-t25", "w12-l1", "w12-l7"],
+  "refs": ["r1", "r2", "r9", "r13", "r16", "r20", "r23", "tr2", "tr4"]
+}

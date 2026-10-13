@@ -1,0 +1,130 @@
+{
+  "id": "w01-l5",
+  "order": 5,
+  "title": "Decide who owns the conversation",
+  "kind": "problem",
+  "minutes": 20,
+  "brief": "A new assistant needs conversation memory, tools and a retention policy that legal can sign. The vendors disagree on who holds the state, so decide who owns it before you write the first request.",
+  "blocks": [
+    { "t": "h", "text": "Three API surfaces", "level": 2 },
+    { "t": "compare", "title": "Chat Completions, Responses and Anthropic Messages", "intro": "OpenAI says Chat Completions stays supported and Responses is recommended for all new projects [[r6]]. The choice still depends on your dials.", "options": [
+      { "name": "Chat Completions", "tag": "GA", "summary": "An array of Messages in, a message out. Your app holds the history.", "pros": ["Widely mirrored by other vendors, and Azure's v1 API also routes chat completions calls to other providers [[r14]]", "ZDR eligible endpoint"], "cons": ["No built-in tools", "From GPT-5.4 it rejects tools when effort is not `none`; GPT-6 Astra and 6.1 Sol need Responses for tools"], "bestWhen": "You target many OpenAI-compatible vendors, or run non-reasoning models with simple state in your app.", "avoidWhen": "You need reasoning with tools, built-in tools or server-held state.", "meta": [{ "k": "State", "v": "your app" }, { "k": "Portability", "v": "high" }] },
+      { "name": "Responses", "tag": "GA", "summary": "Typed Items in and out (`message`, `reasoning`, `function_call`, `function_call_output`). `output` can hold several items.", "pros": ["Server state options", "Built-in tools, background mode and encrypted reasoning"], "cons": ["OpenAI-specific shape", "Stored by default, so retention needs a decision", "No `seed`, `stop`, penalties or `logit_bias`"], "bestWhen": "New builds, reasoning with tools, built-in tools or background jobs.", "avoidWhen": "You must stay portable across many vendors.", "meta": [{ "k": "State", "v": "either" }, { "k": "Portability", "v": "medium" }] },
+      { "name": "Anthropic Messages", "tag": "GA", "summary": "`POST /v1/messages` is stateless. `system` is top level, `max_tokens` is required and content is typed blocks.", "pros": ["Native adaptive thinking, effort and strict tool use", "1M context on current models"], "cons": ["You send the full history every call", "No stored-response parameter"], "bestWhen": "You build on Claude models and want its native features.", "avoidWhen": "You need server-held threads or one code path across vendors.", "meta": [{ "k": "State", "v": "your app" }, { "k": "Portability", "v": "low" }] }
+    ] },
+    { "t": "h", "text": "Flip the constraints", "level": 2 },
+    { "t": "dials", "id": "w01-l5-api", "title": "API and state design", "prompt": "Change who owns state, the retention rule, the tool needs and the portability goal. Watch the ranking move.",
+      "dials": [
+        { "id": "state", "label": "State ownership", "values": [
+          { "id": "app", "label": "My app owns history" },
+          { "id": "server", "label": "The server holds history" }
+        ] },
+        { "id": "retention", "label": "Retention rule", "values": [
+          { "id": "normal", "label": "Normal retention is fine" },
+          { "id": "zdr", "label": "ZDR or no stored content" }
+        ] },
+        { "id": "tools", "label": "Tool needs", "values": [
+          { "id": "plain", "label": "Own functions only" },
+          { "id": "builtin", "label": "Built-in tools, reasoning with tools or background" }
+        ] },
+        { "id": "port", "label": "Portability", "values": [
+          { "id": "multi", "label": "Many vendors" },
+          { "id": "single", "label": "One vendor family" }
+        ] }
+      ],
+      "options": [
+        { "id": "chat", "name": "Chat Completions, app history", "summary": "Resend Messages each turn." },
+        { "id": "rstate", "name": "Responses, stateless", "summary": "`store: false` and replay every item." },
+        { "id": "rprev", "name": "Responses with previous_response_id", "summary": "Chain turns on the server." },
+        { "id": "rconv", "name": "Responses with Conversations", "summary": "A durable server-side conversation." },
+        { "id": "msgs", "name": "Anthropic Messages", "summary": "Stateless, full history per call." }
+      ],
+      "scores": {
+        "chat": {
+          "state": { "app": { "s": 1, "why": "You resend Messages and decide what to trim." }, "server": { "s": -2, "why": "There is no conversation object to chain on." } },
+          "retention": { "normal": { "s": 0, "why": "Neutral." }, "zdr": { "s": 1, "why": "`/v1/chat/completions` is ZDR eligible." } },
+          "tools": { "plain": { "s": 1, "why": "Function calling works for non-reasoning use." }, "builtin": { "s": -2, "why": "No built-in tools, and from GPT-5.4 tools are rejected when effort is not none." } },
+          "port": { "multi": { "s": 2, "why": "Many vendors mirror the shape, and Azure's v1 API routes chat completions calls to other providers." }, "single": { "s": 0, "why": "No portability benefit when you stay in one family." } }
+        },
+        "rstate": {
+          "state": { "app": { "s": 2, "why": "You hold the items, encrypted reasoning included, and control trimming and compaction." }, "server": { "s": -1, "why": "You rebuild what the server would hold." } },
+          "retention": { "normal": { "s": 0, "why": "Works, but you give up server convenience." }, "zdr": { "s": 2, "why": "ZDR forces `store` to false. Reasoning items carry `encrypted_content` that you replay." } },
+          "tools": { "plain": { "s": 1, "why": "Typed `function_call` and `function_call_output` items." }, "builtin": { "s": 2, "why": "Built-in tools such as `web_search`, `file_search`, `code_interpreter` and `mcp` live in Responses." } },
+          "port": { "multi": { "s": -1, "why": "Items are OpenAI-specific. Azure supports Responses, and Anthropic uses its own shape." }, "single": { "s": 1, "why": "Fine inside the OpenAI and Azure family." } }
+        },
+        "rprev": {
+          "state": { "app": { "s": -1, "why": "You lose trimming control, and earlier input tokens bill again every turn." }, "server": { "s": 2, "why": "Least code: send new input and the previous response id." } },
+          "retention": { "normal": { "s": 1, "why": "Responses are stored by default and kept 30 days." }, "zdr": { "s": -2, "why": "ZDR forces `store` to false, so there is no stored response to chain on (inference)." } },
+          "tools": { "plain": { "s": 1, "why": "Works with functions." }, "builtin": { "s": 2, "why": "Built-in tools and background mode are native to Responses." } },
+          "port": { "multi": { "s": -1, "why": "OpenAI-specific." }, "single": { "s": 1, "why": "Native to OpenAI and Azure." } }
+        },
+        "rconv": {
+          "state": { "app": { "s": -1, "why": "The server owns the thread." }, "server": { "s": 2, "why": "A durable conversation object with no 30 day TTL." } },
+          "retention": { "normal": { "s": 1, "why": "Durable threads suit audit and long-lived conversations." }, "zdr": { "s": -2, "why": "`/v1/conversations` is not ZDR eligible." } },
+          "tools": { "plain": { "s": 1, "why": "Works with functions." }, "builtin": { "s": 2, "why": "Same built-in tools as Responses." } },
+          "port": { "multi": { "s": -2, "why": "An OpenAI-specific object." }, "single": { "s": 0, "why": "Neutral inside the family." } }
+        },
+        "msgs": {
+          "state": { "app": { "s": 1, "why": "Stateless by design. You send the full history every call." }, "server": { "s": -2, "why": "The body has no conversation or stored-response parameter." } },
+          "retention": { "normal": { "s": 0, "why": "Retention terms are outside this world. Read Anthropic's data terms." }, "zdr": { "s": 0, "why": "Not compared here. Check the vendor's current terms." } },
+          "tools": { "plain": { "s": 1, "why": "`tool_use` and `tool_result` blocks. `tool_choice` rules vary by model." }, "builtin": { "s": 0, "why": "Server tools exist (web search, web fetch, code execution, tool search, MCP connector) with their own shapes." } },
+          "port": { "multi": { "s": 0, "why": "A distinct shape. The OpenAI SDK layer is for testing, not production." }, "single": { "s": 1, "why": "Native fit for Claude models." } }
+        }
+      },
+      "takeaway": "Retention and state ownership decide more than API fashion. ZDR pushes you toward stateless replay, and durable threads push you toward a conversation object." },
+    { "t": "table", "caption": "State options on the OpenAI side (checked 2026-10-13)", "head": ["Option", "Who holds history", "Retention", "Trade-offs"], "rows": [
+      ["Replay it yourself", "Your app", "Yours", "Full control of trimming and compaction, and it works with `store: false`. You resend tokens and a reorder can break the cached prefix [[r7]]."],
+      ["`previous_response_id`", "OpenAI", "Responses are kept 30 days", "Least code. Earlier input tokens bill again each turn and top-level `instructions` are not carried over [[r7]]."],
+      ["Conversations API (released 2025-08-20)", "OpenAI", "No 30 day TTL on conversations and items", "Durable and good for audit. Not ZDR eligible [[r10]]."],
+      ["Compaction", "Either side", "Follows your state choice", "Client-side `/responses/compact` (2025-12-11) or server-side `context_management` with `compact_threshold` (2026-02-10). Azure says server-side compaction works with `store=false` [[r34]]."]
+    ] },
+    { "t": "diagram", "id": "w01-l5-state", "title": "Choose where state lives", "alt": "A decision tree. If no content may be stored, replay items yourself with store false. Otherwise if threads must outlive 30 days or be audited, use the Conversations API. Otherwise chain with previous_response_id.", "src": "flowchart TB\n  Q{Content may be stored}\n  Q -- no --> R[Replay items yourself with store false]\n  Q -- yes --> D{Thread outlives 30 days or needs audit}\n  D -- yes --> C[Conversations API]\n  D -- no --> P[previous_response_id]", "caption": "A starting rule. Add a permission, residency and cost check before you commit." },
+    { "t": "failure", "title": "State and API failure modes", "items": [
+      { "symptom": "The second turn ignores the system prompt", "cause": "`previous_response_id` does not carry over top-level `instructions`.", "fix": "Send `instructions` on every turn." },
+      { "symptom": "Cost per turn climbs in a long chain", "cause": "Earlier input tokens bill again on every chained turn.", "fix": "Compact or trim history, and keep a stable prefix so caching can help." },
+      { "symptom": "Code that reads the first output item breaks", "cause": "`output` can hold several items, such as reasoning and function calls, so text is not always at index 0.", "fix": "Iterate the items and select by type." },
+      { "symptom": "An audit finds content although `store` is false", "cause": "Abuse monitoring logs can keep content up to 30 days unless ZDR or Modified Abuse Monitoring applies. Conversations and files are not ZDR eligible [[r10]].", "fix": "Agree the retention class first, then choose the API and the state option." },
+      { "symptom": "A stateless reasoning loop loses its earlier thinking", "cause": "Encrypted reasoning items were dropped when replaying history.", "fix": "Replay every output item, encrypted reasoning included." }
+    ] },
+    { "t": "accordion", "items": [
+      { "title": "Go deeper: built-in tools by platform", "blocks": [
+        { "t": "list", "style": "ul", "items": [
+          "OpenAI Responses tools listed for GPT-6 Astra: `web_search`, `file_search`, `image_generation`, `code_interpreter`, `hosted_shell`, `apply_patch`, `skills`, `computer_use`, `mcp` and `tool_search` [[r1]].",
+          "Azure: remote MCP needs explicit approval by default, mTLS and Azure service tags are not supported for MCP client traffic, and Code Interpreter has extra charges with up to 1,000 files per container [[r34]].",
+          "Anthropic server tools: web search, web fetch, code execution and tool search, plus the MCP connector. The count endpoint rejects server tools and the MCP connector [[r30]]."
+        ] }
+      ] },
+      { "title": "Go deeper: background mode", "blocks": [
+        { "t": "p", "md": "Set `background: true` and poll while the status is `queued` or `in_progress` [[r35]]. ZDR projects run with `store=false`, and data sits on disk for roughly 10 minutes so you can poll. Modified Abuse Monitoring projects keep a background response past polling only if you set `store=true`. On Azure, cancel is idempotent, you resume a stream with `sequence_number`, and combining background with streaming has a known performance issue [[r34]]." }
+      ] },
+      { "title": "Go deeper: Azure v1 API", "blocks": [
+        { "t": "p", "md": "Since August 2025 you can opt in to the v1 API with the `OpenAI()` client and a base URL ending `/openai/v1`. A dated `api-version` is no longer required, and preview features use feature headers or an `alpha` path [[r14]]. Azure recommends Responses for Azure OpenAI models, keeps responses 30 days and lets you delete by ID [[r34]]." }
+      ] },
+      { "title": "Go deeper: the Assistants sunset", "blocks": [
+        { "t": "table", "caption": "OpenAI announced deprecation on 2025-08-26 and sunset the API on 2026-08-26 [[r51]]", "head": ["Assistants concept", "Replacement", "Caveat"], "rows": [
+          ["Threads", "Conversations", "Conversations are not ZDR eligible."],
+          ["Runs", "Responses", "A run becomes a response with typed Items."],
+          ["Assistants", "Prompts", "Reusable prompts (`v1/prompts`) are themselves deprecated, with shutdown on 2026-11-30 [[r11]]."]
+        ] },
+        { "t": "callout", "kind": "preview", "title": "Azure status", "md": "Microsoft's classic docs say Azure OpenAI Assistants retire on 2026-08-26 with migration to Foundry Agent Service [[r49]]. I found only pre-date notices, so the post-date Azure status is unverified as of 2026-10-13." }
+      ] }
+    ] }
+  ],
+  "quiz": [
+    { "id": "w01-l5-q1", "type": "single", "tag": "diagnose", "q": "A chat service chains turns with `previous_response_id`. Turn 1 follows the system prompt, turn 2 ignores it. The code sets `instructions` only on turn 1. What is the cause?", "options": ["Responses expire after a single turn and must be recreated", "`store` defaulted to false on the second turn", "`instructions` are not carried over by `previous_response_id`", "The model forgot it because the context window filled up after one turn"], "answer": 2, "explain": "Top-level `instructions` are not carried across `previous_response_id`, so send them each turn. Responses are kept 30 days and stored by default, and a full window would not hit on turn 2.", "difficulty": 2, "ref": "r7" },
+    { "id": "w01-l5-q2", "type": "single", "tag": "security", "q": "A team must run with zero data retention, uses reasoning models with tools, and wants conversations that survive restarts. Which design fits?", "options": ["Conversations API with `store: true` so threads survive restarts", "`previous_response_id` chaining over responses stored on the server", "The Assistants API with Threads, which keeps thread state for you", "Stateless Responses with your own thread store and item replay"], "answer": 3, "explain": "ZDR forces store to false and the Conversations endpoint is not ZDR eligible, so your own store plus replay is the fit. Chaining needs stored responses, and the Assistants API was sunset on 2026-08-26.", "difficulty": 3, "ref": "r10" },
+    { "id": "w01-l5-q3", "type": "match", "tag": "concept", "q": "Match each Assistants API concept to the OpenAI replacement named in the migration mapping.", "pairs": [
+      { "l": "Threads", "r": "Conversations" },
+      { "l": "Runs", "r": "Responses" },
+      { "l": "Assistants", "r": "Prompts, which are deprecated too" }
+    ], "explain": "Threads map to Conversations and Runs map to Responses. Assistants map to Prompts, but reusable prompts were deprecated on 2026-06-03 with shutdown on 2026-11-30, so treat that mapping as a stopgap and keep configuration in your own code or store.", "difficulty": 2, "ref": "r51" }
+  ],
+  "defend": null,
+  "refs": ["r1", "r6", "r7", "r10", "r11", "r14", "r30", "r34", "r35", "r49", "r51"],
+  "takeaways": [
+    "Decide who owns state and what retention class applies before you pick an API",
+    "ZDR forces stateless replay, and the Conversations API is not ZDR eligible",
+    "`previous_response_id` is the least code and bills earlier input tokens again each turn",
+    "The Assistants API is sunset, and its Prompts replacement is deprecated too"
+  ]
+}

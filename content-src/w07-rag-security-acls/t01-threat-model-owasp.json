@@ -1,0 +1,108 @@
+{
+  "id": "w07-t01",
+  "order": 1,
+  "group": "Threats",
+  "title": "RAG threat model and OWASP LLM Top 10 2025",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "A threat model for RAG lists what you protect, who can write into each stage and where text crosses a trust boundary, then maps those risks to the OWASP LLM Top 10 2025 ids.",
+  "useIf": "You are starting a RAG design review and need a shared vocabulary for what can go wrong.",
+  "avoidIf": "You already have a threat model and need a specific control. Jump to the access control or defence topics.",
+  "explain": [
+    { "t": "p", "md": "The model can only leak what retrieval hands it, and it will follow any instruction that arrives inside that text. A RAG threat model therefore starts with two questions: **who can write into each stage** and **what can each stage read or send out**. Assets are the documents and their permissions, the embeddings, the system prompt, the caller's identity and tokens, and every tool the model can call." },
+    { "t": "diagram", "id": "w07-t01-d1", "title": "Where text crosses a trust boundary", "alt": "Writers feed ingestion and the index. A caller's question and the retrieved chunks both enter the prompt. The model output reaches a client and tools, which are the exit points.", "src": "flowchart LR\n  W[Writers: staff, customers, web] --> I[Ingestion]\n  I --> X[(Index)]\n  C[Caller question] --> R[Retrieval]\n  X --> R\n  R --> P[Prompt]\n  P --> M[Model]\n  M --> O[Output renderer]\n  M --> T[Tools]" },
+    { "t": "p", "md": "Every arrow that carries text written by someone other than the caller is an attack path. Run the model in three passes:" },
+    { "t": "list", "style": "ol", "items": ["List the assets and who may see each one.", "List the writers at each stage and mark the untrusted ones.", "List the exits: the output renderer, tools, logs and caches."] },
+    { "t": "p", "md": "The OWASP LLM Top 10 2025 names the risks that matter at each point [[r1]]." },
+    { "t": "table", "caption": "OWASP LLM Top 10 2025 items that touch RAG", "head": ["Id", "Risk", "RAG shape", "First control"], "rows": [
+      ["LLM01", "Prompt Injection", "Instructions hidden in a retrieved chunk. RAG and fine-tuning do not fully mitigate it [[tr1]]", "Least privilege, no outbound channel, layered detection"],
+      ["LLM02", "Sensitive Information Disclosure", "Chunks the caller may not read reach the prompt [[tr2]]", "Enforce access in retrieval with the caller's identity"],
+      ["LLM04", "Data and Model Poisoning", "Manipulated embedding data steers answers [[tr3]]", "Source authentication, provenance, ingest review"],
+      ["LLM05", "Improper Output Handling", "Rendered Markdown or links carry data out [[tr4]]", "Encode output, strict content security policy"],
+      ["LLM06", "Excessive Agency", "Tools broader than the task [[tr5]]", "Minimum tools, scopes and approval"],
+      ["LLM07", "System Prompt Leakage", "Prompt used as a secret or as authorization [[tr6]]", "Keep secrets and rules outside the prompt"],
+      ["LLM08", "Vector and Embedding Weaknesses", "Cross-tenant leaks, inversion, poisoning [[r2]]", "Permission-aware stores, logical partitioning"]
+    ] },
+    { "t": "callout", "kind": "note", "title": "Two neighbouring lists", "md": "OWASP also published a Top 10 for Agentic Applications 2026 (ASI01 to ASI10) on 2025-12-09 [[r3]], and MITRE ATLAS lists RAG techniques such as AML.T0064 and AML.T0070 [[r4]]. Do not confuse them with the LLM list." }
+  ],
+  "whereToUse": [
+    "Design reviews before a RAG assistant gets access to real documents",
+    "Interview answers that must show a layered view instead of one guard",
+    "Choosing which of the later topics to read first for your corpus and tools",
+    "Incident post-mortems: classify the leak by id and by stage"
+  ],
+  "whenToUse": {
+    "use": ["A new corpus mixes authors you do not fully trust", "The assistant can call tools or render rich output", "Several teams own different pipeline stages"],
+    "avoid": ["You need an implementation recipe: use the topic for that control", "The system has no retrieval and no tools, so most items drop out", "You expect the list to be complete: it is a shared vocabulary, not a design"],
+    "flips": ["The corpus is written only by vetted staff: weight LLM04 lower and LLM02 higher", "The assistant gains a send or write tool: LLM06 and LLM01 move to the top"]
+  },
+  "alternatives": {
+    "title": "Ways to frame the risk",
+    "head": ["Framing", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Stage-by-stage trust map (this topic)", "You can name every writer and exit", "The system changes weekly and the map goes stale", "Needs an owner per stage"],
+      ["OWASP LLM Top 10 checklist", "You need shared ids for audits", "You treat the list as complete", "Misses design-specific flows"],
+      ["OWASP Agentic Top 10 and ATLAS", "The system plans and acts", "It is a plain Q&A bot", "More vocabulary than needed"],
+      ["Single control (one guard)", "A quick demo", "Any real data is present", "One bypass breaks everything"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "The review lists only prompt injection", "cause": "Treating RAG as a prompt problem", "fix": "Walk each stage: ingest, index, retrieve, prompt, output, tools" },
+    { "symptom": "Everyone assumes the system prompt enforces access", "cause": "LLM07 is ignored: the prompt is not a secret or a control", "fix": "Move rules and secrets to code that runs outside the model" },
+    { "symptom": "Threat model never updates", "cause": "No trigger on new sources or tools", "fix": "Re-run it whenever a writer, tool or output channel is added" }
+  ],
+  "scenarios": [
+    {
+      "id": "w07-t01-s1",
+      "title": "Read-only assistant over staff-written pages",
+      "situation": "An assistant answers questions over an internal wiki. Everyone with write access is an employee. The assistant has no tools and renders plain text. Documents carry per-team permissions.",
+      "constraints": ["Corpus authors are vetted employees", "No tools, no outbound channel", "Permissions differ by team"],
+      "unknowns": ["Who can edit pages, and can contractors?", "Does the client render Markdown or fetch images?"],
+      "question": "Which risk do you address first?",
+      "options": [
+        { "name": "Add a prompt-injection classifier on every chunk", "verdict": "good", "why": "Cheap insurance against a careless or malicious edit.", "tradeoff": "Adds latency and false positives while the main exposure stays open." },
+        { "name": "Enforce the caller's permissions inside retrieval (LLM02, LLM08)", "verdict": "best", "why": "Authors are trusted and there is no outbound channel, so the realistic loss is a chunk reaching the wrong reader.", "tradeoff": "Needs ACL capture at ingest and a sync story." },
+        { "name": "Tell the model in the system prompt not to reveal restricted pages", "verdict": "poor", "why": "The model is not an authorization layer and the prompt can be extracted or overridden.", "tradeoff": "Fine as a tone instruction, never as the access control." }
+      ],
+      "flips": [
+        { "if": "Anyone on the internet can edit a page", "then": "Injection and poisoning rise to the top: add ingest review and spotlighting." },
+        { "if": "The client renders images from model output", "then": "Output handling (LLM05) joins the first tier." }
+      ],
+      "takeaway": "Rank risks by who can write, what can leave and how much agency exists."
+    },
+    {
+      "id": "w07-t01-s2",
+      "title": "Customer tickets in, email out",
+      "situation": "A support agent reads customer-submitted tickets, looks up account data and can send replies automatically. Volume is high and replies are sent without review.",
+      "constraints": ["Untrusted authors (customers)", "Private account data in scope", "Agent can send messages externally"],
+      "unknowns": ["Can a reply include data from other accounts?", "Is a human review step acceptable for some replies?"],
+      "question": "How do you reduce the risk most?",
+      "options": [
+        { "name": "Stack a classifier, spotlighting and a stricter prompt", "verdict": "good", "why": "Lowers attack success and is worth having.", "tradeoff": "All three are probabilistic, so a single bypass still reaches the channel." },
+        { "name": "Rely on one best-in-class input classifier", "verdict": "poor", "why": "EchoLeak bypassed a production classifier as one link in its chain.", "tradeoff": "Acceptable only when the agent cannot send or fetch anything." },
+        { "name": "Remove one leg: draft replies for human approval, or block account data in that session", "verdict": "best", "why": "Untrusted input, private data and an outbound channel together are the shape of EchoLeak-style exfiltration [[r10]] [[r6]].", "tradeoff": "Adds reviewer time or reduces automation." }
+      ],
+      "flips": [
+        { "if": "Replies go only to the ticket author and carry no account data", "then": "The private data leg is gone and automation is fine." },
+        { "if": "Volume makes review impossible", "then": "Restrict the tool to templated replies and block free-text exfiltration paths." }
+      ],
+      "takeaway": "When all three legs are present, design out a leg before adding guards."
+    }
+  ],
+  "quiz": [
+    { "id": "w07-t01-q1", "type": "match", "tag": "concept", "q": "Match each OWASP LLM Top 10 2025 id to its RAG shape.", "pairs": [
+      { "l": "LLM02", "r": "A chunk the caller may not read reaches the prompt" },
+      { "l": "LLM04", "r": "Manipulated embedding data steers answers" },
+      { "l": "LLM05", "r": "Rendered output carries data out" },
+      { "l": "LLM08", "r": "Cross-tenant context leak in a shared vector store" }
+    ], "explain": "LLM02 is disclosure, LLM04 is poisoning of embedding data, LLM05 is unvalidated output handling such as Markdown that triggers fetches, and LLM08 covers vector store weaknesses including cross-context leaks.", "ref": "r1" },
+    { "id": "w07-t01-q2", "type": "single", "tag": "diagnose", "q": "A reviewer says RAG removes prompt injection risk because answers are grounded. What is the right reply?", "options": ["Correct: grounding blocks injected instructions", "Incorrect: OWASP says RAG and fine-tuning do not fully mitigate prompt injection", "Correct for indirect injection, incorrect for direct injection"], "answer": 1, "explain": "Retrieved text is itself an input channel. Indirect injection arrives through documents, so grounding adds an attack path instead of removing one.", "ref": "tr1" }
+  ],
+  "flashcards": [
+    { "front": "Which two questions start a RAG threat model?", "back": "Who can write into each stage, and what can each stage read or send out. Then mark every point where someone else's text enters the prompt." },
+    { "front": "Which OWASP LLM 2025 id covers cross-tenant leaks in a shared vector store?", "back": "LLM08 Vector and Embedding Weaknesses, alongside inversion and poisoning." },
+    { "front": "Name the three legs of the Rule of Two.", "back": "Untrustworthy inputs, access to sensitive data or systems, and the ability to change state or communicate externally. Keep at most two in one session." }
+  ],
+  "related": ["w07-t02", "w07-t06", "w07-l1", "w07-t18"],
+  "refs": ["r1", "r2", "r3", "r4", "r10", "tr1", "tr2", "tr3", "tr4", "tr5", "tr6"]
+}

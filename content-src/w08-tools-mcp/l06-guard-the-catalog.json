@@ -1,0 +1,100 @@
+{
+  "id": "w08-l06",
+  "order": 6,
+  "title": "Guard the catalog",
+  "kind": "problem",
+  "minutes": 18,
+  "brief": "Dozens of teams will publish MCP servers and every agent will read their descriptions as if they were instructions. The number of teams, the need for central policy and whether you need more than tools are open. Decide where trust is checked and whether a gateway, a bundle or a proxy of your own owns the catalog.",
+  "blocks": [
+    { "t": "h", "text": "Where attacks enter an MCP estate", "level": 2 },
+    { "t": "table", "caption": "Threat matrix for MCP hosts, servers and gateways", "head": ["Threat", "What happens", "Controls"], "rows": [
+      ["Tool poisoning", "Hidden instructions sit in a tool description. The model sees the full text while users usually see a simplified label. Named by Invariant Labs on 2025-04-01 and not defined in the spec [[r13]]", "Show full descriptions at approval, review definitions, allow-list tools, and treat remote descriptions, annotations and results as untrusted input [[r15]]"],
+      ["Rug pull", "A server changes a description or behavior after the user approved it [[r13]]", "Pin versions, hash approved definitions, re-approve on a changed hash or `list_changed`, and re-review `allowed_tools` and approvals when the operator or tools change [[r15]]"],
+      ["Cross-server shadowing", "A malicious server's description steers the agent's calls to another, trusted server [[r13]]", "Prefix names by server, keep high-risk servers out of agents that hold sensitive tools, and confirm cross-server data flows [[r6]]"],
+      ["Injection through results", "Tool output or fetched documents carry instructions for the model [[r15]]", "Spotlighting, output filtering, approval for sensitive calls and least-privilege tools"],
+      ["Confused deputy and token passthrough", "A proxy reuses consent or a token that was not issued for it [[r5]]", "Per-client consent, audience validation, token exchange (see the previous level)"],
+      ["SSRF through OAuth discovery", "`resource_metadata` and `authorization_servers` URLs lead a client to internal addresses [[r5]]", "HTTPS only, block private and link-local ranges with a vetted library, validate redirects, egress proxy"],
+      ["State handle hijacking", "An unauthorized party guesses or obtains a handle and acts on another user's state. Renamed from session hijacking in 2026-07-28 [[r5]]", "Never treat a handle as authentication. Use random, expiring handles and key stored state by the verified user id plus the handle"],
+      ["Local server compromise", "A malicious startup command in a config, a malicious payload in a server, or an insecure localhost server reached through DNS rebinding [[r5]]", "Consent dialog that shows the exact command, sandbox with minimal privileges, stdio or restricted IPC, an auth token for local HTTP, bind to 127.0.0.1 and validate `Origin` [[r2]]"]
+    ] },
+    { "t": "diagram", "id": "w08-l06-d1", "title": "A gateway as the control point", "alt": "Two agent teams connect through a gateway to three MCP servers. A registry and an identity provider feed the gateway with allowed servers and identities.", "src": "flowchart LR\n  A1[Agent team A] --> G[Gateway]\n  A2[Agent team B] --> G\n  G --> S1[Server X]\n  G --> S2[Server Y]\n  G --> S3[Server Z]\n  R[Registry] -.-> G\n  I[Identity provider] -.-> G", "caption": "Policies live once at the gateway: identity checks, rate limits, quotas, caching and tracing. Servers behind it still authorize every call." },
+    { "t": "dials", "id": "w08-l06-catalog", "title": "Who should own the tool catalog?", "prompt": "Flip the number of publishing teams, how strict central policy must be, and whether resources or prompts must pass through.",
+      "dials": [
+        { "id": "teams", "label": "Teams publishing servers", "values": [ { "id": "few", "label": "A few" }, { "id": "many", "label": "Many" } ] },
+        { "id": "policy", "label": "Central policy and credential custody", "values": [ { "id": "light", "label": "Light" }, { "id": "strict", "label": "Strict" } ] },
+        { "id": "surface", "label": "Resources or prompts must pass through", "values": [ { "id": "tools", "label": "Tools are enough" }, { "id": "full", "label": "Yes, the full protocol" } ] }
+      ],
+      "options": [
+        { "id": "direct", "name": "Direct connections", "summary": "Each agent connects to each server and enforces its own rules." },
+        { "id": "apim", "name": "API Management MCP gateway", "summary": "REST APIs or existing MCP servers fronted with gateway policies and API Center." },
+        { "id": "toolbox", "name": "Foundry Toolbox", "summary": "A versioned, governed bundle behind one MCP endpoint." },
+        { "id": "proxy", "name": "In-house MCP proxy", "summary": "Your own gateway that forwards the full protocol." }
+      ],
+      "scores": {
+        "direct": {
+          "teams": { "few": { "s": 2, "why": "Fewer moving parts and nothing to operate in the middle." }, "many": { "s": -2, "why": "Every agent repeats auth, limits and approval logic." } },
+          "policy": { "light": { "s": 1, "why": "Little to enforce centrally." }, "strict": { "s": -2, "why": "No single place to enforce quotas, audit or credential custody." } },
+          "surface": { "tools": { "s": 0, "why": "Neutral." }, "full": { "s": 1, "why": "The full protocol surface reaches the host unchanged." } }
+        },
+        "apim": {
+          "teams": { "few": { "s": -1, "why": "Operational overhead for a small estate." }, "many": { "s": 2, "why": "One place for rate limits, quotas, IP filters, caching and tracing, with discovery through API Center." } },
+          "policy": { "light": { "s": 0, "why": "Works, but you may not need the machinery." }, "strict": { "s": 2, "why": "Subscription keys or Entra token validation inbound, and the credential manager for outbound tokens." } },
+          "surface": { "tools": { "s": 1, "why": "API Management supports MCP server tools." }, "full": { "s": -2, "why": "It does not support MCP resources or prompts, and workspaces are not supported." } }
+        },
+        "toolbox": {
+          "teams": { "few": { "s": 0, "why": "Neutral." }, "many": { "s": 2, "why": "Publish a bundle once and let any MCP-compatible runtime reuse it with central credentials." } },
+          "policy": { "light": { "s": 0, "why": "Neutral." }, "strict": { "s": 1, "why": "Central Entra auth, guardrails and promotable versions. Tool search and skills are Preview." } },
+          "surface": { "tools": { "s": 0, "why": "Tools are the main surface." }, "full": { "s": -1, "why": "The pages describe tools and Preview skills. Verify resource and prompt support before relying on it." } }
+        },
+        "proxy": {
+          "teams": { "few": { "s": -1, "why": "You own a gateway to build and patch for a small estate." }, "many": { "s": 0, "why": "Can scale, at the price of owning it." } },
+          "policy": { "light": { "s": -1, "why": "Heavy for light needs." }, "strict": { "s": 1, "why": "Full control over policy, at the cost of building it." } },
+          "surface": { "tools": { "s": 0, "why": "Neutral." }, "full": { "s": 2, "why": "You can forward the full protocol, including resources and prompts." } }
+        }
+      },
+      "takeaway": "A gateway earns its keep once many teams publish and policy is strict. Check what protocol surface it forwards before you commit." },
+    { "t": "failure", "title": "Failure modes and how to detect them", "items": [
+      { "symptom": "An agent reads a local secrets file after a new server is added", "cause": "Tool poisoning: the description told the model to read the file and send its content as an extra argument", "fix": "Review full descriptions at approval, restrict file access in the sandbox and block unexpected parameters. Detect it by logging every tool argument that is not in the schema" },
+      { "symptom": "A server behaves differently a week after approval", "cause": "Rug pull: the definition or behavior changed and nobody re-approved", "fix": "Hash definitions at approval and diff on every `tools/list`. Alert on a changed hash and pause the server until re-approved" },
+      { "symptom": "Tenant B sees a cached tool result that belongs to tenant A", "cause": "A gateway cache keyed on the request alone, ignoring caller identity. A `private` cacheScope must never cross authorization contexts", "fix": "Key caches by caller or subscription, honor `cacheScope`, and test with two identities" },
+      { "symptom": "Agents fail to start when the public registry is down or reset", "cause": "The public registry is in preview and data resets are allowed. It is also not meant to be consumed directly by host apps", "fix": "Mirror approved servers into your own registry and make the public one a build-time input, not a runtime dependency" },
+      { "symptom": "A one-click local server config exfiltrated files at install time", "cause": "The client ran a startup command without showing it", "fix": "Show the exact command without truncation, require explicit approval and run the server in a sandbox with minimal privileges" }
+    ] },
+    { "t": "accordion", "items": [
+      { "title": "Microsoft options in detail", "blocks": [
+        { "t": "list", "style": "ul", "items": [
+          "**API Management**: either turn a managed REST API into an MCP server, where operations become tools, or front an existing MCP server. Policies apply to every tool in the server: rate limiting and quotas, IP filtering, caching and tracing. It supports tools only, not MCP resources or prompts, and it does not support workspaces. Register and discover servers through Azure API Center [[r17]].",
+          "**API Management auth**: inbound with a subscription key in `Ocp-Apim-Subscription-Key` or Entra tokens checked by `validate-azure-ad-token`. Outbound through the credential manager and `get-authorization-context`. The docs also show forwarding the inbound `Authorization` header to the backend, which is token passthrough unless the backend is the token's audience [[r36]].",
+          "**Foundry MCP tool**: settings include `server_url`, `server_label`, `allowed_tools`, `require_approval` and `project_connection_id`. Approvals arrive as `mcp_approval_request` items and are answered with `mcp_approval_response`. Non-streaming calls time out at 100 seconds, so long tools need background mode. Private MCP needs private networking [[r15]].",
+          "**Foundry Toolbox**: a versioned, governed bundle behind one MCP-compatible endpoint of the form `.../toolboxes/{name}/versions/{version}/mcp`. It can hold MCP, A2A, OpenAPI, Azure AI Search and web search tools. Teams promote a default version without redeploying agents. The first use of an OAuth tool can return `CONSENT_REQUIRED` (`-32006`). Tool search (`tool_search`, `call_tool`) and skills are Preview as of 2026-10-13 [[r16]].",
+          "**Agent Framework**: Python tools `MCPStdioTool`, `MCPStreamableHTTPTool` and `MCPWebsocketTool`. `Agent.as_mcp_server()` exposes an agent as an MCP server. `allowed_tools` and `approval_mode` take raw or prefixed tool names [[r26]]."
+        ] }
+      ] },
+      { "title": "Registries: public versus private", "blocks": [
+        { "t": "table", "caption": "The public MCP Registry is in preview as of 2026-10-13 [[r10]]", "head": ["Question", "Public MCP Registry", "Private registry (for example API Center)"], "rows": [
+          ["Status", "Preview. Breaking changes or data resets may occur", "Part of your own platform"],
+          ["Holds", "`server.json` metadata that points at npm, PyPI or Docker Hub packages, or at remote URLs", "Your approved servers, including private ones"],
+          ["Private servers", "Not supported. Not designed for self-hosting", "Yes. The registry docs recommend hosting your own for private servers"],
+          ["Naming and trust", "Reverse DNS names with namespace verification of GitHub accounts or domains. It proves who published, not that the code is safe", "Whatever curation and scanning you add"],
+          ["Who should consume it", "Downstream aggregators, which pull about once per hour. Host apps should consume downstream registries, not this one directly", "Your hosts and agents"]
+        ] }
+      ] }
+    ] },
+    { "t": "callout", "kind": "preview", "title": "Preview labels, verified 2026-10-13", "md": "The public MCP Registry is in preview. Foundry Toolbox tool search and skills are in preview. The Foundry MCP tool's .NET SDK is in preview. Core API Management MCP and Toolbox pages carry no preview label. State the label and the date when you recommend any of them [[r10]] [[r16]]." }
+  ],
+  "quiz": [
+    { "id": "w08-l06-q1", "type": "single", "tag": "security", "q": "A user approved a server's tools last month. Today its `read_note` description quietly gained an instruction to also send file contents to a new argument. Which control would have caught this?", "options": ["Trusting the `readOnlyHint` the server publishes on every call", "Requiring OAuth on the server so only approved users connect", "Raising the model temperature so it ignores odd instructions", "Hashing approved definitions and requiring re-approval when `tools/list` returns a different definition"], "answer": 3, "explain": "This is a rug pull. Only comparing the current definition with the approved one detects it. Annotations are untrusted hints that the same server controls. OAuth identifies callers but does not constrain what a server says. Temperature does not make a model reliably ignore injected instructions.", "difficulty": 2, "ref": "r13" },
+    { "id": "w08-l06-q2", "type": "single", "tag": "diagnose", "q": "Audit log excerpt from an MCP server with no sessions. What is the root cause?", "code": { "lang": "text", "code": "10:01 create_basket        user=alice  -> bsk_1001\n10:02 create_basket        user=bob    -> bsk_1002\n10:05 add_item basket_id=bsk_1001 user=bob  -> ok" }, "options": ["The server treated possession of a sequential handle as authentication and did not bind it to the verified user", "The client must send `Mcp-Session-Id` on every request so that the server knows which basket belongs to which caller", "`add_item` should have been declared idempotent", "The server needs `subscriptions/listen` to keep baskets consistent"], "answer": 0, "explain": "State handle hijacking: bob used another user's handle and the server accepted it. Handles should be unguessable, expiring and keyed by the verified user id. 2026-07-28 has no session header. Idempotency and subscriptions do not address authorization.", "difficulty": 2, "ref": "r5" },
+    { "id": "w08-l06-q3", "type": "single", "tag": "tradeoff", "q": "Forty teams will publish MCP servers. Admins need quotas, central audit and Entra token checks, and agents only use tools. Which design fits?", "options": ["Each agent connects directly and enforces its own limits", "Hosts consume the public MCP Registry directly at runtime", "API Management as an MCP gateway, with servers registered in API Center", "An in-house proxy that forwards every protocol feature, built from scratch"], "answer": 2, "explain": "Many teams plus strict policy and tools-only use is the gateway's sweet spot. Direct connections repeat policy forty times. The public registry is in preview, public only and not meant for host apps. An in-house proxy can work but pays for resource and prompt support the dials do not need.", "difficulty": 2, "ref": "r17" },
+    { "id": "w08-l06-q4", "type": "multi", "tag": "security", "q": "Select every mitigation the MCP security guide lists for local MCP server compromise.", "options": ["Show the exact startup command without truncation and require explicit approval", "Run servers in a sandbox with minimal default privileges", "Prefer stdio, or restrict HTTP access with an auth token or restricted IPC", "Trust servers whose tools carry `readOnlyHint: true`", "Run local servers with administrator rights so file access errors never occur"], "answers": [0, 1, 2], "explain": "Consent with the full command, sandboxing and restricted access are the listed mitigations. Annotation hints are untrusted. Running with elevated rights makes arbitrary code execution worse.", "difficulty": 2, "ref": "r5" }
+  ],
+  "defend": null,
+  "refs": ["r2", "r5", "r6", "r10", "r13", "r15", "r16", "r17", "r26", "r36"],
+  "takeaways": [
+    "Tool descriptions are an injection channel. Poisoning and rug pulls are defeated by review, pinning and hash comparison, not by annotations.",
+    "A state handle names state. It never proves identity, so authorize it against the verified user on every call.",
+    "API Management fronts tools only. Check what protocol surface a gateway forwards before choosing it.",
+    "The public MCP Registry is in preview and public only. Mirror approved servers into a registry you control.",
+    "Local servers need consent with the exact command, a sandbox and restricted access."
+  ]
+}

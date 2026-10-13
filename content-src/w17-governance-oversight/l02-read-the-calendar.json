@@ -1,0 +1,62 @@
+{
+  "id": "w17-l2",
+  "order": 2,
+  "title": "Read the calendar, not the blog post",
+  "kind": "problem",
+  "minutes": 18,
+  "brief": "A customer asks which AI rules apply to your assistant and from when. Date every obligation, name your role as provider or deployer, and check that the date on your slide is not one that moved on 2026-07-27.",
+  "blocks": [
+    { "t": "h", "text": "Dates that decide the roadmap", "level": 2 },
+    { "t": "table", "caption": "EU AI Act milestones after the Digital Omnibus, checked 2026-10-13 [[r1]].", "head": ["Date", "What applies", "Why it matters"], "rows": [
+      ["2024-08-01", "The AI Act enters into force", "Start of the staged calendar"],
+      ["2025-02-02", "Prohibitions and AI literacy obligations", "Banned practices are already off the table"],
+      ["2025-08-02", "General-purpose AI (GPAI) obligations", "Model providers, and teams that fine-tune or rebrand models, check their role"],
+      ["2026-08-02", "Article 50 transparency rules apply. Enforcement starts for GPAI, prohibitions, transparency and AI literacy", "Chatbots must tell people they talk to an AI system"],
+      ["2026-12-02", "New prohibitions, and the end of the Article 50(2) marking transition for systems already on the market", "Machine-readable marking of synthetic content"],
+      ["2027-12-02", "Annex III high-risk rules, moved from 2026-08-02 by the Digital Omnibus", "Articles 12 and 14 logging and oversight for those uses"],
+      ["2028-08-02", "Annex I product-embedded high-risk rules", "Safety components of regulated products"]
+    ], "highlightCol": 0 },
+    { "t": "p", "md": "The Digital Omnibus on AI is Regulation (EU) 2026/1744. It was signed on 2026-07-08, published in the Official Journal on 2026-07-24 and entered into force on 2026-07-27 [[r3]]. It moves Annex III high-risk obligations to 2027-12-02 and Annex I to 2028-08-02, extends SME relief to small mid-caps, simplifies AI literacy, bans AI that generates non-consensual sexual content or child sexual abuse material and allows special-category data to be processed to detect and correct bias [[r2]].\n\nThe deferral covers the Chapter III high-risk duties, not the transparency rules. The rest of the Digital Omnibus package (GDPR, ePrivacy, NIS2, Data Act) was not law in the cited law-firm note, so re-check before you claim it [[r3]]. The signature, publication and in-force dates come from that secondary source, because the EUR-Lex text did not load for scripted requests." },
+    { "t": "diagram", "id": "w17-l2-d1", "title": "Which duties touch my system?", "alt": "A decision flow. A prohibited practice stops the project. An Annex III use brings high-risk duties from 2027-12-02. Any system that talks to people or generates synthetic content has Article 50 duties from 2026-08-02. Everything else still has AI literacy and voluntary codes.", "src": "flowchart TB\n  A[AI system] --> B{Prohibited practice?}\n  B -->|yes| X[Do not ship]\n  B -->|no| C{Annex III use?}\n  C -->|yes| H[High-risk duties from 2027-12-02]\n  C -->|no| D{Chats or generates content?}\n  D -->|yes| T[Article 50 duties from 2026-08-02]\n  D -->|no| E[AI literacy and voluntary codes]\n  H --> D", "caption": "A simplification for orientation, not legal advice. Check each system with counsel." },
+    { "t": "table", "caption": "Role decides the duty. One assistant can be both a provider of one system and a deployer of another.", "head": ["Role and system", "Typical duty", "Where"], "rows": [
+      ["Provider of a system that talks to people", "Design it so people are told they interact with an AI system unless that is obvious, clearly and at the latest at the first interaction", "Article 50(1) and 50(5) [[r6]]"],
+      ["Provider of a system that generates synthetic text, image, audio or video", "Mark outputs in a machine-readable format so they are detectable. Systems on the market before 2026-08-02 have until 2026-12-02", "Article 50(2) [[r6]]"],
+      ["Deployer of deep fake or public-interest text generation", "Disclose that the content is artificially generated or manipulated. Text that went through human review or editorial control is exempt", "Article 50(4) [[r6]]"],
+      ["Provider of a high-risk system", "Keep automatic event logs, enable human oversight and report serious incidents", "Articles 12, 14 and 73 [[r8]] [[r7]]"],
+      ["GPAI model provider", "The voluntary Code of Practice (2025-07-10) is a recognised way to show compliance. Transparency and Copyright cover Article 53, Safety and Security covers Article 55", "Code of Practice [[r9]]"]
+    ] },
+    { "t": "stats", "items": [
+      { "label": "Prohibited practices", "value": "EUR 35M or 7%", "note": "Of worldwide annual turnover. Undertakings pay the higher figure" },
+      { "label": "Other operator obligations", "value": "EUR 15M or 3%", "note": "Same higher-figure rule" },
+      { "label": "Incorrect information to authorities", "value": "EUR 7.5M or 1%", "note": "SMEs, start-ups and small mid-caps pay the lower figure" },
+      { "label": "Annex III high-risk date", "value": "2027-12-02", "note": "Not 2026-08-02. Check any older slide" }
+    ] },
+    { "t": "failure", "title": "Failure modes to recognise", "items": [
+      { "symptom": "The roadmap shows Annex III high-risk compliance due on 2026-08-02.", "cause": "It was written before Regulation (EU) 2026/1744 entered into force on 2026-07-27.", "fix": "Re-baseline to 2027-12-02 for Annex III and 2028-08-02 for Annex I. Keep Article 50 on 2026-08-02." },
+      { "symptom": "A team says a deployer has no duties.", "cause": "Duties differ by role, not by size. Deployers disclose deep fakes and public-interest text, and a serious incident clock runs from when the provider or deployer becomes aware.", "fix": "Map every system to provider or deployer, per product, and record it in the inventory." },
+      { "symptom": "A chatbot launched before 2026-08-02 shows no AI disclosure.", "cause": "The transition covers Article 50(2) marking until 2026-12-02, not the Article 50(1) disclosure to people.", "fix": "Disclose in the interface now and schedule the machine-readable marking before 2026-12-02." },
+      { "symptom": "A sales deck calls the GPAI Code of Practice a legal requirement.", "cause": "The code is voluntary, a way to demonstrate compliance with Articles 53 and 55.", "fix": "Say voluntary, and map the code's chapters to the obligations you meet." }
+    ] },
+    { "t": "callout", "kind": "interview", "title": "What interviewers listen for", "md": "Date every claim. Say that Annex III moved to 2027-12-02, that Article 50 and enforcement for GPAI began on 2026-08-02, that the Omnibus date facts come from a secondary source and that you would confirm the legal text with counsel. Then say whether you are a provider or a deployer." }
+  ],
+  "quiz": [
+    { "id": "w17-l2-q1", "type": "single", "tag": "flip", "q": "A roadmap says Annex III high-risk compliance is due on 2026-08-02. What changed?", "options": ["Nothing, the date stands", "The Omnibus removed the high-risk duties entirely", "Regulation (EU) 2026/1744 moved it to 2027-12-02", "The Omnibus moved Article 50 transparency to 2027-12-02 as well"], "answer": 2, "explain": "The Digital Omnibus on AI, in force since 2026-07-27, moved Annex III to 2027-12-02 and Annex I to 2028-08-02. It did not remove the duties, and the deferral is limited to Chapter III high-risk duties, so Article 50 transparency still applied from 2026-08-02.", "difficulty": 2, "ref": "r2" },
+    { "id": "w17-l2-q2", "type": "numeric", "tag": "numeric", "q": "A company with EUR 2,000,000,000 worldwide annual turnover commits a prohibited practice. What is the maximum fine under Article 99, in EUR millions?", "answer": 140, "tolerancePct": 1, "unit": "EUR million", "hint": "For an undertaking the higher of the two figures applies.", "explain": "Prohibited practices carry up to EUR 35 million or 7% of worldwide annual turnover. Seven percent of EUR 2 billion is EUR 140 million, which is higher than EUR 35 million, and undertakings pay the higher figure. An SME or start-up would pay the lower of the two.", "difficulty": 2, "ref": "r4" },
+    { "id": "w17-l2-q3", "type": "match", "tag": "concept", "q": "Match each date to what applies from it.", "pairs": [
+      { "l": "2025-02-02", "r": "Prohibitions and AI literacy" },
+      { "l": "2025-08-02", "r": "General-purpose AI obligations" },
+      { "l": "2026-08-02", "r": "Article 50 transparency rules, and enforcement for GPAI and prohibitions" },
+      { "l": "2027-12-02", "r": "Annex III high-risk rules" }
+    ], "explain": "Prohibitions and AI literacy came first, GPAI obligations followed on 2025-08-02, Article 50 and enforcement started on 2026-08-02, and the Omnibus moved Annex III to 2027-12-02.", "difficulty": 1, "ref": "r1" },
+    { "id": "w17-l2-q4", "type": "single", "tag": "tradeoff", "q": "A text-generating assistant was placed on the market on 2026-06-01 with no machine-readable marking of its output. By when must Article 50(2) marking be in place?", "options": ["2026-08-02", "2026-12-02", "2027-12-02", "2028-08-02"], "answer": 1, "explain": "Systems placed on the market before 2026-08-02 get until 2026-12-02 for Article 50(2) marking. 2026-08-02 is when Article 50 applies to new systems, and 2027-12-02 and 2028-08-02 are the Annex III and Annex I high-risk dates, which are a different obligation.", "difficulty": 2, "ref": "r1" }
+  ],
+  "defend": null,
+  "refs": ["r1", "r2", "r3", "r4", "r6", "r7", "r8", "r9"],
+  "takeaways": [
+    "Date every claim. Annex III high-risk moved to 2027-12-02 and Annex I to 2028-08-02 after 2026-07-27.",
+    "Article 50 transparency and GPAI enforcement began on 2026-08-02. Marking has a transition to 2026-12-02.",
+    "Duties follow your role as provider or deployer, per system.",
+    "The GPAI Code of Practice is voluntary. Fines reach EUR 35M or 7% for prohibited practices.",
+    "Name the secondary sources in your answer and confirm legal text with counsel."
+  ]
+}

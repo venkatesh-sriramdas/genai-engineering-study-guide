@@ -1,0 +1,93 @@
+{
+  "id": "w08-t05",
+  "order": 5,
+  "group": "Foundations",
+  "title": "Tool annotations, output schemas and structured content",
+  "minutes": 7,
+  "difficulty": "core",
+  "summary": "Annotations are behaviour hints about a tool, `outputSchema` declares the shape of its result, and `structuredContent` carries machine-readable output next to the text the model reads.",
+  "useIf": "Hosts need hints for approval UX, or downstream code needs typed results from a tool.",
+  "avoidIf": "You would rely on annotations for security decisions about a server you do not control.",
+  "explain": [
+    { "t": "p", "md": "**Annotations** describe how a tool behaves so a host can shape its approval UI. They are hints only, and clients MUST treat them as untrusted unless they come from trusted servers [[r6]] [[r37]]. Missing hints default to the cautious reading, shown below." },
+    { "t": "table", "caption": "Annotation hints and their defaults", "head": ["Hint", "Default", "Meaning", "Safe host use"], "rows": [["`readOnlyHint`", "false", "The tool does not change its environment", "Fewer prompts only for tools from reviewed servers"], ["`destructiveHint`", "true", "May delete or overwrite. Meaningful only when not read-only", "Stronger confirmation"], ["`idempotentHint`", "false", "Repeating a call with the same arguments has no extra effect", "Safe to retry on timeout"], ["`openWorldHint`", "true", "Reaches systems outside a closed domain, such as the web", "Warn about untrusted content"], ["`title`", "none", "Display name", "UI label"]] },
+    { "t": "p", "md": "**Output schemas** came with structured tool output in 2025-06-18. A tool may declare `outputSchema`, a JSON Schema (2020-12 by default) for its result. It then returns `structuredContent` that conforms to the schema, and SHOULD also return the serialized JSON in a `TextContent` block so hosts that ignore structured output still work. Clients SHOULD validate results against the schema. In 2026-07-28 `structuredContent` may be any JSON value and schemas accept any 2020-12 keywords [[r1]]." },
+    { "t": "callout", "kind": "gotcha", "title": "Not the same as LLM structured outputs", "md": "MCP structured content is a result format for tool output. Model-side structured outputs constrain what a model generates. They solve different problems and can be used together." },
+    { "t": "p", "md": "Errors stay separate: an execution failure sets `isError: true` and the content explains why, so the model can adjust. Input validation errors count as execution errors, a change made in 2025-11-25 [[r31]]." }
+  ],
+  "whereToUse": [
+    "Approval UIs that colour or batch confirmations by destructive and read-only hints",
+    "Tools whose results feed code or another tool, such as a price lookup returning numbers and currency",
+    "Typed clients that validate results before use",
+    "Retry logic that checks `idempotentHint` before replaying a call"
+  ],
+  "whenToUse": {
+    "use": ["The server is operated and reviewed by you", "A downstream consumer needs a stable result shape", "You want hosts to differentiate risky and safe tools in the UI", "You need to validate output before passing it on"],
+    "avoid": ["Granting trust to an unreviewed third-party server because its hints look safe", "Using annotations as the only access control", "Declaring an `outputSchema` you do not keep in sync with real results"],
+    "flips": ["The server is third-party: ignore hints for policy and use an allow-list plus approvals", "Hosts ignore structured content: keep the serialized JSON in a text block"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Annotations as UI hints", "Shaping prompts for trusted servers", "Making a security decision about a stranger", "A lying server can mislabel a tool"],
+      ["Policy allow-list in the host", "You must decide which tools may run unprompted", "The catalog changes constantly", "Review effort and approval fatigue"],
+      ["`outputSchema` plus `structuredContent`", "Code consumes the result", "Free text is enough for the model", "Schema must match output or validation fails"],
+      ["Free text only", "The model is the only consumer", "Another program parses the result", "Brittle parsing"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A destructive tool ran without a prompt", "cause": "The host skipped approval because the server set `readOnlyHint: true`", "fix": "Base auto-approval on your own allow-list and review, not on server-supplied hints" },
+    { "symptom": "Clients reject a result or silently drop structured data", "cause": "`structuredContent` does not match the declared `outputSchema`", "fix": "Validate on the server in tests and keep the schema versioned with the tool" },
+    { "symptom": "An older host shows an empty result", "cause": "Only `structuredContent` was returned and the host reads `content`", "fix": "Also return the serialized JSON in a `TextContent` block" }
+  ],
+  "scenarios": [
+    {
+      "id": "w08-t05-s1",
+      "title": "Cutting approval prompts for a third-party server",
+      "situation": "Users are tired of approval prompts. A vendor's server marks most tools `readOnlyHint: true`. The host owner wants to skip prompts for those tools.",
+      "constraints": ["Server run by a vendor", "Approval fatigue is real", "Tools can reach the internet"],
+      "unknowns": ["Has security reviewed this server and its tool list?", "Are tool definitions pinned or can they change?"],
+      "question": "How do you reduce prompts safely?",
+      "options": [
+        { "name": "Review the server, allow-list specific tools, then skip prompts only for those", "verdict": "best", "why": "Your own review and pinning carry the trust. Hints can still inform the UI.", "tradeoff": "Upfront review work and re-review when definitions change." },
+        { "name": "Keep prompting for every call", "verdict": "good", "why": "Safe and simple.", "tradeoff": "Approval fatigue pushes users to click through everything." },
+        { "name": "Skip prompts for every tool that sets `readOnlyHint: true`", "verdict": "poor", "why": "Annotations from an untrusted server are only claims, and a rug pull can flip them.", "tradeoff": "Acceptable for a server you build and operate yourself." }
+      ],
+      "flips": [
+        { "if": "The server is internal, reviewed and version-pinned", "then": "Honour its hints in policy." },
+        { "if": "Tools also read untrusted web content", "then": "Keep confirmations, since `openWorldHint` signals injection exposure." }
+      ],
+      "takeaway": "Trust comes from review, not from labels."
+    },
+    {
+      "id": "w08-t05-s2",
+      "title": "Typed results for a pricing pipeline",
+      "situation": "A `get_price` tool feeds a pricing calculation in code and is also read by the model. Several host versions are in use, some older.",
+      "constraints": ["Code consumes the result", "Mixed host versions", "Schema may evolve"],
+      "unknowns": ["Do all hosts handle `structuredContent`?", "How often does the result shape change?"],
+      "question": "How should the tool return its result?",
+      "options": [
+        { "name": "Declare `outputSchema`, return `structuredContent` and the same JSON as text", "verdict": "best", "why": "Typed consumers validate the structure and older hosts still read the text block.", "tradeoff": "Duplicate payload bytes and a schema to maintain." },
+        { "name": "Return free text and parse it with regular expressions", "verdict": "poor", "why": "Parsing breaks when wording changes and cannot be validated.", "tradeoff": "Fine for a prototype with a human reader only." },
+        { "name": "Return `structuredContent` without text", "verdict": "good", "why": "Compact and typed.", "tradeoff": "Hosts that ignore structured output see an empty result." }
+      ],
+      "flips": [
+        { "if": "Every consumer is your own and current", "then": "You may drop the duplicate text." },
+        { "if": "The shape changes weekly", "then": "Version the tool name or schema to avoid breaking consumers." }
+      ],
+      "takeaway": "Use schemas for code consumers and keep a text fallback for compatibility."
+    }
+  ],
+  "quiz": [
+    { "id": "w08-t05-q1", "type": "single", "tag": "concept", "q": "A tool carries no annotations. How should a host read its behaviour?", "options": ["Read-only and idempotent", "Not read-only, destructive, not idempotent and open-world", "Read-only but open-world", "Destructive only if the name says so"], "answer": 1, "explain": "The defaults are cautious: `readOnlyHint` false, `destructiveHint` true, `idempotentHint` false and `openWorldHint` true. Assuming safety when hints are absent is the mistake." },
+    { "id": "w08-t05-q2", "type": "single", "tag": "security", "q": "A host auto-approves tools whose server sets `readOnlyHint: true`. What is the core flaw?", "options": ["Hints are untrusted unless the server is trusted", "`readOnlyHint` is not defined in the spec", "Read-only tools never need schemas", "Auto-approval is blocked by TLS"], "answer": 0, "explain": "Clients MUST treat annotations as untrusted unless they come from trusted servers, so a malicious or changed server can lie. The hint exists in the spec, schemas are unrelated and TLS does not decide approvals." }
+  ],
+  "flashcards": [
+    { "front": "What are the default annotation values?", "back": "`readOnlyHint` false, `destructiveHint` true, `idempotentHint` false and `openWorldHint` true. They are hints, not guarantees." },
+    { "front": "Why also return text next to `structuredContent`?", "back": "A tool SHOULD include the serialized JSON in a `TextContent` block for hosts that ignore structured output." },
+    { "front": "Is MCP structured content the same as model structured outputs?", "back": "No. It is a tool result format. Model structured outputs constrain generation. They are unrelated and can be combined." }
+  ],
+  "related": ["w08-t02", "w08-t13", "w08-t14", "w08-l02"],
+  "refs": ["r6", "r37", "r1", "r31"]
+}

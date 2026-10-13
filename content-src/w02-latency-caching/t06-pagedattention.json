@@ -1,0 +1,108 @@
+{
+  "id": "w02-t06",
+  "order": 6,
+  "group": "KV cache and serving",
+  "title": "PagedAttention and fragmentation",
+  "minutes": 8,
+  "difficulty": "advanced",
+  "summary": "PagedAttention stores the KV cache in fixed-size blocks mapped through a block table, like virtual memory pages. It removes most reserved-but-unused memory and lets requests share blocks.",
+  "useIf": "You run your own inference engine and want more concurrent sequences per GPU, or you need to understand how engines share KV.",
+  "avoidIf": "You use a hosted API. The provider's engine already does this, and you cannot tune it.",
+  "explain": [
+    { "t": "p", "md": "A simple engine reserves one contiguous KV region per request, sized for the longest answer it might produce. Most requests end earlier, so much of that memory is reserved and never used, and gaps between regions are too small to reuse. The vLLM paper shows that this waste limits batch size, and with it throughput [[r6]]." },
+    { "t": "p", "md": "**PagedAttention** splits each sequence's KV cache into fixed-size blocks and keeps a **block table** that maps the sequence's logical blocks to physical blocks anywhere in GPU memory. Blocks are allocated on demand as tokens are generated, so waste is confined to the last, partly filled block. Because a block table is only a mapping, several sequences can point to the same physical block, which enables sharing within a request (parallel samples) and across requests (a common prefix). The paper reports near-zero waste and 2x to 4x higher throughput at the same latency than the state of the art in 2023 [[r6]]." },
+    { "t": "diagram", "id": "w02-t06-d1", "title": "Two requests sharing a prefix block", "alt": "Two block tables point to one shared physical block for the common prefix and to separate physical blocks for their own tokens.", "src": "flowchart LR\n  A[Block table A] --> P1[(Physical 7: shared prefix)]\n  B[Block table B] --> P1\n  A --> P2[(Physical 3: A tokens)]\n  B --> P3[(Physical 9: B tokens)]" },
+    { "t": "p", "md": "In vLLM each block carries a reference count, so a shared block is freed only when no request uses it. Prefix caching builds on the same blocks: it hashes full blocks and reuses them, and it caches only full blocks [[r7]]. The multimodal example in the vLLM design doc assumes blocks of 16 tokens (its other examples use 4) [[r7]]. Smaller blocks cut last-block waste but increase table size and lookup work, which is a general trade-off to test on your engine." },
+    { "t": "callout", "kind": "note", "title": "Paging does not remove the capacity limit", "md": "Blocks are a pool. When the pool is empty the engine preempts requests and, in vLLM V1, recomputes them later by default [[tr6]]. Paging raises how much of the pool is useful. It does not enlarge the pool." }
+  ],
+  "whereToUse": [
+    "Self-hosted serving of open models with vLLM, SGLang or similar engines",
+    "Workloads with highly variable output length, where contiguous reservation wastes memory",
+    "Parallel sampling or beam search, where requests share a long prompt",
+    "Multi-turn chat where each turn extends a shared history",
+    "Reading engine metrics such as block usage and preemption counts"
+  ],
+  "whenToUse": {
+    "use": [
+      "You host models and sequence lengths vary widely",
+      "Many requests share a prefix and you want to store it once",
+      "You see low batch sizes although GPU memory looks full"
+    ],
+    "avoid": [
+      "Hosted API only, where the engine is not yours",
+      "A tiny deployment with fixed, short sequences, where waste is already small",
+      "Low, steady traffic where GPUs sit idle anyway and the engine is not the bottleneck"
+    ],
+    "flips": [
+      "Traffic is bursty with long outputs: paging helps most, so prefer an engine that pages by default",
+      "Tenants must not share cache state: keep paging but salt prefix hashes per tenant",
+      "Hardware is unusual and no paged engine supports it: you may need a custom allocator"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with other KV memory strategies",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Paged KV (vLLM, SGLang)", "Variable lengths, shared prefixes", "Hardware without engine support", "Block table overhead, isolation to design"],
+      ["Contiguous max-length reservation", "Fixed, short sequences", "Variable or long outputs", "Large reserved-but-unused memory"],
+      ["Lower max sequence length", "Few requests need long outputs", "Long outputs are common", "Truncates legitimate requests"],
+      ["KV quantization", "Memory-bound at long context", "Quality-sensitive long tasks", "Eval gate needed"],
+      ["More GPUs", "Budget exists", "Cost-sensitive", "Parallelism overhead"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Batch size stays low while memory looks full", "cause": "Contiguous reservation holds space for maximum lengths", "fix": "Use an engine with paged KV allocation [[r6]]" },
+    { "symptom": "Latency spikes once the block pool is exhausted", "cause": "Requests are preempted and recomputed", "fix": "Add KV headroom, lower `max_num_seqs`, or shorten contexts [[tr6]]" },
+    { "symptom": "Prefix sharing fails to help although prompts look alike", "cause": "Only full blocks are cached, or a token in the first block differs", "fix": "Keep the shared prefix byte-identical and long enough to fill blocks [[r7]]" }
+  ],
+  "scenarios": [
+    {
+      "id": "w02-t06-s1",
+      "title": "Reserved memory starves the batch",
+      "situation": "A team serves an open model with a stack that reserves KV for the maximum sequence length per request. Outputs range from 50 to 4,000 tokens. GPUs are memory-full at a batch of 12, and utilization is low.",
+      "constraints": ["Self-hosted", "Highly variable output length", "Switching engines is possible with a week of work"],
+      "unknowns": ["Is the model supported by a paged engine?", "Do requests share long prefixes?"],
+      "question": "What is the best change?",
+      "options": [
+        { "name": "Lower the maximum sequence length cap", "verdict": "good", "why": "It reduces reservation immediately.", "tradeoff": "It truncates or rejects legitimate long requests." },
+        { "name": "Write a custom block allocator", "verdict": "poor", "why": "It duplicates mature engine work and carries correctness risk.", "tradeoff": "Only right for hardware or models that no engine supports." },
+        { "name": "Move to an engine with paged KV allocation", "verdict": "best", "why": "Blocks are allocated as tokens appear, so the memory that was reserved for unused length becomes usable batch capacity.", "tradeoff": "A migration with testing, and new operational knobs." }
+      ],
+      "flips": [
+        { "if": "All requests are short and uniform", "then": "The gain is small, so keep the current stack." },
+        { "if": "The model is unsupported by paged engines", "then": "A custom allocator or a different model becomes the choice." }
+      ],
+      "takeaway": "Adopt a paged engine before inventing a memory manager."
+    },
+    {
+      "id": "w02-t06-s2",
+      "title": "Self-host to get PagedAttention?",
+      "situation": "A product calls a hosted model and users complain about latency. A teammate proposes self-hosting an open model to benefit from PagedAttention. Traffic is about 20 requests per minute.",
+      "constraints": ["Low, steady traffic", "Hosted model quality is sufficient", "No residency constraint"],
+      "unknowns": ["Where does time go: prefill, decode or queueing?", "What would idle GPUs cost?"],
+      "question": "What do you do first?",
+      "options": [
+        { "name": "Benchmark self-hosting at projected sustained volume", "verdict": "good", "why": "It tests the cost and latency claim with real numbers.", "tradeoff": "It takes time and may confirm that hosted is cheaper." },
+        { "name": "Self-host at this volume", "verdict": "poor", "why": "At 20 requests per minute GPUs sit idle, and you take on operations without evidence that engine memory is the bottleneck.", "tradeoff": "Right when volume is sustained and high, or when residency or model control requires it." },
+        { "name": "Stay hosted and tune prompt size, output length and prompt caching", "verdict": "best", "why": "At low volume paging gains are small, and the hosted provider already runs an optimised engine. Your levers are on the request.", "tradeoff": "You depend on the provider's capacity and cannot tune the engine." }
+      ],
+      "flips": [
+        { "if": "Volume grows to sustained high utilization", "then": "Self-hosting with a paged engine can win on cost." },
+        { "if": "Data may not leave your boundary", "then": "Self-host regardless of volume." }
+      ],
+      "takeaway": "Engine internals matter when you own the GPUs and keep them busy."
+    }
+  ],
+  "quiz": [
+    { "id": "w02-t06-q1", "type": "numeric", "tag": "numeric", "q": "A request ends at 500 tokens but contiguous allocation reserved 8,192 tokens at 128 KiB per token. How many MiB were reserved and never used?", "answer": 961.5, "tolerancePct": 2, "unit": "MiB", "hint": "(8,192 - 500) x 128 KiB, then divide by 1,024", "explain": "7,692 unused tokens x 128 KiB is 984,576 KiB, which is 961.5 MiB. With paging, only the unused tail of the last block (at most one block) would be wasted.", "difficulty": 2, "ref": "r6" },
+    { "id": "w02-t06-q2", "type": "single", "tag": "concept", "q": "What lets two requests share a common prompt prefix under PagedAttention?", "options": ["They copy the prefix into one larger contiguous region", "The model weights are shared", "Their block tables point to the same physical blocks", "The tokenizer merges the requests"], "answer": 2, "explain": "A block table is a mapping, so two tables can reference one physical block, with a reference count. Copying defeats the saving, and weight sharing and tokenizers are unrelated.", "difficulty": 1, "ref": "r6" },
+    { "id": "w02-t06-q3", "type": "multi", "tag": "tradeoff", "q": "Which statements about paged KV and prefix caching in vLLM are correct?", "options": ["Only full blocks are cached", "Paging enlarges the total KV pool", "A shared block is freed only when no request uses it", "Prefix caching hashes each block using the parent hash and block tokens"], "answers": [0, 2, 3], "explain": "The design doc says only full blocks are cached and blocks carry reference counts. Block hashes include the parent hash and tokens. Paging uses the pool more efficiently but does not make it larger.", "difficulty": 3, "ref": "r7" }
+  ],
+  "flashcards": [
+    { "front": "What problem does PagedAttention solve?", "back": "Reserved-but-unused and fragmented KV memory. Fixed-size blocks and a block table allow on-demand allocation and sharing." },
+    { "front": "What did the vLLM paper report?", "back": "Near-zero KV waste and 2x to 4x throughput at equal latency versus the state of the art in 2023." },
+    { "front": "Does paging make the KV pool bigger?", "back": "No. It makes more of the pool useful. When the pool is empty, requests are preempted and recomputed." }
+  ],
+  "related": ["w02-t04", "w02-t07", "w02-t08", "w02-l3"],
+  "refs": ["r6", "r7", "tr6"]
+}

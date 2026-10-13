@@ -1,0 +1,50 @@
+{
+  "id": "w02-l1",
+  "order": 1,
+  "title": "Read the stopwatch",
+  "kind": "concept",
+  "minutes": 15,
+  "brief": "A user says the assistant feels slow. Before you touch anything, decide what you are timing: the wait for the first word, the speed of the words after it, or the whole answer. Prompt length, output length and traffic shape are not given yet.",
+  "blocks": [
+    { "t": "h", "text": "Four stages and three numbers", "level": 2 },
+    { "t": "p", "md": "Every request passes through four stages: the prompt is sent, the request **queues**, the model runs **prefill** over the whole prompt, then **decode** generates one token at a time. TTFT (time to first token) covers queueing, prefill and network time, so it grows with prompt length. TPOT (time per output token, also called inter-token latency or ITL) sets how smooth a stream feels. TTLT (time to last token) is the total [[r13]].\n\nThe three numbers answer three different questions, and a fix for one rarely moves another. Decide which one the product is judged on before you pick a lever." },
+    { "t": "diagram", "id": "w02-l1-timeline", "title": "One request on a timeline", "alt": "Sequence diagram. The client sends a request, it waits in a scheduler queue, prefill reads the whole prompt and builds the KV cache, decode returns the first token and then one token per step until the last token.", "src": "sequenceDiagram\n  participant C as Client\n  participant Q as Scheduler queue\n  participant P as Prefill\n  participant D as Decode\n  C->>Q: Request with prompt\n  Q->>P: Admit when capacity frees\n  P->>P: Read whole prompt, build KV cache\n  P->>D: Hand over KV cache\n  D-->>C: First token (TTFT ends)\n  D-->>C: Token 2, 3, 4 ... one per step\n  D-->>C: Last token (TTLT ends)", "caption": "Queueing, prefill and network sit before the first token. Everything after it is decode." },
+    { "t": "table", "caption": "The numbers, what moves them and who feels them", "head": ["Metric", "Definition", "Moves with", "Who feels it"], "rows": [
+      ["**TTFT**", "Queueing + prefill + network until the first token", "Prompt length, queue depth, prefix caching, distance to the endpoint", "Anyone watching a stream. Voice assistants most, because silence is audible"],
+      ["**TPOT or ITL**", "`(e2e_latency - TTFT) / (output_tokens - 1)`", "Model size, batch load, KV cache size, decode speed", "Readers of a stream. A value above reading speed is wasted, below it feels stuck"],
+      ["**TTLT or e2e**", "`TTFT + generation time`", "Output token count above all, including hidden reasoning tokens", "Non-streaming clients, batch jobs, and agents that need the whole tool call before the next step"],
+      ["**TPS per user**", "Output length over e2e latency, tends to `1 / ITL`", "Same drivers as TPOT", "Capacity planners comparing hardware"],
+      ["**System TPS**", "Total output tokens over the benchmark window", "Concurrency. Rises to a saturation point while per-user TPS falls", "Anyone dividing cost by throughput"]
+    ], "highlightCol": 0 },
+    { "t": "formula", "title": "Total latency from parts", "expr": "TTLT = TTFT + (TBT x tokens_generated)", "vars": [
+      { "k": "TTFT", "v": "time to the first token, including queueing and prefill" },
+      { "k": "TBT", "v": "time between tokens, the same quantity as TPOT or ITL" },
+      { "k": "tokens_generated", "v": "all generated tokens, including hidden reasoning tokens that count in completion tokens" }
+    ], "example": "TTFT 0.6 s, TBT 25 ms and 400 tokens give 0.6 + 0.025 x 400 = **10.6 s**. Halve the output and TTLT falls to 5.6 s. Halve the prompt and TTFT might fall by 0.1 s. Azure's guidance says to check output token counts before declaring a latency regression [[r14]]." },
+    { "t": "table", "caption": "Prefill and decode are different kinds of work", "head": ["Phase", "Work per iteration", "Bottleneck", "Per-iteration latency", "What helps"], "rows": [
+      ["**Prefill**", "Whole prompt in parallel", "Compute: it saturates the GPU", "High", "Cache the prefix, shorten the prompt, chunk long prompts, scale compute"],
+      ["**Decode**", "One token per request", "Memory bandwidth: weights and KV are streamed for each token", "Low", "Batch many decodes together, shrink KV, use GQA or MLA, quantize, speculate"]
+    ], "highlightCol": 0 },
+    { "t": "failure", "title": "Latency symptoms and what they usually mean", "items": [
+      { "symptom": "TTLT doubled after a release, TTFT is flat", "cause": "Output tokens grew: a prompt change made answers longer, or a reasoning model is spending more hidden tokens", "fix": "Bucket TTLT by output tokens and compare `reasoning_tokens` in the usage block before blaming the platform" },
+      { "symptom": "TTFT p95 jumps at the same hour daily while prompts are unchanged", "cause": "Queueing on a deployment shared with a batch job or another workload", "fix": "Give each workload its own deployment, or buy a priority or provisioned tier. Check the queue-time share of TTFT" },
+      { "symptom": "The page looks frozen but the answer arrives eventually", "cause": "The client waits for the whole response, so there is no perceived progress and long answers hit client timeouts", "fix": "Stream with `stream: true`. Total time stays the same, time to first visible word drops" },
+      { "symptom": "Two benchmark tools report different ITL for the same server", "cause": "One includes TTFT in the average and the other excludes it", "fix": "Pin the definition in your SLO and compute it from raw timestamps yourself" }
+    ] },
+    { "t": "callout", "kind": "interview", "title": "What a senior answer sounds like", "md": "Ask which number the user feels. A streaming chat is judged on TTFT p95 and a smooth TPOT. Voice is judged on TTFT and on staying ahead of speech. A batch summary is judged on TTLT and cost. An agent step is judged on TTLT, because a half-streamed tool call cannot run. Then say that streaming changes perception, not total time, and that cutting output tokens is usually the biggest lever [[r15]]." }
+  ],
+  "quiz": [
+    { "id": "w02-l1-q1", "type": "single", "tag": "diagnose", "q": "A streaming assistant starts answering about 6 s after the question on weekday mornings, then streams smoothly. A retrieval change grew the prompt from 2,000 to 30,000 tokens. Output length did not change. Which stage grew?", "options": ["Decode, because the model emits tokens more slowly after the change", "Prefill, because the model reads 15 times more input first", "Network, because longer prompts need much more upload bandwidth", "Output formatting, because streaming adds overhead on every chunk"], "answer": 1, "explain": "A smooth stream after a late start points at TTFT, and TTFT grows with prompt length because prefill must read the whole prompt first. Decode speed would show as slow tokens after the start. Text prompts are small on the wire, so upload time is rarely the cause. Chunk overhead does not scale with prompt length.", "difficulty": 1, "ref": "r13" },
+    { "id": "w02-l1-q2", "type": "numeric", "tag": "numeric", "q": "TTFT is 0.8 s, time between tokens is 20 ms and the model generates 500 tokens. What is the total time to last token?", "answer": 10.8, "tolerancePct": 2, "unit": "seconds", "hint": "TTLT = TTFT + TBT x tokens generated", "explain": "0.8 + 0.020 x 500 = 0.8 + 10 = 10.8 s. Note that output generation is 93% of the total, which is why cutting output tokens beats trimming the prompt for total time.", "difficulty": 1, "ref": "r14" },
+    { "id": "w02-l1-q3", "type": "multi", "tag": "concept", "q": "Select every statement that is true.", "options": ["Streaming does not change total generation time but lowers the time to the first visible response.", "Halving output tokens can cut latency by about half, while halving the prompt may gain only 1% to 5%.", "Batching decode requests slows each request in proportion to batch size because decode is compute-bound.", "Azure's normalized TTFT metric divides first-byte time by prompt tokens and is only for comparing across prompt sizes."], "answers": [0, 1, 3], "explain": "Streaming and the output-versus-input rule of thumb come from the OpenAI latency guide and Azure's guidance. The normalized TTFT metric exists for cross-prompt comparison. The third statement is wrong: decode is memory-bandwidth bound, so batching amortizes weight reads and per-request slowdown is well below proportional until the GPU saturates.", "difficulty": 2, "ref": "r15" }
+  ],
+  "defend": null,
+  "refs": ["r13", "r14", "r15", "r9"],
+  "takeaways": [
+    "TTFT, TPOT and TTLT answer different questions, so name the one the product is judged on",
+    "TTFT grows with prompt length and queueing. TTLT is dominated by output tokens, including hidden reasoning tokens",
+    "Prefill is compute-bound and decode is memory-bound, which is why the fixes differ",
+    "Streaming changes perception, not total time",
+    "Pin metric definitions in your SLO, because tools disagree on ITL"
+  ]
+}

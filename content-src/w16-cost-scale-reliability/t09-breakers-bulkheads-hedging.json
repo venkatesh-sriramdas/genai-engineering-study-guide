@@ -1,0 +1,117 @@
+{
+  "id": "w16-t09",
+  "order": 9,
+  "group": "Gateway and resilience",
+  "title": "Circuit breakers, bulkheads and hedging",
+  "minutes": 8,
+  "difficulty": "advanced",
+  "summary": "A circuit breaker stops calls to a failing dependency, a bulkhead stops one consumer from sinking the rest, and hedging sends an early duplicate to cut tail latency. Each trades capacity, cost or complexity for isolation or speed.",
+  "useIf": "A failing or slow dependency, or one noisy consumer, can drag down everything else.",
+  "avoidIf": "Traffic is small and failures are rare: simple retries and good timeouts are enough.",
+  "explain": [
+    { "t": "p", "md": "A **circuit breaker** has three states. In **closed** it passes calls and counts recent failures. When failures exceed a threshold it moves to **open** and rejects calls quickly. After a trip period it enters **half-open**, lets a few calls through and closes again only if they succeed [[tr4]]. In API Management a backend has one `circuitBreaker` rule with `failureCondition`, `tripDuration` and `acceptRetryAfter`; a tripped breaker returns 503, rules are approximate across gateway instances, and the Consumption tier lacks them. For Azure OpenAI backends accept `Retry-After`, which can be very long [[r4]]. AWS warns breakers add modal behaviour that is hard to test and can slow recovery, so pair them with a local token bucket on retries [[tr3]]." },
+    { "t": "p", "md": "A **bulkhead** partitions capacity into pools so a fault stays inside its own pool. Azure's pattern partitions instances by consumer load and availability needs [[tr5]]. For models that means separate deployments or per-consumer limits for batch, interactive and experimental workloads; Azure advises separate deployments because mixed workloads share batches and cache [[r27]]. **Hedging** sends a duplicate after about the 95th-percentile delay and takes the first reply. In a Google BigTable benchmark it cut the 99.9th percentile for 1,000 key reads from 1,800 ms to 74 ms for about 2% extra requests [[r19]] (figures from a search summary, PDF not parsed)." },
+    { "t": "diagram", "id": "w16-t09-d1", "title": "Circuit breaker states", "alt": "Closed moves to open when failures exceed a threshold. Open moves to half-open after the trip duration. Half-open returns to closed if probes succeed or to open if one fails.", "src": "stateDiagram-v2\n  [*] --> Closed\n  Closed --> Open: failures exceed threshold\n  Open --> HalfOpen: trip duration ends\n  HalfOpen --> Closed: probes succeed\n  HalfOpen --> Open: a probe fails" },
+    { "t": "table", "caption": "Which tool for which failure", "head": ["Failure", "Tool", "Why"], "rows": [
+      ["A dependency is down or very slow", "Circuit breaker", "Fail fast, give it room to recover"],
+      ["One consumer exhausts shared capacity", "Bulkhead", "Cap its pool, protect the others"],
+      ["A rare slow call on a cheap, idempotent request", "Hedging", "Duplicate early, cancel the loser"]
+    ] }
+  ],
+  "whereToUse": [
+    "APIM backend pools across two model regions",
+    "Separate deployments for batch, interactive and experimental traffic",
+    "Per-tool concurrency limits in an agent runtime",
+    "Hedged calls to embeddings, reranking or short classification",
+    "Dependency calls from retrieval to search, storage or tools"
+  ],
+  "whenToUse": {
+    "use": ["Breaker: a dependency can fail for minutes and callers would otherwise pile up", "Bulkhead: several workloads with different value share capacity", "Hedging: tail latency hurts, the call is cheap, idempotent and short"],
+    "avoid": ["Hedging long generations or tool calls with side effects: it doubles spend and risks duplicates", "A breaker with a trip duration shorter than the dependency's recovery time", "Hedging when the cause is overload: duplicates add load"],
+    "flips": ["Provider returns long Retry-After: set `acceptRetryAfter` so the breaker honours it", "Hedge rate exceeds a small budget: stop hedging and fix the tail", "One tenant dominates traffic: give it a pool of its own"]
+  },
+  "alternatives": {
+    "title": "Isolation and speed tools compared",
+    "head": ["Tool", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Retry with jitter", "Blips", "Sustained failure or overload", "Amplifies load"],
+      ["Circuit breaker", "Sustained dependency failure", "Short blips; gateway fleets with approximate counts", "503s while open; modal behaviour [[tr3]]"],
+      ["Bulkhead", "Noisy neighbours, mixed criticality", "Scarce capacity", "Fragmented quota and idle headroom"],
+      ["Hedging", "Slow tail on cheap idempotent calls", "Long, costly or side-effecting calls", "Extra spend and load on the duplicate"],
+      ["Load shedding or degradation", "Capacity is exhausted", "Everything is critical", "Users lose features (see the fallback topic)"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Callers see 503 with no sign of an outage", "cause": "The gateway breaker is open and the error is gateway-originated", "fix": "Tag gateway errors in traces, alert on breaker open time and show it on the dashboard" },
+    { "symptom": "The breaker flaps open and closed", "cause": "Trip duration is short and half-open probes hit a still-sick dependency", "fix": "Lengthen or back off the trip duration; accept Retry-After for Azure OpenAI backends" },
+    { "symptom": "Hedging raised the bill and the error rate", "cause": "Duplicates were sent for long generations during an overload", "fix": "Hedge only cheap idempotent calls, cap the hedge rate and cancel the losing request" }
+  ],
+  "scenarios": [
+    {
+      "id": "w16-t09-s1",
+      "title": "A batch job crowds out chat",
+      "situation": "A nightly pipeline and an interactive chat share one deployment. When the pipeline runs, chat users see slow replies and 429s.",
+      "constraints": ["Both workloads are valuable", "One shared quota", "The pipeline can move or shrink"],
+      "unknowns": ["Can the pipeline use Batch?", "Is there a gateway to enforce per-consumer limits?"],
+      "question": "Which isolation fits?",
+      "options": [
+        { "name": "Bulkhead: separate deployments, or per-consumer token limits, and Batch for the pipeline", "verdict": "best", "why": "The failure is contention, not a dependency outage. Isolating pools protects chat directly.", "tradeoff": "Quota is fragmented and each pool needs headroom." },
+        { "name": "A circuit breaker on the pipeline", "verdict": "poor", "why": "Breakers react to failures of a dependency, not to a consumer using too much capacity.", "tradeoff": "Right when the model endpoint itself fails." },
+        { "name": "Hedge chat requests", "verdict": "poor", "why": "Duplicates add load to a saturated deployment.", "tradeoff": "Right for a rare slow tail with spare capacity." }
+      ],
+      "flips": [
+        { "if": "Only a few teams and low volume", "then": "A single deployment with a simple limiter may do." },
+        { "if": "The pipeline can wait hours", "then": "Batch makes the isolation nearly free." }
+      ],
+      "takeaway": "Contention needs a bulkhead, not a breaker."
+    },
+    {
+      "id": "w16-t09-s2",
+      "title": "A slow tail on reranking",
+      "situation": "A reranking call is cheap, idempotent and usually answers in 80 ms, but 1 in 100 calls takes over 1 second and blows the retrieval budget.",
+      "constraints": ["Latency budget for retrieval is 400 ms", "Spare capacity exists", "Calls are read-only"],
+      "unknowns": ["Why is the tail slow: queueing, a cold node or overload?", "Can the loser be cancelled?"],
+      "question": "What do you apply?",
+      "options": [
+        { "name": "Hedge after about the p95 delay, with a hedge budget and cancellation", "verdict": "best", "why": "The call is cheap and idempotent, so an early duplicate trims the tail for a few percent extra requests.", "tradeoff": "Extra load and cost on the hedged calls." },
+        { "name": "Retry after a 1 second timeout", "verdict": "good", "why": "Cuts the worst tail.", "tradeoff": "The user already waited the full timeout." },
+        { "name": "Open a circuit breaker on slow responses", "verdict": "poor", "why": "A one-percent tail is not a dependency outage and the breaker would reject healthy traffic.", "tradeoff": "Right for sustained high error or latency." }
+      ],
+      "flips": [
+        { "if": "The tail is caused by overload", "then": "Hedging adds load; fix capacity first." },
+        { "if": "The call is a long generation", "then": "Do not hedge; use a deadline and fallback." }
+      ],
+      "takeaway": "Hedge cheap, idempotent calls with spare capacity."
+    },
+    {
+      "id": "w16-t09-s3",
+      "title": "Primary region keeps failing with long Retry-After",
+      "situation": "The primary region returns 429 and 503 with Retry-After values of many minutes. A secondary region exists behind the gateway.",
+      "constraints": ["Automatic failover needed", "Clients cannot change", "Gateway tier supports breakers"],
+      "unknowns": ["Does the API need session affinity?", "Does the secondary have quota?"],
+      "question": "How should the gateway behave?",
+      "options": [
+        { "name": "Priority pool with a breaker that accepts Retry-After and a warmed secondary", "verdict": "best", "why": "The breaker stays open for the advertised time and traffic flows to the secondary without client changes.", "tradeoff": "The secondary starts with a cold cache and needs quota." },
+        { "name": "Round-robin both regions", "verdict": "good", "why": "Spreads load.", "tradeoff": "Keeps sending half the traffic to a failing region." },
+        { "name": "Hedge every request across both regions", "verdict": "poor", "why": "It doubles cost and load permanently to mask a regional fault.", "tradeoff": "Right only for rare tail events on cheap calls." }
+      ],
+      "flips": [
+        { "if": "The API is stateful", "then": "Add session affinity or accept losing state on failover." },
+        { "if": "The secondary lacks quota", "then": "Fix capacity first, or degrade features." }
+      ],
+      "takeaway": "A breaker with accepted Retry-After plus a ready secondary fails over cleanly."
+    }
+  ],
+  "quiz": [
+    { "id": "w16-t09-q1", "type": "order", "tag": "order", "q": "Order the life of a circuit breaker after a dependency starts failing.", "items": ["Closed: failures are counted", "Open: calls are rejected quickly", "Half-open: a few probe calls pass", "Closed again: probes succeeded"], "explain": "Failures push it open. After the trip duration, half-open allows probes. Success closes it, failure reopens it [[tr4]].", "difficulty": 1 },
+    { "id": "w16-t09-q2", "type": "numeric", "tag": "numeric", "q": "You hedge any request still unanswered after the p95 latency. At most what percentage of requests send a duplicate?", "answer": 5, "tolerancePct": 0, "unit": "%", "explain": "By definition 5% of requests take longer than p95, so at most about 5% trigger a hedge; cancelling the loser and faster replies can bring it lower, as in the BigTable benchmark's roughly 2% [[r19]]. Derived.", "difficulty": 2 },
+    { "id": "w16-t09-q3", "type": "single", "tag": "flip", "q": "The cause of slowness is overload on the dependency. What does hedging do?", "options": ["Reduces load by caching", "Adds load and can worsen the slowdown", "Opens the breaker"], "answer": 1, "explain": "Duplicates add requests to an already saturated service. Hedging suits a slow tail with spare capacity, not overload. It does not cache or trip breakers.", "difficulty": 2 }
+  ],
+  "flashcards": [
+    { "front": "What are the breaker states?", "back": "Closed (count failures), open (reject fast), half-open (probe with a few calls). APIM returns 503 when open." },
+    { "front": "Bulkhead in one line?", "back": "Partition capacity into pools so one consumer's fault or load stays inside its own pool." },
+    { "front": "When is hedging safe?", "back": "Cheap, idempotent, short calls with spare capacity. Hedge after about p95, cap the hedge rate and cancel the loser." }
+  ],
+  "related": ["w16-t07", "w16-t08", "w16-t10", "w16-l4", "w10-t10"],
+  "refs": ["r4", "r19", "r27", "tr3", "tr4", "tr5"]
+}

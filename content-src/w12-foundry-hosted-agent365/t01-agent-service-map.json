@@ -1,0 +1,116 @@
+{
+  "id": "w12-t01",
+  "order": 1,
+  "group": "Foundry Agent Service",
+  "title": "Foundry Agent Service map and agent types",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "Foundry Agent Service is a managed platform with a runtime, toolboxes, models, tracing, optimization, identity and publishing. You choose how much you build: a prompt agent, a voice prompt agent, a hosted agent, or a direct Responses API call.",
+  "useIf": "You are deciding where an agent should live in Foundry and want the map before the details.",
+  "avoidIf": "You already know the agent type and need protocol, session or identity details: jump to the specific topic.",
+  "explain": [
+    { "t": "p", "md": "Foundry Agent Service is a managed platform for building, deploying and scaling agents [[r1]]. Its parts are the **Agent Runtime** (hosts prompt and hosted agents, manages conversations and tool calls), **Toolboxes**, **Models** from the Foundry catalog, **Observability**, **Optimization**, **Identity and Security**, and **Publishing** [[r1]]. The runtime itself rests on three objects: an **agent** (model, instructions, tools), a **conversation** (persisted history) and a **response** (one unit of execution) [[tr1]]. A response can run with or without an agent or a conversation, so start with a response and add the others when you need them [[tr1]]." },
+    { "t": "p", "md": "You then pick how much to build. A **prompt agent** is configuration only. A **voice-based prompt agent** adds managed real-time voice through Voice Live. A **hosted agent** is your own code, shipped as a container image or a .zip that Foundry builds into an image. Calling the **Responses API directly** from code you already run gives an *ephemeral agent*: the definition lives in your app and no Foundry agent resource exists [[r1]]." },
+    { "t": "diagram", "id": "w12-t01-d1", "title": "Four ways in, one project endpoint", "alt": "Clients reach prompt, voice and hosted agents through the Agent Runtime. Your own app can call the Responses API directly. All of them use the models and tools behind the project endpoint.", "src": "flowchart TB\n  C[Client or channel] --> RT[Agent Runtime]\n  RT --> PA[Prompt agent]\n  RT --> VA[Voice prompt agent]\n  RT --> HA[Hosted agent]\n  APP[Your app, Responses API direct] --> M\n  PA --> M[Models and toolbox]\n  VA --> M\n  HA --> M" },
+    { "t": "table", "caption": "Status of each part on 2026-10-13 (checked against the live pages)", "head": ["Part", "What it gives you", "Status"], "rows": [
+      ["Agents (core), prompt agents", "Config-only agents run by Foundry", "GA [[r9]]"],
+      ["Voice-based prompt agents", "Managed real-time voice via Voice Live", "Preview [[r1]]"],
+      ["Hosted agents", "Your code, per-session sandbox, dedicated identity", "No separate GA row. Explicit GA statement: UNVERIFIED [[r9]]"],
+      ["Tracing", "End-to-end traces in Application Insights", "GA for prompt and hosted agents [[tr3]]"],
+      ["Agent optimizer", "Proposes better instructions and tool descriptions", "Limited preview [[r25]]"],
+      ["Agent guardrails", "Controls at input, tool call, tool response and output", "Preview for agents, GA for models [[r8]]"]
+    ] },
+    { "t": "callout", "kind": "preview", "title": "Resource model in one line", "md": "The Foundry resource is `Microsoft.CognitiveServices/accounts` with kind `AIServices`, and a project is its subresource and the development boundary. Roles were renamed (Foundry User, Foundry Owner, Foundry Account Owner, Foundry Project Manager were Azure AI User, Azure AI Owner, Azure AI Account Owner, Azure AI Project Manager). Role IDs did not change [[r24]]." }
+  ],
+  "whereToUse": [
+    "Choosing a starting point for a new agent project before any code exists",
+    "Explaining to a platform team which parts Foundry runs and which parts you own",
+    "Planning a migration off classic agents, which retire on 2027-03-31 [[r11]]",
+    "Mapping features to preview risk before a production go-live review"
+  ],
+  "whenToUse": {
+    "use": [
+      "You want one managed place for runtime, tools, identity, tracing and publishing",
+      "You can accept Azure-hosted compute and the Foundry model catalog",
+      "You want to start light (prompt agent) and move to code only when a requirement forces it"
+    ],
+    "avoid": [
+      "Code must stay on another cloud or on premises and cannot move: self-host and only register it",
+      "You need a feature that is still preview and your policy forbids preview in production",
+      "A single prompt-only chatbot with no tools, identity or publishing needs: a direct model call is simpler"
+    ],
+    "flips": [
+      "A requirement for webhooks, custom protocols or persistent files flips a prompt agent to a hosted agent",
+      "An existing agent that already runs elsewhere flips you to the direct Responses API call or registration",
+      "A production ban on preview features removes voice-based agents and memory from the shortlist"
+    ]
+  },
+  "alternatives": {
+    "title": "The four entry points compared",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Prompt agent", "No custom orchestration, fastest path, nothing to operate", "You need your own code, protocols or files", "Per-call inference and tool usage only [[r1]]"],
+      ["Voice-based prompt agent", "Managed spoken conversation without hosting orchestration", "You need direct SIP or full evaluation modes", "Preview: no SLA, several limits [[r1]]"],
+      ["Hosted agent", "Custom code, custom protocols, `$HOME` state, compute control", "The agent is light and config would do", "Adds container compute per active session [[r1]]"],
+      ["Responses API direct (ephemeral)", "Definition should ship with your app, no Foundry agent resource", "You want a managed endpoint, versions and publishing for the agent", "You run and secure the host process [[r1]]"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Team builds a hosted agent for a simple FAQ bot", "cause": "Assuming production means containers", "fix": "Start with a prompt agent. The docs name it the least to manage and good for production agents without custom orchestration [[r1]]." },
+    { "symptom": "A doc or sample refers to Connected Agents or a shared project endpoint with `agent_reference`", "cause": "Classic or initial-preview material that does not match the new service", "fix": "Check the date and the migration page. Connected Agents does not exist in the new service, and the initial-preview hosted backend ended on 2026-08-20 [[r11]]." },
+    { "symptom": "Role assignment fails because the role name is not found", "cause": "Docs and portals mix old Azure AI names and new Foundry names", "fix": "Search for both names. The role IDs are unchanged [[r24]]." }
+  ],
+  "scenarios": [
+    {
+      "id": "w12-t01-s1",
+      "title": "Internal helper, small team",
+      "situation": "A team wants an internal assistant that answers from a few tools and a knowledge source. Nobody wants to own containers.",
+      "constraints": ["No custom orchestration logic", "Small team, low ops appetite", "Text only"],
+      "unknowns": ["Does any tool need to run inside our process?", "Do we need Teams publishing later?"],
+      "question": "Which entry point do you choose?",
+      "options": [
+        { "name": "Prompt agent", "verdict": "best", "why": "Instructions, model and tools as configuration. Foundry runs it, with an Entra identity and a managed endpoint.", "tradeoff": "No custom code path, so a later need for webhooks or files means moving to a hosted agent." },
+        { "name": "Direct Responses API call", "verdict": "good", "why": "Keeps the definition in your repo and still uses Foundry models and tools.", "tradeoff": "You host and secure the calling process and get no Foundry agent resource to publish." },
+        { "name": "Hosted agent", "verdict": "poor", "why": "It adds container build, compute billed per active session and code to maintain for a need that config covers.", "tradeoff": "Right when you need your own code, custom protocols or persistent files." }
+      ],
+      "flips": [
+        { "if": "The helper must receive webhooks from another system", "then": "Hosted agent with the Invocations protocol." },
+        { "if": "The definition must be reviewed and deployed with the app code", "then": "Direct Responses API call (ephemeral agent)." }
+      ],
+      "takeaway": "Default to the least to manage, and move up only when a named requirement forces it."
+    },
+    {
+      "id": "w12-t01-s2",
+      "title": "Phone line, preview allowed",
+      "situation": "A business wants a spoken assistant for inbound calls. The team has no speech orchestration code and accepts preview features with a waiver.",
+      "constraints": ["Real-time voice", "Preview allowed with sign-off", "Phone channel needed"],
+      "unknowns": ["Is direct SIP required?", "Do we need to inspect and redact the transcript between stages?"],
+      "question": "How do you build it?",
+      "options": [
+        { "name": "Voice-based prompt agent with Teams Phone extensibility or Twilio", "verdict": "best", "why": "Foundry manages the voice lifecycle through Voice Live, and Teams Phone extensibility and Twilio are the supported phone paths [[r1]].", "tradeoff": "Preview: no SLA. Direct SIP is not offered and evaluation covers full conversations only." },
+        { "name": "Hosted agent with Invocations WebSocket and your own voice stack", "verdict": "good", "why": "Full control over turn handling and tools, paired with Pipecat, LiveKit or Voice Live in the container [[r2]].", "tradeoff": "You write and operate the orchestration and pay for compute." },
+        { "name": "Prompt text agent behind a standard Teams card", "verdict": "poor", "why": "The standard text-agent card is not shown for voice agents, and this does not give spoken turns [[r1]].", "tradeoff": "Fine for text chat, not for phone calls." }
+      ],
+      "flips": [
+        { "if": "Policy forbids preview features in production", "then": "Hosted agent with Invocations WebSocket, after you confirm its status for your policy." },
+        { "if": "Transcripts must be filtered between stages", "then": "Use the cascaded architecture so text is inspectable." }
+      ],
+      "takeaway": "Voice-based agents buy managed orchestration at the price of preview limits."
+    }
+  ],
+  "quiz": [
+    { "id": "w12-t01-q1", "type": "single", "tag": "concept", "q": "Which entry point leaves no Foundry agent resource and keeps the agent definition in your application code?", "options": ["Prompt agent", "Direct Responses API call (ephemeral agent)", "Hosted agent", "Voice-based prompt agent"], "answer": 1, "explain": "An ephemeral agent is assembled in your process on each call. Prompt, hosted and voice agents are all persisted Foundry resources.", "ref": "r1" },
+    { "id": "w12-t01-q2", "type": "match", "tag": "concept", "q": "Match each entry point to the cost model the docs give for it.", "pairs": [
+      { "l": "Prompt agent", "r": "Per-call inference plus tool usage" },
+      { "l": "Hosted agent", "r": "Inference plus tools plus container compute" },
+      { "l": "Voice-based prompt agent", "r": "Voice Live and model usage" }
+    ], "explain": "The agent-type comparison table in the overview lists these cost models. Only the hosted agent adds container compute.", "ref": "r1" },
+    { "id": "w12-t01-q3", "type": "multi", "tag": "tradeoff", "q": "Which statements about status on 2026-10-13 are supported by the docs?", "options": ["Voice-based prompt agents are preview", "The agent optimizer is limited preview", "Hosted agents have an explicit GA row in the Foundry GA table", "Tracing is GA for prompt and hosted agents"], "answers": [0, 1, 3], "explain": "Voice agents and the optimizer carry preview labels and tracing is GA for prompt and hosted agents. The GA table has no separate hosted agent row, so an explicit hosted GA statement is unverified.", "ref": "r9" }
+  ],
+  "flashcards": [
+    { "front": "Name the three Foundry agent types and the fourth entry point.", "back": "Prompt agents, voice-based prompt agents and hosted agents. The fourth is calling the Responses API directly, which gives an ephemeral agent with no Foundry resource." },
+    { "front": "What are the three runtime objects in Agent Service?", "back": "Agent (model, instructions, tools), conversation (persisted history) and response (one execution). Start with a response and add the others when needed." }
+  ],
+  "related": ["w12-t02", "w12-t03", "w12-t07", "w12-t19", "w12-l1"],
+  "refs": ["r1", "r2", "r9", "r11", "r24", "r25", "r8", "tr1", "tr3"]
+}

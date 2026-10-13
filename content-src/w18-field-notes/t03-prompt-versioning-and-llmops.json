@@ -1,0 +1,114 @@
+{
+  "id": "w18-t03",
+  "order": 3,
+  "group": "Operating prompts",
+  "title": "Prompt versioning and LLMOps",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "Treat the prompt, model version, parameters, tools and retrieval settings as one release unit: version it, gate it on evals, canary it and keep a pinned bundle to roll back to.",
+  "useIf": "A prompt or model change can reach real users and you need to know which combination produced which behaviour.",
+  "avoidIf": "You are prototyping with a single user. Heavy release machinery before a golden set exists only slows you down.",
+  "explain": [
+    { "t": "p", "md": "Model behaviour depends on a **combination**: model version, prompt, configuration, orchestration logic, tools and retrieval. The Azure Architecture Center says all of these changes must be tested and the tested combination **pinned together** in production. A router can then support blue-green, A/B and traffic mirroring without mixing untested combinations, and logs should carry enough metadata to correlate behaviour with prompt, config, model and retrieval versions [[r10]]. OpenAI gives the same advice: pin to a dated model snapshot and build evals that measure prompt behaviour when you iterate or upgrade [[tr3]]." },
+    { "t": "flow", "title": "A release path for a prompt change", "direction": "h", "steps": [
+      { "title": "Change", "md": "Edit the prompt, model, config, tool or retrieval setting in version control.", "tag": "version" },
+      { "title": "Offline gate", "md": "Run the golden set against the new bundle. Block on regressions.", "tag": "eval" },
+      { "title": "Mirror", "md": "Copy live traffic to the candidate and compare without serving it.", "tag": "shadow" },
+      { "title": "Canary", "md": "Serve a small slice. Watch quality, latency, cost and refusals.", "tag": "canary" },
+      { "title": "Promote and pin", "md": "Pin the tested bundle and log its versions on every request.", "tag": "release" },
+      { "title": "Roll back", "md": "Re-point to the last pinned bundle if metrics breach a threshold.", "tag": "safety" }
+    ] },
+    { "t": "p", "md": "**Where prompts live** is a real decision. OpenAI advises, as of 2026-10-13, keeping production prompts in application code: typed inputs, code review, tests and your normal deployment process, with feature flags or config for staged rollouts. Its reusable prompt objects are being deprecated: creation is de-emphasized from 2026-06-03 and `v1/prompts` is scheduled to shut down on 2026-11-30 [[tr3]]. Do not make a vendor-hosted prompt store or eval tool your only system of record. The dataset-backed prompt optimizer and Evals platform are read-only for existing users on 2026-10-31 with shutdown scheduled for 2026-11-30 [[r11]]." },
+    { "t": "callout", "kind": "gotcha", "title": "Retirement is a release event", "md": "Retired model deployments return HTTP errors. Deprecated deployments accept no new deployments but keep working until retirement [[r10]]. Put retirement dates in your release calendar and canary the replacement model with the pinned prompt before the cutoff." }
+  ],
+  "whereToUse": [
+    "Any production assistant or agent where a prompt edit can change answers for users",
+    "Teams where several people edit prompts, tools or retrieval settings",
+    "Model upgrades and deprecations that force a swap on a deadline",
+    "Regulated or audited apps that must reproduce what a user saw",
+    "Agent platforms where instructions are versioned objects that can be promoted"
+  ],
+  "whenToUse": {
+    "use": [
+      "Every change to prompt, model, config, tools or retrieval goes through an eval gate",
+      "You can log versions on each request for correlation",
+      "You need a one-step rollback to a known-good bundle"
+    ],
+    "avoid": [
+      "Editing the live prompt in a console with no review or eval",
+      "Using a floating model alias such as 'latest' in production",
+      "Letting a vendor-hosted prompt store be the only copy"
+    ],
+    "flips": [
+      "Non-engineers must edit prompts: add a reviewed config store with the same eval gate",
+      "Traffic is tiny: skip shadow and canary, but keep the offline gate and pinning",
+      "A deadline-driven model retirement: shadow and canary the replacement first"
+    ]
+  },
+  "alternatives": {
+    "title": "Where prompts live",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Prompts in code and Git", "Engineers own prompts and want review, tests and CI", "Non-engineers need to edit them", "Release needs a deploy or a flag"],
+      ["Config or registry store with review", "Policy or domain owners edit often", "No eval gate or audit trail is attached", "Another system to run and secure"],
+      ["Agent-platform versions (promoted objects)", "The platform runs the agent and supports versions", "You need to move across platforms", "Lock-in to the platform's version model"],
+      ["Vendor-hosted prompt objects", "Legacy integrations that already use them", "New work, since OpenAI is deprecating them", "Shutdown of `v1/prompts` scheduled for 2026-11-30"],
+      ["Edit in place, no versions", "Throwaway prototypes", "Anything with users", "No rollback and no audit"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Behaviour changes after a harmless prompt tweak", "cause": "An untested combination of prompt, model, config or retrieval reached production", "fix": "Gate every change on the offline eval and deploy only pinned bundles with versions logged per request." },
+    { "symptom": "Eval scores stay green but users complain", "cause": "The golden set is stale or tuned to the prompt", "fix": "Refresh it from real traces, hold out a test slice and watch live quality, refusal and cost metrics in the canary." },
+    { "symptom": "Requests start failing with HTTP errors one morning", "cause": "A model deployment was retired", "fix": "Track retirement dates, canary the replacement ahead of time and keep the previous bundle for rollback while it still exists." }
+  ],
+  "scenarios": [
+    {
+      "id": "w18-t03-s1",
+      "title": "Small team, one prompt, weekly edits",
+      "situation": "Three engineers maintain one assistant. The prompt changes weekly. A golden set of 200 cases exists. Traffic is modest.",
+      "constraints": ["Engineers own the prompt", "A golden set exists", "No dedicated platform team"],
+      "unknowns": ["Does anyone outside engineering edit the prompt?", "How costly is a bad answer?"],
+      "question": "Where does the prompt live and how does it ship?",
+      "options": [
+        { "name": "A shared document pasted into config by hand", "verdict": "good", "why": "Cheap and gives some history.", "tradeoff": "No automated gate, so regressions reach users until someone notices." },
+        { "name": "A vendor-hosted prompt object edited in a console", "verdict": "poor", "why": "OpenAI is deprecating reusable prompt objects and `v1/prompts` shuts down on 2026-11-30.", "tradeoff": "Reasonable only for a short-lived prototype that will be migrated." },
+        { "name": "In Git with a CI eval gate and a feature flag for rollout", "verdict": "best", "why": "Matches OpenAI's advice to version prompts in code, and the gate blocks regressions cheaply.", "tradeoff": "Releasing a prompt change needs a deploy or a flag flip." }
+      ],
+      "flips": [
+        { "if": "A policy team must edit wording daily", "then": "Move to a reviewed config store that triggers the same eval gate." },
+        { "if": "Traffic grows and quality is revenue-critical", "then": "Add shadow traffic and a canary stage." }
+      ],
+      "takeaway": "For engineer-owned prompts, code review plus an eval gate is the cheapest safe release path."
+    },
+    {
+      "id": "w18-t03-s2",
+      "title": "Model deprecation on a deadline",
+      "situation": "A high-traffic assistant runs on a model whose retirement date is eight weeks away. The replacement behaves differently on refusals and formatting.",
+      "constraints": ["Large user base", "Fixed retirement date", "Weak tolerance for format regressions"],
+      "unknowns": ["How large is the golden set for format-sensitive cases?", "Is traffic mirroring available?"],
+      "question": "How do you migrate?",
+      "options": [
+        { "name": "Switch the alias to the new model and watch dashboards", "verdict": "poor", "why": "It ships an untested combination to everyone and rollback depends on the old model still existing.", "tradeoff": "Only acceptable for low-risk internal tools with instant rollback." },
+        { "name": "Pin a candidate bundle, run the offline gate, mirror traffic, then canary", "verdict": "best", "why": "Each stage exposes a different kind of regression before most users see it.", "tradeoff": "Takes calendar time and needs mirroring plus metrics for refusals and format validity." },
+        { "name": "Offline eval only, then cut over", "verdict": "good", "why": "Catches many regressions at low cost.", "tradeoff": "Offline sets miss live traffic quirks, so incidents surface in production." }
+      ],
+      "flips": [
+        { "if": "The replacement is the same family and behaviour is near-identical", "then": "A short canary may be enough." },
+        { "if": "Retirement date moves up", "then": "Compress shadow time and widen alerts, but keep the canary." }
+      ],
+      "takeaway": "Treat retirement dates as release deadlines and de-risk the swap in stages."
+    }
+  ],
+  "quiz": [
+    { "id": "w18-t03-q1", "type": "order", "tag": "order", "q": "Order the safe release path for a prompt change.", "items": ["Change in version control", "Offline eval gate", "Mirror live traffic", "Canary slice", "Promote and pin the bundle"], "explain": "Gate on the golden set first, then compare on live traffic without serving, then serve a small slice, then promote the tested bundle and pin it.", "ref": "r10" },
+    { "id": "w18-t03-q2", "type": "single", "tag": "concept", "q": "What does a deprecated Azure model deployment do before retirement?", "options": ["Accepts no new deployments but keeps working until retirement", "Returns HTTP errors immediately, exactly like a retired deployment", "Switches to the newest model automatically", "Stops logging"], "answer": 0, "explain": "Deprecated deployments keep working until retirement but cannot be newly deployed. Retired deployments return HTTP errors, and nothing switches models automatically.", "ref": "r10" },
+    { "id": "w18-t03-q3", "type": "single", "tag": "tradeoff", "q": "Why avoid a floating 'latest' model alias in production?", "options": ["It always costs more per token than a pinned snapshot", "It cannot be logged", "It can change behaviour without a tested bundle", "It disables caching"], "answer": 2, "explain": "A floating alias can move to a different snapshot, so the tested combination is no longer what runs. It does not inherently cost more, block logging or disable caching.", "ref": "tr3" }
+  ],
+  "flashcards": [
+    { "front": "What should be pinned together in production?", "back": "Model version, prompt, configuration, orchestration logic and retrieval settings, because the tested combination is the release unit." },
+    { "front": "When does OpenAI's `v1/prompts` reusable prompt API shut down?", "back": "Scheduled for 2026-11-30. OpenAI advises versioning prompts in application code instead." },
+    { "front": "What changes for the OpenAI Evals platform and dataset-backed prompt optimizer on 2026-10-31?", "back": "They become read-only for existing users, with shutdown scheduled for 2026-11-30." }
+  ],
+  "related": ["w18-l2", "w14-t14", "w14-t15", "w12-t06", "w02-t14", "w15-t01"],
+  "refs": ["r10", "r11", "tr3"]
+}

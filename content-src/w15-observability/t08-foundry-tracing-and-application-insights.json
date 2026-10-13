@@ -1,0 +1,151 @@
+{
+  "id": "w15-t08",
+  "order": 8,
+  "group": "Platforms",
+  "title": "Foundry tracing and Application Insights",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "Foundry can collect traces for its agents server-side after you connect an Application Insights resource to the project, with no code change. Client-side tracing and the Agents view add depth, and KQL over the dependencies table answers custom questions.",
+  "useIf": "Your agents run in Foundry Agent Service, or you want one Application Insights resource to hold traces from Foundry and your own code.",
+  "avoidIf": "You assume server-side tracing covers every agent type, or that Foundry traces and Agent Framework telemetry are the same pipeline.",
+  "explain": [
+    { "t": "p", "md": "**Server-side tracing** turns on after you connect an Application Insights resource to the Foundry project. No code change is needed. It is generally available for prompt and hosted agents and in preview for workflow and external agents. Foundry stores traces in Application Insights using the OTel GenAI conventions, and the portal Traces tab shows 90 days. You need the Log Analytics Reader role, plus Privileged Monitoring Data Reader if the tables are protected [[r12]]." },
+    { "t": "p", "md": "**Client-side tracing** (preview) instruments your own code that talks to Foundry. Set `AZURE_EXPERIMENTAL_ENABLE_GENAI_TRACING=true` (Python) or `AppContext.SetSwitch(\"Azure.Experimental.EnableGenAITracing\", true)` (.NET) before creating the client. Traces typically appear within a few minutes (2 to 5 minutes on the client-side page). Message content recording uses `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true`, and `@trace_function` records parameters and return values regardless [[r12]] [[r13]]." },
+    { "t": "table", "caption": "Foundry server-side versus Agent Framework client-side telemetry [[r12]] [[r10]]", "head": ["Question", "Foundry server-side tracing", "Agent Framework or SDK telemetry"], "rows": [
+      ["Who produces spans?", "Foundry, for agents it hosts", "Your process, through OpenTelemetry"],
+      ["Setup", "Connect Application Insights to the project", "Enable instrumentation, configure an exporter"],
+      ["Covers", "Prompt and hosted agents (GA), workflow and external agents (preview)", "Any code you run, including external agents"],
+      ["Content control", "Content recording flag", "`ENABLE_SENSITIVE_DATA` or `EnableSensitiveData`"],
+      ["Backend", "Application Insights", "Any OTLP backend, including the same Application Insights"]
+    ] },
+    { "t": "p", "md": "In Application Insights the **Agents (Preview)** blade is built on the OTel GenAI semantics. It shows agent runs, tool calls, models and GenAI errors, can sort traces by tokens used, and offers prebuilt Grafana dashboards for Agent Framework, Agent Framework workflows, Foundry and coding agents. It relies on `gen_ai.usage.input_tokens` and `gen_ai.usage.output_tokens`. Spans land in the `dependencies` table with attributes in `customDimensions` [[r14]]." },
+    { "t": "code", "lang": "kql", "title": "Confirm gen_ai attributes reach Application Insights (Microsoft Learn query)", "code": "dependencies\n| where timestamp > ago(1h)\n| where customDimensions has \"gen_ai.agent.name\"\n| project timestamp, name, customDimensions\n| take 20" },
+    { "t": "code", "lang": "kql", "title": "Tokens per agent (composed from documented attribute names, verify against your data)", "code": "dependencies\n| where timestamp > ago(1d)\n| where customDimensions has \"gen_ai.usage.input_tokens\"\n| extend agent = tostring(customDimensions[\"gen_ai.agent.name\"]),\n         inTok = toint(customDimensions[\"gen_ai.usage.input_tokens\"]),\n         outTok = toint(customDimensions[\"gen_ai.usage.output_tokens\"])\n| summarize calls = sum(itemCount), inputTokens = sum(inTok * itemCount), outputTokens = sum(outTok * itemCount) by agent\n| order by outputTokens desc" }
+  ],
+  "whereToUse": [
+    "Prompt and hosted agents in Foundry where you want traces without code changes",
+    "A single Application Insights resource that holds Foundry traces and your own services' telemetry",
+    "Investigating tool calls and model errors in the Agents view",
+    "KQL reports of tokens, runs and p95 durations per agent",
+    "Grafana dashboards for agent fleets"
+  ],
+  "whenToUse": {
+    "use": [
+      "Connect Application Insights to the Foundry project for prompt and hosted agents",
+      "Add client-side tracing for your own orchestration code and external agents",
+      "Use KQL on `dependencies` and `customDimensions` for questions the blades do not answer"
+    ],
+    "avoid": [
+      "Do not rely on preview tracing paths (workflow, external and client-side) for production SLAs",
+      "Do not forget to weight KQL sums by `itemCount` when sampling is on",
+      "Do not enable content recording only because the portal offers it"
+    ],
+    "flips": [
+      "You need a non-Azure backend: export OTLP from your own code and keep Foundry traces for Foundry-hosted agents",
+      "Regulated content: keep content recording off and use shape signals",
+      "Workflow or external agents are core: plan for preview behavior and re-check when GA labels change"
+    ]
+  },
+  "alternatives": {
+    "title": "Where agent traces can live",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Foundry portal plus Application Insights", "Agents hosted in Foundry, no code change", "Agents run elsewhere", "Preview paths for workflow, external and client-side"],
+      ["Application Insights with Grafana", "You want dashboards and KQL across services", "You need LLM-specific eval and prompt tooling", "Agents view and some dashboards are preview [[r14]]"],
+      ["Local Aspire Dashboard", "Development on a laptop", "Production", "Not a production backend (ports 4317 and 18888 in the docs)"],
+      ["Third-party OTLP backend", "You need its evals or prompt management", "You want Foundry portal views", "A second system and its data residency"]
+    ]
+  },
+  "pitfalls": [
+    {
+      "symptom": "No traces appear in the Foundry Traces tab",
+      "cause": "No Application Insights resource is connected to the project, or the reader lacks Log Analytics Reader",
+      "fix": "Connect the resource, grant Log Analytics Reader (and Privileged Monitoring Data Reader for protected tables) and wait a few minutes [[r12]]"
+    },
+    {
+      "symptom": "Client-side spans never show up",
+      "cause": "The experimental tracing switch was set after the client was created, or not at all",
+      "fix": "Set `AZURE_EXPERIMENTAL_ENABLE_GENAI_TRACING` or the .NET switch before creating the client [[r13]]"
+    },
+    {
+      "symptom": "Agents view panels are empty although traces exist",
+      "cause": "Spans lack `gen_ai.usage.input_tokens` and `gen_ai.usage.output_tokens`, which the view relies on",
+      "fix": "Run the verification query and add or map the missing attributes [[r14]]"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "w15-t08-s1",
+      "title": "Prompt agents in Foundry, compliance wants traces, no code changes",
+      "situation": "A team runs several prompt agents in Foundry Agent Service. Compliance wants traces for investigations. The team has no appetite for instrumenting code.",
+      "constraints": ["Prompt agents only", "No code changes", "Azure-centric"],
+      "unknowns": ["Is content recording allowed?", "Who needs read access to the data?"],
+      "question": "How do you get traces?",
+      "options": [
+        { "name": "Connect Application Insights to the Foundry project and enable server-side tracing, content recording off", "verdict": "best", "why": "GA for prompt agents, no code change and the Traces tab and Agents view work out of the box.", "tradeoff": "Tied to Application Insights, and content stays out of traces." },
+        { "name": "Wrap every agent call in custom client tracing", "verdict": "good", "why": "Adds your own spans and context.", "tradeoff": "Client-side tracing is preview and duplicates what the platform emits." },
+        { "name": "Log requests and responses in an app database", "verdict": "poor", "why": "It stores content in a bespoke store without run structure.", "tradeoff": "Right if auditors require conversation records as a separate system." }
+      ],
+      "flips": [
+        { "if": "Agents are workflow or external agents", "then": "Expect preview behavior and add client-side tracing." },
+        { "if": "Content must be readable for audits", "then": "Use a governed content store, not trace attributes." }
+      ],
+      "takeaway": "Platform-hosted agents get platform tracing for free."
+    },
+    {
+      "id": "w15-t08-s2",
+      "title": "Foundry agents plus self-hosted orchestration code",
+      "situation": "An orchestrator runs on containers and calls both Foundry agents and a partner agent. The team wants one trace view and one place for KQL.",
+      "constraints": ["Mixed hosting", "One Application Insights wanted", "Some preview features acceptable"],
+      "unknowns": ["Which hops propagate context?", "Is the exporter configured in the orchestrator?"],
+      "question": "What setup do you choose?",
+      "options": [
+        { "name": "Server-side tracing for Foundry agents plus OpenTelemetry in the orchestrator exporting to the same Application Insights", "verdict": "best", "why": "Each part is traced by the layer that owns it and everything lands in one store.", "tradeoff": "Two pipelines to configure and a preview client-side path." },
+        { "name": "Only server-side tracing", "verdict": "poor", "why": "It misses your orchestrator and the partner hop.", "tradeoff": "Enough when every agent is hosted in Foundry." },
+        { "name": "Only client-side tracing", "verdict": "good", "why": "Covers your code and what you call.", "tradeoff": "Misses server-side internals of Foundry agents." }
+      ],
+      "flips": [
+        { "if": "Foundry agents are only prompt agents", "then": "Server-side tracing may be all you need." },
+        { "if": "You need a vendor-neutral backend", "then": "Export OTLP from the orchestrator and keep Foundry traces for Foundry agents." }
+      ],
+      "takeaway": "Combine server-side and client-side tracing when hosting is mixed."
+    }
+  ],
+  "quiz": [
+    {
+      "id": "w15-t08-q1",
+      "type": "single",
+      "tag": "concept",
+      "q": "What turns on Foundry server-side tracing for prompt agents?",
+      "options": [
+        "Adding `UseOpenTelemetry` to every agent",
+        "Setting `ENABLE_SENSITIVE_DATA=true`",
+        "Installing the Aspire Dashboard",
+        "Connecting an Application Insights resource to the Foundry project"
+      ],
+      "answer": 3,
+      "explain": "Server-side tracing needs only the Application Insights connection and no code change. `UseOpenTelemetry` and `ENABLE_SENSITIVE_DATA` belong to Agent Framework telemetry, and Aspire is a local viewer."
+    },
+    {
+      "id": "w15-t08-q2",
+      "type": "multi",
+      "tag": "diagnose",
+      "q": "Foundry traces are missing. Which checks are sensible? Select all that apply.",
+      "options": [
+        "An Application Insights resource is connected to the project",
+        "The reader holds Log Analytics Reader (and Privileged Monitoring Data Reader if tables are protected)",
+        "For client-side spans, the tracing switch was set before the client was created",
+        "The agent must be a Semantic Kernel plugin"
+      ],
+      "answers": [0, 1, 2],
+      "explain": "The connection, the reader roles and the client-side switch are the documented prerequisites. Semantic Kernel plugins are not a requirement."
+    }
+  ],
+  "flashcards": [
+    { "front": "Which Foundry agent types have GA server-side tracing?", "back": "Prompt and hosted agents. Workflow and external agents, and client-side tracing, are preview (checked 2026-10-13)." },
+    { "front": "How long does the Foundry portal Traces tab show data?", "back": "90 days. Backend retention follows your Application Insights settings." },
+    { "front": "Where do GenAI spans land in Application Insights?", "back": "In the `dependencies` table, with attributes in `customDimensions`." }
+  ],
+  "related": ["w15-t07", "w15-t09", "w15-t10", "w12-t14", "w16-t07"],
+  "refs": ["r10", "r12", "r13", "r14"]
+}

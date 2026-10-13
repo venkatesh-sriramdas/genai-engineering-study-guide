@@ -1,0 +1,190 @@
+{
+  "id": "w15-t12",
+  "order": 12,
+  "group": "Operating",
+  "title": "Tooling landscape",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "Because the GenAI conventions ride on OpenTelemetry, one instrumented app can feed Application Insights, Langfuse, LangSmith, Phoenix or a local dashboard. Pick the backend by ecosystem, the features you need around traces and where your data may live.",
+  "useIf": "You must choose, combine or replace a tracing and evaluation backend for LLM applications.",
+  "avoidIf": "You pick a tool for its demo and discover later that its transport, data residency or pricing does not fit.",
+  "explain": [
+    { "t": "p", "md": "OTLP is the common door. Backends differ in what they accept and what they add on top of traces: dashboards, evaluation, prompt management and data controls. Check the transport first, then the features, then where data lives [[r17]] [[r18]] [[r19]] [[r14]]. Because the format is shared, you instrument once and choose the backend by configuration, and an OpenTelemetry Collector can fan the same spans out to several backends during a migration [[r18]]." },
+    { "t": "p", "md": "Expect attribute mapping, because the GenAI conventions are still evolving: Langfuse maps received OTel traces to its own data model and supports popular GenAI attributes. To filter or aggregate by user or session there, those attributes must be on every span, not only the root, and baggage with a span processor is the documented way, with the warning not to put sensitive values in baggage [[r17]]." },
+    { "t": "table", "caption": "Onboarding specifics checked 2026-10-13", "head": ["Backend", "How traces arrive", "Gotcha"], "rows": [
+      ["Langfuse", "OTLP at `/api/public/otel` (traces at `/api/public/otel/v1/traces`), HTTP/JSON or HTTP/protobuf, Basic auth, regional endpoints [[r17]]", "gRPC is not supported, so a default gRPC exporter fails"],
+      ["LangSmith", "`OTEL_EXPORTER_OTLP_ENDPOINT=https://api.smith.langchain.com/otel` plus an `x-api-key` header, optional `Langsmith-Project` [[r18]]", "Give the base URL only: the exporter appends `/v1/traces`, and including it returns 404. Regional and self-hosted hosts differ"],
+      ["Arize Phoenix", "Accepts OTLP, built on OpenTelemetry with OpenInference instrumentation, with tracing, evaluation, prompt tools and experiments [[r19]]", "OpenInference attributes are a second vocabulary beside `gen_ai.*`"],
+      ["Application Insights and Foundry", "Microsoft OpenTelemetry Distro or Foundry server-side tracing, KQL, Agents (Preview) view, Grafana dashboards [[r12]] [[r14]]", "Agents view and some dashboards are preview; sampling defaults apply"]
+    ] },
+    { "t": "dials", "id": "w15-t12-backend", "title": "Choose a telemetry backend", "prompt": "Flip the constraints. The ranking and the reasons update.",
+      "dials": [
+        { "id": "eco", "label": "Ecosystem", "values": [ { "id": "azure", "label": "Azure centric" }, { "id": "open", "label": "Multi-cloud or open" } ] },
+        { "id": "need", "label": "What you need", "values": [ { "id": "trace", "label": "Traces, metrics and alerts" }, { "id": "evals", "label": "Plus evals, datasets and prompts" } ] },
+        { "id": "ctrl", "label": "Data control", "values": [ { "id": "strict", "label": "Stay in your tenant" }, { "id": "flex", "label": "Hosted SaaS acceptable" } ] }
+      ],
+      "options": [
+        { "id": "az", "name": "Foundry and Application Insights", "summary": "Azure native traces, KQL, Agents view." },
+        { "id": "lf", "name": "Langfuse", "summary": "OTLP over HTTP, own data model." },
+        { "id": "px", "name": "Arize Phoenix", "summary": "Open source, OpenInference, evals and experiments." },
+        { "id": "ls", "name": "LangSmith", "summary": "Datasets, experiments and evaluators." }
+      ],
+      "scores": {
+        "az": {
+          "eco": { "azure": { "s": 2, "why": "Same tenant, identity and Foundry integration." }, "open": { "s": -1, "why": "Little benefit outside Azure." } },
+          "need": { "trace": { "s": 2, "why": "KQL, Grafana and alerting come with it." }, "evals": { "s": 0, "why": "Foundry evaluation exists but is mostly preview." } },
+          "ctrl": { "strict": { "s": 2, "why": "Data stays in your subscription and region." }, "flex": { "s": 0, "why": "No extra benefit from hosting choice." } }
+        },
+        "lf": {
+          "eco": { "azure": { "s": 0, "why": "Works through OTLP over HTTP, needs protocol setup." }, "open": { "s": 2, "why": "Vendor-neutral OTLP ingestion." } },
+          "need": { "trace": { "s": 1, "why": "Good tracing views." }, "evals": { "s": 1, "why": "Adds its own data model on top of traces." } },
+          "ctrl": { "strict": { "s": 1, "why": "Local deployment is documented, with operations to run." }, "flex": { "s": 1, "why": "Hosted regions are available." } }
+        },
+        "px": {
+          "eco": { "azure": { "s": 0, "why": "Accepts OTLP but uses OpenInference conventions." }, "open": { "s": 2, "why": "Open source and built on OpenTelemetry." } },
+          "need": { "trace": { "s": 1, "why": "Strong tracing views." }, "evals": { "s": 2, "why": "Evaluation, datasets, experiments and prompt tools in one place." } },
+          "ctrl": { "strict": { "s": 1, "why": "Open source, so you can run it yourself." }, "flex": { "s": 1, "why": "A managed sibling product, Arize AX, exists from the same vendor." } }
+        },
+        "ls": {
+          "eco": { "azure": { "s": -1, "why": "A separate hosted product outside your Azure estate." }, "open": { "s": 1, "why": "Accepts OTLP from any app." } },
+          "need": { "trace": { "s": 1, "why": "Solid tracing." }, "evals": { "s": 2, "why": "Datasets, experiments, offline and online evaluators." } },
+          "ctrl": { "strict": { "s": -1, "why": "Hosted by default, self-hosting adds operations." }, "flex": { "s": 1, "why": "Regional hosted endpoints are available." } }
+        }
+      },
+      "takeaway": "Pick by ecosystem and data control first, then by the evaluation and prompt features you actually use." }
+  ],
+  "whereToUse": [
+    "Selecting the production backend for agents hosted in Foundry or on Azure",
+    "Adding an eval and prompt-management layer on top of existing OpenTelemetry traces",
+    "Running a local viewer during development",
+    "Fan-out from an OpenTelemetry Collector to two backends during a migration"
+  ],
+  "whenToUse": {
+    "use": [
+      "Keep instrumentation vendor-neutral with OTLP so the backend can change",
+      "Use Application Insights and Foundry when governance, KQL and Azure identity matter most",
+      "Add an LLM-focused backend when you need evaluation workflows tied to traces"
+    ],
+    "avoid": [
+      "Do not choose by demo: check transport (gRPC versus HTTP), residency and retention",
+      "Do not send content to a hosted backend before reviewing its data handling",
+      "Do not run two backends without deciding which is the source of truth"
+    ],
+    "flips": [
+      "Data may not leave your tenant: favor Azure native tooling or self-hosted open source",
+      "Your team lives in notebooks and experiments: an eval-centric tool outweighs KQL convenience",
+      "A short evaluation period: fan out to both backends through a collector, then retire one"
+    ]
+  },
+  "alternatives": {
+    "title": "Build versus buy",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Azure native (Application Insights, Foundry)", "Azure estate, governance and KQL", "Multi-cloud estate or eval-first workflows", "Preview parts of the Agents view and some tracing paths [[r14]]"],
+      ["Managed SaaS (for example LangSmith or hosted Langfuse)", "Fast start, built-in evals and prompts", "Strict residency or content rules", "Vendor data handling and pricing"],
+      ["Self-hosted open source (Phoenix, Langfuse)", "Control over data and cost", "A small team with no platform capacity", "You run, scale and secure it"],
+      ["Build on a collector plus Grafana", "You already run observability platforms", "You need LLM-specific eval workflows", "Dashboards and schemas you build and maintain"]
+    ]
+  },
+  "pitfalls": [
+    {
+      "symptom": "Langfuse shows nothing from a default Agent Framework Python app",
+      "cause": "The framework's default OTLP exporter uses gRPC and Langfuse accepts only OTLP over HTTP",
+      "fix": "Set the protocol to http and use the `/api/public/otel` endpoint with the required headers [[r17]] [[r10]]"
+    },
+    {
+      "symptom": "LangSmith returns 404 for every export",
+      "cause": "The endpoint included `/v1/traces` on a base-URL setting, so the exporter appended it again",
+      "fix": "Set the base `https://api.smith.langchain.com/otel` and let the exporter add the path [[r18]]"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "w15-t12-s1",
+      "title": "An Azure-only company with agents in Foundry",
+      "situation": "A company runs everything in Azure. Agents are hosted in Foundry plus a few services on Container Apps. Security wants data to stay in the tenant. The team has KQL experience.",
+      "constraints": ["Azure-only estate", "Data stays in tenant", "Governance is a priority"],
+      "unknowns": ["Are workflow agents in use (preview paths)?", "Is an eval workflow needed on top of traces?"],
+      "question": "Which backend do you choose?",
+      "options": [
+        { "name": "Foundry tracing with Application Insights, plus OTel export from the container services", "verdict": "best", "why": "It keeps data in the tenant, covers hosted agents with no code and gives KQL and Grafana.", "tradeoff": "Preview parts remain, and eval workflows are less polished than eval-first tools." },
+        { "name": "A hosted SaaS eval platform for all traces", "verdict": "poor", "why": "It moves trace data out of the tenant, which security ruled out.", "tradeoff": "Right when residency rules allow and evals are the main need." },
+        { "name": "Self-hosted open-source tool in the tenant", "verdict": "good", "why": "Keeps data in your tenant and adds eval features.", "tradeoff": "You operate another platform." }
+      ],
+      "flips": [
+        { "if": "Eval and prompt workflows become the top need", "then": "Add an open-source tool in the tenant and fan out through a collector." },
+        { "if": "The estate becomes multi-cloud", "then": "Keep OTLP instrumentation and revisit the backend." }
+      ],
+      "takeaway": "Let ecosystem and data control decide before features."
+    },
+    {
+      "id": "w15-t12-s2",
+      "title": "A research team iterating on prompts across clouds",
+      "situation": "A small team runs agents across two clouds and iterates on prompts weekly. They want datasets, experiments and trace views, and have no platform engineers.",
+      "constraints": ["Multi-cloud", "Eval and prompt iteration is the need", "No platform capacity"],
+      "unknowns": ["Is data sensitive?", "What volume will traces reach?"],
+      "question": "How do you set up tooling?",
+      "options": [
+        { "name": "Vendor-neutral OTLP instrumentation sending to a managed eval-centric backend", "verdict": "best", "why": "Little to operate, quick datasets and experiments and the backend can change later.", "tradeoff": "Data handling and pricing depend on the vendor." },
+        { "name": "Build dashboards on a collector and Grafana", "verdict": "poor", "why": "It needs platform work the team does not have and gives no eval workflow.", "tradeoff": "Right for teams that already run observability platforms." },
+        { "name": "Self-host an open-source backend", "verdict": "good", "why": "Control and no per-trace fee.", "tradeoff": "Operations load for a team without platform engineers." }
+      ],
+      "flips": [
+        { "if": "Data becomes sensitive", "then": "Self-host or restrict content capture." },
+        { "if": "Volume grows beyond vendor pricing", "then": "Move to a self-hosted option." }
+      ],
+      "takeaway": "Small teams buy what they cannot afford to operate."
+    }
+  ],
+  "quiz": [
+    {
+      "id": "w15-t12-q1",
+      "type": "single",
+      "tag": "bug",
+      "q": "A Python agent using the default OTLP exporter sends nothing to Langfuse. What is the most likely cause?",
+      "options": [
+        "The default exporter uses gRPC and Langfuse accepts only OTLP over HTTP",
+        "Langfuse requires prompts to be stored first",
+        "Langfuse does not support OpenTelemetry",
+        "The agent has too many tools"
+      ],
+      "answer": 0,
+      "explain": "Langfuse supports OTLP over HTTP with JSON or protobuf and does not support gRPC. It does accept OpenTelemetry, and prompts and tool counts are unrelated."
+    },
+    {
+      "id": "w15-t12-q2",
+      "type": "match",
+      "tag": "concept",
+      "q": "Match each backend to a documented onboarding detail.",
+      "pairs": [
+        { "l": "Langfuse", "r": "OTLP over HTTP at `/api/public/otel`, no gRPC" },
+        { "l": "LangSmith", "r": "Base endpoint `https://api.smith.langchain.com/otel` with an `x-api-key` header" },
+        { "l": "Arize Phoenix", "r": "Built on OpenTelemetry with OpenInference instrumentation" },
+        { "l": "Aspire Dashboard", "r": "Local viewer with OTLP on 4317 and UI on 18888" }
+      ],
+      "explain": "These are the documented onboarding details checked on 2026-10-13. Mixing them up leads to the 404 and gRPC failures listed in the pitfalls."
+    },
+    {
+      "id": "w15-t12-q3",
+      "type": "single",
+      "tag": "flip",
+      "q": "Security requires that no trace data leave your Azure tenant, but the team wants evaluation workflows. Which choice fits best?",
+      "options": [
+        "A hosted SaaS tool for all traces",
+        "Application Insights plus a self-hosted open-source eval tool inside the tenant",
+        "Disable tracing",
+        "Send traces to a public endpoint with content capture on"
+      ],
+      "answer": 1,
+      "explain": "Data control rules out hosted SaaS, and the eval need rules out nothing. A tenant-hosted combination meets both. Disabling tracing loses the evidence and a public endpoint with content is the opposite of the requirement."
+    }
+  ],
+  "flashcards": [
+    { "front": "Which transport does Langfuse accept for OTLP?", "back": "HTTP with JSON or protobuf at `/api/public/otel`. gRPC is not supported." },
+    { "front": "How should you set the LangSmith OTLP endpoint?", "back": "`https://api.smith.langchain.com/otel` as a base URL with an `x-api-key` header. Do not add `/v1/traces` because the exporter appends it." },
+    { "front": "What is Arize Phoenix built on?", "back": "OpenTelemetry, with OpenInference instrumentation. It offers tracing, evaluation, prompt tools and experiments." },
+    { "front": "How do you stay vendor neutral?", "back": "Instrument with OpenTelemetry and OTLP, keep content policy outside the vendor choice and use a collector to fan out when migrating." }
+  ],
+  "related": ["w15-t02", "w15-t08", "w15-t09", "w15-t11", "w14-t08", "w12-t14"],
+  "refs": ["r10", "r12", "r14", "r17", "r18", "r19"]
+}

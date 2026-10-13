@@ -1,0 +1,143 @@
+{
+  "id": "w07-t15",
+  "order": 15,
+  "group": "Operations and defences",
+  "title": "ACL sync, drift and revocation",
+  "minutes": 10,
+  "difficulty": "advanced",
+  "summary": "Every copy of a permission (index, membership cache, answer cache) ages. Design how a change reaches each copy, how you detect copies that missed it, and what revocation time you promise per tier.",
+  "useIf": "Permissions live in a source system and your index, caches or membership store hold copies of them.",
+  "avoidIf": "You delegate retrieval to the source and keep no copy. Then there is nothing to sync, only a live call to rely on.",
+  "explain": [
+    { "t": "p", "md": "A revoked grant keeps working until **every** copy catches up, and each copy ages at its own rate. A pull indexer cannot beat its next run: the schedule interval ranges from 5 to 1,440 minutes [[r19]]. Push ingestion lets you patch only the ACL field with `merge`, so revocation can be seconds, but then you own the change feed. Graph driveItem notifications average under a minute and can take up to six hours, and directory subscriptions expire in under 29 days and need renewal [[r27]]. Never promise a revocation time tighter than the slowest link." },
+    { "t": "p", "md": "Start by writing a **revocation target per sensitivity tier**. Restricted data may need seconds to minutes and general internal data may accept hours. These are planning estimates, not vendor numbers. Then list every copy of a permission (index ACL field, membership cache, answer cache, search replicas) and give each one an owner, a refresh mechanism and a way to detect when it is wrong." },
+    { "t": "table", "caption": "Sync designs and their revocation floor", "head": ["Design", "Floor", "You own", "Fits"], "rows": [
+      ["Scheduled pull indexer", "5 to 1,440 minutes [[r19]]", "Schedule, resync of parent scopes [[r16]]", "General content, hours"],
+      ["Event-driven push merge", "Seconds, bounded by the event feed", "Change feed, retries, subscription renewal", "Restricted tiers"],
+      ["Notifications plus delta reconcile", "Event latency, healed by delta [[r35]]", "Both paths", "Large sources with missed events"],
+      ["Delegate, no copy", "Live", "Quotas and licences [[r26]]", "Rich rules, small volume"],
+      ["Live check on top hits", "Seconds, bounded by cache TTL", "Latency and failure handling", "Restricted hits"]
+    ] },
+    { "t": "formula", "title": "Chance a returned grant is stale", "expr": "P(stale) = 1 - exp(-lambda x lag)", "vars": [ { "k": "lambda", "v": "revocations per grant per hour: the daily revocation rate divided by 24" }, { "k": "lag", "v": "hours between the source change and the index" } ], "example": "At 5% revocations a day and 24 hours of lag, P(stale) is about **4.9%** per returned grant, and with 10 hits about 39% of queries include a revoked document. At 1% a day and 1 hour of lag it is about 0.04% per grant, or about 0.4% of queries. Source: the lab model in the ACL decision space topic, a teaching simplification." },
+    { "t": "flow", "title": "A drift-detection loop (design reasoning)", "direction": "h", "steps": [
+      { "title": "Sample", "md": "Pick documents daily, weighted to restricted tiers.", "tag": "daily" },
+      { "title": "Compare", "md": "Read the source ACL and the index ACL for each.", "tag": "diff" },
+      { "title": "Alert and contain", "md": "On any mismatch, alert and hide the document until fixed.", "tag": "fail closed" },
+      { "title": "Track age", "md": "Chart the age of the oldest unsynced change.", "tag": "SLO" }
+    ] },
+    { "t": "callout", "kind": "gotcha", "title": "Revocation includes deletes and caches", "md": "Deleted source items must disappear from the index and from answer, semantic and membership caches. Test deletes, not only permission edits, with a canary document." }
+  ],
+  "whereToUse": [
+    "Setting a revocation target per sensitivity tier before building sync",
+    "SharePoint or lake content indexed on a schedule with permission fields",
+    "Security reviews that ask how fast a leaver loses access to answers",
+    "Incident response after a folder move or group rename left stale ACLs"
+  ],
+  "whenToUse": {
+    "use": ["Different tiers have different revocation targets", "A copy of permissions exists in the index or a cache", "You can sample and compare source and index ACLs"],
+    "avoid": ["Quoting a single revocation number for the whole system", "Relying on one mechanism for parent-scope and item-scope changes", "Assuming a managed indexer means no drift"],
+    "flips": ["Restricted data needs seconds: push merges from events plus a live check", "Only general content is in scope: a scheduled indexer and a daily resync may be enough", "Sources emit unreliable events: add delta-query reconciliation"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Approach", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Scheduled indexer only", "Hours are acceptable", "Seconds are required", "Stale grants up to the interval"],
+      ["Event-driven push", "Seconds for restricted tiers", "Events are lost or delayed up to six hours", "Pipeline and subscription upkeep"],
+      ["Event plus periodic full resync", "You need both speed and self-healing", "Resync is too heavy to run often", "Compute cost of resync"],
+      ["Drift audit on a sample", "Any copy of permissions exists", "Sample misses rare scopes", "Detection, not prevention"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A folder permission change never reaches the index", "cause": "Indexer runs pick up unique item ACLs but not parent-scope changes", "fix": "Trigger /resync with options permissions on change events and schedule one" },
+    { "symptom": "Events stop and nobody notices", "cause": "A Graph subscription expired after under 29 days", "fix": "Renew early, alert on missing events and reconcile with delta queries" },
+    { "symptom": "Revoked users still see cached answers", "cause": "Answer or semantic caches are not scoped by ACL or outlive the target", "fix": "Key caches by ACL scope and set TTL below the revocation target" },
+    { "symptom": "Deleted documents still appear in citations", "cause": "Deletes were not propagated to the index or caches", "fix": "Propagate tombstones by source id and test deletes with a canary" }
+  ],
+  "scenarios": [
+    {
+      "id": "w07-t15-s1",
+      "title": "General content, hours acceptable",
+      "situation": "An assistant covers 40 SharePoint sites of general internal content. Permissions rarely change, and leaving staff lose access to the source immediately. Hours of lag are acceptable to the business.",
+      "constraints": ["General internal content", "Revocation within hours", "40 sites"],
+      "unknowns": ["How often do parent-scope permissions change?", "Who watches the sync?"],
+      "question": "What sync design fits?",
+      "options": [
+        { "name": "Indexer every few hours, a daily resync of permissions and a sampled drift audit", "verdict": "best", "why": "It matches an hours target at low cost and heals parent-scope changes through the resync [[r16]].", "tradeoff": "Stale grants for hours and a job to monitor." },
+        { "name": "Event-driven push pipeline with Graph subscriptions", "verdict": "good", "why": "Faster than needed.", "tradeoff": "Builds and runs a pipeline the target does not justify." },
+        { "name": "Indexer only, and assume the managed service keeps ACLs right", "verdict": "poor", "why": "Parent-scope changes are not picked up by runs, so drift grows unseen.", "tradeoff": "Acceptable only for content where wrong access has no impact." }
+      ],
+      "flips": [
+        { "if": "A subset of sites turns restricted", "then": "Give those sites event-driven updates and a live check." },
+        { "if": "Compliance needs evidence", "then": "Keep drift audit reports." }
+      ],
+      "takeaway": "Match the machinery to the revocation target."
+    },
+    {
+      "id": "w07-t15-s2",
+      "title": "Restricted tier, seconds",
+      "situation": "A restricted tier in a custom push index must reflect a revoked grant within about ten seconds. The source emits change events through a webhook that occasionally drops messages.",
+      "constraints": ["Revocation in seconds", "Push index", "Unreliable events"],
+      "unknowns": ["How often are events lost?", "Is a live check allowed on restricted hits?"],
+      "question": "How do you meet the target?",
+      "options": [
+        { "name": "Nightly resync", "verdict": "poor", "why": "A day of lag misses ten seconds by a wide margin.", "tradeoff": "Right for general content with a daily target." },
+        { "name": "Event-driven merge of the ACL field, a reconciliation job and a live check on restricted hits", "verdict": "best", "why": "Events give speed, reconciliation catches lost messages and the live check covers the gap [[r19]].", "tradeoff": "Three mechanisms to run and test." },
+        { "name": "Poll the source change feed every minute and merge", "verdict": "good", "why": "Simpler than webhooks and self-healing.", "tradeoff": "Up to a minute of lag, so ten seconds is missed." }
+      ],
+      "flips": [
+        { "if": "The target relaxes to five minutes", "then": "A five-minute poll or indexer works." },
+        { "if": "The source offers a reliable change feed with ordering", "then": "Drop the reconciliation job." }
+      ],
+      "takeaway": "Seconds need events, healing and a live check."
+    },
+    {
+      "id": "w07-t15-s3",
+      "title": "Drift found after a folder move",
+      "situation": "A daily sample finds that 0.3% of documents under a moved folder carry old ACLs in the index. Some of them are now more restricted at the source.",
+      "constraints": ["Drift detected", "Some docs now more restricted", "Index is the serving path"],
+      "unknowns": ["How many documents are in the affected scope?", "Can mismatched documents be hidden quickly?"],
+      "question": "What do you do first?",
+      "options": [
+        { "name": "Wait for the next scheduled run to fix it", "verdict": "poor", "why": "Exposure continues, and parent-scope changes are not picked up by runs anyway.", "tradeoff": "Fine only for mismatches that grant less access." },
+        { "name": "Contain by hiding mismatched documents, run a targeted resync of the scope, then add a parent-scope event trigger", "verdict": "best", "why": "It stops exposure first, fixes the scope and removes the root cause.", "tradeoff": "Some documents are briefly unavailable." },
+        { "name": "Run a full re-index of the corpus immediately", "verdict": "good", "why": "Fixes everything.", "tradeoff": "Slow and expensive, and it does not contain exposure while it runs." }
+      ],
+      "flips": [
+        { "if": "Mismatches only grant less access than the source", "then": "Fix on the normal schedule." },
+        { "if": "Restricted data was exposed", "then": "Open an incident and review logs." }
+      ],
+      "takeaway": "Contain, repair the scope, then fix the cause."
+    },
+    {
+      "id": "w07-t15-s4",
+      "title": "Deleted file still cited",
+      "situation": "A user deleted a sensitive file at the source. Two hours later the assistant still quotes it. The index sync runs every four hours and a semantic cache holds answers for a day.",
+      "constraints": ["Delete at the source", "Four-hour sync", "One-day answer cache"],
+      "unknowns": ["Do deletes propagate through the indexer?", "How is the cache keyed?"],
+      "question": "How do you close the gap?",
+      "options": [
+        { "name": "Propagate deletes as tombstones by source id to the index and invalidate caches that cite it", "verdict": "best", "why": "It removes the chunks and every cached answer built from them.", "tradeoff": "Needs source ids on chunks and cache entries." },
+        { "name": "Shorten the cache TTL only", "verdict": "good", "why": "Reduces the cached exposure.", "tradeoff": "The index still serves the chunks until the next sync." },
+        { "name": "Wait for the next full rebuild", "verdict": "poor", "why": "It leaves the document live for hours or days.", "tradeoff": "Acceptable only for non-sensitive content." }
+      ],
+      "flips": [
+        { "if": "The source supports soft deletes with events", "then": "Use those events to trigger tombstones." },
+        { "if": "Caches are keyed by ACL scope and short-lived", "then": "Cache invalidation may be unnecessary." }
+      ],
+      "takeaway": "Revocation covers deletes, index copies and caches."
+    }
+  ],
+  "quiz": [
+    { "id": "w07-t15-q1", "type": "numeric", "tag": "numeric", "q": "Using P(stale) = 1 - exp(-lambda x lag): 5% of grants are revoked per day (lambda = 0.05 / 24 per hour) and sync lag is 24 hours. What percentage of returned grants is stale?", "answer": 4.9, "tolerancePct": 5, "unit": "%", "hint": "lambda x lag = 0.05", "explain": "lambda times lag is 0.05, and 1 minus exp(-0.05) is about 0.049, or 4.9%. With 10 hits per query about 39% of queries contain a revoked document. It is a lab model, not a measurement.", "ref": "r19" },
+    { "id": "w07-t15-q2", "type": "single", "tag": "flip", "q": "A SharePoint library's permissions change at the folder level. The indexer runs every 5 minutes. What brings the index up to date?", "options": ["The next scheduled run alone", "A call to /resync with options permissions, or /resetdocs for specific keys", "Waiting for the access token to expire", "Nothing: SharePoint pushes folder changes to the index"], "answer": 1, "explain": "Runs pick up unique item ACL changes, but parent-scope changes need an explicit resync of permissions or a reset of specific documents.", "ref": "r16" },
+    { "id": "w07-t15-q3", "type": "multi", "tag": "tradeoff", "q": "Which statements set a realistic revocation expectation? Choose all that apply.", "options": ["A pull indexer cannot update faster than its schedule interval of at least 5 minutes", "Graph driveItem notifications can take up to six hours", "Push ingestion can patch the ACL field immediately with merge", "A managed indexer guarantees zero drift"], "answers": [0, 1, 2], "explain": "The schedule minimum is 5 minutes, driveItem notification latency has a six-hour maximum and push merge can update ACLs at once. No managed service guarantees zero drift.", "ref": "r27" }
+  ],
+  "flashcards": [
+    { "front": "What is the revocation floor of a pull indexer?", "back": "Its next run. The schedule interval is 5 to 1,440 minutes. Push ingestion can update ACLs immediately with merge but you own the change feed." },
+    { "front": "How would you detect ACL drift?", "back": "Sample documents daily, compare source and index ACLs, alert on any mismatch, hide mismatches until fixed, and chart the age of the oldest unsynced change." },
+    { "front": "What does revocation include besides permission edits?", "back": "Deletes and every cache: index chunks, answer caches, semantic caches and membership caches. Test with a canary document." }
+  ],
+  "related": ["w07-t10", "w07-t12", "w07-t16", "w07-t19", "w07-l6", "w03-t06"],
+  "refs": ["r16", "r19", "r26", "r27", "r35"]
+}

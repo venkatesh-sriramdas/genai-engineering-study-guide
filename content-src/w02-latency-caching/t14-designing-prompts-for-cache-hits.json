@@ -1,0 +1,120 @@
+{
+  "id": "w02-t14",
+  "order": 14,
+  "group": "Prompt caching",
+  "title": "Designing prompts for cache hits",
+  "minutes": 9,
+  "difficulty": "core",
+  "summary": "Hit rate is something you engineer. Put content in order of how rarely it changes, keep tools and settings frozen, shard hot prefixes across keys and alert when the cached share drops.",
+  "useIf": "You pay for a long prefix on every call and the dashboard shows few cached tokens, or you are designing a new prompt layout.",
+  "avoidIf": "Reuse is too sparse for any cache to hit, in which case the fix is to turn caching off, not to reshape the prompt.",
+  "explain": [
+    { "t": "p", "md": "A cache matches a prefix, so everything before the first changed token is reusable and everything after it is not. The design rule follows: **stable first, dynamic last, history append-only**. Order content by how often it changes, and put a breakpoint after the last stable layer where the provider allows one [[r1]] [[r3]]." },
+    { "t": "table", "caption": "A layout from most to least stable", "head": ["Layer", "Changes", "Rule"], "rows": [
+      ["Tool definitions", "On deploy", "Fixed, sorted order. Do not add or drop tools per request"],
+      ["System instructions", "On deploy", "No timestamps, names or request ids"],
+      ["Static reference and examples", "Daily or less", "Identical bytes across calls"],
+      ["Conversation history", "Each turn", "Append only. Do not edit, reorder or trim the middle"],
+      ["Retrieved passages, time, question", "Every call", "Last. Never in the cached region"]
+    ] },
+    { "t": "lab", "id": "prompt-cache", "intro": "Start with the Many tenants, low traffic preset: about 0.2 requests per minute per tenant leaves gaps that run into a 5 minute lifetime. Then load One hot prefix, where 120 requests per minute on one key exceeds the roughly 15 per minute documented before misses begin, and spread it across keys. Finally break the prefix on 70% of requests and watch caching cost more than no caching." },
+    { "t": "p", "md": "**Freeze what changes the prefix.** On OpenAI `model`, `tools`, `parallel_tool_calls`, `text.format`, `reasoning.effort`, `text.verbosity` and `context_management` all affect the cached prefix. Use `tool_choice: \"none\"` or `allowed_tools` instead of removing a tool. On supported GPT-6 models append a `configuration_update` input item to change reasoning effort without rewriting the prefix [[r1]]. MCP servers SHOULD return tools in a deterministic order, and `tools/list` MUST NOT vary per connection but MAY vary by authorization, so group users with identical tool sets [[r18]]." },
+    { "t": "p", "md": "**Route and key.** Caches live on single machines, and above about 15 requests per minute for one prefix and key, requests can overflow to machines without the entry. Before GPT-5.6, a stable `prompt_cache_key` per shared prefix improves routing, and busier traffic needs a stable mapping across several keys: 1,000 requests per minute needs at least 67 keys. A key never pins a machine or guarantees a hit [[r1]] [[r2]]." },
+    { "t": "formula", "title": "When padding a short prefix pays off", "expr": "pad if L > M x (r + (w - r) / N)", "vars": [
+      { "k": "L, M", "v": "original prefix length and the provider minimum, in tokens" },
+      { "k": "r, w", "v": "read and write multipliers" },
+      { "k": "N", "v": "total requests that share the padded prefix inside its lifetime (one write and N - 1 reads)" }
+    ], "example": "With M = 1,024, r = 0.1, w = 1.25 and N = 10, the threshold is 1,024 x 0.215 = 220 tokens. A 300-token prefix shared by 10 requests is worth padding to the minimum. Formula from the OpenAI guide [[r1]]." },
+    { "t": "callout", "kind": "tip", "title": "Measure the ratio, alert on the drop", "md": "Track cached tokens over prompt tokens (on Anthropic, read tokens over input plus read plus creation). A regression raises no error. OpenAI offers a Prompt Caching Dashboard and a Prompt Cache Diagnostics tool [[r1]]." }
+  ],
+  "whereToUse": [
+    "Designing a new assistant, agent or RAG prompt layout",
+    "Debugging a cached-token share that dropped after a release",
+    "Platforms with many tenants that need per-tenant prefixes and keys",
+    "Agent frameworks that build tool lists from MCP servers",
+    "Cost reviews where input tokens dominate the bill"
+  ],
+  "whenToUse": {
+    "use": [
+      "A large share of tokens could be identical across calls but is not cached today",
+      "You can control prompt assembly code and tool registration order",
+      "Traffic per prefix is steady enough to reuse entries inside the lifetime"
+    ],
+    "avoid": [
+      "Reuse per prefix is rare, so the work gains nothing",
+      "Content must be personalised at the very top of the prompt for correctness",
+      "You would weaken isolation by sharing one prefix or key across tenants"
+    ],
+    "flips": [
+      "Prefix is shorter than the minimum and reused heavily: pad, if L exceeds M(r + (w - r)/N)",
+      "One prefix exceeds 15 requests per minute on an older model: shard across stable keys",
+      "Tool lists differ by authorization: give each identical set its own key and prefix"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with other ways to cut input cost",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Reorder for stable-first", "Dynamic text sits early", "Order is already stable", "Small code change, big effect"],
+      ["Explicit breakpoints", "Layers change at different rates", "Provider offers none (PTU-M)", "Maintenance of markers"],
+      ["Shorten the prompt", "Padded with irrelevant text", "Prompt is already tight", "May drop needed context"],
+      ["Padding to the minimum", "Short prefix, heavy reuse", "Reuse is light", "Pays for padding tokens"],
+      ["Route easy queries to a smaller model", "Many queries are easy", "Queries are uniformly hard", "Splits the cached prefix across models"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Cached share is zero although the prompt is long and constant in content", "cause": "A timestamp or request id sits near the top, or tools are emitted in map order", "fix": "Move dynamic text last and sort tools. Diff two consecutive prompts byte by byte [[r1]]" },
+    { "symptom": "Hit rate falls after turning on summarisation of old turns", "cause": "Compaction or truncation rewrites the history prefix", "fix": "Compact rarely and accept one miss, or keep a stable summary block appended once [[r1]]" },
+    { "symptom": "Hits fall for some users only", "cause": "Their MCP tool list differs by authorization, so their prefix differs", "fix": "Group users by identical tool sets and prefix, and give each group its own key [[r18]]" }
+  ],
+  "scenarios": [
+    {
+      "id": "w02-t14-s1",
+      "title": "Zero hits on a long prompt",
+      "situation": "A 12,000-token prompt starts with the line Current time followed by the clock, then policies, then tools that the code collects from a dictionary. The cached share is 0%. Traffic is 30 requests per minute.",
+      "constraints": ["Hosted API with automatic caching", "Prompt is far above the minimum", "Traffic is steady"],
+      "unknowns": ["Is the tool order stable between processes?", "Does the model need the time at the top?"],
+      "question": "What do you change?",
+      "options": [
+        { "name": "Raise the cache lifetime or prewarm", "verdict": "poor", "why": "The prefix changes at the first line on every call, so a longer lifetime has nothing to reuse.", "tradeoff": "Right when the prefix is stable and the gaps are too long." },
+        { "name": "Move the time to the end, sort the tools and re-measure the cached share", "verdict": "best", "why": "It removes both prefix breakers, so the 12,000 stable tokens match on every call.", "tradeoff": "The model sees the time late, which rarely matters, and you must keep the order sorted forever." },
+        { "name": "Place an explicit breakpoint after the policies", "verdict": "good", "why": "It caches the policy layer even if tools vary.", "tradeoff": "The time at the top still breaks everything after it, so you must move it anyway." }
+      ],
+      "flips": [
+        { "if": "The task depends on the time early in the prompt", "then": "Put it in a short message after the cached prefix." },
+        { "if": "Tools legitimately differ per request", "then": "Group requests by tool set." }
+      ],
+      "takeaway": "Find the first changed token. Everything after it is lost."
+    },
+    {
+      "id": "w02-t14-s2",
+      "title": "One hot prefix at 1,000 requests per minute",
+      "situation": "A support product on a model before GPT-5.6 sends 1,000 requests per minute that share one 6,000-token prefix. It uses one prompt_cache_key. The cached share is 40% and unstable.",
+      "constraints": ["About 15 requests per minute per key and prefix before overflow", "Model predates GPT-5.6", "One shared prefix"],
+      "unknowns": ["Can the gateway map requests to keys deterministically?", "Do tenants require separate keys anyway?"],
+      "question": "How do you key the traffic?",
+      "options": [
+        { "name": "Keep one key", "verdict": "poor", "why": "All 1,000 requests hit one routing target, and overflow sends most of them to machines without the entry.", "tradeoff": "Right when traffic for the prefix stays under about 15 requests per minute." },
+        { "name": "Spread across at least 67 keys with a stable mapping", "verdict": "best", "why": "1,000 divided by 15 is 67, so each key stays under the overflow rate and each key's entries get reused.", "tradeoff": "More keys mean more cold entries to warm, and a mapping to maintain." },
+        { "name": "Drop the key and rely on default routing", "verdict": "good", "why": "It is simple and can work at moderate rates.", "tradeoff": "At this rate you lose the routing help the key gave and hits stay unstable." }
+      ],
+      "flips": [
+        { "if": "The model is GPT-5.6 or later", "then": "The key is optional for routing, but still useful for per-customer accounting." },
+        { "if": "Tenants require isolation", "then": "Use per-tenant keys and accept the lower shared hit rate." }
+      ],
+      "takeaway": "Divide the request rate by about 15 to get the minimum key count."
+    }
+  ],
+  "quiz": [
+    { "id": "w02-t14-q1", "type": "numeric", "tag": "numeric", "q": "A single prefix receives 1,000 requests per minute. At about 15 requests per minute per key, what is the minimum number of prompt_cache_key values needed?", "answer": 67, "tolerancePct": 2, "unit": "keys", "hint": "1,000 / 15, rounded up", "explain": "1,000 / 15 is 66.7, so at least 67 keys are needed with a stable mapping. A key never guarantees a hit, so confirm with the cached share.", "difficulty": 2, "ref": "r1" },
+    { "id": "w02-t14-q2", "type": "order", "tag": "order", "q": "Order a prompt for the best cache reuse, from first to last.", "items": ["Tool definitions", "System instructions", "Static reference document", "Conversation history so far", "Retrieved passages and the new question"], "explain": "Content goes from least to most frequently changing. History is append-only, and the retrieved text and question change every call so they come last.", "difficulty": 1, "ref": "r1" },
+    { "id": "w02-t14-q3", "type": "single", "tag": "concept", "q": "What does a prompt_cache_key guarantee?", "options": ["A cache hit for every repeated prefix", "Pinning of requests to one machine", "Nothing by itself. It only improves routing and accounting", "Longer cache lifetime"], "answer": 2, "explain": "The key helps route requests with a shared prefix to the same place and, on GPT-5.6+, gives per-customer accounting. It never pins a machine or guarantees a hit, and it does not change the lifetime.", "difficulty": 2, "ref": "r1" }
+  ],
+  "flashcards": [
+    { "front": "What is the layout rule for cache-friendly prompts?", "back": "Stable first, dynamic last, history append-only. Tools, then system, then static reference, then history, then retrieved text and the question." },
+    { "front": "How many keys does one prefix at 1,000 requests per minute need?", "back": "At least 67, from 1,000 / 15 requests per minute per key, using a stable mapping." },
+    { "front": "How do you remove a tool without breaking the cache on OpenAI?", "back": "Do not remove it. Use tool_choice none or allowed_tools so the tools array, and the prefix, stay identical." }
+  ],
+  "related": ["w02-t11", "w02-t12", "w02-t13", "w02-l5"],
+  "refs": ["r1", "r2", "r3", "r18"]
+}

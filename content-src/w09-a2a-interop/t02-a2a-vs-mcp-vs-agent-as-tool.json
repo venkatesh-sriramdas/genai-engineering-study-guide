@@ -1,0 +1,169 @@
+{
+  "id": "w09-t02",
+  "order": 2,
+  "group": "Concepts",
+  "title": "A2A vs MCP vs agent-as-tool",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "Three ways to use another agent's work: call it as an in-process function, reach it as an MCP tool, or talk to it as an A2A peer. Ownership, task shape, trust and latency decide which.",
+  "useIf": "You must decide how one agent should reach a capability or another agent.",
+  "avoidIf": "You want one answer for the whole system: mix the three, one per boundary.",
+  "explain": [
+    { "t": "p", "md": "The A2A project draws the line by direction. **MCP is vertical**: it gives one agent tools and resources. **A2A is horizontal**: independent, often opaque agents discover each other, share tasks and exchange results. They complement each other: A2A between agents, MCP inside each agent [[r3]]." },
+    { "t": "p", "md": "Microsoft's Agent Framework guidance is the same in practice. Use **agents as tools** when agents share a process and a team. Use **A2A** when you cross a service, team or organization boundary, and budget for the network latency, retries and versioning that come with it [[r12]]. An MCP tool call has no task lifecycle unless the Tasks extension is supported [[r20]], while A2A has tasks, contexts and artifacts built in [[r1]]." },
+    { "t": "dials", "id": "w09-t02-pick", "title": "Pick how to reach the other capability", "prompt": "Flip the dials. The ranking and the reasons update.",
+      "dials": [
+        { "id": "owner", "label": "Who owns the callee", "values": [ { "id": "same", "label": "Same team and process" }, { "id": "team", "label": "Another team, same company" }, { "id": "org", "label": "Another organization" } ] },
+        { "id": "shape", "label": "Shape of the work", "values": [ { "id": "short", "label": "Short and stateless" }, { "id": "long", "label": "Long, multi-turn or artifacts" } ] },
+        { "id": "latency", "label": "Latency per call", "values": [ { "id": "tight", "label": "Tight (hundreds of ms)" }, { "id": "relaxed", "label": "Relaxed (seconds or more)" } ] }
+      ],
+      "options": [
+        { "id": "tool", "name": "In-process agent as tool", "summary": "A function wrapper around another agent in the same runtime." },
+        { "id": "mcp", "name": "MCP tool", "summary": "The callee is a tool on an MCP server." },
+        { "id": "a2a", "name": "A2A peer", "summary": "The callee is an independent agent with a card and tasks." },
+        { "id": "api", "name": "Plain API call", "summary": "A fixed HTTP contract wrapped as a function tool." }
+      ],
+      "scores": {
+        "tool": {
+          "owner": { "same": { "s": 2, "why": "No boundary to pay for." }, "team": { "s": -1, "why": "Couples release cycles across teams." }, "org": { "s": -2, "why": "You cannot import code you do not own." } },
+          "shape": { "short": { "s": 1, "why": "A function call is enough." }, "long": { "s": -1, "why": "Long work needs your own durability and state handling." } },
+          "latency": { "tight": { "s": 2, "why": "No network hop." }, "relaxed": { "s": 0, "why": "Latency is not the constraint, so it adds nothing." } }
+        },
+        "mcp": {
+          "owner": { "same": { "s": 0, "why": "Works, but a protocol is unneeded overhead." }, "team": { "s": 1, "why": "A shared tool server serves many hosts." }, "org": { "s": 1, "why": "Standard auth and discovery help across companies." } },
+          "shape": { "short": { "s": 2, "why": "Tools and short calls are MCP's home ground." }, "long": { "s": -1, "why": "Needs the Tasks extension and loses A2A's contexts and artifacts." } },
+          "latency": { "tight": { "s": 1, "why": "One hop, no agent negotiation." }, "relaxed": { "s": 1, "why": "Fine at any latency." } }
+        },
+        "a2a": {
+          "owner": { "same": { "s": -2, "why": "Protocol and hop cost with no boundary." }, "team": { "s": 2, "why": "Independent releases and ownership are the fit." }, "org": { "s": 2, "why": "Opaque execution and a trust boundary are the design goal." } },
+          "shape": { "short": { "s": -1, "why": "Task machinery is heavier than the job." }, "long": { "s": 2, "why": "Tasks, input-required turns, streaming and push are built in." } },
+          "latency": { "tight": { "s": -1, "why": "Network hop plus agent latency." }, "relaxed": { "s": 1, "why": "The overhead disappears behind the work." } }
+        },
+        "api": {
+          "owner": { "same": { "s": 0, "why": "Acceptable but needless indirection." }, "team": { "s": 1, "why": "A stable contract suits cross-team reuse." }, "org": { "s": 1, "why": "Works when the partner publishes a fixed API." } },
+          "shape": { "short": { "s": 1, "why": "A deterministic call needs no agent." }, "long": { "s": -1, "why": "You rebuild polling and status yourself." } },
+          "latency": { "tight": { "s": 1, "why": "One hop, no reasoning." }, "relaxed": { "s": 0, "why": "Neutral." } }
+        }
+      },
+      "takeaway": "Cross-boundary, long-running work points to A2A. Short, stateless capabilities point to tools, MCP or plain APIs. Same-team calls point to in-process." },
+    { "t": "callout", "kind": "interview", "title": "Answer with the boundary", "md": "When asked which to use, name the ownership boundary, the task shape and the latency budget first. Short, schema-shaped capabilities are tools. Independent agents with long or conversational work are A2A peers. Same-team code stays in process." }
+  ],
+  "whereToUse": [
+    "Choosing how a planner agent reaches a specialist agent, a data lookup or a partner service",
+    "Reviewing an architecture where every helper was wrapped as an MCP tool or every call became A2A",
+    "Setting an organization-wide default: A2A for cross-team agents, MCP for shared tool catalogs",
+    "Interview answers about the boundary between agents and tools"
+  ],
+  "whenToUse": {
+    "use": [
+      "Use A2A when the callee is an agent with its own reasoning and state, behind a team or organization boundary",
+      "Use MCP when the callee is a capability with a schema: a tool, a resource or a prompt",
+      "Use an in-process agent tool when one team ships both agents together"
+    ],
+    "avoid": [
+      "Avoid A2A for a deterministic lookup: the task machinery adds cost with no benefit",
+      "Avoid MCP wrappers for long, multi-turn agents unless you add the Tasks extension and accept the loss of context grouping",
+      "Avoid in-process composition across teams: release cycles and trust get entangled"
+    ],
+    "flips": [
+      "A tool call grows from seconds to many minutes: move from MCP tool to A2A or add the Tasks extension",
+      "A co-owned helper agent gets a second consuming team: promote it from in-process tool to an A2A service",
+      "A partner already ships an MCP server and the work is short: take the MCP server and skip A2A"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["In-process agent tool", "One team, one process, tight latency", "Another team or organization owns the callee", "Coupled releases and shared failure domain [[r13]]"],
+      ["MCP tool", "Short, schema-shaped capabilities reused by many hosts", "Long or multi-turn agent conversations", "No task lifecycle without the Tasks extension [[r20]]"],
+      ["A2A peer", "Opaque, independent agents with long-running work", "Deterministic or sub-second calls", "Network, auth, retries and version negotiation"]
+    ]
+  },
+  "pitfalls": [
+    {
+      "symptom": "Every user request pays an extra round trip to a helper agent in the same repo",
+      "cause": "A2A was used where agents share a process and team",
+      "fix": "Wrap the helper as an in-process tool and keep A2A for real boundaries [[r12]]"
+    },
+    {
+      "symptom": "A long MCP tool call loses its result when the client disconnects",
+      "cause": "A plain tool call has no task lifecycle, so there is nothing to poll or resume",
+      "fix": "Use the MCP Tasks extension if the host supports it, or expose the work as an A2A task [[r20]]"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "w09-t02-s1",
+      "title": "A stock lookup shared by many hosts",
+      "situation": "Many assistants need a deterministic stock lookup with a fixed schema. Calls take 80 ms and are stateless.",
+      "constraints": ["Stateless, deterministic", "Many consuming hosts", "Tight latency"],
+      "unknowns": ["Do hosts already speak MCP?", "Is the lookup also needed by non-agent systems?"],
+      "question": "How do you expose it?",
+      "options": [
+        { "name": "MCP tool", "verdict": "best", "why": "A schema-shaped capability reused by many hosts is MCP's purpose, with standard discovery and auth.", "tradeoff": "Tool definitions cost context tokens in every host." },
+        { "name": "Plain REST API with a function tool per host", "verdict": "good", "why": "Also serves non-agent callers and needs no MCP stack.", "tradeoff": "Each host writes its own tool wrapper." },
+        { "name": "A2A agent", "verdict": "poor", "why": "There is no reasoning, state or long-running work to model as tasks.", "tradeoff": "Right if the lookup becomes a negotiating agent with follow-up questions." }
+      ],
+      "flips": [
+        { "if": "Lookups start to need clarifying questions", "then": "Promote the capability to an A2A agent." },
+        { "if": "Only one host will ever call it", "then": "A function tool over REST is enough." }
+      ],
+      "takeaway": "Deterministic and schema-shaped means tool, not peer."
+    },
+    {
+      "id": "w09-t02-s2",
+      "title": "A compliance agent used by twelve product teams",
+      "situation": "A platform team runs a compliance-review agent. Product teams send drafts, the agent asks clarifying questions and may take 10 minutes. It releases weekly and the teams use different frameworks.",
+      "constraints": ["Other team owns the callee", "Long and multi-turn", "Relaxed latency", "Internal, moderately sensitive data"],
+      "unknowns": ["How do teams authenticate to the agent?", "Are results needed as downloadable artifacts?"],
+      "question": "How do product agents reach it?",
+      "options": [
+        { "name": "A2A peer with a published Agent Card", "verdict": "best", "why": "Independent releases, clarifying questions through input-required, artifacts for the report and framework-neutral clients.", "tradeoff": "Each team handles version negotiation, auth and retries." },
+        { "name": "MCP tool with the Tasks extension", "verdict": "good", "why": "Fits if the hosts are already MCP clients and conversations stay short.", "tradeoff": "Weaker support for multi-turn context and artifacts." },
+        { "name": "Shared library imported by each team", "verdict": "poor", "why": "Every team must upgrade on the platform team's schedule and the agent's model and data access get duplicated.", "tradeoff": "Right only for pure, deterministic rules with no model or data dependency." }
+      ],
+      "flips": [
+        { "if": "The review becomes a fixed rule check under 1 second", "then": "Expose a plain API or MCP tool." },
+        { "if": "The data is regulated and each call needs per-user delegation", "then": "Keep A2A but design authentication and delegation first (see A2A authentication and trust)." }
+      ],
+      "takeaway": "Another team's long, conversational agent is an A2A peer."
+    }
+  ],
+  "quiz": [
+    {
+      "id": "w09-t02-q1",
+      "type": "match",
+      "tag": "concept",
+      "q": "Match each approach to the situation it fits best.",
+      "pairs": [
+        { "l": "In-process agent as tool", "r": "One team ships both agents in one process" },
+        { "l": "MCP tool", "r": "Short, schema-shaped capability reused by many hosts" },
+        { "l": "A2A peer", "r": "Independent opaque agent with long-running, multi-turn work" },
+        { "l": "Plain API call", "r": "Fixed contract with no reasoning needed" }
+      ],
+      "explain": "Each pairing follows the boundary and task shape. In-process removes protocol cost, MCP standardizes tools, A2A models independent agents and tasks, and a plain API suits a fixed contract."
+    },
+    {
+      "id": "w09-t02-q2",
+      "type": "single",
+      "tag": "diagnose",
+      "q": "A vendor's analysis agent is wrapped as an MCP tool. Jobs take 12 minutes and calls fail when the client connection drops. What is the most direct fix?",
+      "options": [
+        "Raise the client timeout to 15 minutes",
+        "Retry the same call three times",
+        "Switch the tool to a cheaper model",
+        "Use a protocol with a task lifecycle: the MCP Tasks extension or an A2A task"
+      ],
+      "answer": 3,
+      "explain": "The cause is that a plain tool call has no task handle to poll or resume. A longer timeout still loses the result on disconnect, blind retries repeat 12 minutes of work, and the model choice is unrelated."
+    }
+  ],
+  "flashcards": [
+    { "front": "How does the A2A project describe the MCP and A2A split?", "back": "MCP is vertical (an agent to its tools and resources). A2A is horizontal (independent agents to each other). Use A2A between agents and MCP inside each." },
+    { "front": "When is an in-process agent tool the right call?", "back": "When one team ships both agents in one process. A2A adds network latency, retries and versioning that only pay off across boundaries." },
+    { "front": "What does a plain MCP tool call lack that an A2A task has?", "back": "A task lifecycle: ids, states, progress, input-required turns and artifacts, unless the MCP Tasks extension is used." }
+  ],
+  "related": ["w09-t01", "w09-t04", "w09-l01", "w08-t01", "w08-t08", "w08-t17", "w11-t25"],
+  "refs": ["r1", "r3", "r12", "r13", "r20"]
+}

@@ -1,0 +1,92 @@
+{
+  "id": "w18-l1",
+  "order": 1,
+  "title": "Spend thinking where it pays",
+  "kind": "problem",
+  "minutes": 20,
+  "brief": "A model can think before it answers, and every thinking token costs time and money. Task difficulty, latency budget, whether answers can be checked and call volume are all open. Decide when a reasoning model beats a standard one and how much effort to give it.",
+  "blocks": [
+    { "t": "h", "text": "Effort is a cost dial, not only a quality dial", "level": 2 },
+    { "t": "table", "caption": "Reasoning controls by vendor, checked 2026-10-13. Values and defaults differ per model, so read the model page before you set one.", "head": ["Vendor", "Control", "Values and defaults", "Gotcha"], "rows": [
+      ["OpenAI", "`reasoning.effort` (Responses), `reasoning_effort` (Chat Completions), `reasoning.mode` on GPT-5.6 and GPT-6", "Model-dependent: none, minimal, low, medium, high, xhigh, max. gpt-5.5 defaults to medium. Mode is standard (default) or pro, independent of effort.", "GPT-6 Astra rejects `none` with HTTP 400. GPT-6.1 Sol rejects `none` and `minimal` and defaults to medium. Chat Completions has no function calling on either, so use Responses [[r1]]."],
+      ["Azure OpenAI", "`max_completion_tokens` on Chat Completions, `reasoning_effort`", "Same model-dependent values as the model it hosts.", "Function tools with `reasoning_effort` are not supported for gpt-5.6-sol on `/v1/chat/completions`, even if you never send the field, because the default is medium. Use `/v1/responses` or set effort to none [[r2]]."],
+      ["Claude", "Adaptive thinking with `output_config.effort`", "low, medium, high, xhigh, max. Default is high on most models and medium on Claude Opus 5.5 and Claude Haiku 5.5.", "Manual `budget_tokens` is deprecated on Claude 4.6 and returns HTTP 400 on 4.7 and later. A turn may contain no thinking block [[r3]] [[r4]]."],
+      ["Gemini", "`thinking_level`", "Per model, for example gemini-3.8-flash is on at medium with low, medium and high, and gemini-3.1-pro-preview is on at high.", "Each thought step carries an encrypted signature, and summaries are opt-in through `thinking_summaries` [[r5]]."]
+    ], "highlightCol": 3 },
+    { "t": "formula", "title": "Output headroom with hidden reasoning", "expr": "max_output_tokens >= reasoning_tokens + visible_answer_tokens", "vars": [ { "k": "max_output_tokens", "v": "the cap you set, which covers reasoning and the visible answer together" }, { "k": "reasoning_tokens", "v": "hidden thinking, billed as output tokens" }, { "k": "visible_answer_tokens", "v": "what the user sees" } ], "example": "OpenAI recommends reserving at least **25,000** tokens for reasoning and output when you start. If the cap is reached the response has `status: incomplete` with reason `max_output_tokens`, which can happen before any visible output while you still pay for the input and reasoning tokens [[r1]]." },
+    { "t": "stats", "items": [
+      { "label": "Compute-optimal allocation", "value": "more than 4x", "note": "Efficiency over best-of-N when compute is allocated by prompt difficulty (Snell et al., 2024-08)" },
+      { "label": "Smaller model", "value": "can beat 14x larger", "note": "FLOPs-matched, where the smaller model has non-trivial success" },
+      { "label": "Budget forcing (s1)", "value": "50% to 57%", "note": "AIME24 after extending thinking with Wait (2025-01)" },
+      { "label": "Starting reserve", "value": "25,000 tokens", "note": "OpenAI advice for reasoning plus output" }
+    ] },
+    { "t": "dials", "id": "w18-l1-reasoning", "title": "When does a reasoning model beat a standard one?", "prompt": "Flip the dials. The standard model is on the board because it wins whenever thinking does not pay.",
+      "dials": [
+        { "id": "difficulty", "label": "Task difficulty", "values": [ { "id": "routine", "label": "Routine or lookup" }, { "id": "hard", "label": "Multi-step planning or debugging" } ] },
+        { "id": "latency", "label": "Latency budget", "values": [ { "id": "tight", "label": "Voice or interactive" }, { "id": "relaxed", "label": "Background or batch" } ] },
+        { "id": "check", "label": "Verifiable outcome", "values": [ { "id": "yes", "label": "Tests or a validator can score answers" }, { "id": "no", "label": "No automatic check" } ] },
+        { "id": "volume", "label": "Call volume", "values": [ { "id": "high", "label": "High, cost sensitive" }, { "id": "low", "label": "Low, high value per call" } ] }
+      ],
+      "options": [
+        { "id": "std", "name": "Standard model or effort none", "summary": "No reasoning tokens." },
+        { "id": "low", "name": "Reasoning at low effort", "summary": "A modest latency increase." },
+        { "id": "med", "name": "Reasoning at the default (medium)", "summary": "The vendor's balanced starting point." },
+        { "id": "high", "name": "High or xhigh effort", "summary": "Deep thinking for hard, valuable calls." },
+        { "id": "vote", "name": "Standard model plus sampling and a validator", "summary": "Several samples, pick by check or vote." }
+      ],
+      "scores": {
+        "std": {
+          "difficulty": { "routine": { "s": 2, "why": "Reasoning adds cost with no gain on lookups and classification." }, "hard": { "s": -2, "why": "Planning and debugging need thinking." } },
+          "latency": { "tight": { "s": 2, "why": "Fastest to the first visible token." }, "relaxed": { "s": 0, "why": "Speed is not the constraint." } },
+          "check": { "yes": { "s": -1, "why": "A cheap check lets spare compute buy accuracy." }, "no": { "s": 0, "why": "Neutral." } },
+          "volume": { "high": { "s": 1, "why": "Lowest cost per call." }, "low": { "s": 0, "why": "Neutral." } }
+        },
+        "low": {
+          "difficulty": { "routine": { "s": 0, "why": "Rarely needed for routine work." }, "hard": { "s": 1, "why": "Enough for modest planning and tool use." } },
+          "latency": { "tight": { "s": 1, "why": "OpenAI suggests trying low first for latency-sensitive gpt-5.5, then none if needed." }, "relaxed": { "s": 0, "why": "Neutral." } },
+          "check": { "yes": { "s": 0, "why": "Neutral." }, "no": { "s": 1, "why": "Some reasoning is the main quality lever without a check." } },
+          "volume": { "high": { "s": 1, "why": "Modest token cost." }, "low": { "s": 0, "why": "Neutral." } }
+        },
+        "med": {
+          "difficulty": { "routine": { "s": -1, "why": "Overkill for routine work." }, "hard": { "s": 2, "why": "The default balance for planning and judgement." } },
+          "latency": { "tight": { "s": -1, "why": "Extra thinking delays the first visible token." }, "relaxed": { "s": 1, "why": "Latency is affordable." } },
+          "check": { "yes": { "s": 0, "why": "Neutral." }, "no": { "s": 1, "why": "Quality lever when no validator exists." } },
+          "volume": { "high": { "s": -1, "why": "Reasoning tokens bill as output at volume." }, "low": { "s": 1, "why": "Worth it per call." } }
+        },
+        "high": {
+          "difficulty": { "routine": { "s": -2, "why": "Pays for thinking the task does not need." }, "hard": { "s": 1, "why": "Worth it only where evals show a gain over medium." } },
+          "latency": { "tight": { "s": -2, "why": "Long thinking before any visible output." }, "relaxed": { "s": 1, "why": "Long runs are tolerable." } },
+          "check": { "yes": { "s": 1, "why": "You can test whether higher effort really helps." }, "no": { "s": -1, "why": "You cannot prove the gain." } },
+          "volume": { "high": { "s": -2, "why": "Reasoning tokens at volume dominate the bill." }, "low": { "s": 1, "why": "High-value calls justify it." } }
+        },
+        "vote": {
+          "difficulty": { "routine": { "s": -1, "why": "Pays n times for easy items." }, "hard": { "s": 1, "why": "Independent samples can fix some hard items." } },
+          "latency": { "tight": { "s": -1, "why": "n times the tokens plus an aggregation step." }, "relaxed": { "s": 1, "why": "Samples can run in parallel in the background." } },
+          "check": { "yes": { "s": 2, "why": "A validator picks the best sample and turns compute into accuracy." }, "no": { "s": -1, "why": "Majority vote works only when answers are comparable." } },
+          "volume": { "high": { "s": -2, "why": "n times the tokens at volume." }, "low": { "s": 1, "why": "Affordable on few calls." } }
+        }
+      },
+      "takeaway": "Start at the vendor default, raise effort only when an eval shows a gain, and lower it for voice, classification and retrieval steps." },
+    { "t": "failure", "title": "Reasoning failure modes", "items": [
+      { "symptom": "Responses come back with status incomplete and no visible answer", "cause": "The output cap was spent on reasoning tokens", "fix": "Reserve at least 25,000 tokens when starting, then tune from measured reasoning tokens. Alert on incomplete with reason max_output_tokens [[r1]]." },
+      { "symptom": "HTTP 400 after swapping to a newer model", "cause": "The effort value or thinking mode is unsupported: none on GPT-6 Astra, or manual budget_tokens on Claude 4.7 and later", "fix": "Keep a per-model capability table and a contract test that runs on every model change [[r1]] [[r4]]." },
+      { "symptom": "Cache hit rate drops after a team starts varying Claude effort per turn", "cause": "The resolved effort value is rendered into the prompt, so changing it invalidates cache breakpoints", "fix": "Pick one thinking configuration and one effort level per conversation [[r3]]." },
+      { "symptom": "A tool-using agent skips thinking in later steps", "cause": "In a tool loop the first request after new user input carries most reasoning, and follow-ups that only process tool results can skip thinking, even at xhigh and max", "fix": "Judge quality from end-to-end trajectories, not per-turn thinking blocks [[r3]]." },
+      { "symptom": "Cost per task doubles after an effort increase with no quality change", "cause": "Reasoning tokens are billed as output and effort was raised without an eval", "fix": "Track reasoning tokens per request and gate effort changes on an eval that shows a gain." }
+    ] },
+    { "t": "callout", "kind": "interview", "title": "The sentence to say", "md": "Effort is a cost and latency dial as well as a quality dial. Say which model, which default and which eval would justify raising it, and note that OpenAI advises a clear goal, constraints and an output contract instead of scripting every step [[r1]]." }
+  ],
+  "quiz": [
+    { "id": "w18-l1-q1", "type": "single", "tag": "diagnose", "difficulty": 2, "q": "This Azure request fails with the error shown, although it never sets `reasoning_effort`. What is the cause and the fix?", "code": { "lang": "text", "code": "POST /openai/v1/chat/completions\n{ \"model\": \"gpt-5.6-sol\", \"messages\": [...], \"tools\": [ ... ] }\n\n400: Function tools with reasoning_effort are not supported for\ngpt-5.6-sol in /v1/chat/completions." }, "options": ["The tool schema is invalid, so validate the JSON schema of every function definition in the request", "The model defaults to medium effort, so call /v1/responses or set reasoning_effort to none", "Chat Completions was retired on this resource, so recreate the deployment", "max_completion_tokens is missing, so add it to the request body"], "answer": 1, "explain": "The model reasons at medium by default, and function tools combined with reasoning are unsupported on Chat Completions for this model, so sending tools alone triggers the error. A schema defect or a missing token cap would produce different errors, and the endpoint has not been retired.", "ref": "r2" },
+    { "id": "w18-l1-q2", "type": "single", "tag": "flip", "difficulty": 2, "q": "A voice assistant on gpt-5.5 feels slow at the default effort. What does OpenAI's guidance suggest as the first change?", "options": ["Raise effort to xhigh so that the model needs fewer follow-up turns to finish", "Switch to pro reasoning mode on the voice path so that answers are correct first time", "Keep medium and ask the model in the prompt to think faster and answer briefly", "Try low effort first and move to none only if the latency target is still missed"], "answer": 3, "explain": "OpenAI recommends trying low first for latency-sensitive gpt-5.5 use and moving to none if required. Higher effort and pro mode add thinking before the first visible token, and a prompt request does not reliably cut reasoning.", "ref": "r1" },
+    { "id": "w18-l1-q3", "type": "numeric", "tag": "numeric", "difficulty": 1, "q": "A request returns a 500-token answer after 6,500 reasoning tokens. Reasoning tokens are billed as output tokens. At an illustrative $10 per million output tokens, what does the output side of this request cost?", "answer": 0.07, "tolerancePct": 1, "unit": "USD", "hint": "Add reasoning and visible tokens, then multiply by the price per token.", "explain": "6,500 + 500 = 7,000 output tokens. 7,000 / 1,000,000 x $10 = $0.07. Counting only the 500 visible tokens would give $0.005 and understate the bill by 14x.", "ref": "r1" }
+  ],
+  "defend": null,
+  "refs": ["r1", "r2", "r3", "r4", "r5", "r6", "r7", "r46"],
+  "takeaways": [
+    "Effort values, defaults and rejections are per model. Keep a capability table and test it on every model swap.",
+    "Reasoning tokens are billed as output, so reserve headroom and track them per request.",
+    "Start at the default, raise effort only with an eval that shows a gain, and lower it for voice, classification and retrieval.",
+    "With a validator, sampling plus a check can beat higher effort. Without one, raising effort cannot be proven."
+  ]
+}

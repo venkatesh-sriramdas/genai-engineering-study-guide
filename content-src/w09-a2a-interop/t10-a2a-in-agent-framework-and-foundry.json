@@ -1,0 +1,159 @@
+{
+  "id": "w09-t10",
+  "order": 10,
+  "group": "Security and platforms",
+  "title": "A2A in Agent Framework and Foundry",
+  "minutes": 8,
+  "difficulty": "advanced",
+  "summary": "Microsoft Agent Framework and Foundry Agent Service can both call and expose A2A agents. Foundry's a2a tool and A2A 1.0 are generally available, while the Agent Framework A2A packages are prerelease, and each has limits worth knowing.",
+  "useIf": "You build on Microsoft's stack and need agents to call, or be called by, agents on other platforms.",
+  "avoidIf": "Your agents share one process and team: Agent Framework's agent-as-tool pattern is simpler and cheaper.",
+  "explain": [
+    { "t": "p", "md": "**Calling** a remote agent: Agent Framework's `A2AAgent` wraps any A2A endpoint as a normal agent, so `run` and streaming work as usual. You can resolve a card from a well-known URI (`A2ACardResolver`), start from a card you got from a registry, or configure the endpoint directly. The .NET client prefers HTTP+JSON over JSON-RPC unless you set `PreferredBindings`. A long task returns a continuation token you can poll or resubscribe to, and the A2A `context_id`, `task_id` and `task_state` live in the session [[r15]]. `A2AAgent` is only a transport wrapper: the remote agent's tools stay invisible and are changed on the remote side [[r15]]." },
+    { "t": "p", "md": "**Exposing** an agent: .NET uses `Microsoft.Agents.AI.Hosting.A2A.AspNetCore` (`AddA2AServer`, `MapA2AHttpJson`, `MapWellKnownAgentCard`). Python uses `A2AExecutor` from `agent-framework-a2a`, built on `a2a-sdk`, which maps agent output to A2A events and artifacts and passes the A2A `context_id` as the session id. Go uses `a2aprovider`. You author and publish the Agent Card yourself. Install the packages with `--prerelease` (.NET) or `--pre` (Python): they are prerelease as of 2026-10-13 [[r14]]." },
+    { "t": "table", "caption": "Status and limits as of 2026-10-13", "head": ["Capability", "Foundry Agent Service", "Agent Framework"], "rows": [
+      ["Call a remote A2A agent", "`a2a` tool (A2A 1.0, GA) through a project connection. `a2a_preview` (0.3) is Preview [[r16]]", "`A2AAgent` client, prerelease [[r15]]"],
+      ["Expose your agent over A2A", "Incoming A2A for prompt agents: v1.0, JSON-RPC only, text only, no streaming, Entra auth only [[r17]]", "ASP.NET Core, Python or Go hosting, prerelease. Bindings and streaming are yours to configure [[r14]]"],
+      ["Versions", "Serves 0.3 unless you send `A2A-Version: 1.0` or fetch the v1.0 card [[r17]]", "Python `agent-framework-a2a` moved to `a2a-sdk` v1.0 in python-1.4.0 (2026-05-14) [[tr4]]"],
+      ["Auth", "Connection types include key, OAuth, Entra token, managed identity and agentic identity [[r16]]", "`AuthInterceptor` on the Python client [[r15]]"],
+      ["Retired", "The Connected Agents tool is not in the new Foundry Agent Service [[r16]]", "Agent as function tool stays the in-process option [[r13]]"]
+    ] },
+    { "t": "diagram", "id": "w09-t10-d1", "title": "A Foundry agent calling a remote A2A agent", "alt": "A user talks to a Foundry agent. The agent uses the a2a tool, which reads a project connection that stores authentication, and calls the remote A2A agent. The Foundry agent uses the reply to answer the user.", "src": "flowchart LR\n  U[User] --> F[Foundry agent]\n  F --> T[a2a tool]\n  T --> C[Project connection with auth]\n  C --> R[Remote A2A agent]\n  R --> F" },
+    { "t": "callout", "kind": "preview", "title": "Mixed maturity, checked 2026-10-13", "md": "Foundry's `a2a` tool and A2A 1.0 are GA. `a2a_preview` and A2A 0.3 are Preview. The Agent Framework A2A packages need prerelease flags. Say the label and the date whenever you recommend one [[r14]] [[r16]]." }
+  ],
+  "whereToUse": [
+    "A .NET or Python orchestrator that calls a partner's agent through `A2AAgent`",
+    "A Foundry prompt agent that delegates to a remote specialist through the `a2a` tool and a project connection",
+    "A Foundry prompt agent exposed to other teams as a text-only A2A endpoint",
+    "A self-hosted Agent Framework agent behind ASP.NET Core or Starlette that other platforms call",
+    "Migration of classic Connected Agents setups to the A2A tool or workflows"
+  ],
+  "whenToUse": {
+    "use": [
+      "The `a2a` tool for new Foundry integrations that target A2A 1.0",
+      "Foundry incoming A2A when callers need text Q and A and Entra auth is acceptable",
+      "Self-hosted Agent Framework A2A servers when you need streaming, other bindings or non-text artifacts"
+    ],
+    "avoid": [
+      "Do not start new work on `a2a_preview` unless you must stay on 0.3",
+      "Do not expect `A2AAgent` to expose or configure the remote agent's tools",
+      "Do not ship prerelease A2A packages unpinned"
+    ],
+    "flips": [
+      "Callers need streaming or file artifacts from your Foundry agent: self-host an A2A server instead",
+      "A partner only speaks 0.3: send the 0.3 version explicitly and plan the move to 1.0",
+      "Both agents are yours and in one process: use agent-as-tool and skip A2A"
+    ]
+  },
+  "alternatives": {
+    "title": "Ways to connect agents on Microsoft's stack",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Agent Framework `A2AAgent`", "Code-first orchestrator calling any A2A agent", "You want a managed, portal-configured connection", "Prerelease packages, you own auth and retries"],
+      ["Foundry `a2a` tool with a project connection", "Foundry agents calling remote A2A agents with stored credentials", "The peer needs non-text content over a Foundry target", "Text-only and no streaming for Foundry targets [[r17]]"],
+      ["Foundry workflows", "Orchestrating several Foundry agents declaratively", "Peers outside Foundry", "Tied to Foundry's workflow model [[r16]]"],
+      ["Agent as function tool (Agent Framework)", "Agents in one process and team", "Cross-team or cross-organization boundaries", "Coupling, shared release cycle [[r13]]"]
+    ]
+  },
+  "pitfalls": [
+    {
+      "symptom": "Replies arrive in the 0.3 shape from a Foundry agent",
+      "cause": "No `A2A-Version` header or `a2a-version` query value was sent, so Foundry served 0.3",
+      "fix": "Send `A2A-Version: 1.0`, or let the client fetch the v1.0 card so the SDK negotiates [[r17]]"
+    },
+    {
+      "symptom": "Package install fails or resolves an old version",
+      "cause": "The A2A packages are prerelease and need `--prerelease` (.NET) or `--pre` (Python)",
+      "fix": "Pass the flag and pin the version in your lock file [[r14]]"
+    },
+    {
+      "symptom": "Conversation context vanishes after a restart",
+      "cause": "The session with `context_id`, `task_id` and `task_state` was not persisted, or the remote agent expired it",
+      "fix": "Persist the session (`to_dict`) and design for retention limits (Foundry keeps 60 days from last write) [[r15]] [[r17]]"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "w09-t10-s1",
+      "title": "A .NET orchestrator calling a partner and a Foundry agent",
+      "situation": "A .NET orchestrator must call a partner's Python agent and a team's Foundry prompt agent. Both publish A2A cards. The partner's job may run for 20 minutes.",
+      "constraints": ["Code-first orchestrator", "One long-running remote agent", "Mixed platforms"],
+      "unknowns": ["Which A2A versions do the peers serve?", "How do the peers authenticate callers?"],
+      "question": "How does the orchestrator call them?",
+      "options": [
+        { "name": "`A2AAgent` per peer, resolved from cards, with background responses for the long job", "verdict": "best", "why": "One programming model for both peers, continuation tokens for the 20-minute task and card-driven interface choice.", "tradeoff": "Prerelease packages and your own auth handling per peer." },
+        { "name": "REST function tools written per peer", "verdict": "good", "why": "Full control and no prerelease dependency.", "tradeoff": "You rebuild tasks, context ids and polling for the long job." },
+        { "name": "The Connected Agents tool", "verdict": "poor", "why": "It is not available in the new Foundry Agent Service.", "tradeoff": "Right only for legacy classic agents that still run." }
+      ],
+      "flips": [
+        { "if": "The orchestrator is itself a Foundry agent", "then": "Use the `a2a` tool with a project connection." },
+        { "if": "Package prerelease status is unacceptable", "then": "Use plain REST tools and accept the extra code." }
+      ],
+      "takeaway": "Use the SDK that models tasks and context ids for you."
+    },
+    {
+      "id": "w09-t10-s2",
+      "title": "Exposing an agent that streams and returns files",
+      "situation": "Another team wants live progress and a generated PDF from your agent over A2A. Your agent currently runs as a Foundry prompt agent.",
+      "constraints": ["Callers need streaming and file artifacts", "Foundry incoming A2A is text-only and non-streaming", "Moderate traffic"],
+      "unknowns": ["Can callers accept polling and a link in text?", "Is a prerelease package acceptable?"],
+      "question": "How do you expose it?",
+      "options": [
+        { "name": "Self-host an Agent Framework A2A server with streaming and artifacts", "verdict": "best", "why": "You control bindings, streaming and artifact parts, which Foundry's incoming endpoint does not offer for v1.0.", "tradeoff": "You run hosting, auth and scaling, and depend on prerelease packages." },
+        { "name": "Foundry incoming A2A with polling and a download link in text", "verdict": "good", "why": "Managed endpoint with Entra auth and no hosting work.", "tradeoff": "No live progress and files only by reference." },
+        { "name": "Foundry incoming A2A with files base64-encoded into text", "verdict": "poor", "why": "Large payloads in text break limits and clients cannot treat them as files.", "tradeoff": "Tolerable only for tiny snippets." }
+      ],
+      "flips": [
+        { "if": "Callers only need a text answer", "then": "Use Foundry incoming A2A." },
+        { "if": "Foundry later declares streaming for v1.0 on its card", "then": "Re-evaluate and move back to the managed endpoint." }
+      ],
+      "takeaway": "Match the host to the modalities and streaming you must support."
+    }
+  ],
+  "quiz": [
+    {
+      "id": "w09-t10-q1",
+      "type": "single",
+      "tag": "concept",
+      "q": "Which Foundry A2A tool type targets A2A 1.0 and is generally available?",
+      "options": ["`a2a_preview`", "`a2a`", "`connected_agent`", "`mcp`"],
+      "answer": 1,
+      "explain": "`a2a` targets 1.0 and is GA, `a2a_preview` targets 0.3 and is Preview, and Connected Agents is not in the new Foundry Agent Service. `mcp` is a different protocol."
+    },
+    {
+      "id": "w09-t10-q2",
+      "type": "match",
+      "tag": "concept",
+      "q": "Match each item to its platform behaviour.",
+      "pairs": [
+        { "l": "Foundry incoming A2A v1.0", "r": "JSON-RPC only, text only, no streaming" },
+        { "l": "`A2AAgent` tool visibility", "r": "Remote agent's tools stay hidden" },
+        { "l": "No A2A-Version sent to Foundry", "r": "Served as 0.3" },
+        { "l": "Agent Framework A2A packages", "r": "Need prerelease install flags" }
+      ],
+      "explain": "These are the four platform facts checked on 2026-10-13: Foundry's v1.0 limits, the transport-only wrapper, the 0.3 default and the prerelease status."
+    },
+    {
+      "id": "w09-t10-q3",
+      "type": "single",
+      "tag": "diagnose",
+      "q": "A team calls a Foundry agent over A2A without any version selector and the reply shapes look like the old protocol. What explains it?",
+      "options": [
+        "The agent was deployed with the wrong model",
+        "gRPC was negotiated by mistake",
+        "The Agent Card was unsigned",
+        "Foundry serves A2A 0.3 when no version is selected"
+      ],
+      "answer": 3,
+      "explain": "Without an `A2A-Version` header or `a2a-version` query value Foundry serves preview 0.3. The model, binding and card signature do not decide the protocol version."
+    }
+  ],
+  "flashcards": [
+    { "front": "Which Foundry A2A tool type is GA and for which protocol version?", "back": "`a2a` for A2A 1.0 (GA). `a2a_preview` is for 0.3 and is Preview." },
+    { "front": "What are the limits of Foundry's incoming A2A for v1.0?", "back": "JSON-RPC only, text modality only, no streaming, Entra auth only, tasks and contexts kept 60 days from last write." },
+    { "front": "How do you install the Agent Framework A2A packages?", "back": "`--prerelease` for .NET packages and `--pre` for `agent-framework-a2a` in Python. They are prerelease as of 2026-10-13." },
+    { "front": "What does `A2AAgent` hide from you?", "back": "The remote agent's tools and reasoning. It is a transport wrapper, so tool changes happen on the remote side." }
+  ],
+  "related": ["w09-t02", "w09-t06", "w09-t09", "w09-l05", "w11-t25", "w12-t11", "w12-t08"],
+  "refs": ["r13", "r14", "r15", "r16", "r17", "tr4"]
+}

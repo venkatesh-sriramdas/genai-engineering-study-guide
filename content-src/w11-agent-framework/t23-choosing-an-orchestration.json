@@ -1,0 +1,140 @@
+{
+  "id": "w11-t23",
+  "order": 23,
+  "group": "Orchestrations",
+  "title": "Choosing an orchestration",
+  "minutes": 9,
+  "difficulty": "core",
+  "summary": "The five built-in orchestrations differ by topology, who decides the next step and how much they cost. Start with the simplest that fits the task shape, and escalate only when evidence says it is needed.",
+  "useIf": "You have several agents and must pick sequential, concurrent, handoff, group chat or Magentic, or decide that an agent-as-tool or custom workflow is better.",
+  "avoidIf": "A single agent with tools meets quality and latency targets: multi-agent adds cost, context isolation work and failure modes.",
+  "explain": [
+    { "t": "p", "md": "Topology drives behaviour. **Sequential** is a pipeline. **Concurrent** is fan-out and aggregate. **Handoff** is a mesh with no central orchestrator, where the receiving agent owns the task. **Group chat** is a star with an orchestrator that picks the speaker over a shared full history. **Magentic** is group chat plus a planning manager with a progress ledger. The docs add that Magentic adds planning cost and is untested outside its original design, so start with group chat unless the path truly needs planning [[tr23]] [[tr24]] [[tr25]] [[tr26]] [[tr27]]." },
+    { "t": "p", "md": "**Rules of thumb that come from the mechanics.** Latency: sequential sums, concurrent takes the slowest, group chat and Magentic multiply rounds. Tokens: group chat and handoff re-share history with every participant, so cost grows with rounds and participants, while Magentic adds manager calls on top. Control: only handoff returns to a user by default; approvals in the others arrive as request events. Every built-in orchestration is a workflow underneath, so `as_agent()`, checkpoint storage and human-in-the-loop requests work the same way, and you can drop to a custom graph when the pattern does not fit [[tr14]]." },
+    { "t": "table", "caption": "Decision matrix (checked 2026-10-13)", "head": ["Pattern", "Who picks the next step", "Latency", "Token cost", "Interactive with a user", "Maturity"], "rows": [
+      ["Sequential", "Fixed order", "Sum of steps", "Grows with full-conversation passing (chain-only option)", "No free-text pause", "Stable"],
+      ["Concurrent", "All at once", "Slowest plus aggregator", "Sum of participants", "No free-text pause", "Stable"],
+      ["Handoff", "The current agent", "Per turn, one agent", "Mesh broadcast of messages", "Yes by default", "Stable; autonomous mode experimental"],
+      ["Group chat", "Orchestrator (selector or agent)", "Rounds x one agent", "Rounds x full shared history", "No free-text pause", "Stable"],
+      ["Magentic", "Planning manager", "Rounds plus manager calls", "Highest: plan, ledger, specialists", "Plan review option", "Stable; .NET types experimental"]
+    ] },
+    { "t": "flow", "title": "A decision order that avoids over-engineering", "steps": [
+      { "title": "Function or one agent?", "md": "If code or one agent with tools works, stop." },
+      { "title": "Are steps independent?", "md": "Yes: concurrent. No: continue." },
+      { "title": "Fixed dependent order?", "md": "Yes: sequential, or a graph if you need branches and gates." },
+      { "title": "Should ownership move to specialists?", "md": "Yes: handoff. Primary keeps ownership: agent-as-tool." },
+      { "title": "Iterative review among roles?", "md": "Group chat with a selector." },
+      { "title": "Unknown path, many rounds?", "md": "Magentic, with limits and plan review." }
+    ] },
+    { "t": "tabs", "tabs": [
+      { "label": "C#", "blocks": [ { "t": "code", "lang": "csharp", "code": "var seq  = AgentWorkflowBuilder.BuildSequential(a, b, c);\nvar conc = AgentWorkflowBuilder.BuildConcurrent([a, b, c]);\nvar hand = AgentWorkflowBuilder.CreateHandoffBuilderWith(a)\n               .WithHandoffs(a, [b, c]).WithHandoffs([b, c], a).Build();\nvar chat = AgentWorkflowBuilder.CreateGroupChatBuilderWith(\n               ag => new RoundRobinGroupChatManager(ag) { MaximumIterationCount = 6 })\n               .AddParticipants(a, b).Build();\nWorkflow mag = new MagenticWorkflowBuilder(manager)\n               .AddParticipants([a, b]).WithMaxRounds(10).Build();" } ] },
+      { "label": "Python", "blocks": [ { "t": "code", "lang": "python", "code": "from agent_framework.orchestrations import (SequentialBuilder, ConcurrentBuilder,\n    HandoffBuilder, GroupChatBuilder, MagenticBuilder)\n\nseq  = SequentialBuilder(participants=[a, b, c]).build()\nconc = ConcurrentBuilder(participants=[a, b, c]).build()\nhand = HandoffBuilder(name='h', participants=[a, b, c]).with_start_agent(a).build()\nchat = GroupChatBuilder(participants=[a, b], selection_func=pick,\n                        termination_condition=done).build()\nmag  = MagenticBuilder(participants=[a, b], manager_agent=mgr,\n                       max_round_count=10).build()\n# all are workflows: .as_agent(), checkpoint_storage=..., HITL work the same way" } ] }
+    ] }
+  ],
+  "whereToUse": [
+    "Design reviews: choosing the topology before writing agents",
+    "Cost reviews: spotting patterns whose token cost scales with rounds and participants",
+    "Migration from AutoGen teams: mapping Team types to workflow orchestrations",
+    "Interviews: justifying why you did not reach for the most capable pattern"
+  ],
+  "whenToUse": {
+    "use": [
+      "Task shape is clear: independent, dependent, ownership transfer, iterative or unknown",
+      "You can state latency, cost and audit requirements before choosing",
+      "You will measure the multi-agent design against a single-agent baseline"
+    ],
+    "avoid": [
+      "Picking Magentic because it sounds most capable",
+      "Multi-agent without evaluation evidence that it beats one agent",
+      "Using group chat where a fixed pipeline is enough"
+    ],
+    "flips": [
+      "Provable order or approvals at specific steps: leave orchestrations and use a custom workflow graph",
+      "A primary agent must stay accountable for the final answer: use agent-as-tool instead of handoff"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Single agent with tools", "Task fits one context and one role", "Roles need isolation or parallel work", "Prompt grows, one failure mode"],
+      ["Agent as tool", "Primary agent owns the outcome", "A specialist should converse with the user", "Primary relays everything"],
+      ["Built-in orchestration", "A standard shape fits", "You need custom state or edges", "Less control, but fewer bugs"],
+      ["Custom workflow graph", "Gates, branches, checkpoints", "A standard shape is enough", "More design and testing"],
+      ["Harness with background agents", "One planner, parallel delegates", "Work must survive restarts", "Experimental, results return as text"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Costs rise sharply after adding more agents to a group chat", "cause": "Every turn re-sends the shared history and rounds multiply", "fix": "Cap rounds, compact, limit participants or move independent work to concurrent" },
+    { "symptom": "The team cannot explain why Magentic was chosen", "cause": "Chosen for capability, not for an unknown path", "fix": "Write down the task shape and fall back to group chat or a graph if the path is knowable" },
+    { "symptom": "An orchestration cannot satisfy an approval requirement", "cause": "Sequential, concurrent and group chat do not pause for free text", "fix": "Use handoff, a request port in a custom graph, or tool approvals" }
+  ],
+  "scenarios": [
+    {
+      "id": "w11-t23-s1",
+      "title": "Incident response assistant",
+      "situation": "During an incident the assistant should gather logs, metrics and recent deploys in parallel, then a coordinator reasons over everything and suggests actions. Time to first insight matters: under 30 seconds.",
+      "constraints": ["Three independent data gathers", "Under 30 seconds", "A person is watching"],
+      "unknowns": ["Are the gatherers read-only?", "Does a coordinator need a debate?", "What if one source is down?"],
+      "question": "Which pattern?",
+      "options": [
+        { "name": "Concurrent gatherers with an aggregator, followed by a single coordinator agent (a small custom graph or a sequential step after the aggregator)", "verdict": "best", "why": "Independent gathers run in parallel, so latency is about the slowest source, and one coordinator reasons over the merged data.", "tradeoff": "Cost is three gatherer runs plus the coordinator; a failed source needs explicit handling." },
+        { "name": "Magentic with specialists", "verdict": "poor", "why": "The path is known (gather, then reason), so planning calls only add latency and cost.", "tradeoff": "Right when each incident needs a different investigation path." },
+        { "name": "Sequential gatherers", "verdict": "good", "why": "Simple.", "tradeoff": "Latency is the sum of three slow queries, which may exceed 30 seconds." }
+      ],
+      "flips": [
+        { "if": "Investigations differ wildly per incident", "then": "Consider Magentic with plan review." },
+        { "if": "A source is flaky", "then": "Add timeouts and partial-result handling in the aggregator." }
+      ],
+      "takeaway": "When the shape is known, use the pattern that matches it: independent then merge."
+    },
+    {
+      "id": "w11-t23-s2",
+      "title": "Product Q&A that sometimes needs an expert",
+      "situation": "A product assistant answers most questions alone. Pricing and legal questions should move to a specialist who then continues with the user. Volume is high and cost matters.",
+      "constraints": ["Live chat", "Specialist continues the conversation", "Cost sensitive"],
+      "unknowns": ["How often do pricing and legal questions occur?", "Can specialists use different tools?"],
+      "question": "How do you wire the agents?",
+      "options": [
+        { "name": "Handoff: a generalist start agent with pricing and legal specialists it can hand to", "verdict": "best", "why": "Ownership moves to the specialist who then talks to the user, and most chats never leave the generalist.", "tradeoff": "Mesh broadcast adds some tokens, and routing quality depends on the prompts." },
+        { "name": "Agent-as-tool: generalist calls specialists", "verdict": "good", "why": "Cheaper to reason about and the generalist stays accountable.", "tradeoff": "The generalist relays answers, so specialist voice and follow-ups are filtered." },
+        { "name": "Group chat with all agents on every question", "verdict": "poor", "why": "Pays for several agents on every question where most need one.", "tradeoff": "Right for review-heavy content creation." }
+      ],
+      "flips": [
+        { "if": "Specialists only return short facts", "then": "Agent-as-tool is simpler." },
+        { "if": "Routing can be decided by a keyword or tier", "then": "Use a conditional edge instead of an LLM handoff." }
+      ],
+      "takeaway": "Match the pattern to who should talk to the user."
+    },
+    {
+      "id": "w11-t23-s3",
+      "title": "Do we need multi-agent at all?",
+      "situation": "A team proposes five agents for a task that fits in one context window. Eval data shows a single agent scores 91 percent. The five-agent prototype scores 93 percent at 4 times the cost.",
+      "constraints": ["Eval data available", "Cost matters", "2 point gain"],
+      "unknowns": ["Is the 2 point gain statistically significant?", "Which errors does it fix?"],
+      "question": "What do you recommend?",
+      "options": [
+        { "name": "Keep the single agent, check significance and error types, and revisit if a category of errors needs role separation", "verdict": "best", "why": "A 2 point gain for 4 times the cost is rarely worth it, and it may be within noise.", "tradeoff": "You forgo a small possible gain." },
+        { "name": "Ship the five-agent design", "verdict": "poor", "why": "Quadruples cost and failure surface for a marginal gain.", "tradeoff": "Right when the gain targets a costly error class." },
+        { "name": "Use concurrent voting on all requests", "verdict": "good", "why": "May raise quality with less design.", "tradeoff": "Still multiplies cost and needs proof." }
+      ],
+      "flips": [
+        { "if": "Errors are expensive, such as legal or medical", "then": "Pay for a reviewer agent on the high-risk class only." },
+        { "if": "Task grows beyond the context window", "then": "Multi-agent isolation becomes worth considering." }
+      ],
+      "takeaway": "Earn each extra agent with measured gains."
+    }
+  ],
+  "quiz": [
+    { "id": "w11-t23-q1", "type": "match", "tag": "concept", "q": "Match each orchestration to its topology.", "pairs": [ { "l": "Sequential", "r": "Pipeline" }, { "l": "Concurrent", "r": "Fan-out and aggregate" }, { "l": "Handoff", "r": "Mesh, no central orchestrator" }, { "l": "Group chat", "r": "Star with a speaker-selecting orchestrator" } ], "explain": "Magentic has the group chat shape with a planning manager. Handoff agents connect in a mesh because they share context.", "ref": "tr25" },
+    { "id": "w11-t23-q2", "type": "single", "tag": "tradeoff", "q": "A task needs several specialists, the path is not known in advance, and the budget allows planning calls. Which pattern fits, per the docs?", "options": ["Sequential", "Concurrent", "Magentic", "A single function"], "answer": 2, "explain": "Magentic targets complex open-ended tasks with dynamic planning. The docs recommend group chat when complex planning is not needed.", "ref": "tr27" },
+    { "id": "w11-t23-q3", "type": "multi", "tag": "flip", "q": "Which requirements push you away from the built-in orchestrations toward a custom workflow? Select all.", "options": ["A mandated, provable step order", "Approval at one specific step that may take days", "Three agents reviewing the same draft in parallel", "Custom shared state between steps"], "answers": [0, 1, 3], "explain": "Parallel independent review is exactly what concurrent orchestration provides.", "ref": "tr14" }
+  ],
+  "flashcards": [
+    { "front": "Which orchestration returns control to a user by default?", "back": "Handoff. Sequential, concurrent and group chat do not pause for free text on their own." },
+    { "front": "Why start with group chat before Magentic?", "back": "Magentic adds planning cost and is untested outside Magentic-One's design, so use it only when the path truly needs planning." },
+    { "front": "Which pattern's latency is bounded by the slowest participant?", "back": "Concurrent (plus the aggregator)." }
+  ],
+  "related": ["w11-t18", "w11-t19", "w11-t20", "w11-t21", "w11-t22", "w10-t11"],
+  "refs": ["tr14", "tr23", "tr24", "tr25", "tr26", "tr27"]
+}

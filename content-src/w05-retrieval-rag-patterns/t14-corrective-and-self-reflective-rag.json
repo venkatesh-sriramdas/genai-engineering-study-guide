@@ -1,0 +1,95 @@
+{
+  "id": "w05-t14",
+  "order": 14,
+  "group": "Advanced patterns",
+  "title": "Corrective and self-reflective RAG (CRAG, Self-RAG)",
+  "minutes": 8,
+  "difficulty": "advanced",
+  "summary": "Corrective RAG scores retrieved documents and changes course when they look weak. Self-RAG trains one model to decide when to retrieve and to critique passages and its own output.",
+  "useIf": "Retrieval quality varies by question, the corpus has gaps, and a wrong answer costs more than an extra model call.",
+  "avoidIf": "Latency and cost are tight, retrieval is already reliable, or you cannot bound the retry loop.",
+  "explain": [
+    { "t": "p", "md": "Plain RAG trusts whatever retrieval returns. Two families add a check. **CRAG** (Corrective Retrieval Augmented Generation) uses a lightweight **retrieval evaluator** that scores document quality and triggers different actions. When the corpus is weak it falls back to web search, and it filters the kept text with a decompose-then-recompose step. It is plug-and-play: it wraps an existing generator. **Self-RAG** is different. One language model is trained to decide when to retrieve and to critique retrieved passages and its own output using reflection tokens. It needs a fine-tuned model, and the paper reports 7B and 13B sizes [[r19]] [[r20]]." },
+    { "t": "diagram", "id": "w05-t14-d1", "title": "A corrective loop with a ceiling", "alt": "Retrieve documents, evaluate them, answer when good, rewrite and retry or broaden when weak, abstain when the retry budget is spent.", "src": "flowchart TD\n  Q[Question] --> R[Retrieve]\n  R --> E{Evaluate evidence}\n  E -->|good| G[Generate with citations]\n  E -->|weak| W[Rewrite or broaden source]\n  W --> B{Budget left}\n  B -->|yes| R\n  B -->|no| A[Abstain]" },
+    { "t": "p", "md": "**What the evaluator can be.** A cross-encoder or reranker score with a calibrated cutoff, a small classifier, or an LLM judge per chunk. The cheaper the evaluator, the more often you can afford it. **What the fallback can be.** A rewritten query, more candidates, a second knowledge source, a web search or abstention. Web fallback has governance cost: data egress, untrusted pages that can carry injected instructions, and unclear provenance. Azure's `medium` agentic effort is a managed cousin: a semantic classifier plus one retry with a revised plan [[r5]]." },
+    { "t": "p", "md": "**Cost and loops.** Each evaluation and retry is another call. Put a hard ceiling on retries (one or two is typical, author suggestion), cap total tokens and time, and log every decision so you can see whether corrections help. Measure the lift on a golden set that includes weak-retrieval and unanswerable cases. If it does not beat a plain pipeline with a good cutoff, do not ship it." },
+    { "t": "callout", "kind": "tip", "title": "Try the cheap version first", "md": "A reranker score cutoff plus abstention (see score thresholds) captures much of the corrective idea at a fraction of the cost. Add retry or web fallback when measurement shows the weak-retrieval slice is large." }
+  ],
+  "whereToUse": [
+    "Assistants over incomplete corpora, where partial coverage is common",
+    "High-stakes answers that prefer a retry or refusal to a confident error",
+    "Pipelines that can legitimately fall back to a second source",
+    "Research settings where a fine-tuned reflective model is available"
+  ],
+  "whenToUse": {
+    "use": ["Retrieval quality varies a lot between questions", "A cheap evaluator exists and can be calibrated", "A fallback source or abstention path is allowed", "Extra latency of a retry is acceptable on the weak slice"],
+    "avoid": ["Retrieval is reliable and the cutoff already handles misses", "Strict latency budgets without routing", "Web fallback is not permitted for your data", "You cannot fine-tune and cannot evaluate Self-RAG style models"],
+    "flips": ["Web access is banned: replace the web fallback with abstention or a second internal source", "Evaluator calls dominate cost: use reranker scores instead of an LLM judge", "A fine-tuned reflective model is available and evaluated: Self-RAG becomes an option"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Cutoff plus abstention", "You want most of the safety cheaply", "Corpus has gaps another source could fill", "Refusals on answerable-elsewhere questions"],
+      ["CRAG style evaluator and fallback", "Retrieval quality varies, fallback allowed", "Tight latency, data egress limits", "Extra calls, web trust issues [[r19]]"],
+      ["Self-RAG", "A fine-tuned reflective model is in reach", "You use hosted models only", "Needs fine-tuning, 7B and 13B in the paper [[r20]]"],
+      ["Agentic retrieval at `medium`", "Managed retry with revised plan", "GA-only rules", "Preview, planning tokens [[r5]]"],
+      ["Plain RAG", "Reliable retrieval, low risk", "High-stakes domains", "Confident wrong answers"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Retry loops inflate cost and latency on unanswerable questions", "cause": "No ceiling on retries or total tokens", "fix": "Cap retries at one or two, set a token and time budget, and abstain when spent" },
+    { "symptom": "The evaluator rejects good chunks", "cause": "Its threshold was not calibrated, or the evaluator is out of domain", "fix": "Calibrate on a golden set with labelled good and bad chunks, and monitor rejection rates" },
+    { "symptom": "Web fallback inserts wrong or hostile text", "cause": "Open-web pages are untrusted and may contain injected instructions", "fix": "Restrict to approved domains, scan retrieved text and treat it as lower trust" }
+  ],
+  "scenarios": [
+    {
+      "id": "w05-t14-s1",
+      "title": "Support bot with coverage gaps",
+      "situation": "A product support bot sees about one in six questions for which the knowledge base has no matching article. Public web docs for the product are allowed.",
+      "constraints": ["Gaps are common", "Public web fallback allowed", "Latency budget of four seconds"],
+      "unknowns": ["How accurate is the web fallback on past gaps?", "Who reviews fallback answers?"],
+      "question": "What do you build?",
+      "options": [
+        { "name": "A reranker-score evaluator that routes weak shortlists to one retry, then an approved-domain web fallback, then abstention, with a retry ceiling", "verdict": "best", "why": "Gaps are frequent and the fallback is allowed, so a corrective loop recovers answers while the ceiling bounds cost.", "tradeoff": "Extra latency on the weak slice and a calibrated evaluator to maintain." },
+        { "name": "Always answer from the top 5", "verdict": "poor", "why": "Gap questions get fabricated answers.", "tradeoff": "Acceptable for a low-risk FAQ where gaps are rare." },
+        { "name": "Abstain whenever the cutoff fails", "verdict": "good", "why": "Safe and cheap.", "tradeoff": "Gives up answers that approved web docs could supply." }
+      ],
+      "flips": [
+        { "if": "Web access is not permitted", "then": "Replace the fallback with abstention and a hand-off." },
+        { "if": "The latency budget drops to about a second", "then": "Drop the retry and web step, and abstain or hand off directly when the shortlist is weak." }
+      ],
+      "takeaway": "Correct when gaps are common and fallbacks are allowed."
+    },
+    {
+      "id": "w05-t14-s2",
+      "title": "Hosted models only, regulated data",
+      "situation": "A bank uses hosted frontier models through an API. No fine-tuning of generator models is allowed, and web access is blocked.",
+      "constraints": ["Hosted models only", "No web", "High risk"],
+      "unknowns": ["Is an internal second source available?", "What is the tolerated retry latency?"],
+      "question": "Which reflective approach fits?",
+      "options": [
+        { "name": "CRAG-style evaluator on top of the existing generator, with abstention and a second internal source instead of web", "verdict": "best", "why": "CRAG is plug-and-play around any generator, while hosted-only rules out Self-RAG [[r19]].", "tradeoff": "An evaluator to calibrate and an extra retrieval on the weak slice." },
+        { "name": "Self-RAG with a fine-tuned 7B model", "verdict": "poor", "why": "It needs a fine-tuned reflective model, which policy rules out [[r20]].", "tradeoff": "Fits teams that can train, host and evaluate the model." },
+        { "name": "No evaluation, rely on the prompt to say 'I don't know'", "verdict": "good", "why": "Cheap and gives explicit permission to abstain [[r41]].", "tradeoff": "The model cannot see that retrieval was weak, so errors slip through." }
+      ],
+      "flips": [
+        { "if": "A fine-tuned reflective model is allowed and evaluated", "then": "Test Self-RAG against the CRAG-style design on the golden set." },
+        { "if": "Web access becomes allowed for approved domains", "then": "Add the web fallback to the CRAG-style design, restricted to approved sources and logged." }
+      ],
+      "takeaway": "Hosted-only rules out Self-RAG."
+    }
+  ],
+  "quiz": [
+    { "id": "w05-t14-q1", "type": "single", "tag": "concept", "q": "What is the main practical difference between CRAG and Self-RAG?", "options": ["CRAG needs a fine-tuned model and Self-RAG does not", "Only Self-RAG can abstain", "CRAG wraps an existing generator, while Self-RAG needs a fine-tuned model with reflection tokens", "Only CRAG uses retrieval"], "answer": 2, "explain": "CRAG is plug-and-play with a retrieval evaluator. Self-RAG trains one LM to retrieve and critique through reflection tokens [[r19]] [[r20]]." },
+    { "id": "w05-t14-q2", "type": "multi", "tag": "tradeoff", "q": "Select the controls that keep a corrective loop bounded.", "options": ["A retry ceiling", "A token and time budget", "Abstention when the budget is spent", "Unlimited retries until confidence is high"], "answers": [0, 1, 2], "explain": "Ceilings and abstention bound cost. Unlimited retries loop forever on unanswerable questions." },
+    { "id": "w05-t14-q3", "type": "single", "tag": "security", "q": "Why is open-web fallback a governance concern?", "options": ["Web pages are untrusted and may contain injected instructions", "Web search has no relevance scores", "It requires fine-tuning", "It disables citations"], "answer": 0, "explain": "Fetched pages are untrusted input and can carry instructions or false content. The other options are not true of web fallback." }
+  ],
+  "flashcards": [
+    { "front": "What does the CRAG retrieval evaluator do?", "back": "Scores retrieved document quality and triggers different actions, including web search fallback, then filters with decompose-then-recompose." },
+    { "front": "What does Self-RAG require?", "back": "A fine-tuned language model that emits reflection tokens to decide when to retrieve and to critique passages and its output." },
+    { "front": "What bounds a corrective loop?", "back": "A retry ceiling, a token and time budget, and abstention when the budget is spent." }
+  ],
+  "related": ["w05-t06", "w05-t13", "w05-t17", "w06-t03", "w06-t02"],
+  "refs": ["r19", "r20", "r5", "r41"]
+}

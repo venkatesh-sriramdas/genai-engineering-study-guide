@@ -1,0 +1,87 @@
+{
+  "id": "w12-l1",
+  "order": 1,
+  "title": "Pick the agent's home",
+  "kind": "problem",
+  "minutes": 16,
+  "brief": "An agent needs somewhere to run. How much code you own, where that code may run and whether each user needs private files and compute are all open. Compare five homes and flip the dials.",
+  "blocks": [
+    { "t": "h", "text": "Five homes for one agent", "level": 2 },
+    { "t": "p", "md": "Foundry Agent Service has three agent types [[r1]]. A **prompt agent** is instructions, a model and tools as configuration, with no code. A **voice-based prompt agent** adds managed real-time voice over a WebSocket and is preview as of 2026-10-13. A **hosted agent** runs your own code as a container image, or as a .zip that Foundry builds into an image [[r2]].\n\nYou can also skip the agent resource. Call the Responses API directly and the definition lives in your code: an *ephemeral agent*. Two homes sit outside the service, self-hosting on AKS or Container Apps and Copilot Studio, and both can still be governed (level 6). Treat the choice as a dial problem, not a ranking.\n\nAll of it sits in one resource model: a Foundry resource (`Microsoft.CognitiveServices/accounts` with kind `AIServices`) holds projects, and a project is the development boundary. Connected Storage, Key Vault and AI Search keep their own governance [[r24]]." },
+    { "t": "compare", "title": "Where the agent runs", "intro": "Status labels were checked on 2026-10-13.", "options": [
+      { "name": "Prompt agent", "tag": "GA", "summary": "Instructions, model and tools as configuration. No code and no container.", "pros": ["Least to manage, per the agent types page", "Supports private networking", "No container to build or size"], "cons": ["No custom orchestration or protocol surface", "No per-session files or compute"], "bestWhen": "Instructions, a model and catalog tools are enough.", "avoidWhen": "You need webhooks, AG-UI, voice sockets or files that persist across turns.", "meta": [{ "k": "You write", "v": "Configuration" }, { "k": "Status", "v": "Agents core GA" }] },
+      { "name": "Hosted agent", "tag": "GA on v1 API", "summary": "Your code in a per-session, VM-isolated sandbox with its own Entra agent identity and endpoint.", "pros": ["Python or C# with Agent Framework, LangGraph, OpenAI Agents SDK, Anthropic Agent SDK, GitHub Copilot SDK or custom code", "Several protocols on one agent", "Persisted `$HOME` and bring-your-own VNet"], "cons": ["Billing follows active sessions, so concurrency times allocation drives cost", "Some hosted features are still preview on 2026-10-13, such as long-running resilience", "The initial-preview backend ended on 2026-08-20 and forced a redeploy"], "bestWhen": "You bring code, custom protocols or per-session state.", "avoidWhen": "A prompt agent already covers the need, or the code must run outside Azure.", "meta": [{ "k": "You write", "v": "Agent code" }, { "k": "Cost driver", "v": "CPU and memory of active sessions" }] },
+      { "name": "Direct Responses call (ephemeral agent)", "tag": "Pattern", "summary": "Your app calls the Responses API. The definition ships with the app and no Foundry agent resource exists.", "pros": ["Definition versions with your app code", "Runs wherever your app runs"], "cons": ["Nothing for Foundry to version, publish or give an endpoint to", "You own the loop, hosting and scaling"], "bestWhen": "The agent is a feature of one application.", "avoidWhen": "Several teams must share, version and publish the agent as a unit.", "meta": [{ "k": "You write", "v": "App plus definition" }] },
+      { "name": "Self-host on AKS or Container Apps", "tag": "Your ops", "summary": "Run the agent on your own platform, on another cloud or on premises, then register it for governance.", "pros": ["Code and data can stay on another cloud or on premises", "Registry sync, the Agent 365 SDK or Foundry Control Plane registration can still govern it"], "cons": ["You run scaling, isolation, patching and identity wiring", "Native integration paths give more than inventory; registration alone may not"], "bestWhen": "Residency or an existing platform forces the location.", "avoidWhen": "No hard reason exists to leave Foundry.", "meta": [{ "k": "You write", "v": "Agent plus platform" }] },
+      { "name": "Copilot Studio agent", "tag": "Low code", "summary": "A maker-oriented platform. Its agents appear in the Agent 365 registry and can receive agent identities (preview).", "pros": ["Makers build without a code pipeline", "Visible in the registry, sometimes under more than one type by design"], "cons": ["Less control over orchestration and protocols than owned code (inference)", "Automatic agent identity assignment is preview as of 2026-10-13"], "bestWhen": "Business teams own the agent and the tools are connector shaped.", "avoidWhen": "You need custom protocols or sandboxed code execution.", "meta": [{ "k": "You write", "v": "Low-code flows" }] }
+    ] },
+    { "t": "dials", "id": "w12-l1-runtime", "title": "Pick a runtime", "prompt": "Flip the constraints. The ranking and the reasons update.",
+      "dials": [
+        { "id": "code", "label": "Who owns the logic", "values": [ { "id": "cfg", "label": "Configuration is enough" }, { "id": "code", "label": "Custom orchestration or protocols" }, { "id": "low", "label": "Makers, low code" } ] },
+        { "id": "state", "label": "State and isolation", "values": [ { "id": "none", "label": "Stateless turns" }, { "id": "files", "label": "Per-session files and compute" } ] },
+        { "id": "where", "label": "Where it may run", "values": [ { "id": "foundry", "label": "Inside Foundry is fine" }, { "id": "away", "label": "Another cloud or on premises" } ] }
+      ],
+      "options": [
+        { "id": "prompt", "name": "Prompt agent", "summary": "Configuration only." },
+        { "id": "hosted", "name": "Hosted agent", "summary": "Your code, per-session sandbox." },
+        { "id": "eph", "name": "Direct Responses call", "summary": "Definition lives in your app." },
+        { "id": "self", "name": "Self-host and register", "summary": "AKS, Container Apps, other clouds." },
+        { "id": "studio", "name": "Copilot Studio", "summary": "Low-code maker platform." }
+      ],
+      "scores": {
+        "prompt": {
+          "code": { "cfg": { "s": 2, "why": "No code or container, the least to manage." }, "code": { "s": -2, "why": "No custom orchestration or protocols." }, "low": { "s": 0, "why": "Configuration, but not a maker surface." } },
+          "state": { "none": { "s": 1, "why": "Stateless turns need no sandbox." }, "files": { "s": -2, "why": "No per-session files or compute." } },
+          "where": { "foundry": { "s": 1, "why": "Managed in the service, private networking supported." }, "away": { "s": -2, "why": "It runs only in Foundry." } }
+        },
+        "hosted": {
+          "code": { "cfg": { "s": -1, "why": "Compute billed per active session is wasted." }, "code": { "s": 2, "why": "Your code and several protocols." }, "low": { "s": -1, "why": "Needs a code pipeline." } },
+          "state": { "none": { "s": 0, "why": "Works, but the sandbox adds cost." }, "files": { "s": 2, "why": "Persisted `$HOME` and per-session compute." } },
+          "where": { "foundry": { "s": 1, "why": "Own endpoint, identity and BYO VNet." }, "away": { "s": -1, "why": "The sandbox runs in Foundry, not on premises." } }
+        },
+        "eph": {
+          "code": { "cfg": { "s": 0, "why": "Works, but you host the loop." }, "code": { "s": 1, "why": "You own orchestration inside the app." }, "low": { "s": -2, "why": "It is code in an app." } },
+          "state": { "none": { "s": 1, "why": "Stateless calls fit well." }, "files": { "s": -1, "why": "You build file persistence yourself." } },
+          "where": { "foundry": { "s": 0, "why": "Fine, the app lives in your estate." }, "away": { "s": 1, "why": "Only model calls leave your environment." } }
+        },
+        "self": {
+          "code": { "cfg": { "s": -2, "why": "Heavy for a configuration-only need." }, "code": { "s": 1, "why": "Full control, full operations." }, "low": { "s": -2, "why": "Needs an engineering team." } },
+          "state": { "none": { "s": 0, "why": "Neutral." }, "files": { "s": 1, "why": "You own storage and isolation." } },
+          "where": { "foundry": { "s": -1, "why": "You rebuild what the service gives you." }, "away": { "s": 2, "why": "Code stays where it must, then you register it." } }
+        },
+        "studio": {
+          "code": { "cfg": { "s": 0, "why": "Possible, but a different audience." }, "code": { "s": -2, "why": "Limited orchestration and protocol control (inference)." }, "low": { "s": 2, "why": "Built for makers." } },
+          "state": { "none": { "s": 1, "why": "Conversational turns fit." }, "files": { "s": -2, "why": "No sandboxed per-session compute." } },
+          "where": { "foundry": { "s": 0, "why": "Runs in the Microsoft platform and shows in the registry." }, "away": { "s": -1, "why": "Not a place for on-premises code." } }
+        }
+      },
+      "takeaway": "Hosted agents win on code plus state, prompt agents win on least effort, self-hosting wins on location. Name the dial that decided it." },
+    { "t": "diagram", "id": "w12-l1-d1", "title": "Runtime decision path", "alt": "A decision tree: custom code needed leads to a hosted agent when it can run in Foundry or self-hosting when it cannot. No custom code leads to a prompt agent.", "src": "flowchart TB\n  Q{Custom code needed?} -->|No| P[Prompt agent]\n  Q -->|Yes| W{May run in Foundry?}\n  W -->|Yes| H[Hosted agent]\n  W -->|No| S[Self-host and register]\n  P --> G[Govern in Agent 365]\n  H --> G\n  S --> G", "caption": "Governance is a separate decision from the runtime. All three paths can reach the control plane." },
+    { "t": "table", "caption": "Feature status map, checked 2026-10-13", "head": ["Feature", "Status on 2026-10-13", "Design consequence"], "rows": [
+      ["Agents (core), tracing for prompt and hosted agents", "GA [[r9]]", "Safe baseline"],
+      ["Hosted agents", "GA on the v1 API with azure-ai-projects 2.3.0 or later; long-running resilience is preview [[r11]]", "Check the label on each hosted feature before a regulated launch"],
+      ["Toolboxes", "GA, with tool search and skills in preview [[r3]]", "Use the toolbox, keep tool search optional"],
+      ["Publishing to Teams and Microsoft 365 Copilot", "GA [[r5]]", "Safe channel"],
+      ["Foundry IQ", "API GA depends on the Search REST version, portal preview [[r6]]", "Pin the API version"],
+      ["Foundry memory", "Preview [[r7]]", "Needs a preview waiver"],
+      ["Agent guardrails", "Preview, model guardrails GA [[r8]]", "Do not rely on agent-level controls alone"],
+      ["Agent optimizer", "Limited preview [[r25]]", "Treat as an experiment"],
+      ["Foundry Workflows", "Preview, retires 2026-12-01 [[r11]]", "Do not start new work on it"],
+      ["Classic agents", "Retire 2027-03-31 [[r11]]", "Plan a migration"]
+    ], "highlightCol": 1 },
+    { "t": "failure", "title": "Failure modes", "items": [
+      { "symptom": "The bill grows with concurrency on a light agent", "cause": "A hosted agent sized above its need, billed on CPU and memory of every active session", "fix": "Use a prompt agent if no code is needed, or move to a smaller sandbox. Detect it by watching peak CPU against allocation." },
+      { "symptom": "The portal cannot publish the agent to Teams", "cause": "Portal publishing is not supported when the project has public network access disabled", "fix": "Publish through the REST API with `enable_m365_public_endpoint`." },
+      { "symptom": "Role assignments from an older runbook do not match the portal", "cause": "Azure AI User, Azure AI Owner, Azure AI Account Owner and Azure AI Project Manager were renamed Foundry User, Foundry Owner, Foundry Account Owner and Foundry Project Manager", "fix": "The role IDs did not change. Update the runbook names [[r24]]." }
+    ] },
+    { "t": "callout", "kind": "interview", "title": "What interviewers listen for", "md": "Do not say 'hosted agents for everything'. Name what forces code, then name the cost: per-session compute and a preview boundary you checked on a date." }
+  ],
+  "quiz": [
+    { "id": "w12-l1-q1", "type": "single", "tag": "flip", "q": "Requirements change: each user session needs files that persist across turns, a custom Invocations endpoint and compute isolated per session. Which home fits best?", "options": ["Prompt agent", "Hosted agent", "Copilot Studio agent", "Direct Responses call from a stateless web app"], "answer": 1, "explain": "Hosted agents give a per-session VM-isolated sandbox, a persisted `$HOME` and several protocols. A prompt agent has no code or sandbox. Copilot Studio is a maker platform without per-session sandboxes. A stateless app would have to build file persistence and isolation itself.", "difficulty": 1, "ref": "r2" },
+    { "id": "w12-l1-q2", "type": "single", "tag": "diagnose", "q": "A team cannot publish a hosted agent to Teams from the Foundry portal. Which cause fits the project setting shown?", "code": { "lang": "text", "code": "project.publicNetworkAccess = Disabled\nportal publish -> not supported" }, "options": ["The agent exposes no A2A endpoint, which Teams requires before any publishing can start in the portal", "The Azure Bot Service provider is registered twice in the subscription", "Portal publishing is unsupported with public network access disabled, so use the REST API route", "Prompt agents and hosted agents cannot share one project"], "answer": 2, "explain": "The publish guide states portal publishing is unsupported when public network access is disabled and points to the REST API with `enable_m365_public_endpoint`. Teams does not need A2A, since the Activity protocol is bridged from Responses. A double provider registration is not a documented cause. Projects can hold both agent types.", "difficulty": 2, "ref": "r5" },
+    { "id": "w12-l1-q3", "type": "multi", "tag": "concept", "q": "Select every statement that holds on 2026-10-13.", "options": ["A prompt agent needs no container image.", "A direct Responses API call creates a Foundry agent resource you can publish.", "A hosted agent can be built from a container image or from a .zip.", "The Foundry GA table lists hosted agents on their own GA row."], "answers": [0, 2], "explain": "Prompt agents are configuration only, and hosted agents accept a container image or a .zip that Foundry builds. A direct Responses call is an ephemeral agent with no agent resource, so there is nothing to publish. The migration page states hosted agents are generally available on the GA v1 API (azure-ai-projects 2.3.0 or later), but the GA table has no separate hosted row, so the table row claim is not supported.", "difficulty": 2, "ref": "r1" }
+  ],
+  "defend": null,
+  "refs": ["r1", "r2", "r3", "r5", "r6", "r7", "r8", "r9", "r11", "r24", "r25"],
+  "takeaways": ["Runtime is a dial problem: logic ownership, state and location", "Hosted agents buy code and per-session state, and cost scales with active sessions", "No separate hosted row exists in the GA table, though the migration page says hosted agents are GA on the v1 API", "Governance is a separate decision from the runtime"]
+}

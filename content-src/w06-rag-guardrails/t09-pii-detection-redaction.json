@@ -1,0 +1,109 @@
+{
+  "id": "w06-t09",
+  "order": 9,
+  "group": "Alternatives and operations",
+  "title": "PII detection and redaction",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "PII handling means detecting personal data, then choosing to redact, mask or tokenise it at the right points: ingest, input, output and logs. Detectors are imperfect, so the choice of point and method matters as much as the tool.",
+  "useIf": "Prompts, documents, transcripts or logs contain personal data that the model, the index or the log store should not hold.",
+  "avoidIf": "You plan to rely on a single output filter: it misses PII that was already sent to the model and written to logs.",
+  "explain": [
+    { "t": "p", "md": "Pick the **point** first. At ingest you strip PII before it is embedded (see the ingestion quality-gates topic). On input you remove it before the prompt reaches the model and the logs. On output you filter what the model says. Do all three when the risk justifies it." },
+    { "t": "p", "md": "**Azure AI Language PII** has three feature types: text PII (synchronous strings such as prompts, logs and tickets), conversation PII (asynchronous, for transcripts and chats) and document-based PII (asynchronous, native `.pdf`, `.docx` and `.txt`, returning a redacted file plus JSON metadata). Output has categories, confidence scores and redacted text. The Azure AI Search PII skill takes at most 50,000 characters per input [[r18]]. **Presidio** offers an analyzer, an anonymizer, an image redactor and a structured-data module. Its recognizers combine NER, regex and rules with checksums and context, it can call external detectors such as Azure AI Language, and its docs warn there is no guarantee it finds all PII. The project moved to a community-owned Data Privacy Stack with docs at presidio.dataprivacystack.org [[r17]]. The **Foundry PII filter** scans model output only, is preview, follows Azure Language categories, and per category either annotates or annotates and blocks the whole output [[r8]]." },
+    { "t": "p", "md": "**Method.** *Redaction* removes the value. *Masking* overwrites it (for example `****` or a type label). *Tokenisation* swaps it for a placeholder such as `[PERSON_1]` and keeps the mapping in a protected store, so authorised code can restore it in the response. Reversibility is a trade-off: a token vault is itself a sensitive store. If the answer never needs the real value, prefer irreversible redaction. These method distinctions are engineering practice, not product settings." },
+    { "t": "diagram", "id": "w06-t09-d1", "title": "Reversible redaction around a model call", "alt": "User text is scanned for PII and values are replaced with tokens. The tokens go to the model and the mapping goes to a token vault. The response with tokens is restored from the vault before it is shown to the user.", "src": "flowchart LR\n  U[User text] --> D[Detect PII]\n  D --> T[Swap for tokens]\n  T --> M[Model]\n  T --> V[(Token vault)]\n  M --> R[Response with tokens]\n  R --> S[Restore values]\n  V --> S\n  S --> A[Answer]" }
+  ],
+  "whereToUse": [
+    "Customer chat and call-centre transcripts used for analytics or model improvement",
+    "RAG ingestion of tickets, HR cases and clinical notes",
+    "Prompt logging and tracing, where raw prompts would store personal data",
+    "Assistants that must personalise answers without sending raw identifiers to a model",
+    "Output review for assistants that might echo personal data"
+  ],
+  "whenToUse": {
+    "use": [
+      "Use irreversible redaction when the value is never needed again",
+      "Use tokenisation when the response must restore the value for an authorised user",
+      "Use typed placeholders so the model keeps context",
+      "Test detectors on your own formats, languages and custom IDs"
+    ],
+    "avoid": [
+      "Avoid an output-only filter as the sole control: input and logs are already exposed",
+      "Avoid asterisk masking where meaning matters: it removes context the model needs",
+      "Avoid treating any detector as complete"
+    ],
+    "flips": [
+      "Data may not leave your environment: use Presidio self-hosted instead of a managed service",
+      "Custom identifiers matter: add Presidio recognizers with regex, checksum and context",
+      "Documents arrive as files at volume: use the asynchronous document-based mode"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Azure AI Language PII", "Managed, many entity types, text, conversation, document modes", "Data must stay in house", "Per-call cost, residency review"],
+      ["Presidio (self-hosted)", "Custom recognizers, residency, image and structured data", "You cannot maintain it", "No guarantee of full coverage, you own tuning"],
+      ["Foundry PII filter (output only)", "Guard model output with policy actions", "PII is already in input or logs", "Preview, output only, block action drops the whole output"],
+      ["LLM-based detection", "Odd formats and context", "Cost, latency, consistency", "Leaks PII to another model call"],
+      ["Regex and checksums", "Fixed formats such as card or national IDs", "Free-text names and addresses", "Easy and cheap, many false negatives"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Personal data appears in prompt logs although output filtering is on", "cause": "The Foundry PII filter scans output only, so inputs and traces were never redacted", "fix": "Redact before logging and before the model call" },
+    { "symptom": "Answers get worse after masking", "cause": "Asterisks removed the type and role of the values", "fix": "Use typed placeholders such as `[PERSON_1]`" },
+    { "symptom": "Custom account numbers leak through", "cause": "No recognizer for that format and detectors give no coverage guarantee", "fix": "Add custom recognizers and test on a labelled sample" },
+    { "symptom": "A token vault breach would expose everything", "cause": "The mapping store is broadly accessible and never expires", "fix": "Restrict access, separate keys, set expiry and audit reads" }
+  ],
+  "scenarios": [
+    {
+      "id": "w06-t09-s1",
+      "title": "Call-centre transcripts for analytics",
+      "situation": "Thousands of recorded call transcripts are processed overnight for trend analysis. Analysts never need names or account numbers. Volume is high and latency does not matter.",
+      "constraints": ["Batch processing", "Values never needed", "Transcripts are conversations", "Residency allows a managed service"],
+      "unknowns": ["Which languages appear?", "Are there custom identifiers?"],
+      "question": "How do you handle PII?",
+      "options": [
+        { "name": "Irreversible redaction with the asynchronous conversation PII feature before storage", "verdict": "best", "why": "The mode fits transcripts, runs in batch and leaves no recoverable values.", "tradeoff": "Detector misses still leak, so sample and test." },
+        { "name": "Self-hosted Presidio with custom recognizers", "verdict": "good", "why": "Keeps data in house and supports custom formats.", "tradeoff": "You maintain and tune it." },
+        { "name": "Output-only PII filter on the analytics model", "verdict": "poor", "why": "The transcripts with PII are stored and processed as input, which the output filter never sees.", "tradeoff": "Right for guarding what a chat model says." }
+      ],
+      "flips": [
+        { "if": "Data may not leave the environment", "then": "Presidio self-hosted becomes the best choice." },
+        { "if": "Case handlers need the real values", "then": "Tokenise with a vault, not irreversible redaction." }
+      ],
+      "takeaway": "Pick the detector mode and the point that match where the data sits."
+    },
+    {
+      "id": "w06-t09-s2",
+      "title": "Chat assistant that greets users by name",
+      "situation": "A support assistant must write replies that include the customer's name and order number. The team does not want the model provider to receive raw identifiers.",
+      "constraints": ["Reply needs real values", "Model must not see raw IDs", "Real-time, interactive", "Custom order number format"],
+      "unknowns": ["Who may restore values?", "How long must mappings live?"],
+      "question": "How do you design redaction?",
+      "options": [
+        { "name": "Tokenise before the model call with typed placeholders, restore from a protected vault after, with custom recognizers for order numbers", "verdict": "best", "why": "The model sees placeholders, the user sees real values, and custom IDs are covered.", "tradeoff": "A token vault is a new sensitive store to secure." },
+        { "name": "Mask values with asterisks", "verdict": "good", "why": "Simple and irreversible.", "tradeoff": "The reply cannot contain real values and the model loses context." },
+        { "name": "Send raw text and rely on the output PII filter", "verdict": "poor", "why": "The raw identifiers already reached the model and logs.", "tradeoff": "Right only when the provider is trusted for that data and the filter is an extra layer." }
+      ],
+      "flips": [
+        { "if": "Replies never need the real values", "then": "Use irreversible redaction and skip the vault." },
+        { "if": "Provider data handling is approved for PII", "then": "Keep the output filter as a second layer and simplify inputs." }
+      ],
+      "takeaway": "Reversibility is a feature you pay for with a new secret store."
+    }
+  ],
+  "quiz": [
+    { "id": "w06-t09-q1", "type": "single", "tag": "security", "q": "What does the Foundry PII filter scan?", "options": ["User input only", "Tool responses only", "Logs and traces", "Model output only"], "answer": 3, "explain": "The Foundry PII filter scans model output (completions) only and is preview. It does not cover user input, tool responses or logs, so you need other controls there.", "ref": "r8" },
+    { "id": "w06-t09-q2", "type": "match", "tag": "concept", "q": "Match each Azure AI Language PII feature to its mode.", "pairs": [{ "l": "Text PII", "r": "Synchronous strings such as prompts and tickets" }, { "l": "Conversation PII", "r": "Asynchronous transcripts and chats" }, { "l": "Document-based PII", "r": "Asynchronous `.pdf`, `.docx`, `.txt` with a redacted file" }, { "l": "AI Search PII skill", "r": "At most 50,000 characters per input" }], "explain": "The three feature types differ by sync or async mode and input shape. The AI Search skill has its own input cap.", "ref": "r18" },
+    { "id": "w06-t09-q3", "type": "multi", "tag": "tradeoff", "q": "Which are benefits of typed placeholders such as `[PERSON_1]` over asterisks?", "options": ["The model keeps the role of each value", "Authorised code can restore real values", "No mapping store is needed", "Different entities stay distinguishable"], "answers": [0, 1, 3], "explain": "Typed, numbered placeholders keep meaning and allow restoration, but they require a mapping store, which is the cost.", "ref": "r17" }
+  ],
+  "flashcards": [
+    { "front": "Why is an output-only PII filter not enough?", "back": "It scans model output only (preview). Personal data in prompts, tool responses and logs is already exposed." },
+    { "front": "Redaction, masking and tokenisation?", "back": "Redaction removes the value, masking overwrites it, tokenisation swaps it for a placeholder and keeps a protected mapping so it can be restored." },
+    { "front": "What does Presidio's documentation warn about?", "back": "There is no guarantee it finds all PII. Test your formats and languages, and add custom recognizers." }
+  ],
+  "related": ["w03-t11", "w06-t07", "w06-t08", "w06-t10", "w06-l4", "w15-t06"],
+  "refs": ["r8", "r17", "r18"]
+}

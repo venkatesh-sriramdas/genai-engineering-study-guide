@@ -1,0 +1,89 @@
+{
+  "id": "w07-l7",
+  "order": 7,
+  "title": "Boss: design the wall, then handle the leak",
+  "kind": "boss",
+  "minutes": 25,
+  "brief": "An interviewer asks you to design access control for a RAG assistant, with every dial unspecified, and then reports a leak. Practise the five steps of Dial-and-Defend: clarify, list options, pick and flip, name failures, name metrics and rollout.",
+  "blocks": [
+    { "t": "h", "text": "The interview prompt", "level": 2 },
+    { "t": "scenario", "title": "What you know and what to ask", "known": ["A RAG assistant answers employee questions over internal documents", "Permissions exist in the source systems", "A week after launch a user reports seeing a snippet they should not have access to"], "ask": ["Where do the documents live and how rich are the permissions?", "How selective is access, and how fast must revocation take effect per tier?", "Does the user's token reach retrieval, and how many groups does a user hold?", "Who writes the corpus, what does the client render and can the assistant act?", "What do caches, logs and traces hold today?"], "tension": "Instant revocation, full recall and low latency pull in different directions. Say which dial you trade." },
+    { "t": "diagram", "id": "w07-l7-d1", "title": "A defensible request path", "alt": "A user request goes through an API gatekeeper that resolves principals from the token, runs a pre-filtered search, live-checks the top hits for restricted tiers, then spotlights and sanitizes before the answer.", "src": "flowchart LR\n  U[User token] --> G[API gatekeeper]\n  G --> P[Resolve principals]\n  P --> S[Pre-filtered search]\n  S --> V[Live check top hits]\n  V --> M[Spotlight and generate]\n  M --> O[Sanitize output]", "caption": "One gatekeeper in front of every store. Every retrieval, including agent tool calls, passes through it." }
+  ],
+  "quiz": [
+    { "id": "w07-l7-q1", "type": "order", "tag": "order", "q": "A user reports seeing a snippet from a document they cannot open. Put the response in order.", "items": ["Contain: fail closed on the affected path", "Preserve evidence: principal, document, chunk and filter ids", "Reproduce the query as the reporter", "Classify the cause: drift, missing filter, overage, cache or source setting", "Fix, purge caches, resync and add a regression canary"], "explain": "Containment comes first because the exposure window keeps growing while you investigate. Evidence must be captured before caches expire, reproduction confirms the cause, classification points at the fix, and the regression canary stops the same leak returning.", "difficulty": 1, "ref": "r22" },
+    { "id": "w07-l7-q2", "type": "multi", "tag": "security", "q": "Select every item that belongs in a retrieval log for a permissioned corpus by default.", "options": ["Document and chunk ids", "The principal id", "A hash of the filter that was applied", "Full chunk text kept indefinitely for all users", "The allow or deny outcome"], "answers": [0, 1, 2, 4], "explain": "Ids, principal, filter hash and outcome let you reproduce and audit a decision without copying protected text into a store that has no ACLs. Full text kept indefinitely is the log-as-leak pattern. Capture content only for a bounded window with its own access control.", "difficulty": 2, "ref": "r2" },
+    { "id": "w07-l7-q3", "type": "single", "tag": "flip", "q": "Your design uses native ACLs, which are preview as of 2026-10-13. Legal now requires GA features only in production. Which change keeps most of the design?", "options": ["Switch to a post-filter in application code and over-fetch generously", "Drop access control for documents labelled low sensitivity", "Move to security filters and resolve groups yourself", "Give each user a private index with a nightly rebuild"], "answer": 2, "explain": "Security filters are GA on any API version and keep the pre-filter shape. You take on group resolution (Graph, with overage handling) and ACL updates with `merge`, and you lose deny entries and token-based enforcement. A post-filter weakens recall and leaks denied text to later stages, dropping controls is not a design, and per-user indexes do not scale.", "difficulty": 2, "ref": "r13" }
+  ],
+  "defend": {
+    "prompt": "Design access control for a RAG assistant that answers employee questions over internal documents. Walk me through the options and your choice. A week after launch, an employee reports seeing a snippet from a document they should not have access to. Walk me through your response.",
+    "timebox": "6 min",
+    "clarify": [
+      "Where do the documents live, and what do permissions look like: tenant tag, nested groups, per-document ACLs, deny rules, sharing links, guests?",
+      "How selective is access: what share of the corpus does a typical caller see?",
+      "How fast must revocation take effect for each sensitivity tier?",
+      "Does the user's token reach retrieval end to end, and how many groups does a user hold?",
+      "Who can write to the corpus, what does the client render and can the assistant take actions?",
+      "Is GA required or is preview acceptable, and how many tenants are there and how skewed are they?"
+    ],
+    "options": [
+      { "name": "Pre-filter in the index, with a live check on restricted tiers", "when": "Content is copied into the index, permissions are group based and revocation needs minutes for most content and seconds for a restricted tier.", "tradeoff": "Sync lag for the bulk, and the live check adds latency and source load. Native ACLs are preview, security filters are GA." },
+      { "name": "Delegate retrieval to the source system", "when": "Content lives in Microsoft 365 and permissions must be honoured at query time.", "tradeoff": "Little control over ranking and filters, and rate limits such as 200 requests per user per hour on the Copilot Retrieval API." },
+      { "name": "Physical walls per tenant", "when": "A few large or regulated tenants whose access is only the tenant id.", "tradeoff": "Index caps, cost and operations grow with tenants, and group access inside a tenant still needs a filter." },
+      { "name": "Post-filter in application code", "when": "Almost every document is visible to almost every caller and the rules are too rich to precompute.", "tradeoff": "Starves the top k under selective access and lets denied text reach rerankers, logs and caches." }
+    ],
+    "modelAnswer": [
+      { "t": "p", "md": "**1. Clarify the dials.** I would ask where the content lives, how rich the permissions are, how selective access is, how fast revocation must be per tier, whether the user's token reaches retrieval, who writes to the corpus and what the client renders." },
+      { "t": "p", "md": "**2. Options.** Four options: pre-filter in the index (security filters are GA, native ACLs are preview), delegate retrieval to the source, physical walls per tenant, and the boring post-filter in application code." },
+      { "t": "p", "md": "**3. Choice for assumed dials.** Assume content copied into Azure AI Search from SharePoint and a file lake, group-based ACLs, callers who see about 5% of the corpus, revocation in minutes for most content and seconds for a restricted tier, and preview accepted for a pilot. I would:" },
+      { "t": "list", "style": "ol", "items": [
+        "Pass the user's token end to end with on-behalf-of, resolve groups from the token or Graph, handle group overage and fail closed on any error.",
+        "Pre-filter in the index with native ACLs (preview as of 2026-10-13), or security filters if GA is mandatory.",
+        "Live-check the top hits at the source for the restricted tier.",
+        "Put one API gatekeeper in front of every store and apply the filter to every retrieval, including agent tool calls.",
+        "Key caches by ACL scope, keep TTLs below the revocation SLA and skip caches for restricted labels.",
+        "Log ids and decisions, not content.",
+        "Spotlight retrieved text, strip or allowlist links and images in output and keep the assistant read-only, which removes one leg of the trifecta."
+      ] },
+      { "t": "p", "md": "**What would flip it.** Seconds-level revocation for everything with content in Microsoft 365 flips me to delegation. Few large tenants with a tenant-id permission model flips me to walls. GA-only flips me to security filters with my own group resolution. Near-universal visibility makes a post-filter acceptable." },
+      { "t": "table", "head": ["Failure mode", "How I detect it"], "rows": [
+        ["Post-filter starvation or filtered-recall loss", "Results per query, and filtered recall against a brute-force baseline"],
+        ["ACL drift", "Daily sampled compare of index ACL with source ACL, and the age of the oldest unsynced change"],
+        ["Revocation lag or stale caches", "Nightly canary test with a revoked user, asserting on answers, caches and logs"],
+        ["Group overage failing open or closed", "A test user with 300 groups in CI"],
+        ["Injection or exfiltration", "Red-team documents with planted instructions, and egress alerts for unknown hosts"]
+      ] },
+      { "t": "p", "md": "**5. Metrics and rollout.** I would track revocation lag at p95 per tier, drift rate, empty-result rate, canary pass rate and egress to unknown hosts. I would start with one department, run canary documents and a revoked test user in CI, then widen." },
+      { "t": "callout", "kind": "interview", "title": "The leak report", "md": "**Contain** first: fail closed for the affected path or tier. **Preserve evidence**: principal, document, chunk and filter ids. **Reproduce** the query as the reporter. **Classify** the cause: ACL drift, a parent-scope change, group overage treated as open, a code path with no filter such as an agent tool, an indexed knowledge source created without `ingestionPermissionOptions`, a shared cache or a stale membership cache. **Fix** by resyncing the scope, purging caches and adding the missed path to the gatekeeper, then add a regression canary and report according to your incident policy." }
+    ],
+    "rubric": [
+      { "pt": "Asks about permission model, selectivity, revocation SLA and identity before naming a technology", "w": 3 },
+      { "pt": "Offers at least three enforcement options including the boring post-filter, and picks for stated dials", "w": 3 },
+      { "pt": "Passes the user's identity end to end, handles group overage and fails closed", "w": 2 },
+      { "pt": "Labels Azure AI Search native ACLs as preview and names the GA alternative", "w": 2 },
+      { "pt": "Covers sync and revocation: an SLA per tier, a canary test and a drift audit", "w": 2 },
+      { "pt": "Treats caches and logs as copies outside the ACL and scopes them", "w": 2 },
+      { "pt": "Addresses injection and exfiltration with layers and a removed trifecta leg", "w": 1 },
+      { "pt": "Runs the leak response in order: contain, preserve, reproduce, classify, fix, regression test", "w": 3 }
+    ],
+    "followUps": [
+      { "q": "The reporter belongs to 300 groups. What do you check first?", "a": "Overage handling. Above 200 groups the JWT carries an indicator instead of the list. If the code treated that as no groups or as no filter it fails open or closed for exactly these users. Call Graph `transitiveMemberOf`, page at 999 and fail closed on error." },
+      { "q": "How do you know the filter runs on agent tool calls?", "a": "One gatekeeper API in front of every store, plus a canary test through each retrieval path including tools. A per-path test catches the path that forgot the filter." },
+      { "q": "Preview is not allowed in production. What changes?", "a": "Move to security filters, which are GA on any API version. You own group resolution through Graph and ACL updates with `merge` or `mergeOrUpload`, you lose deny entries, and you keep the same canary, drift and cache rules." }
+    ],
+    "redFlags": [
+      "Puts the rule in the system prompt and calls it access control.",
+      "Filters after retrieval and never mentions over-fetch, or denied text reaching rerankers, caches and logs.",
+      "Calls native ACLs GA, or promises instant revocation without a per-source SLA.",
+      "Responds to the leak by tuning the prompt before containing and reproducing it."
+    ]
+  },
+  "refs": ["r2", "r10", "r11", "r12", "r13", "r22", "r25", "r36", "r37"],
+  "takeaways": [
+    "Clarify the permission model, selectivity, revocation SLA and identity path before naming a technology.",
+    "Pre-filter for the bulk, live-check restricted tiers, one gatekeeper, caches and logs scoped, and say preview out loud.",
+    "Test revocation with a canary and a revoked user on a schedule.",
+    "A leak report follows an order: contain, preserve, reproduce, classify, fix, regression test.",
+    "Study next: the AI security fundamentals path and the red teaming short course."
+  ]
+}

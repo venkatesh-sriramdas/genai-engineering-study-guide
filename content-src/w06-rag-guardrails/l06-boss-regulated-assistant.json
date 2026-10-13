@@ -1,0 +1,74 @@
+{
+  "id": "w06-l6",
+  "order": 6,
+  "title": "Boss: guard a regulated assistant",
+  "kind": "boss",
+  "minutes": 18,
+  "brief": "An interviewer asks you to design the guardrail stack for an assistant that answers customers' questions about their own regulated account data, using RAG and a few tools. No dials are given.",
+  "blocks": [
+    { "t": "h", "text": "Your four minutes", "level": 2 },
+    { "t": "scenario", "title": "What you are handed", "known": ["Customers ask about their own account data, and some answers drive decisions", "The assistant retrieves documents and can call a few tools", "The interviewer will probe latency, streaming, languages and what happens when a guard fails"], "ask": ["Which rules apply, and what is the worst outcome: harm, disclosure or a wrong figure?", "Which languages, what latency budget and must answers stream?", "Which tools have side effects, and where may text go?", "How are permissions enforced in retrieval?"], "tension": "More guards mean fewer incidents and more latency, more false blocks and more things to operate." },
+    { "t": "diagram", "id": "w06-l6-stack", "title": "A defensible default guard stack", "alt": "The user input passes shields and a PII check, retrieval applies an access filter, retrieved chunks pass a document attack scan, the model answers with citations, tool calls pass an allow list, and the output passes groundedness, harm and PII checks before an answer or an abstention.", "src": "flowchart LR\n  U[User] --> IG[Input shields and PII check]\n  IG --> RT[Retrieve with access filter]\n  RT --> RG[Document attack scan]\n  RG --> M[Model with citations]\n  M --> TG[Tool allow list]\n  M --> OG[Groundedness, harm, PII]\n  OG --> A[Answer or abstain]", "caption": "A starting point. Every box has a dial that can remove, replace or move it." }
+  ],
+  "quiz": [
+    { "id": "w06-l6-q1", "type": "single", "tag": "flip", "difficulty": 3, "q": "The product team insists on token streaming for the chat UI, and the risk tier stays high. Which change is most defensible?", "options": ["Switch every output to asynchronous filter mode and rely on annotations", "Remove the groundedness check and keep only the input filters", "Stream directly and retract the answer if the claim check fails later", "Use buffered streaming and show account figures only after the claim check passes"], "answer": 3, "explain": "Buffered streaming filters each chunk before it is shown, and holding account-specific claims until they are checked keeps wrong figures off the screen. Asynchronous filter mode lets violating text appear before the stop signal, removing the claim check removes the grounding control, and retracting a shown figure after the fact is already a disclosure or a wrong answer." },
+    { "id": "w06-l6-q2", "type": "single", "tag": "bug", "difficulty": 2, "q": "What is the most serious problem in this guard orchestration for a regulated assistant?", "code": { "lang": "python", "code": "def answer(q, user):\n    if input_guard(q) == \"block\":\n        return REFUSAL\n    chunks = retrieve(q, user)\n    draft = llm(q, chunks)\n    try:\n        verdict = groundedness_check(draft, chunks, timeout=0.5)\n    except TimeoutError:\n        verdict = \"grounded\"\n    return draft if verdict == \"grounded\" else ABSTAIN" }, "options": ["A timeout is treated as grounded, so the guard fails open", "The input guard should run after retrieval, not before it", "ABSTAIN should be returned inside the try block, not outside it", "The question must reach the guard before the chunks do"], "answer": 0, "explain": "When the check times out the code lets the draft through, so an outage or a slow dependency removes the control exactly when it is stressed. A regulated assistant should fail closed or degrade to an abstention. Running the input guard first is correct, and the position of ABSTAIN and the argument order do not change the failure." },
+    { "id": "w06-l6-q3", "type": "multi", "tag": "security", "difficulty": 3, "q": "Select every control that belongs in this design.", "options": ["Pass the user's identity so retrieval applies document permissions before generation", "Scan retrieved chunks and tool responses for document attacks", "Allow-list tools and validate their arguments in code", "Rely on Prompt Shields alone because it blocks all prompt injection"], "answers": [0, 1, 2], "explain": "Permissions, document-attack scanning and deterministic tool controls each cover a path a content filter cannot. Prompt Shields is a probabilistic detector, so treating it as a complete defence leaves injection and exfiltration paths open." }
+  ],
+  "defend": {
+    "prompt": "Design the guardrail stack for an assistant that answers customers' questions about their own regulated account data. It uses RAG and can call a few tools. Walk me through your design.",
+    "timebox": "4 min",
+    "clarify": [
+      "Which regulations or internal policies apply, and what is the worst outcome: harm, disclosure or a wrong figure?",
+      "Which languages must be supported?",
+      "What is the latency budget, and must answers stream to the user?",
+      "Which tools exist and which of them have side effects?",
+      "May text go to managed services, or only to our own servers?",
+      "How are permissions modelled, and where are they enforced in retrieval?"
+    ],
+    "options": [
+      { "name": "Platform guardrails plus deterministic checks", "when": "Managed services are acceptable and the harms are the standard categories.", "tradeoff": "Several features are preview or English-tested, and a custom policy is awkward." },
+      { "name": "Platform plus a claim-level check and tool controls", "when": "Risk is high and the content is in tested languages.", "tradeoff": "Adds latency and conflicts with token streaming, and agent tool controls are preview." },
+      { "name": "Self-hosted stack: NeMo Guardrails, Llama Guard, Presidio", "when": "Text must stay on our servers or the policy is custom.", "tradeoff": "You operate it and tune false positives yourself." },
+      { "name": "LLM judge only", "when": "A quick pilot with low stakes.", "tradeoff": "Slow, non-deterministic, and blind to tool side effects." }
+    ],
+    "modelAnswer": [
+      { "t": "p", "md": "**1. Clarify the dials.** I would ask which rules apply and what the worst outcome is, which languages, the latency budget and whether answers must stream, which tools have side effects, whether text may leave our servers and how permissions are enforced in retrieval." },
+      { "t": "p", "md": "**2. List the options.** Platform guardrails with deterministic checks is the boring baseline. Adding a claim-level check and tool controls raises coverage and latency. A self-hosted stack keeps text in-house. An LLM judge alone is quick and weak." },
+      { "t": "p", "md": "**3. Pick for the stated dials.** For regulated account data I would layer, and fail closed. Deterministic checks first: schemas, allow lists, size caps and output format. Prompt Shields and a PII check on the input, run in parallel with retrieval. Permission filtering inside retrieval, then a document attack scan on retrieved chunks and tool responses. Tools behind an allow list with validated arguments. Generation with citations, then a claim-level check, using Azure groundedness detection only if the content is English and a preview feature is acceptable, otherwise an NLI model or judge. Harm and PII filters on output. Buffered streaming, or the whole answer after checks. Any guard timeout becomes an abstention or an escalation." },
+      { "t": "p", "md": "**4. Failure modes and detection.**" },
+      { "t": "table", "head": ["Failure", "How I would detect it"], "rows": [["Injection through a retrieved page or tool result", "Planted-instruction tests in CI, document attack detections per source"], ["Guard timeout lets answers through", "Timeout and error rate per guard, with an alert, and a test that forces a timeout"], ["Over-blocking of legitimate account questions", "False positive rate per category and language, override rate, sampled review"], ["Citation that does not support the claim", "Support rate from a sampled entailment check"], ["Non-English attack bypass", "Per-language red-team recall with a floor"]] },
+      { "t": "p", "md": "**5. Metrics and rollout.** Offline: recall per category and language on a red-team set, false positive rate on benign traffic, groundedness and citation support. Shadow mode on live traffic first, then a canary with blocking, with alerts on block rate, guard latency p95 and timeout rate." },
+      { "t": "p", "md": "**What would flip the choice.**" },
+      { "t": "list", "style": "ul", "items": ["Token streaming is mandatory: keep buffered streaming and hold account figures until checked, never asynchronous filter for this risk tier.", "Text may not leave our network: move to the self-hosted stack with custom categories, and budget for tuning.", "Content is mostly non-English: lean on a tunable judge or NLI model per language, because several platform features were tested on English only.", "Latency is tight: run independent guards in parallel and move the claim check to high-risk answers only.", "A preview feature changes or retires: keep a deterministic or self-hosted fallback for that control."] }
+    ],
+    "rubric": [
+      { "pt": "Asks about rules, worst outcome, languages, latency, data location and tools before naming components", "w": 3 },
+      { "pt": "Places guards at input, retrieval, tool and output, not only at input", "w": 3 },
+      { "pt": "Separates answerability, groundedness and citation validity", "w": 2 },
+      { "pt": "Chooses fail-closed behaviour and abstention for the regulated setting", "w": 2 },
+      { "pt": "States feature status (GA, preview, English-only) and what flips the choice", "w": 2 },
+      { "pt": "Handles latency with parallel guards and states the streaming trade-off", "w": 2 },
+      { "pt": "Names failure modes with a detection signal for each", "w": 2 },
+      { "pt": "Gives an evaluation and rollout plan with shadow mode and per-language slices", "w": 2 }
+    ],
+    "followUps": [
+      { "q": "Product demands token streaming. What changes?", "a": "Keep buffered streaming so each chunk is filtered before display, and hold account-specific claims until the claim check passes. I would not use the asynchronous filter here, because violating text can show before the stop signal." },
+      { "q": "Legal says text may not leave our network.", "a": "Move to the self-hosted stack: Llama Guard with rewritten category text, NeMo Guardrails for flow control, Presidio for PII, and a self-hosted NLI or judge for claims. I would budget for tuning false positives and for operating the models." },
+      { "q": "How do you know the guards are not blocking good answers?", "a": "Shadow mode first, a labelled benign set, false positive rate per category and language, the override rate and sampled review. At low base rates most blocks can be false alarms even for a good guard, so precision is the number to watch." }
+    ],
+    "redFlags": [
+      "Treats a content filter or Prompt Shields as a complete defence against injection",
+      "Guards only the user input",
+      "Lets guard timeouts pass requests through",
+      "Names a vendor feature without its status or language limits"
+    ]
+  },
+  "refs": ["r1", "r3", "r4", "r9", "r11", "r13", "r16", "r17"],
+  "takeaways": [
+    "Layer guards across input, retrieval, tools and output, and fail closed",
+    "Streaming and claim-level checks pull in opposite directions, so state which wins",
+    "Name each feature's status and language limits, and keep a fallback for preview controls",
+    "Measure false positives and per-language recall, in shadow mode before blocking"
+  ]
+}

@@ -1,0 +1,101 @@
+{
+  "id": "w04-t14",
+  "order": 14,
+  "group": "Embeddings",
+  "title": "Embedding quantization and rescoring",
+  "minutes": 8,
+  "difficulty": "advanced",
+  "summary": "Store each vector component in fewer bits (int8 or one bit), search the compressed index for extra candidates, then rescore them with the original vectors. You get a large memory saving with a small recall cost.",
+  "useIf": "Vector memory is the cost driver and you can afford a rescoring step against original vectors.",
+  "avoidIf": "The index is small or dimensions are low. Binary quantization on small vectors loses too much.",
+  "explain": [
+    { "t": "p", "md": "**Quantization** shrinks vectors. **Scalar quantization** stores each float32 component as an 8-bit integer, about 4 times smaller. **Binary quantization** keeps one bit per dimension, up to about 28 to 32 times smaller. Compressed vectors are cheaper to hold in memory and faster to compare, but they are less precise, so the compressed search returns a rougher top list." },
+    { "t": "diagram", "id": "w04-t14-d1", "title": "Oversample, then rescore", "alt": "The query searches the compressed index and returns k times the oversampling factor candidates. Those candidates are rescored with the original vectors and the top k are returned.", "src": "flowchart LR\n  Q[\"Query vector\"] --> C[\"Search compressed index\"]\n  C --> O[\"k x oversampling candidates\"]\n  O --> R[\"Rescore with original vectors\"]\n  R --> T[\"Top k results\"]" },
+    { "t": "p", "md": "**Oversampling and rescoring** recover the lost precision. With `defaultOversampling` of 4 and a query `k` of 50, the engine fetches 200 candidates from the compressed vectors, recomputes similarity with the originals and returns the best 50. In AI Search, rescoring works only with HNSW, and `rescoreStorageMethod` is `preserveOriginals` or `discardOriginals` (binary only). A quantized field needs a new vector profile and a new field. Binary quantization is best for dimensions above 1,024 and for embeddings centred on zero [[tr6]] [[tr10]]." },
+    { "t": "stats", "items": [
+      { "label": "Scalar (int8)", "value": "4x smaller", "note": "About 99.3% of float32 performance in an open benchmark [[tr23]]" },
+      { "label": "Binary", "value": "32x smaller", "note": "AI Search says up to 28 times [[tr6]]. About 96% retained with rescoring, 92.5% without [[tr23]]" },
+      { "label": "Binary speed", "value": "up to 45x faster", "note": "Retrieval in the same benchmark [[tr23]]" },
+      { "label": "AI Search oversampling default", "value": "4", "note": "`defaultOversampling` [[tr6]]" }
+    ] },
+    { "t": "code", "lang": "json", "title": "Compression with rescoring (AI Search index definition)", "code": "\"compressions\": [{\n  \"name\": \"binary-quantization\",\n  \"kind\": \"binaryQuantization\",\n  \"rescoringOptions\": {\n    \"enableRescoring\": true,\n    \"defaultOversampling\": 4,\n    \"rescoreStorageMethod\": \"preserveOriginals\"\n  }\n}]", "caption": "Shape follows the Create Index documentation [[tr10]]. Attach the compression to a vector profile, then to a new vector field." },
+    { "t": "p", "md": "Keeping originals (`preserveOriginals`) costs storage but keeps rescoring and later re-quantization possible. Discarding them (binary only) saves the most space and removes both. Always measure recall against an uncompressed baseline on your own queries before and after." }
+  ],
+  "whereToUse": [
+    "Indexes of tens or hundreds of millions of vectors where memory sets the service cost",
+    "High-dimension embeddings (above 1,024) with binary quantization",
+    "Pipelines combined with Matryoshka truncation for the largest saving",
+    "Any HNSW index where a rescoring step with full vectors is acceptable"
+  ],
+  "whenToUse": {
+    "use": ["Memory or cost per vector is the bottleneck", "Dimensions are high and embeddings are centred on zero (binary)", "A baseline recall measurement exists"],
+    "avoid": ["Small indexes where memory is not a constraint", "Low-dimension vectors with binary quantization", "Setups that cannot store or fetch original vectors for rescoring"],
+    "flips": ["Recall falls short: increase oversampling or keep originals", "Dimensions are modest: choose scalar quantization over binary", "You need to change settings later: preserve originals"]
+  },
+  "alternatives": {
+    "title": "Compression options compared",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Scalar int8", "Safe 4 times saving, little recall loss", "Already at the floor", "New field, rescoring to tune"],
+      ["Binary quantization", "High dimensions, huge indexes", "Under about 1,024 dimensions", "Needs oversampling and rescoring, quality loss without them"],
+      ["Matryoshka truncation", "Model supports it", "Model not trained for it", "Needs quantization in AI Search"],
+      ["Smaller model", "Quality headroom exists", "Domain is hard", "Lower quality across the board"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Recall drops badly after enabling binary quantization on 384-dimension vectors", "cause": "Binary quantization suits dimensions above 1,024 and zero-centred embeddings", "fix": "Use scalar quantization for low dimensions, or test binary with rescoring first" },
+    { "symptom": "You cannot change the oversampling strategy or requantize later", "cause": "`discardOriginals` removed the full vectors", "fix": "Use `preserveOriginals` until the settings are final and recall is proven" },
+    { "symptom": "Enabling compression on an existing field is rejected", "cause": "A quantized field needs a new vector profile and a new field", "fix": "Add the new field and re-embed or copy vectors, then cut over by alias" },
+    { "symptom": "Rescoring has no effect on a non-HNSW field", "cause": "In AI Search, rescoring works only with HNSW", "fix": "Use an HNSW algorithm in the vector profile" }
+  ],
+  "scenarios": [
+    {
+      "id": "w04-t14-s1",
+      "title": "100 million high-dimension vectors",
+      "situation": "An index holds 100 million 3,072-dimension vectors and costs far more than planned. A labelled query set exists and a rescoring step is acceptable.",
+      "constraints": ["100 million vectors", "3,072 dimensions", "Memory dominates cost", "Rescoring acceptable"],
+      "unknowns": ["What recall loss is acceptable?", "Is storage for originals affordable?"],
+      "question": "Which compression do you test first?",
+      "options": [
+        { "name": "Binary quantization with oversampling and rescoring, originals preserved", "verdict": "best", "why": "High dimensions are where binary works, and rescoring against originals recovers most of the quality.", "tradeoff": "A new field and some storage for originals." },
+        { "name": "Scalar int8 only", "verdict": "good", "why": "Safe and simple, about 4 times smaller.", "tradeoff": "Much less saving than binary at this scale." },
+        { "name": "Binary with `discardOriginals` straight away", "verdict": "poor", "why": "Removes rescoring and any chance to revise settings before recall is proven.", "tradeoff": "Right once recall is validated and storage must shrink further." }
+      ],
+      "flips": [
+        { "if": "Recall with binary and rescoring misses the target", "then": "Fall back to scalar quantization or raise oversampling." },
+        { "if": "Dimensions are reduced by truncation", "then": "Reassess, since binary prefers high dimensions." }
+      ],
+      "takeaway": "At extreme scale, compress hard but prove recall before discarding originals."
+    },
+    {
+      "id": "w04-t14-s2",
+      "title": "Mid-size index, strict recall",
+      "situation": "An index of 5 million 1,536-dimension vectors fits the quota but the team wants headroom. Recall must stay within half a point of today.",
+      "constraints": ["5 million vectors", "1,536 dimensions", "Recall within 0.5 point", "Limited tuning time"],
+      "unknowns": ["How much headroom is needed?", "Can a new field be backfilled?"],
+      "question": "What do you pick?",
+      "options": [
+        { "name": "Scalar int8 with rescoring and originals preserved", "verdict": "best", "why": "A 4 times saving with about 99% of float32 performance in an open benchmark, and low tuning effort.", "tradeoff": "Originals still need storage and a new field must be filled." },
+        { "name": "Binary quantization with rescoring", "verdict": "good", "why": "A bigger saving that may still meet the target.", "tradeoff": "More recall risk and tuning than scalar." },
+        { "name": "Do nothing", "verdict": "poor", "why": "Leaves the team with no headroom as the corpus grows.", "tradeoff": "Right while the index is far from its quota and growth is flat." }
+      ],
+      "flips": [
+        { "if": "Growth accelerates", "then": "Move to binary or add truncation." },
+        { "if": "Recall target loosens", "then": "Binary becomes acceptable." }
+      ],
+      "takeaway": "Pick the lightest compression that meets the memory goal."
+    }
+  ],
+  "quiz": [
+    { "id": "w04-t14-q1", "type": "numeric", "tag": "numeric", "q": "100 million vectors of 1,024 dimensions are stored with binary quantization (1 bit per dimension). How large are the compressed vectors, in GB (1 GB = 10^9 bytes)?", "answer": 12.8, "tolerancePct": 2, "unit": "GB", "hint": "1,024 bits is 128 bytes per vector.", "explain": "1,024 bits = 128 bytes. 128 bytes x 100,000,000 = 12.8 billion bytes = 12.8 GB. Float32 would need 409.6 GB, so the ratio is 32." },
+    { "id": "w04-t14-q2", "type": "single", "tag": "diagnose", "q": "Recall fell sharply after binary quantization on 384-dimension embeddings. What is the best next step?", "options": ["Use scalar quantization or test binary with rescoring", "Lower efSearch", "Discard the original vectors", "Increase overlap"], "answer": 0, "explain": "Binary quantization suits high dimensions (above 1,024), so low-dimension vectors should use scalar quantization, or binary with rescoring. Lowering efSearch and discarding originals reduce quality further, and overlap is a chunking dial." },
+    { "id": "w04-t14-q3", "type": "multi", "tag": "concept", "q": "Which statements about AI Search quantization are correct?", "options": ["`defaultOversampling` defaults to 4", "Rescoring works only with HNSW", "A quantized field can be enabled in place on an existing field", "`discardOriginals` is available for binary quantization only"], "answers": [0, 1, 3], "explain": "The default oversampling is 4, rescoring needs HNSW and `discardOriginals` is binary only. A quantized field needs a new vector profile and a new field, not an in-place change." }
+  ],
+  "flashcards": [
+    { "front": "What does oversampling do in vector search with rescoring?", "back": "It fetches k times a multiplier of candidates from the compressed index, rescoring them with original vectors before returning the top k. AI Search default: 4." },
+    { "front": "How much do int8 and binary quantization save, and how much quality do they keep?", "back": "int8: 4 times smaller, about 99.3% performance. Binary: 32 times smaller (AI Search says up to 28), about 96% with rescoring and 92.5% without." },
+    { "front": "When is binary quantization a poor fit?", "back": "For low-dimension vectors (below about 1,024) or embeddings not centred on zero. Use scalar quantization there." }
+  ],
+  "related": ["w04-t13", "w04-t16", "w04-t17", "w04-t19", "w03-t09", "w04-l3"],
+  "refs": ["tr6", "tr10", "tr23"]
+}

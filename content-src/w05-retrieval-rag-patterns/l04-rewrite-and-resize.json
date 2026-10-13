@@ -1,0 +1,56 @@
+{
+  "id": "w05-l4",
+  "order": 4,
+  "title": "Rewrite the question, resize the chunk",
+  "kind": "problem",
+  "minutes": 15,
+  "brief": "Users type three words, or five questions in one breath, or a follow-up that only makes sense with the last turn. The index expects something else. Do you change the query, the chunk grain, or both?",
+  "blocks": [
+    { "t": "h", "text": "Match the grain of the question to the grain of the chunk", "level": 2 },
+    { "t": "table", "caption": "Query transformations: what each does and how it fails", "head": ["Transform", "What it does", "Helps when", "How it fails", "Extra cost"], "rows": [
+      ["Clean and normalise", "Apply to the query the same cleaning you applied to chunks before embedding, for example lowercasing [[r8]]", "Always", "Skipped cleaning makes query and chunk vectors drift apart", "None"],
+      ["Conversation-aware rewrite", "Turns a follow-up such as \"and for contractors?\" into a standalone query using chat history", "Multi-turn chat", "Pulls stale context into a new topic", "1 LLM call"],
+      ["Multi-query", "Writes several phrasings and fuses their result lists. Azure offers `queryRewrites: \"generative|count-N\"`, N from 1 to 10, as a preview feature [[r28]]", "Short or vague queries", "Near-duplicate lists, extra cost, dropped identifiers", "1 LLM call plus N searches"],
+      ["HyDE", "An LLM writes a hypothetical answer, and its embedding finds real neighbours [[r14]]", "Dense retrieval with no relevance labels, abstract queries", "The fake text can contain false details, so only the encoder's filtering protects you", "1 LLM call"],
+      ["Step-back", "Asks for the higher-level concept or principle first, then reasons from it [[r15]]", "Questions tied to specifics that need background principles", "Reported gains are on reasoning tasks, not a retrieval benchmark", "1 LLM call"],
+      ["Decomposition", "Splits a multi-part or multi-hop question into sub-queries that run in parallel", "Several parts or hops in one question", "Adds a planning call and extra searches to simple lookups, and loses links between parts", "1 LLM call plus M searches"],
+      ["Self-query and query hints", "Derives metadata filters and boosts from the text. Azure stores hints in `searchIndexParameters.queryHints` [[r29]]", "Questions with implied filters such as year or product line", "Best effort only, so never use it as an authorization boundary", "Planner LLM call"]
+    ], "highlightCol": 3 },
+    { "t": "flow", "title": "A safe rewrite pipeline", "direction": "h", "steps": [
+      { "title": "Clean", "md": "Normalise the query like the chunks.", "tag": "no LLM" },
+      { "title": "Resolve", "md": "Add chat history so a follow-up stands alone.", "tag": "LLM" },
+      { "title": "Classify", "md": "Single fact, multi-part, or filterable?", "tag": "route" },
+      { "title": "Transform", "md": "Rewrite or split, and keep the original query.", "tag": "LLM" },
+      { "title": "Retrieve", "md": "Run every variant in parallel and fuse with RRF." },
+      { "title": "Compare", "md": "Judge against the no-rewrite baseline.", "tag": "eval" }
+    ] },
+    { "t": "compare", "title": "Chunk grain at retrieval time", "intro": "You indexed chunks in the previous world. At retrieval time you still choose what you match on and what you hand to the model.", "options": [
+      { "name": "Small chunks only", "summary": "Match and return the same small passage.", "pros": ["Precise matches", "Small prompt cost"], "cons": ["Answers that span a section are cut", "Pronouns and context are lost"], "bestWhen": "Questions are single-fact lookups.", "avoidWhen": "Answers need the surrounding section." },
+      { "name": "Parent-child (small to big)", "summary": "Match small child chunks, then return the larger parent passage.", "pros": ["Precise match plus enough context", "Fits structured documents"], "cons": ["Larger prompts", "Several children can return the same parent, so you must dedupe", "Parent and child must inherit the same access rights"], "bestWhen": "Questions are precise but answers need the section around the hit.", "avoidWhen": "Parents are huge and the token budget is tight." },
+      { "name": "Large chunks only", "summary": "Match and return big passages.", "pros": ["Context is intact", "Fewer chunks to index"], "cons": ["Embeddings average many topics and blur", "Prompt cost and noise rise"], "bestWhen": "Documents are short and topic-pure.", "avoidWhen": "Documents mix many topics per section." },
+      { "name": "Contextual retrieval", "tag": "Vendor-reported", "summary": "Prepend a short LLM-written context to each chunk before embedding and BM25 indexing.", "pros": ["Anthropic reports 35% fewer top-20 retrieval failures with contextual embeddings (5.7% to 3.7%)", "49% fewer with contextual BM25 too (to 2.9%), and 67% with reranking added"], "cons": ["One LLM call per chunk at index time", "The numbers come from the vendor's own datasets"], "bestWhen": "Chunks lose meaning when cut out of their document.", "avoidWhen": "You cannot afford re-indexing the corpus." }
+    ] },
+    { "t": "code", "lang": "json", "title": "Azure AI Search generative query rewrite (preview, 2026-08-01-preview)", "code": "{\n  \"search\": \"newer hotel near the water with a great restaurant\",\n  \"semanticConfiguration\": \"en-semantic-config\",\n  \"queryType\": \"semantic\",\n  \"queryRewrites\": \"generative|count-5\",\n  \"queryLanguage\": \"en-US\",\n  \"debug\": \"queryRewrites\",\n  \"top\": 1\n}", "caption": "From the Microsoft Learn sample, checked 2026-10-13. Semantic ranking is required, `queryLanguage` is required, and `debug` is for testing only." },
+    { "t": "callout", "kind": "gotcha", "title": "Rewrites can erase the one token that mattered", "md": "Azure's own guidance says rewrites might not contain all the exact terms of the original query, which can hurt highly specific queries that need exact identifiers or product codes [[r28]]. Stored query hints are best effort, are not applied at `minimal` effort, and a GPT-4o or GPT-4.1 family planner returns HTTP 400 at other efforts if stored hints contain a filter [[r29]]. Preview status checked 2026-10-13." },
+    { "t": "failure", "title": "Query transform failure modes", "items": [
+      { "symptom": "Recall on identifier queries drops after adding an LLM rewrite.", "cause": "The rewrite paraphrased the identifier away.", "fix": "Keep the original query as one fused search, or skip the rewrite when the query has identifier-like tokens. Detect with recall sliced by query class." },
+      { "symptom": "\"And for contractors?\" retrieves nothing relevant.", "cause": "No conversation-aware rewrite, so the retriever sees three words with no topic.", "fix": "Resolve the follow-up with the chat history before retrieval and log both versions." },
+      { "symptom": "Multi-query adds latency and cost but no gain.", "cause": "The variants are near duplicates and return the same top hits.", "fix": "Cap the count, dedupe, and measure uplift per query class before keeping it." },
+      { "symptom": "Parent-child fills the prompt with the same section five times.", "cause": "Five child chunks share one parent.", "fix": "Dedupe parents by id before building the prompt." },
+      { "symptom": "A generated filter hides the right document.", "cause": "Self-query filters are best effort and can be wrong.", "fix": "Validate against the schema, fall back to unfiltered search on zero hits, and keep access control in a deterministic filter." }
+    ] }
+  ],
+  "quiz": [
+    { "id": "w05-l4-q1", "type": "match", "tag": "concept", "difficulty": 1, "q": "Match each query transformation to what it does.", "pairs": [ { "l": "HyDE", "r": "Embeds an LLM-written hypothetical answer to find real neighbours" }, { "l": "Step-back", "r": "Asks for the higher-level concept before retrieving" }, { "l": "Decomposition", "r": "Splits a multi-part question into parallel sub-queries" }, { "l": "Self-query", "r": "Turns constraints in the text into metadata filters" } ], "explain": "The four transforms answer different problems: a missing relevance signal, missing background, several questions in one, and implied filters. Mixing them up is the common error, for example using HyDE where decomposition is needed." },
+    { "id": "w05-l4-q2", "type": "single", "tag": "diagnose", "difficulty": 2, "q": "After adding an LLM query rewrite, recall@10 moved as shown. What is the most likely cause and fix?", "code": { "lang": "text", "code": "query class        before  after\nidentifier         0.91    0.74\nparaphrase         0.62    0.71\nmixed              0.70    0.73" }, "options": ["The rewrite drops exact identifiers, so also search with the original query", "The embedding model needs to be re-trained on identifier-heavy examples first", "The BM25 weight is too high, so lower it for every class", "Rewrites should be generated at a higher temperature"], "answer": 0, "explain": "The paraphrase class improved while identifiers dropped, which is the signature of a rewrite that loses exact tokens. Keeping the original query as a fused search restores the identifier hits. Re-training embeddings is a heavy fix for a query-side problem, lowering BM25 would hurt identifiers further, and a higher temperature makes rewrites less faithful." },
+    { "id": "w05-l4-q3", "type": "single", "tag": "tradeoff", "difficulty": 2, "q": "A user asks: \"Compare the notice periods for contractors and employees in the UK and in Germany.\" Which transformation fits best?", "options": ["HyDE, because the question lacks relevance labels", "Step-back, because the question needs a general principle", "Decomposition into one sub-query per party and country", "Self-query alone, because the countries are filters"], "answer": 2, "explain": "The question has several parts and each needs its own evidence, which is what decomposition and parallel sub-queries provide. HyDE helps one abstract query rather than several parts, step-back targets reasoning that needs a principle, and a country filter alone would still leave contractors and employees in one search." }
+  ],
+  "defend": null,
+  "refs": ["r8", "r14", "r15", "r26", "r28", "r29", "r37"],
+  "takeaways": [
+    "Rewrites help vague queries and follow-ups and can erase exact identifiers",
+    "Keep the original query as one of the fused searches",
+    "Route by question shape: decompose multi-part questions, leave single lookups alone",
+    "Parent-child retrieval needs dedupe of parents and matching access rights"
+  ]
+}

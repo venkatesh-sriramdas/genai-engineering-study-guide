@@ -1,0 +1,89 @@
+{
+  "id": "w05-l6",
+  "order": 6,
+  "title": "Retrieve, stuff or cache? Then cite it and debug it",
+  "kind": "problem",
+  "minutes": 17,
+  "brief": "The corpus fits in a context window. Or nearly does. Or it fits for one user and not for another. Retrieval is no longer the only way to put knowledge in a prompt, and whichever you pick, a bad answer still needs a debugging path and every claim needs a source.",
+  "blocks": [
+    { "t": "h", "text": "Three ways to put knowledge in front of the model", "level": 2 },
+    { "t": "compare", "title": "RAG, long context, CAG and routing", "intro": "Li et al. found that when resourced enough, long-context models beat RAG on average, but RAG is much cheaper [[r21]]. Accuracy also falls as input grows: in NoLiMa, 11 of 13 models fell below half of their short-context baseline at 32K tokens, and GPT-4o dropped from 99.3% to 69.7% [[r23]]. Chroma's report of 2025-07-14 saw 18 LLMs become less reliable as input grew [[r25]].", "options": [
+      { "name": "RAG", "tag": "GA", "summary": "Retrieve a few chunks per query.", "pros": ["Scales far beyond the window", "Per-user filters trim results", "Small, cheap prompts"], "cons": ["Retrieval can miss, so recall and abstention need work", "More components to run and evaluate"], "bestWhen": "The corpus is large, changes often or has per-user permissions.", "avoidWhen": "The corpus is tiny and static, where an index adds only risk." },
+      { "name": "Long context per query", "summary": "Put the whole corpus, or a large slice, into every prompt.", "pros": ["No index, no retrieval misses", "Best accuracy on average in Li et al. when resourced enough"], "cons": ["Per-query cost grows with corpus size", "Evidence in the middle is used less (Lost in the Middle)", "Accuracy degrades with length and distractors"], "bestWhen": "The corpus is small. Anthropic's rule of thumb is under 200,000 tokens, about 500 pages.", "avoidWhen": "The corpus is larger than the window or the cost per query matters.", "meta": [{ "k": "Source", "v": "Anthropic vendor guidance" }] },
+      { "name": "Cache-augmented generation (CAG)", "tag": "Paper", "summary": "Preload a small, manageable corpus into the context and cache the runtime KV state, so no retrieval runs per query.", "pros": ["Lower latency and no retrieval errors for constrained knowledge bases, as the paper claims", "Simplest serving path for a shared, static corpus"], "cons": ["Not suited to large or fast-changing corpora", "One cached state cannot hide documents per user (a reasoned limit, not a quote from the paper)"], "bestWhen": "A small, stable, shared knowledge set serves many queries.", "avoidWhen": "Access differs per user or content changes every day." },
+      { "name": "Route per query (Self-Route)", "tag": "Paper", "summary": "Try RAG first and send the query to long context only if the model judges the retrieved evidence insufficient.", "pros": ["Keeps accuracy near long context at lower cost", "Cost follows query difficulty"], "cons": ["Two paths to build, secure and evaluate", "The long-context fallback must fit the data it needs"], "bestWhen": "Most queries are easy and a few need the whole picture.", "avoidWhen": "You cannot afford to maintain two paths." }
+    ] },
+    { "t": "dials", "id": "w05-l6-size", "title": "RAG, long context or CAG?", "prompt": "Flip the corpus size, the change rate and the permission model.",
+      "dials": [
+        { "id": "size", "label": "Corpus versus context window", "values": [ { "id": "fits", "label": "Fits with room to spare" }, { "id": "big", "label": "Far larger than the window" } ] },
+        { "id": "churn", "label": "Change rate", "values": [ { "id": "stable", "label": "Stable" }, { "id": "fast", "label": "Changes daily" } ] },
+        { "id": "perm", "label": "Permissions", "values": [ { "id": "shared", "label": "Same for every user" }, { "id": "peruser", "label": "Different per user" } ] }
+      ],
+      "options": [
+        { "id": "rag", "name": "RAG", "summary": "Retrieve chunks per query." },
+        { "id": "lc", "name": "Long context per query", "summary": "Stuff the corpus into every prompt." },
+        { "id": "cag", "name": "CAG", "summary": "Preload and cache the corpus." },
+        { "id": "route", "name": "Route (RAG then long context)", "summary": "Escalate hard queries." }
+      ],
+      "scores": {
+        "rag": {
+          "size": { "fits": { "s": 0, "why": "It works, with more moving parts than the corpus needs." }, "big": { "s": 2, "why": "Retrieval is the only way when the corpus is far larger than the window." } },
+          "churn": { "stable": { "s": 0, "why": "No special advantage." }, "fast": { "s": 2, "why": "Incremental indexing keeps up." } },
+          "perm": { "shared": { "s": 0, "why": "Neutral." }, "peruser": { "s": 2, "why": "Permission filters trim results per caller." } }
+        },
+        "lc": {
+          "size": { "fits": { "s": 1, "why": "No index to build, and long context beat RAG on average when resourced enough." }, "big": { "s": -2, "why": "It does not fit." } },
+          "churn": { "stable": { "s": 0, "why": "You pay for the whole corpus on every query unless the prefix is cached." }, "fast": { "s": 1, "why": "No index to refresh, so new documents go straight into the prompt." } },
+          "perm": { "shared": { "s": 0, "why": "Neutral." }, "peruser": { "s": 0, "why": "You can build each prompt from the caller's visible documents, but prefixes cannot be shared across users." } }
+        },
+        "cag": {
+          "size": { "fits": { "s": 2, "why": "A small, manageable knowledge set is its intended use." }, "big": { "s": -2, "why": "It cannot preload what does not fit." } },
+          "churn": { "stable": { "s": 2, "why": "The cache is built once." }, "fast": { "s": -2, "why": "The cache must be rebuilt whenever knowledge changes." } },
+          "perm": { "shared": { "s": 1, "why": "One cached state serves everyone." }, "peruser": { "s": -2, "why": "One cached state cannot hide documents per user." } }
+        },
+        "route": {
+          "size": { "fits": { "s": 1, "why": "RAG first and long context for hard queries costs less than long context alone." }, "big": { "s": -1, "why": "The long-context fallback needs a large slice of the corpus to fit." } },
+          "churn": { "stable": { "s": 1, "why": "Both paths are simple on stable data." }, "fast": { "s": 0, "why": "The RAG leg stays fresh, but you run two paths." } },
+          "perm": { "shared": { "s": 1, "why": "Neutral to good." }, "peruser": { "s": 0, "why": "Both paths must enforce the filter, which doubles the places to get it wrong." } }
+        }
+      },
+      "takeaway": "Permissions and change rate usually decide before accuracy does. A shared cache is the first thing per-user access breaks." },
+    { "t": "table", "caption": "Citation strategies", "head": ["Method", "What you get", "What it does not guarantee", "Watch for"], "rows": [
+      ["Prompt-only: cite your sources", "Free-text markers such as [2]", "That the id exists or supports the claim", "Validate every cited id against the retrieved set"],
+      ["API-native citations", "Anthropic `citations` on `document` or `search_result` blocks return `char_location`, `page_location` or `content_block_location` spans, and `cited_text` does not count toward output tokens [[r27]]. OpenAI file search in the Responses API returns `file_citation` annotations [[r30]]", "That the cited span entails the claim", "Anthropic citations with structured outputs returns HTTP 400. OpenAI raw hits come back only with `include: [\"file_search_call.results\"]`"],
+      ["Quote first", "For documents over 20k tokens, ask for word-for-word quotes, then answer from them [[r41]]", "That the quotes are used faithfully", "A second step adds latency and tokens"],
+      ["Post-hoc support check", "An entailment model or judge checks each claim against its cited span", "Nothing on missed claims", "Another model call, covered in the guardrails world"]
+    ], "highlightCol": 2 },
+    { "t": "flow", "title": "Debug a bad answer from the bottom up", "direction": "h", "steps": [
+      { "title": "In the corpus?", "md": "Is the answer text in an indexed chunk? Check ingestion and parsing first.", "tag": "ingest" },
+      { "title": "Retrieved?", "md": "Is the gold chunk in the candidate set? Measure recall@k before reranking.", "tag": "recall" },
+      { "title": "Kept?", "md": "Did fusion, the reranker and the cutoff keep it? Compare its rank at each stage.", "tag": "rank" },
+      { "title": "In the prompt?", "md": "Is it present, untruncated and well placed in the final prompt?", "tag": "prompt" },
+      { "title": "Used?", "md": "Did the model use it and cite a span that supports the claim?", "tag": "answer" }
+    ] },
+    { "t": "failure", "title": "Debug by symptom", "items": [
+      { "symptom": "A confident answer cites a chunk that is irrelevant.", "cause": "A retrieval miss with no abstention gate.", "fix": "Check candidate recall and the cutoff, then add an abstention rule." },
+      { "symptom": "The fact exists in the corpus and is never retrieved.", "cause": "The chunking split it, an identifier needs a keyword leg, or the query and page share no vocabulary.", "fix": "Find the chunk that holds the fact, then add BM25, a rewrite or a different chunk boundary." },
+      { "symptom": "The gold chunk sits at fused rank 31 and is absent from the prompt.", "cause": "Candidates were cut before the reranker, or the reranker only sees the top 50.", "fix": "Raise recall, rerank a deeper list, and log the rank at every stage." },
+      { "symptom": "The gold chunk is in the prompt and the answer ignores it.", "cause": "Position and length effects: evidence in the middle of a long context is used least.", "fix": "Send fewer, better-ranked chunks with the strongest first or last." },
+      { "symptom": "The answer cites a source that does not support the claim.", "cause": "A citation proves provenance, not entailment.", "fix": "Add quote-first prompting or a support check on each claim." },
+      { "symptom": "The answer is stale.", "cause": "Ingestion lag, an old index version or a cache that outlived the content.", "fix": "Compare document timestamps in the prompt with the source, and check cache TTLs." },
+      { "symptom": "A list-everything question returns an incomplete list.", "cause": "Top-k limits what one retrieval can return.", "fix": "Decompose, use a summary or graph index, or raise k with a cap." }
+    ] },
+    { "t": "callout", "kind": "interview", "title": "What interviewers listen for", "md": "They ask where you would look first for a wrong answer. A strong answer walks the stages in order, names the metric at each (recall@k, rank after rerank, prompt contents, support rate) and says which log line proves it." }
+  ],
+  "quiz": [
+    { "id": "w05-l6-q1", "type": "numeric", "tag": "numeric", "difficulty": 1, "q": "A 150,000-token corpus is placed in every prompt with no caching. A RAG pipeline sends 6,000 tokens per query. At the same price per input token, how many times more input cost does long context carry per query?", "answer": 25, "tolerancePct": 2, "unit": "times", "hint": "150,000 divided by 6,000", "explain": "150,000 / 6,000 = 25, so each long-context query carries 25 times the input tokens. Prompt caching can shrink the gap and long context can be more accurate, so the real decision also weighs accuracy, update rate and permissions." },
+    { "id": "w05-l6-q2", "type": "single", "tag": "security", "difficulty": 2, "q": "A team proposes cache-augmented generation for HR policies, where each employee may see a different subset. Which statement is correct?", "options": ["CAG works because a cached prefix is filtered per user at generation time", "CAG removes retrieval errors for every corpus, so permissions stop mattering", "One cached context cannot hide documents per user, so use filtered retrieval or per-user prompts", "CAG needs a vector index, so it cannot be used with HR policies at all"], "answer": 2, "explain": "A cached context is shared state, so every user would see every preloaded document. Per-user visibility needs filtering before documents enter the context, which means filtered retrieval or a per-user prompt. The cache is not filtered at generation time, the claim about every corpus overreaches, and CAG needs no vector index." },
+    { "id": "w05-l6-q3", "type": "single", "tag": "diagnose", "difficulty": 2, "q": "The retrieval log below ends in a wrong answer. What is the best first change?", "code": { "lang": "text", "code": "gold chunk: C17\nrank after rerank: 3\nchunks in prompt: 20, with C17 at position 11\nanswer: ignores C17 and cites C4" }, "options": ["Raise k to 40 so that more of the relevant evidence is present in the prompt", "Send fewer chunks and put the strongest at the start or end", "Switch to a larger embedding model so retrieval ranks the chunk even higher", "Add a BM25 leg to the retriever so identifiers are matched exactly"], "answer": 1, "explain": "The retriever already ranked C17 third, so recall and ranking worked. The failure is position and volume: evidence in the middle of a long context is used least. A larger k adds more distractors, a bigger embedding model changes retrieval, and a BM25 leg addresses a miss that did not happen." },
+    { "id": "w05-l6-q4", "type": "multi", "tag": "concept", "difficulty": 2, "q": "Select every true statement about Anthropic's Citations feature and citations in general.", "options": ["Enabling citations together with structured outputs returns HTTP 400", "`cited_text` counts toward your output tokens", "Citation types include `char_location`, `page_location` and `content_block_location`", "A citation proves the cited span supports the claim"], "answers": [0, 2], "explain": "The docs say citations and structured outputs together return HTTP 400, and list the three location types. `cited_text` is not counted toward output tokens. A citation shows where text came from, not that the claim follows from it, which is why a separate support check exists." }
+  ],
+  "defend": null,
+  "refs": ["r21", "r22", "r23", "r24", "r25", "r27", "r30", "r41"],
+  "takeaways": [
+    "RAG, long context and CAG differ on corpus size, change rate and permissions more than on accuracy",
+    "A shared cached context cannot enforce per-user access",
+    "Debug in stage order: corpus, candidates, ranking, prompt, answer",
+    "A citation proves provenance, not entailment"
+  ]
+}

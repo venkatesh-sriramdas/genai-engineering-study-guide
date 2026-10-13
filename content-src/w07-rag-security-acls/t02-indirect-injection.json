@@ -1,0 +1,117 @@
+{
+  "id": "w07-t02",
+  "order": 2,
+  "group": "Threats",
+  "title": "Indirect prompt injection via documents",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "An attacker hides instructions in a document, email or web page that retrieval later places in the prompt, and the model may follow them as if the user had written them.",
+  "useIf": "Any text written by someone other than the caller can reach the prompt.",
+  "avoidIf": "You are looking for typed attacks by the caller. That is direct injection, which has different defences.",
+  "explain": [
+    { "t": "p", "md": "LLM-integrated applications blur the line between data and instructions, so text that arrives as data can act as a command [[r5]]. In RAG the attacker does not need access to the chat box. They plant text in something your system will retrieve: a wiki page, a shared file, a support ticket, an email, a web page." },
+    { "t": "flow", "title": "The attack path", "direction": "h", "steps": [
+      { "title": "Plant", "md": "Instructions are hidden in content the system ingests: white text, comments, metadata or plain prose.", "tag": "write" },
+      { "title": "Retrieve", "md": "A normal question makes retrieval select the planted chunk.", "tag": "match" },
+      { "title": "Obey", "md": "The model treats the chunk as part of its instructions.", "tag": "confuse" },
+      { "title": "Exfiltrate", "md": "A rendered link, an auto-fetched image or a tool call carries data out.", "tag": "leak" }
+    ] },
+    { "t": "p", "md": "**EchoLeak (CVE-2025-32711)** shows the full chain against Microsoft 365 Copilot: one crafted email, no user click, remote data exfiltration. It combined a bypass of the injection classifier, link redaction defeated by reference-style Markdown, auto-fetched images and a Microsoft Teams proxy that the content security policy allowed [[r6]]. The NVD record was published on 2025-06-11, and the CVSS 3.1 base score is 9.3 from Microsoft and 7.5 from NVD, so always quote the source with the score." },
+    { "t": "p", "md": "The impact depends on agency and on what can leave, not on how clever the wording is. OWASP says severity depends on the business context and the agency given to the model [[tr1]]. That is why the strongest defences remove a capability (an outbound channel, a write tool) and the weakest rely on telling the model to be careful." },
+    { "t": "callout", "kind": "gotcha", "title": "Retrieval is the delivery vehicle", "md": "The planted text must rank high for real queries. Attackers write chunks that mimic likely questions, so low-quality or open corpora are exposed most." }
+  ],
+  "whereToUse": [
+    "Reviewing any assistant over email, tickets, shared drives or web content",
+    "Deciding which sources get ingest-time scanning and which are trusted",
+    "Writing the red-team plan for a retrieval pipeline",
+    "Explaining why a classifier is a layer and not the fix"
+  ],
+  "whenToUse": {
+    "use": ["Authors of the corpus include customers, external senders or anonymous editors", "The assistant can fetch URLs, render images or call tools", "Answers feed decisions without human review"],
+    "avoid": ["Treating it as solved once a classifier is in place", "Applying heavy scans to a corpus only vetted staff can edit, when other controls cost less", "Relying on a system prompt line that tells the model to ignore document instructions"],
+    "flips": ["Remove the outbound channel and the impact drops to answer quality", "A new tool with write or send rights makes every source untrusted until proven otherwise"]
+  },
+  "alternatives": {
+    "title": "Defences compared",
+    "head": ["Defence", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Remove a capability (no outbound channel, no write tool)", "You can live without it", "The feature is the product", "Product trade-off, but deterministic"],
+      ["Ingest-time scan and source authentication", "Few writers, large read volume", "Content is fetched live at query time", "False positives block content"],
+      ["Prompt Shields document attack detection", "Untrusted text reaches the prompt", "Languages outside tested coverage, new phrasing", "Added latency, probabilistic"],
+      ["Spotlighting", "You can mark untrusted spans in the prompt", "A determined attacker adapts", "Token cost, probabilistic"],
+      ["Human approval for actions", "Actions are rare and high impact", "High volume", "Reviewer cost and fatigue"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A red team succeeds even with a classifier on", "cause": "The classifier is one link, and the exit (Markdown, images, tools) is open", "fix": "Close exit paths deterministically and treat detection as a layer" },
+    { "symptom": "Injected text appears only after chunking", "cause": "Scanning ran on whole files but the instruction spans a chunk boundary or sits in metadata", "fix": "Scan at the chunk level and include metadata fields in scans" },
+    { "symptom": "Severity is argued for weeks", "cause": "CVSS scores from different sources are quoted without a source", "fix": "Say who scored it (EchoLeak: 9.3 Microsoft, 7.5 NVD) and rate by agency in your own system" }
+  ],
+  "scenarios": [
+    {
+      "id": "w07-t02-s1",
+      "title": "Web summaries rendered as Markdown",
+      "situation": "An assistant fetches public web pages and summarises them. The chat client renders Markdown, including images, as the model produces it. The model has no tools.",
+      "constraints": ["Content is fully untrusted", "Client auto-loads images", "Conversation can hold private context"],
+      "unknowns": ["Is private data ever in the same session?", "Can the client restrict image hosts?"],
+      "question": "What is the first control to add?",
+      "options": [
+        { "name": "Add Prompt Shields on each fetched page", "verdict": "good", "why": "Catches many known patterns before the page reaches the model.", "tradeoff": "Probabilistic, adds latency, and EchoLeak-style bypasses exist." },
+        { "name": "Add a system prompt line: ignore instructions in web pages", "verdict": "poor", "why": "A prompt is not a boundary and attackers write around it.", "tradeoff": "Useful as a hint in a layered design, never alone." },
+        { "name": "Block automatic image and link rendering to arbitrary hosts, and sanitise output", "verdict": "best", "why": "It closes the exit path deterministically, whatever the model was tricked into writing.", "tradeoff": "Users lose inline images from untrusted hosts." }
+      ],
+      "flips": [
+        { "if": "The session never holds private data", "then": "Impact is limited to answer quality and detection is enough." },
+        { "if": "Images are rendered through an allowed internal proxy", "then": "Review that proxy: EchoLeak used an allowed proxy as the exit." }
+      ],
+      "takeaway": "Close the exit first, then add detection."
+    },
+    {
+      "id": "w07-t02-s2",
+      "title": "Ten million documents, tight latency",
+      "situation": "A knowledge assistant covers ten million documents from many teams. About 0.5% change each day. Query volume is high and the end-to-end budget is 600 ms.",
+      "constraints": ["Large corpus, small daily change", "High query volume", "Latency budget 600 ms"],
+      "unknowns": ["Who can edit documents?", "Does the assistant have any tool beyond search?"],
+      "question": "Where do you spend scanning effort?",
+      "options": [
+        { "name": "Run Prompt Shields on the top chunks at query time in parallel with generation setup", "verdict": "good", "why": "Covers late-arriving content.", "tradeoff": "Per-query cost and a latency tail you must measure." },
+        { "name": "Run a large LLM judge over every retrieved chunk in sequence", "verdict": "poor", "why": "It blows the latency budget and multiplies cost per query.", "tradeoff": "Reasonable for a low-volume, high-risk agent with a relaxed latency budget." },
+        { "name": "Scan chunks at ingest when a document changes, plus egress and tool limits", "verdict": "best", "why": "Cost scales with changes, not with queries, and adds no query latency.", "tradeoff": "Does not see content that changes after the scan or text fetched live." }
+      ],
+      "flips": [
+        { "if": "Most content is fetched live, not indexed", "then": "Query-time checks become the main layer." },
+        { "if": "Only a few vetted authors write", "then": "Spend less on scanning and more on permissions." }
+      ],
+      "takeaway": "Put the expensive check where its cost is paid per change, not per query."
+    },
+    {
+      "id": "w07-t02-s3",
+      "title": "Open edit rights on a wiki",
+      "situation": "Any employee, contractor and partner account can edit pages in a shared wiki. An assistant reads it, can open links and drafts replies for a human to send.",
+      "constraints": ["Many writers of mixed trust", "Human sends the final message", "Assistant can open links"],
+      "unknowns": ["Do contractors count as trusted?", "Can the assistant open external URLs?"],
+      "question": "What do you tighten first?",
+      "options": [
+        { "name": "Lock editing to a few vetted authors", "verdict": "good", "why": "Shrinks the writer set.", "tradeoff": "Hurts the wiki's value and does not stop a compromised vetted account." },
+        { "name": "Restrict link opening to an allowlist and keep the human send step", "verdict": "best", "why": "Removes the outbound leg while the human approval stays.", "tradeoff": "Some legitimate external links stop working." },
+        { "name": "Do nothing because a human reviews every message", "verdict": "poor", "why": "Link fetching can leak data before the human sees the draft.", "tradeoff": "Fine when the assistant has no fetch capability at all." }
+      ],
+      "flips": [
+        { "if": "The assistant gets a send tool", "then": "Add approval on that tool and treat all pages as untrusted." },
+        { "if": "Contractor accounts are tightly managed and logged", "then": "Writers are closer to trusted and ingest scanning can be light." }
+      ],
+      "takeaway": "A human at the end does not help if data can leave earlier."
+    }
+  ],
+  "quiz": [
+    { "id": "w07-t02-q1", "type": "multi", "tag": "security", "q": "Which are links in the published EchoLeak chain? Choose all that apply.", "options": ["Bypass of the injection classifier", "Reference-style Markdown that defeated link redaction", "Theft of the model weights", "A proxy domain the content security policy allowed", "SQL injection into the vector store"], "answers": [0, 1, 3], "explain": "The chain used a classifier bypass, reference-style Markdown to avoid redaction, auto-fetched images and an allowed Teams proxy. Weight theft and SQL injection were not part of it.", "ref": "r6" },
+    { "id": "w07-t02-q2", "type": "order", "tag": "order", "q": "Put the indirect injection attack path in order.", "items": ["Attacker plants instructions in content that will be ingested", "A normal query makes retrieval select the planted chunk", "The model treats the chunk as an instruction", "A link, image or tool call carries data to the attacker"], "explain": "Planting comes first, retrieval delivers it, the model confuses data with instructions, and an exit path completes the leak.", "ref": "r5" }
+  ],
+  "flashcards": [
+    { "front": "Why does indirect injection need retrieval to cooperate?", "back": "The planted chunk must rank for real queries so it enters the prompt. Attackers mimic likely questions, so open or low-quality corpora are most exposed." },
+    { "front": "EchoLeak scores: what must you state with them?", "back": "The scorer. CVSS 3.1 base 9.3 from Microsoft and 7.5 from NVD for CVE-2025-32711. NVD published on 2025-06-11." },
+    { "front": "Why are exit-path controls stronger than detection?", "back": "They are deterministic: a blocked image host or an approval gate holds whatever the model was tricked into writing. Classifiers are probabilistic." }
+  ],
+  "related": ["w07-t01", "w07-t03", "w07-t05", "w07-t17", "w07-l1"],
+  "refs": ["r5", "r6", "r10", "tr1"]
+}

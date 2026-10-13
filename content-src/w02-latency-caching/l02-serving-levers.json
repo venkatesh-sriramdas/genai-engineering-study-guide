@@ -1,0 +1,86 @@
+{
+  "id": "w02-l2",
+  "order": 2,
+  "title": "Keep the GPU busy without stalling users",
+  "kind": "problem",
+  "minutes": 15,
+  "brief": "Many users share one model. Long prompts stall short ones, single streams crawl, and the GPU idles between requests. The model size, GPU count, traffic mix and whether you host the model yourself are all open.",
+  "blocks": [
+    { "t": "h", "text": "Why decode batches well and prefill does not", "level": 2 },
+    { "t": "p", "md": "Prefill runs the whole prompt in parallel, so one prefill already saturates compute and has high latency per iteration. Decode emits one token per request per iteration, so it uses little compute and is limited by memory bandwidth. That makes batching many decodes together very effective. Mixing a long prefill into a running decode batch is the throughput-latency tension: the prefill makes every stream wait [[r9]].\n\nThe five levers below each attack a different symptom. Only the first is a baseline you assume. The rest you add when the symptom appears." },
+    { "t": "compare", "title": "Serving levers and what each one fixes", "intro": "These are engine and architecture choices, so they apply when you run the model yourself. On a hosted API your levers are in the table after the board.", "options": [
+      { "name": "Continuous batching", "tag": "Baseline", "summary": "Schedule at iteration level. Finished requests leave and waiting ones join at the next step, instead of holding the batch until its slowest request ends.", "pros": ["Keeps the GPU full as requests come and go", "Short requests do not wait behind long ones"], "cons": ["Does not remove prefill and decode interference by itself", "Needs paged KV memory to admit and evict cheaply"], "bestWhen": "Any multi-user serving. It is the default in modern engines.", "avoidWhen": "A single local user, where there is nothing to batch.", "meta": [{ "k": "Fixes", "v": "idle GPU between requests" }, { "k": "Cost", "v": "none" }] },
+      { "name": "Chunked prefill", "tag": "Engine flag", "summary": "Split a long prompt into near-equal chunks that share iterations with decodes, so streams keep moving while the prompt is read.", "pros": ["Stall-free schedules and steadier inter-token latency", "Sarathi-Serve reported 2.6x capacity on Mistral-7B with one A100 and up to 3.7x on Yi-34B with two, under tail-latency limits [[r9]]"], "cons": ["The chunked request itself sees a higher TTFT", "Chunk size needs tuning against your latency targets"], "bestWhen": "Mixed prompt lengths and a TPOT target that long prompts keep breaking.", "avoidWhen": "Uniformly short prompts, where there is little to chunk.", "meta": [{ "k": "Fixes", "v": "decode stalls" }, { "k": "Cost", "v": "some TTFT on long prompts" }] },
+      { "name": "Prefill and decode disaggregation", "tag": "Architecture", "summary": "Run prefill and decode on separate machine pools so each can be sized and tuned to its own target [[r28]] [[r29]].", "pros": ["Removes interference between phases", "TTFT and TPOT targets are tuned independently"], "cons": ["KV cache must move between machines", "Two pools and a more complex scheduler to run"], "bestWhen": "A large fleet with separate TTFT and TPOT objectives and saturated load.", "avoidWhen": "One node or low load, where two pools sit half idle.", "meta": [{ "k": "Fixes", "v": "phase interference at scale" }, { "k": "Cost", "v": "KV transfer, complexity" }] },
+      { "name": "Speculative decoding", "tag": "Latency", "summary": "A cheap draft proposes several tokens and the large model verifies them in parallel. The output distribution is unchanged.", "pros": ["2x to 3x faster on T5-XXL in the original paper, with identical outputs [[r19]]", "Helps the single-stream experience the most"], "cons": ["Needs a draft that agrees often with the large model", "Gains shrink once batches are compute-bound (general reasoning, not a figure from the paper)"], "bestWhen": "Light or moderate load and a per-stream speed target.", "avoidWhen": "Saturated batches, where verification competes for the compute that batching already uses.", "meta": [{ "k": "Fixes", "v": "slow single streams" }, { "k": "Cost", "v": "draft model and memory" }] },
+      { "name": "FlashAttention", "tag": "Kernel", "summary": "Exact attention that tiles the computation to cut reads and writes to high-bandwidth memory. Same result as standard attention [[r21]].", "pros": ["No quality trade, it is exact", "Cuts memory traffic that long contexts would otherwise multiply"], "cons": ["A kernel choice tied to hardware generation, not a scheduling lever", "Does not change KV cache size"], "bestWhen": "Long contexts on supported GPUs. Treat it as a default to confirm, not a decision.", "avoidWhen": "You expect it to fix queueing or batching problems. It does not.", "meta": [{ "k": "Fixes", "v": "attention cost at long context" }, { "k": "Cost", "v": "hardware support" }] }
+    ] },
+    { "t": "dials", "id": "w02-l2-serving", "title": "Pick the serving lever", "prompt": "Flip the symptom, the load and the fleet shape. KV quantization and prefix caching are covered in the next levels.", "dials": [
+      { "id": "symptom", "label": "Symptom", "values": [{ "id": "stall", "label": "Streams stall when a long prompt arrives" }, { "id": "slow", "label": "Each stream is slow even when idle" }, { "id": "mem", "label": "Batch size is capped by KV memory" }] },
+      { "id": "load", "label": "Load", "values": [{ "id": "light", "label": "Light, few concurrent requests" }, { "id": "heavy", "label": "Heavy, batches saturated" }] },
+      { "id": "fleet", "label": "Fleet", "values": [{ "id": "one", "label": "One GPU node" }, { "id": "many", "label": "Many nodes, separate TTFT and TPOT targets" }] }
+    ], "options": [
+      { "id": "chunk", "name": "Chunked prefill", "summary": "Split long prefills so decodes keep running." },
+      { "id": "spec", "name": "Speculative decoding", "summary": "Draft and verify to speed one stream." },
+      { "id": "kvq", "name": "KV cache quantization", "summary": "Store keys and values in fewer bits." },
+      { "id": "disagg", "name": "Prefill and decode disaggregation", "summary": "Separate machine pools per phase." },
+      { "id": "prefix", "name": "Engine prefix caching", "summary": "Reuse KV for shared prompt prefixes." }
+    ], "scores": {
+      "chunk": {
+        "symptom": { "stall": { "s": 2, "why": "It exists to stop long prefills from freezing running decodes." }, "slow": { "s": 0, "why": "A lone stream has no prefill to interleave with." }, "mem": { "s": 0, "why": "It does not change how much KV memory is used." } },
+        "load": { "light": { "s": 0, "why": "At low load few prefills collide with decodes." }, "heavy": { "s": 2, "why": "Interference peaks when batches are saturated." } },
+        "fleet": { "one": { "s": 1, "why": "A scheduler setting on the one engine you have." }, "many": { "s": 0, "why": "Still useful, but it does not isolate TTFT from TPOT targets." } }
+      },
+      "spec": {
+        "symptom": { "stall": { "s": 0, "why": "It does not touch prefill interference." }, "slow": { "s": 2, "why": "Verifying several tokens per large-model pass speeds a single stream." }, "mem": { "s": -1, "why": "A draft model and extra verification add memory pressure." } },
+        "load": { "light": { "s": 2, "why": "Spare compute absorbs the verification work." }, "heavy": { "s": -1, "why": "Gains shrink once batches already use the compute." } },
+        "fleet": { "one": { "s": 0, "why": "Per-node feature with no fleet effect." }, "many": { "s": 0, "why": "Per-node feature with no fleet effect." } }
+      },
+      "kvq": {
+        "symptom": { "stall": { "s": 0, "why": "It does not change scheduling." }, "slow": { "s": 1, "why": "Less KV traffic per token helps decode somewhat." }, "mem": { "s": 2, "why": "KIVI at 2 bits cut peak memory 2.6x and allowed up to 4x batch size." } },
+        "load": { "light": { "s": -1, "why": "Accuracy risk with no capacity you need." }, "heavy": { "s": 2, "why": "Bigger batches turn the saved memory into throughput." } },
+        "fleet": { "one": { "s": 1, "why": "Fits more sequences on the node you have." }, "many": { "s": 0, "why": "Same gain per node, no extra fleet benefit." } }
+      },
+      "disagg": {
+        "symptom": { "stall": { "s": 2, "why": "Prefill runs elsewhere, so decodes are never interrupted." }, "slow": { "s": 0, "why": "Decode machines still run the model at the same speed." }, "mem": { "s": 0, "why": "KV still has to live somewhere, and it also has to move between pools." } },
+        "load": { "light": { "s": -2, "why": "Two pools and KV transfer waste machines at low load." }, "heavy": { "s": 1, "why": "Pays off once both phases are saturated." } },
+        "fleet": { "one": { "s": -2, "why": "Needs at least two pools to exist." }, "many": { "s": 2, "why": "Each pool is sized for its own TTFT or TPOT target." } }
+      },
+      "prefix": {
+        "symptom": { "stall": { "s": 1, "why": "Skipping a shared prefix shortens the prefill that causes stalls." }, "slow": { "s": 0, "why": "It does not speed decode." }, "mem": { "s": 1, "why": "Shared prefix blocks are stored once." } },
+        "load": { "light": { "s": 0, "why": "Helps only if prefixes repeat, regardless of load." }, "heavy": { "s": 1, "why": "Saved prefill compute matters most when compute is scarce." } },
+        "fleet": { "one": { "s": 1, "why": "All repeats land on the same cache." }, "many": { "s": 0, "why": "Needs prefix-aware routing so repeats reach the node that holds the blocks." } }
+      }
+    }, "takeaway": "Pick by symptom first, then check load and fleet shape. A lever that wins at light load can lose at saturation, and the reverse." },
+    { "t": "table", "caption": "On a hosted API you do not own the scheduler. These are your levers", "head": ["You want to fix", "Self-hosted lever", "Hosted API lever"], "rows": [
+      ["Slow TTFT on long prompts", "Prefix caching, chunked prefill", "Prompt caching, shorter prompts, a smaller model"],
+      ["Slow or jerky streaming", "Speculative decoding, GQA or MLA model, quantization", "A faster model, a faster tier, less load on a shared deployment"],
+      ["Queueing at peak", "More replicas, disaggregation", "A priority or provisioned tier, separate deployments per workload"],
+      ["Total time too long", "Shorter outputs", "Lower `max_tokens`, stop sequences, concise output format"]
+    ] },
+    { "t": "accordion", "items": [
+      { "title": "Go deeper: why speculative decoding loses at high load", "blocks": [
+        { "t": "p", "md": "Speculation trades extra compute for fewer sequential large-model steps. At low batch sizes decode leaves compute idle, so the extra verification is nearly free. When the batch is large enough to use that compute, every wasted draft token costs real throughput. This is engineering reasoning, not a figure from the cited paper. The safe habit is to measure on your own traffic at your own batch sizes [[r19]]." }
+      ] }
+    ] }
+  ],
+  "quiz": [
+    { "id": "w02-l2-q1", "type": "single", "tag": "diagnose", "q": "Inter-token latency spikes for every active stream each time one request with a 40,000-token prompt arrives. Average load is moderate. Which change targets this?", "options": ["Quantize the KV cache to 8 bits so more requests fit in memory", "Add a draft model for speculative decoding so each active stream decodes faster", "Enable chunked prefill so the long prompt shares iterations with decodes", "Raise the maximum batch size so more requests decode at the same time"], "answer": 2, "explain": "The stall happens because a long prefill occupies whole iterations and running decodes wait. Chunked prefill splits it so decodes keep moving. KV quantization changes memory, not scheduling. Speculative decoding speeds decode but does not stop prefill from blocking it. A larger batch adds more work to each iteration and makes the interference worse.", "difficulty": 2, "ref": "r9" },
+    { "id": "w02-l2-q2", "type": "match", "tag": "concept", "q": "Match each technique to what it does.", "pairs": [
+      { "l": "Continuous batching", "r": "Finished requests leave and waiting ones join at every iteration" },
+      { "l": "Chunked prefill", "r": "Splits a long prompt so decodes keep running between chunks" },
+      { "l": "Disaggregation", "r": "Runs prefill and decode on separate machines tuned to TTFT and TPOT" },
+      { "l": "Speculative decoding", "r": "A draft proposes tokens and the large model verifies them in one pass" }
+    ], "explain": "Each technique answers one problem: idle GPU, decode stalls, phase interference at scale, and slow single streams. The pairs are not interchangeable, which is why the symptom comes first.", "difficulty": 1, "ref": "r9" },
+    { "id": "w02-l2-q3", "type": "single", "tag": "flip", "q": "Speculative decoding gave a clear single-stream speedup on a lightly loaded test box but little on the saturated production cluster. Which explanation fits best?", "options": ["At high batch sizes the GPU is already busy, so verification passes compete for compute that batching already uses", "Speculative decoding changes the output distribution, so the production quality gate rejects most of the drafted tokens", "The draft model cannot run while more than one request is active, so production silently falls back to normal decoding", "Production prompts are longer, which disables the verification step and forces the large model to decode every token alone"], "answer": 0, "explain": "Decode normally leaves compute idle, which is what speculation spends. A saturated batch has no idle compute left, so gains shrink. Speculative decoding keeps the output distribution unchanged, drafts can run alongside many requests, and long prompts do not disable verification.", "difficulty": 3, "ref": "r19" }
+  ],
+  "defend": null,
+  "refs": ["r9", "r19", "r21", "r28", "r29", "r20", "r25"],
+  "takeaways": [
+    "Prefill is compute-bound and decode is memory-bound, so mixing them creates stalls",
+    "Match the lever to the symptom: chunked prefill for stalls, speculation for slow streams, KV quantization for memory caps",
+    "Disaggregation pays only at fleet scale with saturated, separate TTFT and TPOT targets",
+    "Speculative decoding keeps output identical but its gains shrink as batches saturate",
+    "On a hosted API your levers are prompt size, output size, model, caching and capacity tier"
+  ]
+}

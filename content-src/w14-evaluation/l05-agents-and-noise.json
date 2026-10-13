@@ -1,0 +1,131 @@
+{
+  "id": "w14-l5",
+  "order": 5,
+  "title": "Grade the agent, then trust the number",
+  "kind": "problem",
+  "minutes": 20,
+  "brief": "An agent can reach the right result by several tool sequences, and it can fail on the second attempt of a task it passed the first time. The side effects of its tools, your need to localize failures and the size of your suite are unspecified. Decide what to grade and how many times to run it.",
+  "blocks": [
+    { "t": "h", "text": "Two questions: what to grade, how often to run", "level": 2 },
+    { "t": "p", "md": "An agent run is a path through tools, not one answer. Anthropic's guidance is to grade the **outcome**, meaning the end state of the environment, and the **transcript** where it helps, using code-based, model-based or human graders [[r17]]. tau-bench grades by comparing the final database state with an annotated goal state, and it defines pass^k as the chance that all k independent trials succeed [[r23]].\n\nGrading answers what you measure. Repetition and statistics answer whether the measurement can be trusted. Most weak agent evals fail on the second question." },
+    { "t": "table", "caption": "Foundry agent evaluators, preview unless noted, checked 2026-10-13 [[r3]]", "head": ["Level", "Evaluators", "Detail", "Use it to"], "rows": [
+      ["System", "Task Completion, Task Adherence, Intent Resolution", "Preview. Intent Resolution is scored 1 to 5 against a threshold.", "Judge the whole run"],
+      ["System", "Customer Satisfaction", "Preview. Six dimensions, each 1 to 5.", "Estimate how the conversation felt"],
+      ["System", "Task Navigation Efficiency", "Needs a ground truth tool sequence.", "Compare with one known best path, only fair when one path is truly right"],
+      ["Process", "Tool Call Accuracy", "Scored 1 to 5 against a threshold.", "Check that calls match the request"],
+      ["Process", "Tool Selection, Tool Input Accuracy, Tool Output Utilization, Tool Call Success", "Tool Input Accuracy runs six strict checks.", "Point a failure at one step"]
+    ] },
+    { "t": "formula", "title": "pass@k and pass^k from n trials", "expr": "pass^k = average over tasks of C(c, k) / C(n, k)\npass@k = 1 - average over tasks of C(n - c, k) / C(n, k)", "vars": [
+      { "k": "n", "v": "trials run per task" },
+      { "k": "c", "v": "trials that succeeded" },
+      { "k": "k", "v": "attempts a user would make: all must succeed for pass^k, any one for pass@k" }
+    ], "example": "With n = 5, c = 4 and k = 3, pass^3 = 4 / 10 = **0.4** and pass@3 = **1**. If every trial succeeds with the same probability p, pass^k is p^k: at p = 0.90 that is 0.729 for k = 3, 0.590 for k = 5 and 0.430 for k = 8. At p = 0.75 it is 0.422, 0.237 and 0.100. Real tasks vary in difficulty, so measured values differ. In 2024, gpt-4o with function calling scored about 61% retail and 35% airline pass^1 on tau-bench, and about 25% retail pass^8 [[r23]]." },
+    { "t": "stats", "items": [
+      { "label": "n = 50", "value": "plus or minus 11.1", "note": "95% interval half-width in points at an 80% pass rate. Computed estimate." },
+      { "label": "n = 100", "value": "plus or minus 7.8", "note": "1.96 x sqrt(0.8 x 0.2 / 100)" },
+      { "label": "n = 200", "value": "plus or minus 5.5", "note": "Computed estimate" },
+      { "label": "n = 400", "value": "plus or minus 3.9", "note": "Computed estimate" },
+      { "label": "n = 1,000", "value": "plus or minus 2.5", "note": "Computed estimate. Clustered questions can widen this by over 3 times." }
+    ] },
+    { "t": "dials", "id": "w14-l5-grade", "title": "Pick how to grade the agent", "prompt": "Flip the task shape, the side effects and the debugging need. The ranking shows which grader fits.", "dials": [
+      { "id": "paths", "label": "Valid solution paths", "values": [{ "id": "one", "label": "One correct path" }, { "id": "many", "label": "Many valid paths" }] },
+      { "id": "effects", "label": "Tool side effects", "values": [{ "id": "none", "label": "Read-only tools" }, { "id": "real", "label": "Tools change state" }] },
+      { "id": "need", "label": "What you need from the eval", "values": [{ "id": "gate", "label": "A release verdict" }, { "id": "locate", "label": "Which step failed" }] }
+    ], "options": [
+      { "id": "outcome", "name": "Outcome check", "summary": "Grade the end state of the environment." },
+      { "id": "exact", "name": "Exact trajectory match", "summary": "Compare tool calls with an expected sequence." },
+      { "id": "process", "name": "Process evaluators", "summary": "Tool selection, input accuracy and output use." },
+      { "id": "transcript", "name": "Transcript judge", "summary": "A rubric over the full conversation." }
+    ], "scores": {
+      "outcome": {
+        "paths": { "one": { "s": 1, "why": "Works, though it does not use the known path." }, "many": { "s": 2, "why": "Any valid path passes, so alternatives are not punished." } },
+        "effects": { "none": { "s": 0, "why": "The outcome is the final answer, which a judge or code can check." }, "real": { "s": 2, "why": "The resulting state is ground truth, like the database state in tau-bench." } },
+        "need": { "gate": { "s": 2, "why": "A clean pass or fail is what a gate needs." }, "locate": { "s": -1, "why": "It says the run failed, not where." } }
+      },
+      "exact": {
+        "paths": { "one": { "s": 2, "why": "Fine when a single sequence is truly correct." }, "many": { "s": -2, "why": "Punishes valid alternatives, so good runs are marked wrong." } },
+        "effects": { "none": { "s": 1, "why": "Deterministic and cheap to run." }, "real": { "s": 0, "why": "Checks the calls, not what they changed." } },
+        "need": { "gate": { "s": 0, "why": "Brittle as a gate, because harmless variation fails it." }, "locate": { "s": 1, "why": "Shows the first step that diverged." } }
+      },
+      "process": {
+        "paths": { "one": { "s": 1, "why": "Tool checks line up with the one correct path." }, "many": { "s": -1, "why": "Strict input checks can fire on valid variants." } },
+        "effects": { "none": { "s": 0, "why": "Useful, but errors cost little." }, "real": { "s": 1, "why": "Catches wrong arguments before they change state." } },
+        "need": { "gate": { "s": 0, "why": "More signals than a gate needs." }, "locate": { "s": 2, "why": "Points at the step: wrong tool, bad input or ignored output." } }
+      },
+      "transcript": {
+        "paths": { "one": { "s": 0, "why": "No particular gain." }, "many": { "s": 1, "why": "A rubric judges reasoning on any path, at the cost of judge calls." } },
+        "effects": { "none": { "s": 1, "why": "Good for text-only agents." }, "real": { "s": -1, "why": "It reads claims about actions instead of checking state." } },
+        "need": { "gate": { "s": 0, "why": "Needs calibration like any judge." }, "locate": { "s": 1, "why": "A rubric can name where the plan went wrong." } }
+      }
+    }, "takeaway": "Grade outcomes when paths vary or tools change state, and add process checks only where you need to localize a failure." },
+    { "t": "failure", "title": "Agent evaluation failure modes", "items": [
+      { "symptom": "The agent passes in the lab and fails for customers", "cause": "An average success rate hides inconsistency, and pass^k decays as k grows", "fix": "Run n trials per task and report pass^k for the number of attempts a customer makes." },
+      { "symptom": "Pass rates look too stable, and failures cluster by task", "cause": "Trials share state such as files or database rows left behind", "fix": "Isolate each trial in a clean environment." },
+      { "symptom": "A correct run is marked wrong", "cause": "A rigid grader. A model found a policy loophole on a tau2-bench flight task and was marked wrong.", "fix": "Grade the end state, read a sample of failed transcripts, and fix the grader before blaming the agent." },
+      { "symptom": "tool_call_accuracy looks unreliable on some conversations", "cause": "Azure AI Search, Bing Grounding, Bing Custom Search, SharePoint Grounding, Code Interpreter, Fabric Data Agent and Web Search have limited evaluator support", "fix": "Avoid tool_call_accuracy, tool_input_accuracy, tool_output_utilization, tool_call_success and groundedness for those conversations, and use outcome checks." },
+      { "symptom": "Intervals look tight but grouped questions share a source", "cause": "Clustered questions are not independent, and clustered standard errors can exceed 3 times the naive ones", "fix": "Use clustered standard errors and paired question-level differences when comparing two models." },
+      { "symptom": "A 2-point gain on 100 tasks gets shipped", "cause": "The interval half-width is about 7.8 points at an 80% pass rate", "fix": "Run a power analysis, enlarge the set or pair the runs before treating a small gain as real." }
+    ] },
+    { "t": "accordion", "items": [
+      { "title": "Go deeper: evaluation levels and composite evaluators", "blocks": [
+        { "t": "p", "md": "`evaluation_level` is `turn` (the default, scoring each response) or `conversation` (the whole multi-turn exchange). The conversation level needs the `messages` data format and skips turn-only evaluators [[r2]]." },
+        { "t": "p", "md": "`builtin.output_quality` batches Fluency, Coherence, Intent Resolution, Task Adherence, Groundedness and Task Completion into one judge call. `builtin.tool_use_quality` batches Tool Call Accuracy, Tool Call Success, Tool Input Accuracy, Tool Output Utilization and Tool Selection. Default pass thresholds are 3 on 1 to 5 scales and 1 on 0/1 scales. The primary result passes only if every applicable component passes. Both are preview as of 2026-10-13 [[r3]]." }
+      ] },
+      { "title": "Go deeper: hooks for Agent Framework and open-source suites", "blocks": [
+        { "t": "p", "md": "Agent Framework exposes `EvalItem`, `Evaluator` and `EvalResults`, plus Python `evaluate_agent()`, `evaluate_workflow()` and a `LocalEvaluator` with checks such as `keyword_check` and `tool_called_check`. `FoundryEvals` defaults to relevance, coherence and task adherence, and adds tool call accuracy when tool definitions exist [[r10]]." },
+        { "t": "p", "md": "DeepEval ships trajectory metrics (Task Completion, Step Efficiency, Plan Adherence, Plan Quality) and component metrics (Tool Correctness, Argument Correctness). Most of its metrics are LLM-judged, so the calibration rules from the previous level apply [[r28]]. The DeepLearning.AI course covers the evaluation loop end to end [[r13]]." }
+      ] },
+      { "title": "Go deeper: benchmark facts worth knowing", "blocks": [
+        { "t": "p", "md": "tau-bench has 115 retail and 50 airline tasks and grades the final database state [[r23]]. The repository is `sierra-research/tau2-bench`, and its README brands the project tau3-bench as of 2026-10-13. Version 1.0.1 (July 2026) fixed task errors in `banking_knowledge`, so earlier results on that domain are not comparable, and it needs Python 3.12 or 3.13 and `uv` [[r35]]. GAIA has 466 questions in three levels. At publication humans scored 92% and GPT-4 with plugins 15% [[r33]]." }
+      ] }
+    ] }
+  ],
+  "quiz": [
+    {
+      "id": "w14-l5-q1", "type": "numeric", "tag": "numeric", "difficulty": 2, "ref": "r23",
+      "q": "An agent is run 5 times on a task and succeeds 4 times. Using the unbiased estimator, what is pass^3 for this task?",
+      "answer": 0.4, "tolerancePct": 1, "unit": "probability", "hint": "pass^k is C(c, k) / C(n, k).",
+      "explain": "C(4, 3) is 4 and C(5, 3) is 10, so pass^3 = 0.4. pass@3 for the same data is 1 - C(1, 3) / C(5, 3) = 1, because any 3 trials must include a success. The gap between 1 and 0.4 is why the choice of pass@k or pass^k depends on whether one success is enough."
+    },
+    {
+      "id": "w14-l5-q2", "type": "single", "tag": "tradeoff", "difficulty": 2, "ref": "r17",
+      "q": "Several tool sequences can solve the task, and the tools change state in an external system. Which grading is best?",
+      "options": [
+        "Match the exact expected tool call sequence, because any deviation from the reference path signals a defect",
+        "Grade the end state of the environment in clean sandboxes, and add selected process checks",
+        "Ask a judge to rate the final message only, because that message is all the user ever reads and acts on",
+        "Count tool calls and prefer runs with fewer calls, because fewer calls always means better planning"
+      ],
+      "answer": 1,
+      "explain": "With several valid paths and real side effects, the end state is the ground truth, and clean sandboxes stop trials from contaminating each other [[r17]]. An exact sequence punishes valid alternatives. A judge on the final message can accept a claim about an action that never happened. Fewer calls can mean skipped checks, so call count is not quality."
+    },
+    {
+      "id": "w14-l5-q3", "type": "numeric", "tag": "numeric", "difficulty": 2, "ref": "r24",
+      "q": "A suite of 100 independent tasks shows an 80% pass rate. What is the half-width of the 95% confidence interval, in percentage points?",
+      "answer": 7.8, "tolerancePct": 3, "unit": "points", "hint": "1.96 x sqrt(p x (1 - p) / n)",
+      "explain": "The standard error is sqrt(0.8 x 0.2 / 100) = 0.04, and 1.96 x 0.04 = 0.0784, so about 7.8 points. A true rate anywhere from about 72% to 88% fits the data, which is why a 2-point gain on 100 tasks is noise. If the questions are clustered, the real interval is wider."
+    },
+    {
+      "id": "w14-l5-q4", "type": "single", "tag": "diagnose", "difficulty": 3, "ref": "r3",
+      "q": "What is the most likely cause of these scores?",
+      "code": { "lang": "text", "code": "tools in conversation: bing_grounding, azure_ai_search\ntool_call_accuracy:    2.0  (fail)\ntool_input_accuracy:   1.0  (fail)\nmodel or prompt change since last run: none" },
+      "options": [
+        "The agent regressed because the underlying model changed between the two runs of this conversation",
+        "The judge deployment is too small to score tool calls, so a larger deployment should be selected",
+        "The pass threshold of 3 is too strict for 1 to 5 scales, so it should be lowered for these runs",
+        "Those tools have limited evaluator support, so tool-level scores are unreliable there"
+      ],
+      "answer": 3,
+      "explain": "The docs list Azure AI Search, Bing Grounding, Bing Custom Search, SharePoint Grounding, Code Interpreter, Fabric Data Agent and Web Search as limited support, and advise avoiding tool_call_accuracy, tool_input_accuracy, tool_output_utilization, tool_call_success and groundedness for them [[r3]]. Nothing changed in the model or prompt, a bigger judge does not fix unsupported tool formats, and lowering the threshold hides the signal instead of explaining it."
+    }
+  ],
+  "defend": null,
+  "refs": ["r2", "r3", "r10", "r13", "r17", "r23", "r24", "r28", "r33", "r35"],
+  "takeaways": [
+    "Grade outcomes first. Exact trajectories punish valid alternatives.",
+    "Add process evaluators so a failure points at a step, and know which tools they do not cover.",
+    "Report pass^k for reliability and pass@k for capability, from n isolated trials per task.",
+    "A pass rate without an interval is a guess. At n = 100 and 80%, the half-width is 7.8 points.",
+    "Use clustered errors and paired comparisons when questions share a source."
+  ]
+}

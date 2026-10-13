@@ -1,0 +1,115 @@
+{
+  "id": "w00-t01",
+  "order": 1,
+  "group": "Start here",
+  "title": "How this guide works",
+  "minutes": 6,
+  "difficulty": "core",
+  "summary": "The guide is a set of standalone topic pages you can open in any order, plus an optional journey of practice problems, labs, flashcards and a progress file you can export.",
+  "useIf": "You want to revise one subject fast, follow the whole journey, or run a group session.",
+  "avoidIf": "You expect a linear course. Topic pages assume you can jump in and use the related links for depth.",
+  "explain": [
+    { "t": "p", "md": "This guide teaches AI engineering through **options and trade-offs**, never through one fixed scenario. The main unit is the **topic**: one page you can open from the left menu and revise in about seven minutes. Topics sit inside **chapters** (for example w01 LLM controls and APIs). The sidebar switch **Topics | Journey** chooses between jumping to any topic (the default) and following one question through the stack in order." },
+    { "t": "flow", "title": "Anatomy of a topic page", "direction": "h", "steps": [
+      { "title": "What it is", "md": "The mechanism in 150 to 400 words, with a visual." },
+      { "title": "Where and when", "md": "Concrete places, then use, avoid and flip conditions stated as dials." },
+      { "title": "Alternatives", "md": "A table with a loses-when column." },
+      { "title": "Pitfalls", "md": "Symptom, cause and fix." },
+      { "title": "Scenarios", "md": "Trade-off cards: choose, then see every verdict." },
+      { "title": "Quick checks", "md": "Quiz items and flashcards." }
+    ] },
+    { "t": "p", "md": "**Practice problems** and **boss rounds** (the Journey mode) turn the same material into game-style levels with dial boards and an interview-style defend task. **Labs** are small interactive tools, seven in total (for example the KV cache sizer and the RRF fusion playground). **Flashcards** use five Leitner boxes and four grades: again, hard, good and easy." },
+    { "t": "p", "md": "Progress lives in your browser's `localStorage` under the key `ftq.v1`. Export it from the Progress page as `ftq-progress-<name>-<date>.json` and import it later with **merge** (keeps the best of both files, the default) or **replace**. If the browser blocks storage, the guide shows a banner that asks you to export. **Facilitator mode** shows quiz and model answers with an Answer key badge, so keep it off on learners' screens. Press `/` or Ctrl or Cmd K to search." },
+    { "t": "callout", "kind": "tip", "title": "Print a chapter cheat sheet", "md": "Every chapter has a generated cheat sheet at `#/w/<chapter id>/cheatsheet`. It lists each topic's title, summary, use-if and avoid-if lines, which makes it a fast pre-interview scan." }
+  ],
+  "whereToUse": [
+    "Before an interview: open the chapter cheat sheet, then drill the topics where your answers feel vague",
+    "On a commute or between meetings: one topic, its scenario cards and its flashcards",
+    "In a team session: one chapter per session, with the facilitator mode on the host's screen only",
+    "After a platform change: re-open the topic and check its dated references, then read the freshness topic",
+    "When onboarding a colleague: send the topic links in the order of your stack"
+  ],
+  "whenToUse": {
+    "use": [
+      "You know the subject and need to sharpen trade-off reasoning",
+      "You have a gap in one chapter and little time",
+      "You want evidence of progress that you can share as a file",
+      "You coach others and need a structure for a debrief"
+    ],
+    "avoid": [
+      "You have never heard of the area and need a tutorial first: start with the introductory course in the references, then return",
+      "You need a vendor's current price or limit: the guide dates its facts, so confirm in the live documentation",
+      "You want to memorise answers: scenario cards change verdicts when a dial moves, so rote answers fail"
+    ],
+    "flips": [
+      "Time is under 30 minutes: use the cheat sheet and flashcards, skip the practice problems",
+      "You study in a group: switch to Journey mode so everyone meets the same boss round",
+      "Your browser clears storage: export progress after every session"
+    ]
+  },
+  "alternatives": {
+    "title": "Ways to use the guide",
+    "head": ["Mode", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Topic-first revision (default)", "You know which subject is weak and want depth fast", "You do not know your gaps yet", "Can leave whole chapters unread"],
+      ["Journey of practice problems", "You want to rehearse a full end-to-end answer", "You have little time", "Longer, and levels repeat topic ideas"],
+      ["Flashcards only", "You already understand and need recall", "You have never met the concept", "Cards without context teach slogans"],
+      ["Facilitated group session", "A team needs shared vocabulary and debate", "Learners study alone", "Needs a host who keeps answers hidden"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Progress vanishes after a browser clean-up", "cause": "State is stored in `localStorage`, which the browser can clear", "fix": "Export the JSON file after each session and import it with merge on the new browser" },
+    { "symptom": "Learners see answers during a group session", "cause": "Facilitator mode is a per-browser setting and was left on", "fix": "Turn it on only on the host's browser and check the Answer key badge before sharing a screen" },
+    { "symptom": "A learner reads topics in order and feels lost", "cause": "Topics are standalone and assume a short refresher, not a lesson sequence", "fix": "Use the related links at the bottom of each topic, or switch to Journey mode for the story" }
+  ],
+  "scenarios": [
+    {
+      "id": "w00-t01-s1",
+      "title": "Two weeks to an interview",
+      "situation": "A candidate has two weeks. They use the platform daily at work but have never explained their design choices aloud.",
+      "constraints": ["Study time is 30 to 45 minutes a day", "The interview is a design conversation, not a coding test", "The candidate builds well but explains poorly"],
+      "unknowns": ["Which chapters match the role?", "Is a mock interview partner available?"],
+      "question": "How should the candidate use the guide?",
+      "options": [
+        { "name": "Read every topic once in chapter order", "verdict": "good", "why": "Complete coverage and a fixed plan.", "tradeoff": "At 7 minutes a topic, 22 topics in one chapter already take more than two hours, so coverage thins out." },
+        { "name": "Topic-first on weak chapters, scenario cards daily, boss rounds spoken aloud", "verdict": "best", "why": "Scenario cards train the trade-off language and boss rounds train the spoken structure, which is the stated weakness.", "tradeoff": "Skipping other chapters leaves blind spots outside the role focus." },
+        { "name": "Flashcards only", "verdict": "poor", "why": "Recall of parameter names does not train justification, which is where the candidate is weak.", "tradeoff": "Flashcards are right for the last two days, once the reasoning is in place." }
+      ],
+      "flips": [
+        { "if": "The candidate also lacks basic vocabulary", "then": "Start with the introductory course in the references, then follow the same plan." },
+        { "if": "Only three days remain", "then": "Use the cheat sheets for the target chapters and do one boss round aloud." }
+      ],
+      "takeaway": "Match the mode to the weakness: reasoning needs scenarios, recall needs cards."
+    },
+    {
+      "id": "w00-t01-s2",
+      "title": "Team workshop on a shared laptop",
+      "situation": "A lead runs a 90 minute session for eight engineers. One laptop is projected. Learners also have the guide open on their own machines.",
+      "constraints": ["One chapter per session", "Answers must stay hidden until groups commit", "Learners want a record afterwards"],
+      "unknowns": ["Do learners use the same browser profile each time?", "Is there a printer for cheat sheets?"],
+      "question": "How do you set it up?",
+      "options": [
+        { "name": "Turn facilitator mode on for everyone to speed up review", "verdict": "poor", "why": "Learners see verdicts before they commit, so the trade-off debate never happens.", "tradeoff": "Right for a self-study learner who wants to check an answer after attempting it." },
+        { "name": "Let learners read the chapter alone, then discuss", "verdict": "good", "why": "Quiet reading suits deep material.", "tradeoff": "Loses the live disagreement that exposes unstated assumptions." },
+        { "name": "Facilitator mode on the host laptop only, pairs argue each card, everyone exports progress at the end", "verdict": "best", "why": "Answers show only where the host controls them, and exported files give each learner a record.", "tradeoff": "The host spends time on the debrief and the export step." }
+      ],
+      "flips": [
+        { "if": "Learners are remote", "then": "Share the host screen with facilitator mode on and have learners vote before each reveal." },
+        { "if": "The group is new to the topic", "then": "Run Journey mode so they meet the story first." }
+      ],
+      "takeaway": "Keep answers on the host screen and make learners commit before the reveal."
+    }
+  ],
+  "quiz": [
+    { "id": "w00-t01-q1", "type": "single", "tag": "concept", "q": "Where does the guide keep your progress by default?", "options": ["On a server tied to your learner name", "In a cookie that expires after 24 hours", "In the browser's `localStorage`, exportable as a JSON file", "Inside the zip file you opened"], "answer": 2, "explain": "State sits in `localStorage` under `ftq.v1` and can be exported and imported. There is no server, cookies are not used for progress, and the zip is read only." },
+    { "id": "w00-t01-q2", "type": "multi", "tag": "concept", "q": "Which statements about importing a progress file are true?", "options": ["Merge keeps the best of both records", "Replace overwrites the current state with the file", "Import needs a network connection", "Merge is the default mode"], "answers": [0, 1, 3], "explain": "Merge keeps the better record per key and is the default, and replace takes the file as is. Import is a local operation and needs no network." },
+    { "id": "w00-t01-q3", "type": "order", "tag": "order", "q": "Put the parts of a topic page in the order you meet them.", "items": ["What it is", "Where and when to use it", "Alternatives table", "Pitfalls", "Scenario cards", "Quick checks and flashcards"], "explain": "The page moves from mechanism to decision criteria to comparison to failure, then tests you with scenarios and quick checks." }
+  ],
+  "flashcards": [
+    { "front": "What is the main unit of this guide?", "back": "The topic: a standalone page that explains, says where and when to use it, compares alternatives, lists pitfalls and offers scenario cards." },
+    { "front": "How do you keep progress across browsers?", "back": "Export the progress JSON from the Progress page and import it elsewhere, using merge to keep the best of both files." },
+    { "front": "What does facilitator mode do?", "back": "It reveals quiz and model answers with an Answer key badge. Enable it only on the host's screen." }
+  ],
+  "related": ["w00-t02", "w00-t03", "w00-t04", "w00-l1", "w00-l2"],
+  "refs": ["r23", "r24"]
+}

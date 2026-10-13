@@ -1,0 +1,115 @@
+{
+  "id": "w13-t05",
+  "order": 5,
+  "group": "Audio and voice",
+  "title": "Realtime speech-to-speech",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "A realtime speech-to-speech model hears audio, reasons, calls tools and speaks back inside one persistent session. You choose the transport, manage keys and sessions, and pay for audio tokens that grow with the conversation.",
+  "useIf": "A person talks to the system live and low latency matters more than inspecting text between stages.",
+  "avoidIf": "You must filter, log or rewrite the text before the model sees it, or the audio is recorded and nobody waits.",
+  "explain": [
+    { "t": "p", "md": "In the **Realtime API** one speech-to-speech model runs per session. It interprets audio, decides what to do, calls tools and answers in speech over a persistent connection, which avoids chaining three services [[r3]]. OpenAI's docs also describe **GPT-Live**, a full-duplex model that listens while it speaks and delegates reasoning to a separate backend, and say to start new conversational voice apps there (checked 2026-10-13). This topic covers the Realtime API itself." },
+    { "t": "p", "md": "Inside a session you configure instructions, voice, tools and turn detection, then exchange JSON events: audio in, audio out and tool calls in between. No separate text stage sits between hearing and speaking, which removes a hop, but you also cannot gate the text before the model reasons. Keep instructions stable across the session, because mid-session edits break the prompt cache [[r5]]." },
+    { "t": "table", "caption": "Transports (Microsoft's latency figures for Azure OpenAI)", "head": ["Transport", "About", "Use for", "Notes"], "rows": [
+      ["WebRTC", "100 ms", "Browser and device clients", "OpenAI mints ephemeral keys with `POST /v1/realtime/client_secrets`. GA calls use `/v1/realtime/calls` [[r3]]"],
+      ["WebSocket", "200 ms", "Server to server", "On Azure use the GA `/openai/v1` endpoint and send no `api-version` [[r6]]"],
+      ["SIP", "Varies", "Telephony", "A client integration must terminate the audio, since Azure's API does not connect straight to end-user devices [[r6]]"]
+    ] },
+    { "t": "diagram", "id": "w13-t05-d1", "title": "Browser session with an ephemeral key", "alt": "The browser asks the app server for a key. The server mints an ephemeral key. The browser then opens a WebRTC session directly with the Realtime API.", "src": "sequenceDiagram\n  participant B as Browser\n  participant S as App server\n  participant R as Realtime API\n  B->>S: Request session\n  S->>R: Mint ephemeral key\n  R-->>S: Short-lived key\n  S-->>B: Key\n  B->>R: Open WebRTC session\n  R-->>B: Audio and events" },
+    { "t": "formula", "title": "Audio token accounting", "expr": "audio_tokens = user_seconds x 10 + assistant_seconds x 20", "vars": [{ "k": "rates", "v": "1 token per 100 ms of user audio, 1 per 50 ms of assistant audio" }], "example": "A turn of 8 s user audio and 16 s assistant audio is 80 + 320 = **400** tokens. The full conversation is resent each turn, so by turn 10 about 9 x 400 = 3,600 tokens of history precede the new audio (an estimate that assumes history stays audio). Prompt caching is best effort, and changing history or instructions mid-session busts the cache [[r5]]." },
+    { "t": "callout", "kind": "gotcha", "title": "Beta to GA changes", "md": "Drop the `OpenAI-Beta: realtime=v1` header, mint keys at `/v1/realtime/client_secrets`, use `/v1/realtime/calls`, set `session.type`, and use renamed events such as `response.output_audio.delta` [[r3]]. Azure sessions last at most 60 minutes [[r6]]." }
+  ],
+  "whereToUse": [
+    "Browser voice assistants and tutors that talk back in real time",
+    "Server pipelines that bridge phone audio to a model",
+    "Hands-free assistants in vehicles or on devices",
+    "Voice front ends where interruptions and natural pauses matter"
+  ],
+  "whenToUse": {
+    "use": [
+      "Latency and natural turn-taking are the top priority",
+      "One model can handle understanding, tools and speech",
+      "You accept less visibility into text between stages"
+    ],
+    "avoid": [
+      "Policy needs redaction or logging of text before the model reasons",
+      "A tuned text agent already exists and must stay in charge of logic",
+      "Sessions routinely exceed one hour with no reconnect design"
+    ],
+    "flips": [
+      "Browser client: WebRTC with ephemeral keys. Server bridge or telephony: WebSocket or SIP",
+      "Slow backend work must not freeze the call: consider GPT-Live style delegation",
+      "Cost per long call climbs: keep instructions stable and tune truncation retention"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Realtime WebRTC", "Browser and device clients", "Server-side relay is mandatory", "Key minting and client trust"],
+      ["Realtime WebSocket", "Server pipelines, simple firewall posture", "End users connect directly", "About 200 ms in Microsoft's table, one extra hop"],
+      ["Realtime over SIP", "Phone numbers and contact centres", "Browser-only products", "Telephony integration varies"],
+      ["Chained pipeline", "Text must be inspected or replaced", "Lowest latency is the goal", "Each stage adds latency (see the cascaded topic)"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Calls drop at about the one hour mark", "cause": "The Azure realtime session maximum is 60 minutes", "fix": "Build reconnect logic that carries a state summary into the new session." },
+    { "symptom": "Cost per turn rises as a call goes on", "cause": "The whole conversation is resent each turn and mid-session edits bust the cache", "fix": "Keep instructions stable. `session.truncation.retention_ratio` defaults to 1.0, and 0.8 drops extra items so the cache stays valid longer [[r5]]." },
+    { "symptom": "Old client code fails after migrating", "cause": "Beta header, endpoint and event names changed in GA", "fix": "Follow the beta-to-GA checklist, and on Azure send no `api-version`." }
+  ],
+  "scenarios": [
+    {
+      "id": "w13-t05-s1",
+      "title": "Browser voice tutor",
+      "situation": "A web app lets students speak to a tutor. Thousands of students connect from home networks. Replies must feel immediate, and the API key must never reach the browser.",
+      "constraints": ["Browser clients", "Low latency", "Secrets must stay server-side"],
+      "unknowns": ["Is a text transcript required for compliance?", "How many concurrent sessions?"],
+      "question": "How do clients connect?",
+      "options": [
+        { "name": "WebRTC with an ephemeral key minted by your server", "verdict": "best", "why": "WebRTC is the browser path with about 100 ms in Microsoft's table, and the short-lived key keeps your real key server-side [[r3]].", "tradeoff": "You build a small token endpoint and handle key expiry." },
+        { "name": "Browser WebSocket using a long-lived API key", "verdict": "poor", "why": "It exposes a standing secret and is the slower transport.", "tradeoff": "A WebSocket is right for server-to-server links, never for shipping secrets to browsers." },
+        { "name": "Browser to your own WebSocket relay to the API", "verdict": "good", "why": "Keeps keys private and lets you log events.", "tradeoff": "Adds a hop and server load for every audio stream." }
+      ],
+      "flips": [
+        { "if": "Compliance needs every transcript stored before the model answers", "then": "Use a chained pipeline instead." },
+        { "if": "Students call by phone", "then": "Use SIP or a telephony bridge." }
+      ],
+      "takeaway": "Browsers get WebRTC and short-lived keys."
+    },
+    {
+      "id": "w13-t05-s2",
+      "title": "Long advisory calls on Azure",
+      "situation": "Advisers hold 70 to 90 minute calls with customers through a voice agent on Azure OpenAI realtime. Calls must not drop, and context must survive.",
+      "constraints": ["Azure deployment", "Sessions of 60 minutes maximum", "Context must carry across"],
+      "unknowns": ["Can a short spoken pause be tolerated during reconnect?", "What state must be carried?"],
+      "question": "How do you handle the session limit?",
+      "options": [
+        { "name": "Reconnect before the cap and carry a compact state summary into the new session", "verdict": "best", "why": "The 60-minute cap is documented [[r6]], so planned handover with a summary keeps context and stable instructions.", "tradeoff": "Needs a summariser and a brief spoken bridge." },
+        { "name": "Use truncation settings to extend the session", "verdict": "poor", "why": "Truncation manages context length, not session lifetime.", "tradeoff": "Right for controlling cost and cache validity, not for beating the cap." },
+        { "name": "Hand every call to a human at 60 minutes", "verdict": "good", "why": "Simple and safe for sensitive advice.", "tradeoff": "Expensive in staff time and bad for customers mid-sentence." }
+      ],
+      "flips": [
+        { "if": "Most calls end under 45 minutes", "then": "A simple reconnect for rare long calls is enough." },
+        { "if": "Another provider has no cap", "then": "Re-check the limits on that platform before moving." }
+      ],
+      "takeaway": "Treat the session cap as a design input, not an edge case."
+    }
+  ],
+  "quiz": [
+    { "id": "w13-t05-q1", "type": "numeric", "tag": "numeric", "q": "In one turn the user speaks for 40 seconds and the assistant for 60 seconds. At 1 token per 100 ms of user audio and 1 per 50 ms of assistant audio, how many audio tokens is the turn?", "answer": 1600, "tolerancePct": 1, "unit": "tokens", "explain": "User: 40 s x 10 = 400 tokens. Assistant: 60 s x 20 = 1,200 tokens. Total 1,600." },
+    { "id": "w13-t05-q2", "type": "single", "tag": "security", "q": "A browser must open a realtime session. What is the safe way to authenticate?", "options": ["Embed the API key in the page", "Mint a short-lived ephemeral key on your server and give it to the browser", "Ask users to paste their own key", "Send audio to a public relay"], "answer": 1, "explain": "OpenAI mints ephemeral keys with `POST /v1/realtime/client_secrets` for client use. Embedding a standing key exposes it. User-pasted keys and public relays are unsafe or unmanaged." },
+    { "id": "w13-t05-q3", "type": "match", "tag": "concept", "q": "Match each transport with its typical use.", "pairs": [
+      { "l": "WebRTC", "r": "Browser and device clients" },
+      { "l": "WebSocket", "r": "Server-to-server pipelines" },
+      { "l": "SIP", "r": "Telephony" }
+    ], "explain": "Microsoft lists about 100 ms for WebRTC, about 200 ms for WebSocket and varying latency for SIP." }
+  ],
+  "flashcards": [
+    { "front": "What latency does Microsoft list for realtime transports?", "back": "About 100 ms for WebRTC (client apps), about 200 ms for WebSocket (server to server), and SIP varies (telephony)." },
+    { "front": "How are realtime audio tokens counted?", "back": "1 token per 100 ms of user audio and 1 per 50 ms of assistant audio. The whole conversation is resent each turn." },
+    { "front": "What is the Azure realtime session cap?", "back": "60 minutes. Use the GA `/openai/v1` endpoint without `api-version`, and build reconnect logic." }
+  ],
+  "related": ["w13-t06", "w13-t07", "w13-t04", "w13-l4", "w02-t16"],
+  "refs": ["r3", "r5", "r6"]
+}

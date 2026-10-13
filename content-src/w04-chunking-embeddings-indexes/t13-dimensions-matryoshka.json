@@ -1,0 +1,104 @@
+{
+  "id": "w04-t13",
+  "order": 13,
+  "group": "Embeddings",
+  "title": "Dimensions and Matryoshka embeddings",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "Vector size drives storage and speed. Matryoshka-trained models let you keep only the first dimensions of a vector, trading a little recall for a large saving.",
+  "useIf": "Vector memory or cost is a constraint and your model was trained for Matryoshka truncation.",
+  "avoidIf": "The corpus is small, so the saving is negligible, or the model was not trained for truncation.",
+  "explain": [
+    { "t": "p", "md": "Every vector costs `dimensions x bytes`. In float32 that is 4 bytes per dimension, so a 3,072-dimension vector is 12,288 bytes. Multiply by the number of chunks and you have the floor for your index memory, before graph overhead." },
+    { "t": "formula", "title": "Raw vector storage", "expr": "bytes = 4 x dimensions x vectors", "vars": [ { "k": "4", "v": "bytes per float32 component" }, { "k": "dimensions", "v": "length of each vector" }, { "k": "vectors", "v": "number of chunks in the index" } ], "example": "One million vectors take about 12.3 GB at 3,072 dimensions, 6.1 GB at 1,536, 4.1 GB at 1,024, 2.0 GB at 512 and 1.0 GB at 256, before index overhead." },
+    { "t": "p", "md": "**Matryoshka representation learning** trains a model so the first d dimensions form a useful embedding on their own, for several values of d [[tr17]]. Cutting a vector to its first d components, then re-normalising to unit length, gives a smaller vector with a modest quality loss. OpenAI's `dimensions` parameter does this for text-embedding-3 models, and a 256-dimension text-embedding-3-large vector still beat the full-size ada-002 on MTEB. If you truncate by hand, you must re-normalise [[tr24]]." },
+    { "t": "code", "lang": "python", "title": "Two ways to get 1,024 dimensions", "code": "# 1. Ask the model for a shorter vector\nresp = client.embeddings.create(model=\"text-embedding-3-large\", input=texts, dimensions=1024)\n\n# 2. Truncate by hand, then re-normalise\nimport numpy as np\nv = np.array(full_vector)[:1024]\nv = v / np.linalg.norm(v)" },
+    { "t": "table", "caption": "Truncation in Azure AI Search and its embedding skill", "head": ["Fact", "Detail"], "rows": [
+      ["Setting", "`truncationDimension` on a compression object [[tr7]]"],
+      ["Requirements", "Scalar or binary quantization, HNSW, and `Edm.Half` or `Edm.Single` fields [[tr7]]"],
+      ["Limits", "Cannot be added to an existing field, no portal support [[tr7]]"],
+      ["Suggested values", "512, and as low as 256 for text-embedding-3-large [[tr7]]"],
+      ["Largest saving", "Binary quantization with truncation and `stored: false`, but partial document updates then lose vectors unless you resend the full vector [[tr7]]"],
+      ["Embedding skill `dimensions`", "Optional, defaults to the model maximum: 3-large 1 to 3,072, 3-small 1 to 1,536, ada-002 fixed at 1,536. The index field dimensions must match [[tr42]]"]
+    ] },
+    { "t": "p", "md": "Decide where to truncate. Asking the model for fewer dimensions stores only short vectors and keeps the pipeline simple. Truncating inside the index keeps the full vector for rescoring and lets you tune later, at the price of extra storage. Either way, measure recall against the full-size baseline on your queries." }
+  ],
+  "whereToUse": [
+    "Large indexes where vector memory sets the price of the service tier",
+    "Pipelines combining truncation with scalar or binary quantization and rescoring",
+    "Latency-sensitive search, since shorter vectors compare faster",
+    "Models explicitly trained for it, such as text-embedding-3 and Nomic Embed v1.5"
+  ],
+  "whenToUse": {
+    "use": ["Memory or cost per vector is the bottleneck", "The model documents Matryoshka support", "You can measure recall against a full-size baseline"],
+    "avoid": ["Small corpora where memory is not a constraint", "Models not trained for truncation", "Recall targets so strict that any loss is unacceptable"],
+    "flips": ["Recall drops too far: raise dimensions or add rescoring with original vectors", "Partial updates are frequent: do not discard stored vectors in AI Search", "The corpus shrinks: return to full dimensions for the best quality"]
+  },
+  "alternatives": {
+    "title": "Ways to shrink an index",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Matryoshka truncation", "Model supports it, memory-bound", "Model not trained for it", "Some recall loss, new field in AI Search"],
+      ["Scalar quantization (int8)", "Want about 4 times smaller with little loss", "Already at the memory floor", "New field and profile, rescoring to tune"],
+      ["Binary quantization", "High dimensions, extreme size cut", "Dimensions under about 1,024", "Needs oversampling and rescoring"],
+      ["Smaller model (3-small)", "English-heavy, cost-driven", "Hard domains or many languages", "Lower quality across the board"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Recall falls sharply after cutting vectors to 256", "cause": "The model was not trained for Matryoshka truncation, so the prefix is not a good embedding", "fix": "Truncate only models that document it and test against the full-size baseline" },
+    { "symptom": "Scores look off with dot product after manual truncation", "cause": "The truncated vector was not re-normalised to unit length", "fix": "Divide by the L2 norm after cutting, as OpenAI advises" },
+    { "symptom": "Indexing fails with a dimension mismatch", "cause": "The skill `dimensions` and the index field `dimensions` differ", "fix": "Set both to the same value and recreate the field if it changed" },
+    { "symptom": "Partial updates erase vectors", "cause": "Vectors were stored with `stored: false` for size, so a merge without the vector drops them", "fix": "Resend the full vector on every update, or keep stored vectors" }
+  ],
+  "scenarios": [
+    {
+      "id": "w04-t13-s1",
+      "title": "20 million chunks on a memory quota",
+      "situation": "An index of 20 million chunks uses 3,072-dimension vectors and presses against the service's vector memory quota. Recall must stay within a point or two of today.",
+      "constraints": ["20 million vectors", "Memory quota binds", "Recall loss capped", "A labelled set exists"],
+      "unknowns": ["Is rescoring acceptable?", "Is a reindex window available?"],
+      "question": "What do you try first?",
+      "options": [
+        { "name": "Re-embed with `dimensions` of 1,024 or 512 and compare recall to the full baseline", "verdict": "best", "why": "Raw size drops from about 246 GB to 82 GB at 1,024, the model is built for it and the labelled set tells you the cost.", "tradeoff": "A reindex and a measured recall loss." },
+        { "name": "Keep full vectors, add quantization with truncation in the index", "verdict": "good", "why": "Large savings with the full vector retained for rescoring.", "tradeoff": "Needs a new field, a quantization profile and more tuning." },
+        { "name": "Cut vectors by hand to 128 dimensions", "verdict": "poor", "why": "Aggressive truncation without testing risks a large recall drop and manual cutting needs re-normalising.", "tradeoff": "Reasonable for non-critical recall once an evaluation shows it works." }
+      ],
+      "flips": [
+        { "if": "Recall falls below target at 512", "then": "Raise to 1,024 and add scalar quantization." },
+        { "if": "Corpus doubles", "then": "Combine truncation and quantization from the start." }
+      ],
+      "takeaway": "Measure recall as dimensions fall, and re-normalise any manual cut."
+    },
+    {
+      "id": "w04-t13-s2",
+      "title": "A small, quality-critical corpus",
+      "situation": "A legal team indexes 50,000 chunks and needs the best possible retrieval. The index is nowhere near any memory limit.",
+      "constraints": ["50,000 chunks", "Quality is the priority", "No memory pressure", "Moderate query volume"],
+      "unknowns": ["Is query latency a concern?", "Will the corpus grow?"],
+      "question": "Do you truncate?",
+      "options": [
+        { "name": "Keep the full dimensions", "verdict": "best", "why": "At 50,000 vectors, 3,072 dimensions take about 0.6 GB, so truncation saves almost nothing and risks recall.", "tradeoff": "Slightly larger vectors than needed." },
+        { "name": "Truncate to 1,024 anyway", "verdict": "good", "why": "Small saving, modest loss.", "tradeoff": "You accept a loss for no real benefit." },
+        { "name": "Truncate to 256 and quantize to binary", "verdict": "poor", "why": "Optimises a dimension that is not constrained and sacrifices quality, the priority.", "tradeoff": "Right once the corpus is hundreds of millions of vectors." }
+      ],
+      "flips": [
+        { "if": "The corpus grows by 100 times", "then": "Revisit truncation and quantization." },
+        { "if": "Query latency becomes a problem", "then": "Test a shorter vector or exhaustive search tuning." }
+      ],
+      "takeaway": "Do not compress what is not constrained."
+    }
+  ],
+  "quiz": [
+    { "id": "w04-t13-q1", "type": "numeric", "tag": "numeric", "q": "How much raw float32 vector storage do 20 million vectors of 1,024 dimensions need, in GB (1 GB = 10^9 bytes), before index overhead?", "answer": 81.92, "tolerancePct": 2, "unit": "GB", "hint": "4 bytes x 1,024 x 20,000,000.", "explain": "4 x 1,024 = 4,096 bytes per vector, times 20,000,000 = 81.92 billion bytes, or about 81.9 GB. HNSW overhead is extra." },
+    { "id": "w04-t13-q2", "type": "single", "tag": "bug", "q": "After cutting vectors to their first 512 components, results with a dot-product metric look wrong. What was missed?", "options": ["Increasing efSearch", "Switching to cosine only", "Re-normalising the truncated vector to unit length", "Adding more overlap"], "answer": 2, "explain": "A prefix of a unit vector is no longer unit length, which distorts dot-product scores. Re-normalise after cutting. Search parameters, metric changes and overlap do not fix the norm." },
+    { "id": "w04-t13-q3", "type": "multi", "tag": "concept", "q": "Which statements about `truncationDimension` in AI Search are true?", "options": ["It requires scalar or binary quantization", "It can be added to an existing vector field", "It works with HNSW and `Edm.Half` or `Edm.Single` fields", "It has portal support"], "answers": [0, 2], "explain": "The feature needs quantization and HNSW with those field types. It cannot be added to an existing field and has no portal support." }
+  ],
+  "flashcards": [
+    { "front": "How much storage is one million 3,072-dimension float32 vectors?", "back": "About 12.3 GB (4 bytes x 3,072 x 1,000,000), before index overhead. At 1,536 dimensions it is about 6.1 GB." },
+    { "front": "What must you do after truncating a Matryoshka vector by hand?", "back": "Re-normalise it to unit length. A prefix of a unit vector is shorter than 1." },
+    { "front": "What are the AI Search `truncationDimension` requirements?", "back": "Scalar or binary quantization, HNSW, and `Edm.Half` or `Edm.Single` fields. It cannot be added to an existing field and has no portal support." },
+    { "front": "What is the risk of `stored: false` with truncation in AI Search?", "back": "Partial document updates lose the vectors unless you resend the full vector." }
+  ],
+  "related": ["w04-t12", "w04-t14", "w04-t16", "w03-t09", "w04-l3"],
+  "refs": ["tr7", "tr17", "tr24", "tr42"]
+}

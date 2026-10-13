@@ -1,0 +1,112 @@
+{
+  "id": "w07-t13",
+  "order": 13,
+  "group": "Identity",
+  "title": "On-behalf-of flow and retrieval identity",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "Run retrieval as the user, not as a broad service account. In the Microsoft identity platform the on-behalf-of (OBO) flow lets a middle tier exchange the caller's token for a downstream token that carries the user's rights.",
+  "useIf": "Each caller has different rights and downstream systems (Search, Graph, a data API) must see who is asking.",
+  "avoidIf": "The job has no user, such as a scheduled batch. There you need a scoped app identity, not OBO.",
+  "explain": [
+    { "t": "p", "md": "The **retrieval identity** is the principal under which retrieval runs. A service account with broad read access plus filtering in your code is the confused-deputy shape: every user gets the service's access, and one missed filter leaks. With OBO the middle tier calls a downstream API as the user, so the downstream system enforces the user's rights itself [[r25]]." },
+    { "t": "diagram", "id": "w07-t13-d1", "title": "On-behalf-of exchange", "alt": "The client calls the assistant API with a token for that API. The API sends that token as an assertion to Entra ID and receives a downstream token for the same user, then calls the downstream API with it.", "src": "sequenceDiagram\n  participant C as Client app\n  participant A as Assistant API\n  participant E as Entra ID\n  participant D as Downstream API\n  C->>A: Token whose audience is the assistant API\n  A->>E: assertion plus requested_token_use=on_behalf_of\n  E-->>A: Token for the downstream API, same user\n  A->>D: Call with the user's delegated token" },
+    { "t": "p", "md": "The request uses `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer`, `requested_token_use=on_behalf_of`, a `scope` for the downstream API and an `assertion` that is the access token sent to the middle tier. That token must have the middle-tier app as its audience [[r25]]. OBO uses **delegated scopes only, never app roles**, so roles stay attached to the user and never to the app acting for them." },
+    { "t": "p", "md": "Handle three details. If the downstream API enforces Conditional Access, such as MFA, the token request fails and the middle tier must return that challenge (a 401 with a `WWW-Authenticate` header) so the client can satisfy it. Never forward a middle-tier token to anything but its intended audience, and never relay it back to the client [[r25]]. In Azure AI Search native ACL queries, the user's Entra token goes in `x-ms-query-source-authorization` while the calling app needs Search Index Data Reader [[r12]]." },
+    { "t": "callout", "kind": "why", "title": "Ingest and query use different identities", "md": "Ingestion often runs as an app identity with read access to sources, for example SharePoint indexing needs application permissions [[r16]]. Query time must carry the user. Keep the two identities, scopes and logs separate." },
+    { "t": "callout", "kind": "note", "title": "Token handling (design reasoning)", "md": "Cache tokens per user and per scope, never share a cache entry between users, never log tokens, and treat any cache TTL on memberships as part of your revocation SLA." }
+  ],
+  "whereToUse": [
+    "Assistant APIs that call Azure AI Search with native ACLs, Microsoft Graph or a line-of-business API",
+    "Systems where per-user audit trails in downstream services matter",
+    "Multi-hop agents where each tool call should carry the user's identity",
+    "Any design review that finds one service account with read access to everything"
+  ],
+  "whenToUse": {
+    "use": ["Rights differ per user and the downstream system can enforce them", "You want the downstream audit log to show the real user", "You can run a confidential client as the middle tier"],
+    "avoid": ["Scheduled jobs with no user present", "Downstream systems that cannot accept delegated tokens", "Relaying middle-tier tokens to the browser"],
+    "flips": ["No interactive user: use a managed identity scoped to the minimum and state the audience of the output", "Downstream does not support delegated tokens: map the user to a permission set yourself and enforce it in code", "MFA applies downstream: surface the challenge instead of falling back to the app identity"]
+  },
+  "alternatives": {
+    "title": "Retrieval identity options",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["OBO delegated token", "Per-user rights, interactive flows", "No user present", "Token plumbing, Conditional Access handling"],
+      ["Service identity plus filter in code", "Public or uniform-access content", "Rights differ per user", "Confused deputy, one missed filter leaks"],
+      ["Service identity plus user id passed explicitly", "Downstream cannot take delegated tokens", "You cannot trust the passing code path", "You own the mapping and audit"],
+      ["Managed identity, scoped to the minimum", "Batch jobs and ingestion", "Output reaches users with different rights", "Must define the output audience"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Every user sees what the service can see", "cause": "Retrieval ran under an app-only token", "fix": "Use OBO or token-based enforcement and show where user identity enters the call" },
+    { "symptom": "MFA users get empty or generic errors", "cause": "The middle tier swallowed the Conditional Access challenge", "fix": "Return the 401 with WWW-Authenticate so the client can step up" },
+    { "symptom": "Tokens appear in logs or traces", "cause": "Request or header logging was left on", "fix": "Redact authorization headers and log principal ids only" }
+  ],
+  "scenarios": [
+    {
+      "id": "w07-t13-s1",
+      "title": "Interactive assistant, different rights per user",
+      "situation": "A web assistant lets employees search documents in an index with native ACLs and in Graph. Rights differ per user and change daily. The security team wants a per-user audit trail.",
+      "constraints": ["Interactive users", "Per-user rights", "Per-user audit"],
+      "unknowns": ["Does the API run as a confidential client?", "Are all downstream APIs OBO-capable?"],
+      "question": "Which retrieval identity do you use?",
+      "options": [
+        { "name": "A service principal with read on everything, filtering in your code", "verdict": "poor", "why": "Every user then holds the service's access, and a missed filter leaks.", "tradeoff": "Fits public content or a prototype with no per-user rights." },
+        { "name": "OBO with delegated scopes, passing the user's token to Search and Graph", "verdict": "best", "why": "Downstream systems enforce the user's rights and log the user [[r25]].", "tradeoff": "Token plumbing, Conditional Access handling and per-user token caches." },
+        { "name": "Service principal plus the user id in a header", "verdict": "good", "why": "Works when the downstream cannot take delegated tokens.", "tradeoff": "You enforce and audit the mapping yourself." }
+      ],
+      "flips": [
+        { "if": "A downstream API cannot accept delegated tokens", "then": "Pass the user id explicitly and enforce in your own layer." },
+        { "if": "Content is public", "then": "A service identity is simpler and fine." }
+      ],
+      "takeaway": "Run retrieval as the user when rights differ per user."
+    },
+    {
+      "id": "w07-t13-s2",
+      "title": "Nightly summary job with no user",
+      "situation": "A scheduled job produces a daily summary of new documents for a team channel. No user is signed in. Documents come from sources with mixed permissions.",
+      "constraints": ["No user present", "Mixed-permission sources", "Output goes to one team"],
+      "unknowns": ["Which team members may see which sources?", "Can sources be restricted to what the whole channel may read?"],
+      "question": "How should the job authenticate?",
+      "options": [
+        { "name": "Store users' refresh tokens and run as them later", "verdict": "poor", "why": "Offline user impersonation widens exposure and breaks consent.", "tradeoff": "Only appropriate for explicit, user-approved delegated background access." },
+        { "name": "A managed identity limited to sources every channel member may read, with the output audience defined", "verdict": "best", "why": "The job's rights equal the audience's common rights, so the summary cannot reveal more than they could read.", "tradeoff": "The summary omits content that only some members may see." },
+        { "name": "A broad service principal that reads everything", "verdict": "good", "why": "Complete summaries.", "tradeoff": "A leak risk for members who lack rights to some sources." }
+      ],
+      "flips": [
+        { "if": "Each reader gets a personal digest", "then": "Generate it per user with their delegated access." },
+        { "if": "All sources are visible to the whole team", "then": "A broad identity is acceptable." }
+      ],
+      "takeaway": "Without a user, scope the identity to the output audience."
+    },
+    {
+      "id": "w07-t13-s3",
+      "title": "Downstream requires MFA",
+      "situation": "The assistant calls a data API that has a Conditional Access policy requiring MFA. Some users report that answers silently omit data after a policy change.",
+      "constraints": ["Conditional Access downstream", "Silent omission", "Interactive users"],
+      "unknowns": ["What error does the token request return?", "Does the client handle claims challenges?"],
+      "question": "How do you fix it?",
+      "options": [
+        { "name": "Return the Conditional Access challenge (401 with WWW-Authenticate) so the client can step up", "verdict": "best", "why": "The user can satisfy MFA and the call then runs as them [[r25]].", "tradeoff": "The client must handle claims challenges." },
+        { "name": "Catch the error and retry with the app identity", "verdict": "poor", "why": "It bypasses the policy and widens access.", "tradeoff": "Never acceptable for user-scoped data." },
+        { "name": "Show a generic error and ask the user to sign in again", "verdict": "good", "why": "Safe.", "tradeoff": "Poor experience and may loop without the claims challenge." }
+      ],
+      "flips": [
+        { "if": "The client cannot handle challenges", "then": "Redirect the user to a sign-in page that triggers MFA." },
+        { "if": "The data does not need Conditional Access", "then": "Relax the policy for that API instead of working around it." }
+      ],
+      "takeaway": "Surface the challenge and never fall back to the app identity."
+    }
+  ],
+  "quiz": [
+    { "id": "w07-t13-q1", "type": "single", "tag": "security", "q": "Which statement about the OBO flow is correct?", "options": ["The middle tier receives the app roles of its own app registration for the downstream call", "It uses delegated scopes only, so roles stay with the user and not the app", "The token sent as the assertion can have any audience", "It lets the browser reuse the middle-tier token directly"], "answer": 1, "explain": "OBO exchanges the user's token for a downstream token with delegated scopes and never app roles. The assertion must have the middle-tier app as its audience, and middle-tier tokens must not be relayed to clients.", "ref": "r25" },
+    { "id": "w07-t13-q2", "type": "order", "tag": "order", "q": "Order the OBO exchange.", "items": ["The client calls the assistant API with a token whose audience is that API", "The API posts the token as the assertion with requested_token_use=on_behalf_of", "Entra ID returns a downstream token for the same user", "The API calls the downstream API with that token"], "explain": "The client token arrives first, the middle tier exchanges it at the token endpoint, receives a downstream token and uses it to call the downstream API.", "ref": "r25" }
+  ],
+  "flashcards": [
+    { "front": "What is the retrieval identity?", "back": "The principal under which retrieval runs: the caller (delegated token) or a service account. It decides what the index or source returns." },
+    { "front": "Why does OBO use delegated scopes only?", "back": "So roles stay attached to the user and never to the app acting on their behalf, which prevents a user gaining rights they should not have." },
+    { "front": "What must the middle tier do when downstream Conditional Access demands MFA?", "back": "Surface the challenge to the client (a 401 with WWW-Authenticate) so the user can step up. Never fall back to the app identity." }
+  ],
+  "related": ["w07-t14", "w07-t11", "w07-t18", "w07-l2", "w08-t11"],
+  "refs": ["r12", "r16", "r25"]
+}

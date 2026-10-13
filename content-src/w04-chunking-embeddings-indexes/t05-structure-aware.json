@@ -1,0 +1,102 @@
+{
+  "id": "w04-t05",
+  "order": 5,
+  "group": "Chunking",
+  "title": "Structure-aware chunking",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "Parse the document's own structure (headings, sections, tables, layout) and split along it, keeping the section path as metadata. Chunks follow the author's meaning, not a token counter.",
+  "useIf": "Documents have headings, tables or layout and answers live inside sections you can name.",
+  "avoidIf": "The text is flat, or the parser cannot recover headings reliably, so the structure you split on is wrong.",
+  "explain": [
+    { "t": "p", "md": "**Structure-aware chunking** splits on what the author already marked: markdown headings, HTML tags, layout blocks, list items, tables. The chunker walks the heading tree and emits a chunk per section. A table or code block is kept as one unit. If a section is longer than the limit, a recursive splitter divides it, and short sibling sections can be merged up. Each chunk records its **section path**, for example `Returns > International > Import duties`." },
+    { "t": "diagram", "id": "w04-t05-d1", "title": "Structure-aware pipeline", "alt": "A document is parsed into structured markdown, split by heading tree, oversized sections are split recursively, tables are kept whole, and each chunk receives a section path.", "src": "flowchart LR\n  A[\"Document\"] --> B[\"Parse to markdown or layout\"]\n  B --> C[\"Split by heading tree\"]\n  C --> D[\"Keep tables and code whole\"]\n  D --> E[\"Cap size inside long sections\"]\n  E --> F[\"Attach section path\"]" },
+    { "t": "p", "md": "The quality of the split depends on the parse. Document Intelligence layout v4.0 returns Markdown with headings, HTML tables, handwriting flags and figure regions [[tr41]]. The AI Search Content Understanding skill extracts and chunks in one step, with a default chunk length of 500 and a range of 300 to 50,000 characters or 100 to 8,000 tokens [[tr5]]. The Azure Architecture Center advises matching the approach to the document type (structured, semi-structured, unstructured) and shows a Content Understanding analyzer that adds title, summary and keywords as chunk metadata [[tr9]]." },
+    { "t": "table", "caption": "Metadata worth storing with every structure-aware chunk", "head": ["Field", "Why it earns its place"], "rows": [
+      ["Section path", "Disambiguates the chunk, supports filters and citations"],
+      ["Page or ordinal position", "Enables window expansion and page-level citations"],
+      ["Content type (text, table, figure, code)", "Lets you route or weight chunk types"],
+      ["Source id and version", "Supports updates and deletes by document"],
+      ["Access fields copied at ingest", "Every chunk must inherit its document's permissions"]
+    ] },
+    { "t": "callout", "kind": "tip", "title": "Section path: field or prepended text?", "md": "Prepending the path to the chunk text makes it searchable and visible to the embedding, but adds tokens to every chunk. Storing it in a separate field costs nothing in the embedding but is not matched unless you search that field. Many teams do both for a short path." },
+    { "t": "p", "md": "The chunk visualizer lab in the fixed-size chunking topic shows the difference on a markdown document with a table. Compare 'Fixed 64 on markdown' with 'Structure-aware 64': the second keeps the table whole at the price of uneven chunk sizes." }
+  ],
+  "whereToUse": [
+    "Policy manuals, product documentation, specifications and wikis with real headings",
+    "Reports and slide decks parsed by a layout model into markdown",
+    "Sources that need citations by section or per-section permissions",
+    "Documents with tables or code where splitting mid-block destroys meaning"
+  ],
+  "whenToUse": {
+    "use": ["Headings or layout survive parsing", "Answers are scoped to a named section", "You want stable chunk boundaries under edits"],
+    "avoid": ["Flat text with no usable structure", "Scanned files where heading detection is unreliable and unchecked", "Sections vary from one line to many pages with no size cap"],
+    "flips": ["Parser quality is poor: fix parsing first or fall back to recursive splitting", "Sections are huge: add a size cap and parent-child retrieval", "Questions cross sections: retrieve parents or neighbouring sections"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Structure-aware splitting", "Headings, tables and layout exist", "Flat or badly parsed text", "Depends on parser quality, uneven sizes"],
+      ["Recursive splitting", "Prose, no layout", "Tables and code", "Cuts across section meaning"],
+      ["Fixed size with overlap", "Cheapest baseline", "Structured documents", "Cuts rows from headers"],
+      ["Page-level chunking", "Page is a natural unit", "Pages mix topics", "Blurred vectors, large prompts"],
+      ["Semantic splitting", "Topic shifts without headings", "Headings already exist", "Extra embedding pass"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Some sections are one line, others twenty pages", "cause": "Splitting strictly on headings produces uneven sizes", "fix": "Merge small siblings up to a minimum and recursively split large sections to a maximum" },
+    { "symptom": "A scanned PDF yields one giant chunk", "cause": "OCR text has no detected headings, so the heading splitter finds nothing", "fix": "Use layout analysis that detects headings, verify on a sample, and fall back to recursive splitting" },
+    { "symptom": "Parsing code breaks after a Document Intelligence version change", "cause": "In v4.0 `2024-11-30` Markdown tables are HTML tables and checkboxes use the symbols ☒ and ☐ instead of `:selected:` and `:unselected:`", "fix": "Pin the API version and re-run a parsing regression set on upgrade" }
+  ],
+  "scenarios": [
+    {
+      "id": "w04-t05-s1",
+      "title": "Policy manuals with per-section access",
+      "situation": "An assistant answers from internal policy manuals. Each section can have its own audience and users expect citations that name the section. The files are born-digital with real headings.",
+      "constraints": ["Real headings", "Per-section permissions", "Citations by section", "Moderate corpus size"],
+      "unknowns": ["Do permissions vary inside a document?", "How long are the longest sections?"],
+      "question": "How do you chunk?",
+      "options": [
+        { "name": "Split by heading tree, cap at about 512 tokens, store section path and access fields on each chunk", "verdict": "best", "why": "Sections map to meaning, citations are exact and permissions attach to the right unit.", "tradeoff": "Uneven chunk sizes and a dependency on clean headings." },
+        { "name": "Recursive splitting at 512 tokens", "verdict": "good", "why": "Simple and tolerant of missing headings.", "tradeoff": "Citations lose the section name unless you reattach it." },
+        { "name": "Fixed 512 tokens with 25% overlap over the whole file", "verdict": "poor", "why": "Chunks span section edges, so one chunk can mix audiences and cite no section.", "tradeoff": "Right only for flat text with no headings." }
+      ],
+      "flips": [
+        { "if": "Headings are inconsistent across manuals", "then": "Normalise headings in the parse step or fall back to recursive splitting per source." },
+        { "if": "Sections are very long", "then": "Add parent-child retrieval so small children match and sections are returned." }
+      ],
+      "takeaway": "When structure carries meaning and permissions, split along it and record it."
+    },
+    {
+      "id": "w04-t05-s2",
+      "title": "Scanned contracts, unknown layout quality",
+      "situation": "A legal team archives scanned contracts. Some have clean numbered clauses and others are skewed or handwritten. The team needs clause-level retrieval.",
+      "constraints": ["Scanned PDFs", "Mixed scan quality", "Clause-level retrieval", "Parsing cost is acceptable"],
+      "unknowns": ["What share of scans is poor?", "Are clause numbers consistent?"],
+      "question": "What is the first step?",
+      "options": [
+        { "name": "Run layout analysis to markdown, validate heading and clause detection on a sample, then split structurally with a recursive fallback", "verdict": "best", "why": "Structure only exists after parsing, so quality is checked before splitting.", "tradeoff": "Parsing cost and a manual review loop." },
+        { "name": "Fixed 512 tokens with 15% overlap on raw OCR text", "verdict": "good", "why": "Works regardless of heading detection.", "tradeoff": "Clauses are cut at arbitrary points." },
+        { "name": "A markdown-header splitter on raw OCR text", "verdict": "poor", "why": "Raw OCR has no markdown headings to find, so it emits giant chunks.", "tradeoff": "Right once a layout model has produced markdown." }
+      ],
+      "flips": [
+        { "if": "Most scans are poor quality", "then": "Route those to a vision-based parser or accept the fixed-size fallback." },
+        { "if": "Volume is huge and cost bites", "then": "Parse only documents that users actually query first." }
+      ],
+      "takeaway": "Structure-aware chunking is only as good as the parse that feeds it."
+    }
+  ],
+  "quiz": [
+    { "id": "w04-t05-q1", "type": "single", "tag": "diagnose", "q": "Structure-aware chunking over scanned PDFs yields huge chunks with no section paths. Most likely cause?", "options": ["The embedding model is too small", "Overlap is set to zero", "The vector index uses cosine", "OCR output has no detected headings to split on"], "answer": 3, "explain": "Without headings in the parsed text, a heading-based splitter has nothing to split on. Model size, overlap and similarity metric do not affect heading splitting." },
+    { "id": "w04-t05-q2", "type": "multi", "tag": "tradeoff", "q": "Which are real costs of splitting strictly by heading?", "options": ["Uneven chunk sizes", "Dependence on parser quality", "Mid-sentence cuts in every chunk", "Loss of the section path"], "answers": [0, 1], "explain": "Section sizes vary and the split is only as good as the parse. Mid-sentence cuts come from blind splitting, and a section path is a benefit of this strategy, not a loss." },
+    { "id": "w04-t05-q3", "type": "match", "tag": "concept", "q": "Match each metadata field to the job it does.", "pairs": [ { "l": "Section path", "r": "Disambiguates a chunk and supports section citations" }, { "l": "Ordinal position", "r": "Enables window expansion to neighbours" }, { "l": "Content type", "r": "Routes or weights text, table, figure and code chunks" }, { "l": "Inherited access fields", "r": "Keeps permissions on every chunk" } ], "explain": "Each field answers a specific need: context, neighbour lookup, routing and security trimming. All four must be stored at ingest because they cannot be reconstructed from the vector." }
+  ],
+  "flashcards": [
+    { "front": "What does a structure-aware chunker split on?", "back": "Headings, layout blocks, tables and code, usually from markdown or a layout parse, with a size cap and merging of small sections." },
+    { "front": "What is a section path and why store it?", "back": "The heading trail, such as Returns > International > Duties. It disambiguates the chunk, supports citations and filters." },
+    { "front": "What changed in Document Intelligence v4.0 `2024-11-30` Markdown output?", "back": "Tables are returned as HTML tables and checkboxes use the symbols ☒ and ☐ instead of the older selected tokens." }
+  ],
+  "related": ["w04-t02", "w04-t03", "w04-t06", "w04-t11", "w03-t03", "w03-t05", "w04-l1"],
+  "refs": ["tr5", "tr9", "tr41"]
+}

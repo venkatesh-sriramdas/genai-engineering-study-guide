@@ -1,0 +1,116 @@
+{
+  "id": "w01-t04",
+  "order": 4,
+  "group": "Sampling and decoding",
+  "title": "Temperature and top_p",
+  "minutes": 6,
+  "difficulty": "core",
+  "summary": "Temperature reshapes the next-token probabilities, and top_p cuts the candidate list to the most probable tokens. Newer reasoning and Claude models reject non-default values.",
+  "useIf": "You tune randomness on a non-reasoning model, or debug a 400 about sampling after a model change.",
+  "avoidIf": "The model is a reasoning model with effort above `none`, or a recent Claude model. Control behaviour with prompts, schemas and effort instead.",
+  "explain": [
+    { "t": "p", "md": "At each step the model scores every token. **Temperature** divides those scores before they become probabilities, so low values sharpen the distribution toward the top token and high values flatten it. **top_p** (nucleus sampling) keeps only the smallest set of tokens whose cumulative probability reaches `p`, then samples from that set. Both reduce or widen variety. OpenAI advises changing one, not both [[r4]]. For most tasks pick one knob, leave the other at its default, and compare outputs on a fixed set of prompts rather than on a few samples." },
+    { "t": "formula", "title": "Temperature in the softmax", "expr": "p_i = exp(z_i / T) / sum_j exp(z_j / T)", "vars": [
+      { "k": "z_i", "v": "Score (logit) of token i" },
+      { "k": "T", "v": "Temperature. Near 0 approaches always picking the top token" }
+    ], "example": "Two tokens with scores 2.0 and 1.0. At T = 1 the probabilities are 0.731 and 0.269. At T = 0.5 they become 0.881 and 0.119, so the top token is chosen more often." },
+    { "t": "table", "caption": "Where the controls apply (check date 2026-10-13)", "head": ["API or model", "temperature", "top_p", "Rule"], "compact": true, "rows": [
+      ["OpenAI Responses and Chat", "0 to 2", "Yes", "Change `temperature` or `top_p`, not both [[r4]]"],
+      ["OpenAI reasoning, effort not `none`", "Removed", "Removed", "Send neither, per the GPT-6 guide [[r2]]"],
+      ["Anthropic, older models", "0.0 to 1.0, default 1.0", "Yes", "Lower for analytical tasks [[r19]]"],
+      ["Anthropic, models after Opus 4.6", "Only 1.0", "0.99 or higher", "Any other value returns 400. Opus 4.7 (2026-04-16) already did this [[r21]]"]
+    ] },
+    { "t": "p", "md": "Common starting ranges from practice, not vendor rules: 0 to 0.3 for extraction and classification, 0.2 to 0.5 for summaries, around 0.7 for conversation, 0.8 to 1.0 for brainstorming. Validate with evals. Temperature 0 does not guarantee identical outputs, as Anthropic states [[r19]]." },
+    { "t": "callout", "kind": "tip", "title": "When not to touch them", "md": "If the model is a reasoning model, or a recent Claude model, leave sampling at defaults. Steer with the prompt, strict schemas, effort and verbosity, and measure variance with repeated runs." }
+  ],
+  "whereToUse": [
+    "Extraction and classification on non-reasoning models, where low temperature reduces wobble",
+    "Creative drafting and brainstorming, where higher values give variety",
+    "A/B tests of prompt variants, where you hold sampling fixed to compare fairly",
+    "Migration reviews, to find code that sends sampling values a new model rejects",
+    "Self-consistency setups that sample several answers on purpose and vote"
+  ],
+  "whenToUse": {
+    "use": [
+      "You use a non-reasoning OpenAI model and need more or less variety",
+      "The task has one right answer and you want fewer random deviations",
+      "You need diverse candidates, for example several drafts to rank"
+    ],
+    "avoid": [
+      "Changing both temperature and top_p at once, which makes effects hard to attribute",
+      "Relying on temperature 0 for reproducibility",
+      "Sending non-default values to models that reject them"
+    ],
+    "flips": [
+      "Model is a reasoning model at effort above `none`: remove the parameters",
+      "Target is a Claude model after Opus 4.6: remove them and test variance by repeated runs",
+      "Outputs are flat and repetitive: raise temperature a little before touching penalties"
+    ]
+  },
+  "alternatives": {
+    "title": "Ways to control variety",
+    "head": ["Lever", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Lower temperature", "One right answer, non-reasoning model", "Reasoning or new Claude models reject it", "Less diversity, still not deterministic"],
+      ["Lower top_p", "You want to cut the unlikely tail", "You already changed temperature", "Interaction makes tuning hard"],
+      ["Strict schema or enum", "Output shape must be exact", "Free text is wanted", "Constrains format, not wording"],
+      ["Prompt and examples", "Behaviour must be stable across models", "The prompt is already long", "Costs tokens, needs evals"],
+      ["Sample several and vote", "Accuracy matters more than cost", "Latency or cost is tight", "Multiplies cost, and `n` bills for all choices"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "HTTP 400 on a Claude call that worked on an older model", "cause": "Models after Opus 4.6 accept only temperature 1.0 and top_p of 0.99 or higher", "fix": "Remove the parameters and control behaviour with prompt, schema and effort" },
+    { "symptom": "Results still differ between runs at temperature 0", "cause": "Temperature 0 is not fully deterministic", "fix": "Test with repeated runs and tolerances, and store outputs when you need an audit trail" },
+    { "symptom": "Tuning has no clear effect", "cause": "Both temperature and top_p were changed together", "fix": "Change one, measure on a fixed eval set, then decide" }
+  ],
+  "scenarios": [
+    {
+      "id": "w01-t04-s1",
+      "title": "Extracting fields from invoices",
+      "situation": "A pipeline extracts eight fields from invoices using a non-reasoning model. Outputs vary slightly between runs and break a downstream match step.",
+      "constraints": ["Non-reasoning OpenAI model", "One correct answer per field", "Downstream code needs stable values"],
+      "unknowns": ["Is the variance in values or in formatting?", "Can the output use a strict schema?"],
+      "question": "What do you change?",
+      "options": [
+        { "name": "Use a strict schema, set a low temperature and leave top_p alone, then measure agreement over repeated runs", "verdict": "best", "why": "A schema fixes the shape, low temperature reduces value wobble, and changing one sampling control keeps the test clean.", "tradeoff": "Variance may remain, so the downstream step should tolerate small differences." },
+        { "name": "Set temperature 2 and top_p 0.1 so the two cancel out", "verdict": "poor", "why": "The effects interact and are hard to predict. High temperature adds the randomness you want to remove.", "tradeoff": "Sampling a wide pool is right for brainstorming, not extraction." },
+        { "name": "Set temperature 0 and assume it is deterministic", "verdict": "good", "why": "Cuts most randomness.", "tradeoff": "Output can still differ between runs, and nothing checks the shape." }
+      ],
+      "flips": [
+        { "if": "The model is a reasoning model", "then": "Drop sampling parameters and use a schema plus effort." },
+        { "if": "Auditors need exact reproduction", "then": "Store the extracted output with inputs and model version." }
+      ],
+      "takeaway": "Fix the shape with a schema, narrow randomness with one control, and measure."
+    },
+    {
+      "id": "w01-t04-s2",
+      "title": "Porting a prompt to a recent Claude model",
+      "situation": "An internal tool sends `temperature: 0.2` to an older model. The team switches to Claude Opus 5.5 and every call returns HTTP 400.",
+      "constraints": ["Low-risk internal tool", "Deadline this week", "Output stability still matters"],
+      "unknowns": ["Which parameters does the request send?", "How much variance does the tool tolerate?"],
+      "question": "How do you proceed?",
+      "options": [
+        { "name": "Catch the 400 and retry with random sampling values until one works", "verdict": "poor", "why": "Models after Opus 4.6 accept only temperature 1.0 and top_p of 0.99 or higher, so guessing wastes calls and hides the rule.", "tradeoff": "Trial and error is acceptable only against an undocumented API, and this one is documented." },
+        { "name": "Remove the sampling parameters, tighten the prompt and use a strict schema, then check variance with repeated runs", "verdict": "good", "why": "Matches the documented rule and keeps output stable by other means.", "tradeoff": "More prompt work and an eval pass." },
+        { "name": "Remove the sampling parameters, use `output_config` structured outputs and effort settings, and add a small repeat-run test to the release checklist", "verdict": "best", "why": "It follows the rule and uses the controls that remain supported, with a test that guards against regression [[r19]] [[r32]].", "tradeoff": "Needs a schema and a repeat-run harness." }
+      ],
+      "flips": [
+        { "if": "You need low temperature behaviour exactly", "then": "Use a model family that still accepts it, and record why." },
+        { "if": "The tool is used for creative output", "then": "Defaults of 1.0 may be fine, so keep them and rank several drafts." }
+      ],
+      "takeaway": "A rejected parameter is a contract. Replace the control, do not guess values."
+    }
+  ],
+  "quiz": [
+    { "id": "w01-t04-q1", "type": "numeric", "tag": "numeric", "q": "Two tokens have logits 2.0 and 1.0. At temperature 0.5, what is the probability of the higher-scoring token?", "answer": 0.881, "tolerancePct": 2, "explain": "Divide scores by 0.5 to get 4 and 2. exp(4) = 54.6 and exp(2) = 7.39, so p = 54.6 / 61.99 = 0.881." },
+    { "id": "w01-t04-q2", "type": "single", "tag": "bug", "q": "A request to a Claude model released after Opus 4.6 sends `temperature: 0.3`. What happens?", "options": ["It is clamped to 1.0", "It is ignored silently", "It returns HTTP 400", "It works but only for the first turn"], "answer": 2, "explain": "These models accept only temperature 1.0 and top_p of 0.99 or higher, and other values return 400 [[r19]]. They are not clamped or ignored." },
+    { "id": "w01-t04-q3", "type": "multi", "tag": "tradeoff", "q": "Which statements about temperature and top_p are correct?", "options": ["Change one, not both, when tuning", "Temperature 0 guarantees identical outputs", "Low temperature sharpens the distribution toward the top token", "Reasoning calls with effort above `none` should drop both"], "answers": [0, 2, 3], "explain": "OpenAI advises changing one, low temperature sharpens, and OpenAI says to remove both when effort is not `none`. Temperature 0 does not guarantee determinism." }
+  ],
+  "flashcards": [
+    { "front": "What does temperature do to the next-token distribution?", "back": "It divides the logits before the softmax. Low values sharpen toward the top token and high values flatten the distribution." },
+    { "front": "What is top_p?", "back": "Nucleus sampling: sample only from the smallest set of tokens whose cumulative probability reaches p." },
+    { "front": "Which Claude models accept only temperature 1.0?", "back": "Models released after Opus 4.6, including Opus 4.7. They also need top_p of 0.99 or higher, and other values return 400." }
+  ],
+  "related": ["w01-t03", "w01-t05", "w01-t06", "w01-l2", "w14-t12"],
+  "refs": ["r4", "r2", "r19", "r21", "r32"]
+}

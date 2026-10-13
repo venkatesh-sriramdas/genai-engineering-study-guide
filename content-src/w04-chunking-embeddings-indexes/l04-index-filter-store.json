@@ -1,0 +1,94 @@
+{
+  "id": "w04-l4",
+  "order": 4,
+  "title": "Index, filter, store",
+  "kind": "problem",
+  "minutes": 18,
+  "brief": "The vectors exist. Choose an index family and its knobs, explain why a tenant filter can make a top-10 query return three rows, and pick a store. The vector count, the filter selectivity and the operations model are not stated.",
+  "blocks": [
+    { "t": "h", "text": "Four index families, one memory bill", "level": 2 },
+    { "t": "p", "md": "Topics `w04-t16` (flat, HNSW, IVF, DiskANN), `w04-t17` (HNSW parameters), `w04-t18` (filtered search) and `w04-t19` (vector store options) explain the mechanisms. This level makes you pick. Every approximate index trades recall for speed or memory, and a filter changes the trade, so the tables below carry the numbers an interviewer expects you to quote." },
+    { "t": "table", "caption": "Index families", "head": ["Family", "How it works", "Wins when", "Loses when"], "rows": [
+      ["Flat or exhaustive KNN", "Compare the query with every vector. AI Search `exhaustiveKnn`, Cosmos DB `flat` (up to 505 dimensions), Redis FLAT [[r23]] [[r29]] [[r34]]", "The set is small (Redis suggests under about 1M vectors), results must be exact, or a filter leaves few candidates", "Latency grows with every vector you add"],
+      ["HNSW", "A layered proximity graph walked greedily from the top [[r24]]", "Low latency and high recall when the graph fits in memory", "The vector quota is a memory quota in AI Search [[r36]], and FAISS HNSW does not support removing vectors [[r26]]"],
+      ["IVF with product quantization", "Cluster into lists and search the nearest `probes` lists [[r27]]", "Memory is tight and a re-ranking stage is acceptable [[r26]]", "Recall depends on `probes` (pgvector default 1) and on tuning `lists` [[r27]]"],
+      ["DiskANN", "A graph index built to live mostly on SSD [[r25]]", "Very large sets where RAM is the constraint: a billion points on one workstation with 64 GB of RAM and an SSD [[r25]]", "Cosmos DB needs at least 1,000 vectors or a full scan runs, and results can differ slightly between replicas [[r29]]"]
+    ], "highlightCol": 2 },
+    { "t": "table", "caption": "HNSW knobs and where the defaults differ", "head": ["Parameter", "Effect", "Azure AI Search", "pgvector", "Qdrant"], "rows": [
+      ["`m`", "Links per node. More links raise recall and memory", "4 (range 4 to 10)", "16", "16"],
+      ["`efConstruction`", "Candidate list while building. Higher gives a better graph and a slower build", "400 (100 to 1,000)", "64 (`ef_construction`)", "100 (`ef_construct`)"],
+      ["`efSearch`", "Candidate list per query. Higher raises recall and latency", "500 (100 to 1,000)", "40 (`hnsw.ef_search`)", "Check the docs"]
+    ], "highlightCol": 2 },
+    { "t": "formula", "title": "How many rows survive a post-filter", "expr": "expected_rows = candidates_scanned x selectivity", "vars": [
+      { "k": "candidates_scanned", "v": "what the index returns before the filter (for pgvector HNSW this is about `hnsw.ef_search`)" },
+      { "k": "selectivity", "v": "the share of vectors that match the filter" }
+    ], "example": "With `hnsw.ef_search` 40 and a filter that matches 10% of rows, pgvector returns about **4** rows, not 10. Iterative scans (0.8.0 and later) keep scanning until enough rows pass, bounded by `hnsw.max_scan_tuples` (default 20,000) [[r27]]." },
+    { "t": "dials", "id": "w04-l4-store", "title": "Pick a vector store", "prompt": "Flip the constraints. Remember that one fact can matter more than the whole matrix: data gravity.",
+      "dials": [
+        { "id": "scale", "label": "Vector count", "values": [ { "id": "small", "label": "Under a million" }, { "id": "large", "label": "Tens of millions or more" } ] },
+        { "id": "shape", "label": "Query and data shape", "values": [ { "id": "hybrid", "label": "Keyword plus vector with rich filters" }, { "id": "rows", "label": "Vectors beside transactional rows" }, { "id": "tenant", "label": "Many tenants, each filtered or partitioned" } ] },
+        { "id": "ops", "label": "Operations model", "values": [ { "id": "managed", "label": "Managed service, small team" }, { "id": "self", "label": "We can run it and want cost control" } ] }
+      ],
+      "options": [
+        { "id": "search", "name": "Azure AI Search", "summary": "Managed search with BM25, vectors, filters and semantic ranking." },
+        { "id": "cosmos", "name": "Cosmos DB for NoSQL", "summary": "Vectors in the same items as your operational data, with flat, quantizedFlat and diskANN indexes." },
+        { "id": "pg", "name": "PostgreSQL (pgvector, pg_diskann)", "summary": "Vectors beside relational rows, with HNSW, IVFFlat and DiskANN indexes." },
+        { "id": "redis", "name": "Redis", "summary": "FLAT, HNSW and SVS-VAMANA vector indexes." },
+        { "id": "dedicated", "name": "Dedicated vector database (Qdrant, Pinecone)", "summary": "Purpose-built stores with payload filters and namespaces." },
+        { "id": "elastic", "name": "Elasticsearch or OpenSearch", "summary": "A lexical engine with a dense vector field in the same index." }
+      ],
+      "scores": {
+        "search": {
+          "scale": { "small": { "s": 2, "why": "HNSW fits comfortably, and the vector quota is a memory quota [[r36]]." }, "large": { "s": 0, "why": "HNSW graphs are memory resident, so quota and cost grow with vector count. Compression helps [[r36]]." } },
+          "shape": { "hybrid": { "s": 2, "why": "BM25, vector and filter in one query, with `preFilter` as the recommended mode [[r30]]." }, "rows": { "s": -1, "why": "Vectors live apart from the operational rows, so you sync and reconcile." }, "tenant": { "s": 0, "why": "Tenant id filters work, and an index per tenant is possible, within service limits to check." } },
+          "ops": { "managed": { "s": 2, "why": "A fully managed service." }, "self": { "s": -1, "why": "A managed service only: you cannot run it yourself." } }
+        },
+        "cosmos": {
+          "scale": { "small": { "s": 0, "why": "Approximate indexes need at least 1,000 vectors or a full scan runs, and `flat` stops at 505 dimensions [[r29]]." }, "large": { "s": 2, "why": "`diskANN` (up to 4,096 dimensions) is built for large sets [[r25]] [[r29]]." } },
+          "shape": { "hybrid": { "s": 0, "why": "Check the current docs for keyword plus vector hybrid support. This guide did not verify it." }, "rows": { "s": 2, "why": "Vectors sit in the same items as the data, so there is nothing to sync." }, "tenant": { "s": 1, "why": "A partition key per tenant is the usual Cosmos DB pattern (practice)." } },
+          "ops": { "managed": { "s": 2, "why": "A managed service." }, "self": { "s": -1, "why": "Not self-hosted." } }
+        },
+        "pg": {
+          "scale": { "small": { "s": 2, "why": "HNSW or exact search with a B-tree on the filter column works well and adds no new system [[r27]]." }, "large": { "s": 0, "why": "`pg_diskann` extends it to larger sets, but check memory and build time on your data [[r28]]." } },
+          "shape": { "hybrid": { "s": 0, "why": "Pair it with Postgres full-text search yourself (practice). There is no managed ranker." }, "rows": { "s": 2, "why": "Vectors beside relational rows, in one transaction." }, "tenant": { "s": 1, "why": "List partitioning for many values or tenant isolation, and partial indexes for a few values, are documented patterns [[r27]]." } },
+          "ops": { "managed": { "s": 1, "why": "Azure Database for PostgreSQL offers `pg_diskann` as an extension [[r28]]." }, "self": { "s": 2, "why": "Open source and runs anywhere." } }
+        },
+        "redis": {
+          "scale": { "small": { "s": 2, "why": "FLAT suits sets under about 1M vectors and gives exact results [[r34]]." }, "large": { "s": 0, "why": "HNSW above 1M vectors, with `M` and `EF_CONSTRUCTION` to tune [[r34]]." } },
+          "shape": { "hybrid": { "s": 0, "why": "Check lexical ranking features before relying on it. This guide did not verify them." }, "rows": { "s": 0, "why": "Neutral: a fit only where Redis already holds the data." }, "tenant": { "s": 0, "why": "Neutral." } },
+          "ops": { "managed": { "s": 0, "why": "Neutral." }, "self": { "s": 0, "why": "Neutral." } }
+        },
+        "dedicated": {
+          "scale": { "small": { "s": 0, "why": "Works, but it is a new system for a small set." }, "large": { "s": 2, "why": "Built for large vector workloads, and Pinecone serverless indexes allow up to 1,000,000 namespaces on Enterprise [[r35]]." } },
+          "shape": { "hybrid": { "s": 0, "why": "Check hybrid features per product. This guide did not verify them." }, "rows": { "s": -1, "why": "Vectors live apart from the operational rows, so you sync them." }, "tenant": { "s": 2, "why": "One namespace per tenant is Pinecone's documented pattern [[r35]], and Qdrant builds filter-aware graph edges when payload indexes exist before ingest [[r31]]." } },
+          "ops": { "managed": { "s": 1, "why": "Pinecone serverless indexes are managed [[r35]]." }, "self": { "s": 1, "why": "Qdrant is open source and can be self-hosted [[r31]]." } }
+        },
+        "elastic": {
+          "scale": { "small": { "s": 0, "why": "Works, but heavier than the job needs." }, "large": { "s": 1, "why": "OpenSearch `on_disk` mode trades latency for cost, and Elasticsearch has `bbq_disk` where licensed [[r32]] [[r33]]." } },
+          "shape": { "hybrid": { "s": 2, "why": "A mature lexical engine and a vector field in one index." }, "rows": { "s": -1, "why": "A search copy of your data, kept in sync." }, "tenant": { "s": 0, "why": "Filters or an index per tenant, both workable." } },
+          "ops": { "managed": { "s": 0, "why": "Managed offerings exist. This guide did not verify them." }, "self": { "s": 1, "why": "Self-hostable, with quantized defaults that differ by version [[r32]]." } }
+        }
+      },
+      "takeaway": "Scale picks the index family, filters and hybrid needs pick the engine, and data gravity (where the operational rows live) often decides the tie." },
+    { "t": "failure", "title": "Index and filter failure modes", "items": [
+      { "symptom": "A tenant-filtered query asks for 10 and returns 3", "cause": "The filter runs after the approximate scan. pgvector scans about `ef_search` candidates, and AI Search `postFilter` and `strictPostFilter` can return too few or zero [[r27]] [[r30]].", "fix": "Use `preFilter` in AI Search, iterative scans in pgvector 0.8.0 and later, a partial index or partition per tenant, or exhaustive search over the small filtered set." },
+      { "symptom": "An older index cannot use `preFilter` or compression", "cause": "Indexes created before about 2023-10-15 default to `postFilter` [[r30]].", "fix": "Recreate the index." },
+      { "symptom": "The Cosmos DB vector policy is rejected or queries scan everything", "cause": "Policies cannot be edited in place, `flat` stops at 505 dimensions, and approximate indexes need at least 1,000 vectors [[r29]].", "fix": "Plan dimensions and the index type up front, and drop and re-add the policy when it must change." },
+      { "symptom": "Filtered queries are slow after a bulk load in Qdrant", "cause": "Payload indexes were created after ingest, so the graph has no filter-aware edges [[r31]].", "fix": "Create payload indexes before ingest, or rebuild the HNSW index." }
+    ] },
+    { "t": "callout", "kind": "preview", "title": "Status as of 2026-10-13", "md": "`strictPostFilter` in Azure AI Search and product quantization in `pg_diskann` are preview [[r28]] [[r30]]. Elasticsearch quantization defaults differ by version, with `int8_hnsw` in 9.0 and `bbq_hnsw` from 384 dimensions in later text, so check the version you run [[r32]]. ACORN is a research method for filtered HNSW and not a store feature you can switch on [[r37]]." }
+  ],
+  "quiz": [
+    { "id": "w04-l4-q1", "type": "numeric", "tag": "numeric", "difficulty": 2, "q": "A pgvector HNSW query runs with `hnsw.ef_search` set to 100, and the tenant filter matches 2 percent of the rows. With iterative scans off, about how many rows come back?", "answer": 2, "tolerancePct": 10, "unit": "rows", "hint": "The filter is applied to the candidates the index returns.", "explain": "The index returns about 100 candidates and 2 percent pass the filter, so about 100 x 0.02 = 2 rows, far below a top-10 request. Raising `ef_search` lifts the count slowly, so iterative scans, a partial index or a partition per tenant fix the cause [[r27]]." },
+    { "id": "w04-l4-q2", "type": "single", "tag": "diagnose", "difficulty": 2, "q": "Top-10 queries with a tenant filter return only three rows on a pgvector HNSW index, and recall without the filter is fine. What is the best fix?", "options": ["Raise `m` from 16 to 64 so that the graph has many more links per node", "Lower the embedding dimensions so that the scan visits candidates faster", "Enable iterative scans, or give each tenant a partial index or partition", "Switch the distance metric from cosine to dot product to change the ranking"], "answer": 2, "explain": "The index scans a fixed candidate list and the filter then discards most of it, so the cause is the filter order. Iterative scans keep scanning until enough rows pass, and a partial index or partition makes the candidate set per tenant. `m`, dimensions and the metric change the graph, not how the filter is applied [[r27]]." },
+    { "id": "w04-l4-q3", "type": "single", "tag": "flip", "difficulty": 3, "q": "An index holds 200,000 chunks, and each tenant filter matches about 300 of them. Latency is fine, and recall must be exact. What do you choose?", "options": ["HNSW with `efSearch` raised to 1,000 and a post-filter applied on top", "IVF with `probes` left at the default of 1 and a post-filter", "Binary quantization to speed up the scan and shrink the index", "A pre-filter, or exhaustive search over the filtered subset"], "answer": 3, "explain": "With only about 300 candidates after the filter, comparing the query with every one of them is cheap and exact, which is what AI Search suggests for very selective filters (`exhaustive: true`) and what a B-tree on the filter column does in pgvector. The approximate options add recall risk where the candidate set is already tiny [[r27]] [[r30]]." }
+  ],
+  "defend": null,
+  "refs": ["r23", "r24", "r25", "r26", "r27", "r28", "r29", "r30", "r31", "r32", "r33", "r34", "r35", "r36", "r37", "r40"],
+  "takeaways": [
+    "Flat is exact and fine for small or highly filtered sets, HNSW needs memory, IVF needs tuning and DiskANN fits large sets on SSD",
+    "Know the HNSW defaults and what each knob buys: higher values trade memory, build time or latency for recall",
+    "A post-filter can return too few rows: expected rows are candidates times selectivity, so pre-filter, iterate or partition",
+    "Pick the store by scale, filters, data gravity and the operations model, and say which facts you did not verify"
+  ]
+}

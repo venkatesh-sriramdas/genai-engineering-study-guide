@@ -1,0 +1,85 @@
+{
+  "id": "w06-l4",
+  "order": 4,
+  "title": "Build, borrow or buy: open-source, custom and PII guards",
+  "kind": "problem",
+  "minutes": 18,
+  "brief": "The platform guards cover the common harms. Your taxonomy, your languages or your data-residency rules may say otherwise. When do you reach for NeMo Guardrails, Guardrails AI, Llama Guard, plain deterministic checks or a PII detector?",
+  "blocks": [
+    { "t": "h", "text": "Four kinds of guard you can run yourself", "level": 2 },
+    { "t": "compare", "title": "Open-source and custom guards", "intro": "Version and catalogue facts were checked on 2026-10-13 and change often, so pin versions and re-test.", "options": [
+      { "name": "NeMo Guardrails", "tag": "Open source", "summary": "A Python library, also a Kubernetes microservice, configured with YAML and Colang.", "pros": ["Five rail types: input, retrieval, dialog, execution and output. Retrieval rails filter chunks and execution rails check tool calls [[r13]]", "Built-in content safety, jailbreak detection, topic control, PII handling and fact checking, plus integrations such as Llama Guard", "Runs wherever you host it"], "cons": ["You operate it", "LLM-based rails depend on prompt quality, and `self check facts` fails closed with score 0.0 if a reasoning model uses its whole `max_tokens` budget [[r14]]"], "bestWhen": "You need dialog and flow control as well as classification, or data must stay on your servers.", "avoidWhen": "You only need a managed harm filter." },
+      { "name": "Guardrails AI", "tag": "Open source", "summary": "A Python framework that runs Input and Output Guards built from validators in Guardrails Hub, and can also produce structured output.", "pros": ["The Hub listed 65 validators on 2026-10-13, for example ban list, toxic language, detect jailbreak and detect PII (which uses Presidio) [[r15]]", "Fits code-first teams and structured output checks"], "cons": ["Validator quality and dependencies vary", "The catalogue count changes often"], "bestWhen": "You want to compose small, named checks in application code.", "avoidWhen": "You need a policy engine across dialog turns." },
+      { "name": "Llama Guard", "tag": "Open weights", "summary": "A safety classifier that labels prompts and responses against hazard categories.", "pros": ["Llama Guard 4 is 12B parameters, natively multimodal and runs on one GPU, as a drop-in for Llama Guard 3 8B and 11B", "Category text can be rewritten in the prompt, so a custom taxonomy needs no retraining", "Llama Guard 3 1B stays useful on the edge [[r16]]"], "cons": ["You host a GPU model and add a hop", "It classifies prompt text and image together, not an image alone", "Broad categories such as S6 Specialized Advice can over-block legitimate regulated content"], "bestWhen": "You need your own taxonomy and the text must stay in your network.", "avoidWhen": "You cannot host a model or tune category text." },
+      { "name": "Deterministic checks", "summary": "Schemas, allow lists, regex, size caps, URL and domain allow lists, output format validation.", "pros": ["Fast, predictable and auditable", "The right tool for blocking exfiltration paths, as the MSRC defence-in-depth post notes [[r11]]"], "cons": ["No semantic judgement", "Brittle against rephrasing"], "bestWhen": "A rule can express the policy exactly.", "avoidWhen": "The policy needs meaning, such as tone or intent." }
+    ] },
+    { "t": "dials", "id": "w06-l4-pick", "title": "Platform service, open source or custom?", "prompt": "Flip where text may go, how custom your policy is and which languages you serve.",
+      "dials": [
+        { "id": "data", "label": "Where text may go", "values": [ { "id": "managed", "label": "A managed service is fine" }, { "id": "own", "label": "Only our own servers" } ] },
+        { "id": "taxonomy", "label": "Policy shape", "values": [ { "id": "standard", "label": "Standard harm categories" }, { "id": "custom", "label": "Custom policy categories" } ] },
+        { "id": "language", "label": "Languages", "values": [ { "id": "english", "label": "English" }, { "id": "many", "label": "Many languages" } ] }
+      ],
+      "options": [
+        { "id": "foundry", "name": "Foundry guardrails and Content Safety", "summary": "Managed classifiers and a policy surface." },
+        { "id": "nemo", "name": "NeMo Guardrails", "summary": "Open-source rails and flows you host." },
+        { "id": "gai", "name": "Guardrails AI validators", "summary": "Composable Hub validators in your code." },
+        { "id": "lg", "name": "Llama Guard (self-hosted)", "summary": "Open safety classifier with editable categories." },
+        { "id": "custom", "name": "Custom classifier or LLM judge", "summary": "A policy you define and label yourself." }
+      ],
+      "scores": {
+        "foundry": {
+          "data": { "managed": { "s": 2, "why": "No model to host, and it sits in your Azure estate." }, "own": { "s": -2, "why": "Text goes to a managed service." } },
+          "taxonomy": { "standard": { "s": 2, "why": "Harm categories, jailbreak and protected material are built in." }, "custom": { "s": 0, "why": "Custom categories (standard) is retired or retiring and rapid is preview." } },
+          "language": { "english": { "s": 2, "why": "Best coverage." }, "many": { "s": -1, "why": "Harm models were tested on eight languages and several features on English only." } }
+        },
+        "nemo": {
+          "data": { "managed": { "s": 0, "why": "It orchestrates whichever models you choose." }, "own": { "s": 2, "why": "Runs in your process or as a microservice on your Kubernetes." } },
+          "taxonomy": { "standard": { "s": 1, "why": "Built-in content safety, jailbreak, topic control, PII and fact-check rails." }, "custom": { "s": 2, "why": "Colang flows and actions express your policy." } },
+          "language": { "english": { "s": 0, "why": "Depends on the models you plug in." }, "many": { "s": 0, "why": "Same dependency, so test each language." } }
+        },
+        "gai": {
+          "data": { "managed": { "s": 0, "why": "Neutral." }, "own": { "s": 1, "why": "Validators run in your process, though some call external services." } },
+          "taxonomy": { "standard": { "s": 1, "why": "Hub validators cover ban lists, toxicity, jailbreak and PII." }, "custom": { "s": 1, "why": "Compose validators or write your own." } },
+          "language": { "english": { "s": 0, "why": "Validator dependent." }, "many": { "s": 0, "why": "Validator dependent, so test each language." } }
+        },
+        "lg": {
+          "data": { "managed": { "s": 0, "why": "You host it either way." }, "own": { "s": 2, "why": "Open weights on your own GPU." } },
+          "taxonomy": { "standard": { "s": 1, "why": "Llama Guard 3 ships S1 to S14 hazard categories." }, "custom": { "s": 2, "why": "Rewrite the category text in the prompt." } },
+          "language": { "english": { "s": 0, "why": "Check the model card for your case." }, "many": { "s": 0, "why": "Test your languages, because coverage is not assumed here." } }
+        },
+        "custom": {
+          "data": { "managed": { "s": 1, "why": "Call any model API you approve." }, "own": { "s": 1, "why": "Possible with an open model." } },
+          "taxonomy": { "standard": { "s": -1, "why": "Rebuilding what exists costs more." }, "custom": { "s": 2, "why": "You define the policy and the labelled data exactly." } },
+          "language": { "english": { "s": 0, "why": "No advantage." }, "many": { "s": 1, "why": "You can prompt or tune per language, at a cost." } }
+        }
+      },
+      "takeaway": "Data location and policy shape decide most of this. Language coverage is the dial people forget to test." },
+    { "t": "table", "caption": "PII handling by stage", "head": ["Stage", "Option", "What to know"], "rows": [
+      ["At ingest", "Azure AI Language PII: text PII (synchronous strings), conversation PII (asynchronous) and document PII (asynchronous, native `.pdf`, `.docx`, `.txt`, returns a redacted file and JSON metadata) [[r18]]", "Redaction can remove the signal needed to answer, so decide what must stay linkable and keep it under access control"],
+      ["At query time", "Presidio: analyzer, anonymizer, image redactor and structured data module. Recognizers combine NER, regex, rule logic with checksums and context, and can call external detectors such as Azure AI Language [[r17]]", "The docs warn there is no guarantee it finds all PII, so add custom recognizers for your formats"],
+      ["On output", "Foundry PII filter: scans model output only, entity types follow Azure Language categories, annotate or annotate and block (the whole output) [[r8]]", "Preview. Does not cover prompts, retrieved chunks or logs"],
+      ["In logs and traces", "Redact before storing, with the same detector you trust elsewhere", "The output filter never sees what you log from the input side"]
+    ], "highlightCol": 2 },
+    { "t": "failure", "title": "Failure modes of self-run guards", "items": [
+      { "symptom": "Every answer is blocked after swapping to a reasoning model.", "cause": "`self check facts` returned 0.0 because the model used its `max_tokens` budget before answering, and the rail fails closed.", "fix": "Raise the token budget or use a non-reasoning model for the check, and alert on a sudden block spike." },
+      { "symptom": "Legitimate regulated advice is blocked.", "cause": "A broad hazard category such as Specialized Advice matches normal answers.", "fix": "Rewrite the category text for your domain, measure false positives per category and keep a human review path." },
+      { "symptom": "A local national ID format slips through.", "cause": "No detector guarantees full PII coverage, and the format has no recognizer.", "fix": "Add a custom recognizer with a checksum, build a test set of your formats and track misses." },
+      { "symptom": "The output is clean and PII still shows up in logs.", "cause": "The output filter does not see prompts, chunks or log writes.", "fix": "Redact at ingest and before logging, and test the log path." },
+      { "symptom": "Behaviour changes after a framework upgrade.", "cause": "Rails, prompts and validators change between versions. NeMo's docs list releases from v0.22.0 to v0.24.1 and a Latest build.", "fix": "Pin versions and re-run your guard evaluation set on every upgrade." }
+    ] },
+    { "t": "callout", "kind": "note", "title": "Presidio moved", "md": "Presidio now lives under the community-owned Data Privacy Stack, with docs at presidio.dataprivacystack.org and source at data-privacy-stack/presidio. Old Microsoft URLs redirect, so update bookmarks and dependency notes. Checked 2026-10-13." }
+  ],
+  "quiz": [
+    { "id": "w06-l4-q1", "type": "single", "tag": "tradeoff", "difficulty": 2, "q": "A regulated assistant must keep text on its own servers, enforce custom policy categories and serve several languages. Which stack fits best?", "options": ["Self-hosted Llama Guard with custom category text, run through NeMo Guardrails", "Foundry guardrails with Custom categories (standard) to carry the custom policy", "Guardrails AI validators that call a hosted detection API for every check", "An instruction in the system prompt that lists the policy"], "answer": 0, "explain": "Open weights keep text on your servers, rewritten category text carries the custom taxonomy, and NeMo supplies the flow control. You still have to test each language. Custom categories (standard) is retired or retiring and managed, hosted-API validators send text out, and a prompt instruction is not an enforced guard." },
+    { "id": "w06-l4-q2", "type": "single", "tag": "diagnose", "difficulty": 2, "q": "After switching the generator to a reasoning model, every answer is blocked. The log shows the following. What is the cause?", "code": { "lang": "text", "code": "rail: self check facts\nmodel: reasoning model, max_tokens=200\nscore: 0.0\naction: blocked\nretrieved chunks: 5" }, "options": ["The knowledge base lacks the chunks needed, so the rail scored the answer zero", "A retrieval rail removed every chunk before generation began, leaving nothing to score", "The reasoning model spent its `max_tokens` budget, so the rail failed closed", "A Llama Guard S7 Privacy label fired on every answer, which the rail blocks"], "answer": 2, "explain": "NeMo's fact-check rail returns 0.0 and blocks when a reasoning model uses its whole token budget thinking, which fails closed. The log still shows five retrieved chunks, so retrieval and the chunks are fine, and nothing in it shows a Llama Guard label." },
+    { "id": "w06-l4-q3", "type": "multi", "tag": "security", "difficulty": 2, "q": "Select every true statement about PII controls.", "options": ["Presidio's documentation warns there is no guarantee that it finds all PII", "The Foundry PII filter scans model output only and is a preview feature", "The Foundry PII filter also scans user prompts and retrieved chunks", "Azure AI Language document PII is asynchronous and accepts native .pdf, .docx and .txt files"], "answers": [0, 1, 3], "explain": "The first, second and fourth statements match the docs. The output filter does not scan prompts or chunks, which is why redaction at ingest and before logging is separate work." }
+  ],
+  "defend": null,
+  "refs": ["r13", "r14", "r15", "r16", "r17", "r18", "r8", "r11", "r28", "r29"],
+  "takeaways": [
+    "Data location and policy shape decide most platform versus self-hosted choices",
+    "Llama Guard lets you rewrite category text, and NeMo gives you flow control with five rail types",
+    "No PII detector guarantees full coverage, so test your own formats and cover logs",
+    "Pin guard framework versions and re-run your evaluation set after upgrades"
+  ]
+}

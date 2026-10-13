@@ -1,0 +1,127 @@
+{
+  "id": "w01-t13",
+  "order": 13,
+  "group": "API styles",
+  "title": "Streaming and background mode",
+  "minutes": 7,
+  "difficulty": "core",
+  "summary": "Streaming sends tokens as events so users see output early. Background mode runs a long call on the server while you poll. Batch handles bulk offline work.",
+  "useIf": "A user waits on a response, a call outlasts an HTTP timeout, or you process large volumes offline.",
+  "avoidIf": "You act on partial output. Never execute a tool call or parse JSON before the item is complete.",
+  "explain": [
+    { "t": "p", "md": "**Streaming** returns server-sent events as the model generates. OpenAI Responses emits `response.created`, `response.in_progress`, `response.output_item.added`, `response.content_part.added`, repeated `response.output_text.delta`, then `response.output_text.done`, `response.content_part.done`, `response.output_item.done`, `response.completed`, and `error` on failure [[tr1]]. Anthropic sends `message_start`, then per block `content_block_start`, `content_block_delta` (`text_delta`, `input_json_delta`, `thinking_delta`) and `content_block_stop`, then `message_delta` with cumulative usage and `message_stop`. A `ping` can appear anywhere [[tr2]]." },
+    { "t": "diagram", "id": "w01-t13-d1", "title": "Responses stream, in order", "alt": "Events flow from response created through item added, content part added, repeated text deltas, text done, item done and response completed.", "src": "flowchart LR\n  A[response.created] --> B[output_item.added]\n  B --> C[content_part.added]\n  C --> D[output_text.delta x many]\n  D --> E[output_text.done]\n  E --> F[output_item.done]\n  F --> G[response.completed]" },
+    { "t": "p", "md": "Anthropic streams tool input one complete key and value at a time, so pauses are normal and you should not treat them as stalls. Buffer deltas and act when the item or block is done." },
+    { "t": "p", "md": "**Background mode** sets `background: true`. The call returns at once and you poll while the status is `queued` or `in_progress` [[r35]]. Under zero data retention a background response runs with `store=false` and its data sits on disk for roughly 10 minutes so you can poll, so fetch and persist the result promptly. Projects with Modified Abuse Monitoring keep a background response beyond polling only if `store=true` is set explicitly. On Azure, cancel is idempotent, you can resume a stream with `sequence_number`, and combining background with streaming has a known performance issue [[r34]]." },
+    { "t": "callout", "kind": "tip", "title": "Pick by who is waiting", "md": "A person watching: stream. A request that exceeds a timeout: background and poll. Nobody waiting: Batch at 50% of the Standard price with a 24 hour window, separate rate limits and no streaming on Anthropic batches [[r37]] [[r39]]." }
+  ],
+  "whereToUse": [
+    "Chat and assistant UIs, to cut perceived latency with earlier first tokens",
+    "Voice and live captions, where partial text drives the next step",
+    "Deep research or long reasoning calls that run for minutes",
+    "Web apps behind gateways with short HTTP timeouts",
+    "Bulk nightly processing with Batch instead of per-request calls"
+  ],
+  "whenToUse": {
+    "use": [
+      "Streaming when a person reads output as it appears",
+      "Background mode when a single call may outlast a timeout",
+      "Batch when results can wait up to 24 hours"
+    ],
+    "avoid": [
+      "Acting on partial tool arguments or partial JSON",
+      "Streaming where a downstream system needs only the final object",
+      "Background mode for bulk work that Batch can do at half price"
+    ],
+    "flips": [
+      "A ZDR project uses background mode: poll within the roughly 10 minute window and store the result yourself",
+      "Users disconnect often: use background with polling instead of one long stream",
+      "Streaming plus background on Azure shows slowdowns: poll without streaming"
+    ]
+  },
+  "alternatives": {
+    "title": "Ways to deliver a long or large response",
+    "head": ["Mode", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Streaming", "A person is waiting", "The result is machine-consumed", "More client code, partial-state bugs"],
+      ["Non-streaming call", "Short outputs, simple code", "Long outputs or UIs", "User waits for the whole answer"],
+      ["Background plus polling", "Calls longer than timeouts, resumable work", "You need instant feedback", "Polling logic, retention rules"],
+      ["Batch API", "Offline bulk, cost sensitive", "Interactive use", "Up to 24 hours, 50% discount, separate quota"],
+      ["Flex processing", "Non-urgent work at Batch rates", "Capacity must be certain", "Beta, may be unavailable [[r38]]"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "An email is sent with an incomplete address", "cause": "The app acted on tool arguments before the call finished streaming", "fix": "Execute tools only after the item is done and the arguments validate" },
+    { "symptom": "A stream seems stalled during a tool call on Claude", "cause": "Tool input arrives one complete key and value at a time", "fix": "Wait for `content_block_stop`, and keep a heartbeat timeout longer than the pauses" },
+    { "symptom": "A background result is gone under ZDR", "cause": "Data stays on disk only for roughly 10 minutes for polling", "fix": "Poll early and write the result to your own store" },
+    { "symptom": "Background plus streaming feels slow on Azure", "cause": "A known performance issue when the two combine", "fix": "Use background with polling, or stream without background" }
+  ],
+  "scenarios": [
+    {
+      "id": "w01-t13-s1",
+      "title": "A streaming chat that also calls tools",
+      "situation": "A chat UI streams text and the model sometimes calls a tool that sends an email. Users complain that the first token is slow, and an incident sent an email with a truncated address.",
+      "constraints": ["Interactive UI", "A tool has side effects", "Streaming is wanted for first-token speed"],
+      "unknowns": ["Which tools have side effects?", "Is a confirmation step acceptable?"],
+      "question": "How do you design the stream handling?",
+      "options": [
+        { "name": "Run the tool as soon as its arguments start to arrive, to save time", "verdict": "poor", "why": "Partial arguments caused the incident. A tool must not run before the call item is complete.", "tradeoff": "Prefetching read-only data from partial hints can be safe when it has no side effects." },
+        { "name": "Stream text to the UI, buffer tool calls, validate arguments after the item is done, then execute with a confirmation for side effects", "verdict": "best", "why": "It keeps the fast first token and removes the partial-action risk.", "tradeoff": "A short delay before tools run and more state handling." },
+        { "name": "Turn streaming off whenever tools are enabled", "verdict": "good", "why": "Simple and safe.", "tradeoff": "Users lose the early tokens, so perceived latency rises." }
+      ],
+      "flips": [
+        { "if": "Tools are read-only", "then": "You can start fetching earlier, still validating before use." },
+        { "if": "The consumer is a program", "then": "Skip streaming and take the final object." }
+      ],
+      "takeaway": "Stream for humans, act on completed items only."
+    },
+    {
+      "id": "w01-t13-s2",
+      "title": "A 20 minute research run behind a 60 second gateway",
+      "situation": "A web app runs a deep research call that takes about 20 minutes. The load balancer cuts connections at 60 seconds. The company is under zero data retention.",
+      "constraints": ["Gateway timeout is 60 seconds", "ZDR applies", "A user wants the result in the same session"],
+      "unknowns": ["Can the UI show progress through polling?", "Where can results be stored?"],
+      "question": "What do you build?",
+      "options": [
+        { "name": "Hold one streaming connection open for 20 minutes", "verdict": "poor", "why": "The gateway cuts it at 60 seconds, so the run is lost or must restart.", "tradeoff": "Long streams work only when no intermediary enforces a short timeout." },
+        { "name": "Submit through Batch and notify later", "verdict": "good", "why": "Cheaper and resilient.", "tradeoff": "Up to 24 hours is too slow for a user waiting in session." },
+        { "name": "Use `background: true`, poll for status with a progress UI, and persist the result to your own store within the retention window", "verdict": "best", "why": "It survives the timeout, and storing the result yourself respects ZDR's short polling window.", "tradeoff": "You build polling, error handling and a result store." }
+      ],
+      "flips": [
+        { "if": "The user can come back tomorrow", "then": "Batch halves the price." },
+        { "if": "No ZDR and results may live with the provider", "then": "Keep `store=true` and poll the stored response." }
+      ],
+      "takeaway": "Timeouts push long work to background and polling."
+    },
+    {
+      "id": "w01-t13-s3",
+      "title": "Two million documents overnight",
+      "situation": "A nightly job classifies two million short documents. Results are needed by morning.",
+      "constraints": ["Offline", "Cost sensitive", "Documents are independent"],
+      "unknowns": ["Does the policy allow Batch for this data?", "Is the 50,000 request limit per file acceptable?"],
+      "question": "Which delivery mode do you use?",
+      "options": [
+        { "name": "Batch API, split into files within the request and size limits", "verdict": "best", "why": "It gives a 50% discount, a separate rate-limit pool and a 24 hour window that fits the morning deadline [[r37]].", "tradeoff": "No interactive feedback, and OpenAI batches are not ZDR eligible." },
+        { "name": "Background mode for each document", "verdict": "poor", "why": "It targets long single calls, and two million polls add load without a discount.", "tradeoff": "Background fits a few long calls that exceed a timeout." },
+        { "name": "Synchronous calls with high concurrency", "verdict": "good", "why": "Fast and simple.", "tradeoff": "Standard price, rate-limit pressure and retry handling." }
+      ],
+      "flips": [
+        { "if": "The data is under ZDR", "then": "Batch is not eligible, so use synchronous calls with careful rate limiting." },
+        { "if": "Results are needed within minutes", "then": "Use synchronous calls or a priority tier." }
+      ],
+      "takeaway": "When nobody waits, batch it."
+    }
+  ],
+  "quiz": [
+    { "id": "w01-t13-q1", "type": "order", "tag": "order", "q": "Order these OpenAI Responses stream events.", "items": ["response.created", "response.output_item.added", "response.output_text.delta", "response.output_text.done", "response.completed"], "explain": "A response is created, an item is added, text deltas arrive, the text completes and then the response completes." },
+    { "id": "w01-t13-q2", "type": "single", "tag": "diagnose", "q": "A Claude stream pauses for several seconds while a tool call is being generated. What is the likely cause?", "options": ["Tool input arrives one complete key and value at a time", "The connection dropped", "The context window is full", "`ping` events stopped"], "answer": 0, "explain": "Anthropic streams tool input one complete key and value at a time, so pauses are normal. A `ping` event may also appear in any position." },
+    { "id": "w01-t13-q3", "type": "multi", "tag": "security", "q": "Which practices make streaming with tools safe?", "options": ["Run side-effect tools only after the item is complete and validated", "Execute tools from partial arguments to cut latency", "Buffer deltas until a block ends", "Confirm risky actions with the user"], "answers": [0, 2, 3], "explain": "Complete items, buffering and confirmation prevent partial-action incidents. Executing from partial arguments is the cause of them." }
+  ],
+  "flashcards": [
+    { "front": "How long does ZDR background data stay on disk for polling?", "back": "Roughly 10 minutes. Poll promptly and persist the result yourself." },
+    { "front": "Which Anthropic events carry tool input deltas?", "back": "`content_block_delta` with `input_json_delta`, arriving one complete key and value at a time." },
+    { "front": "Which mode do you pick when nobody is waiting?", "back": "Batch: 50% of Standard, a 24 hour window and a separate rate-limit pool." }
+  ],
+  "related": ["w01-t09", "w01-t11", "w02-t02", "w16-t06", "w01-l5"],
+  "refs": ["tr1", "tr2", "r35", "r34", "r37", "r39", "r38"]
+}

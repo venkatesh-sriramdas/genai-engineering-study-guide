@@ -1,0 +1,75 @@
+{
+  "id": "w12-l3",
+  "order": 3,
+  "title": "Open the right door",
+  "kind": "problem",
+  "minutes": 16,
+  "brief": "Callers speak different languages: a chat UI, a webhook, a phone line, another agent, Teams. A hosted agent can expose several protocols, so decide who owns the conversation and which channel the callers use.",
+  "blocks": [
+    { "t": "h", "text": "Five protocols, one agent", "level": 2 },
+    { "t": "p", "md": "A hosted agent can expose several protocols at once [[r2]]. Choose by who owns the conversation and what the caller sends. The docs' default advice is to start with Responses and add Invocations later. Each hosted agent gets its own endpoint at deploy time, so programmatic callers need no publishing step. Publishing is for people in Teams or Microsoft 365 Copilot [[r5]]." },
+    { "t": "table", "caption": "Hosted agent protocols, checked 2026-10-13", "head": ["Protocol", "Conversation state", "Client", "Use for", "Price of choosing it"], "rows": [
+      ["Responses", "Platform keeps history", "Any OpenAI-compatible SDK", "Chatbots, RAG with tools, background work with `background: true`, Teams and Microsoft 365 publishing", "Fixed event shape"],
+      ["Invocations", "You manage sessions", "Raw HTTP, with SSE you write", "Webhooks, non-conversational batch or extraction, custom streaming such as AG-UI, protocol bridges", "You build history and the streaming format"],
+      ["Invocations (WebSocket)", "You manage sessions", "WebSocket client, paired with Pipecat, LiveKit or Voice Live inside the container", "Real-time voice", "Two-way streaming and reconnect logic"],
+      ["Activity", "Bridged from Responses", "Teams and Microsoft 365 Copilot", "Chat inside Microsoft 365", "Not chosen directly, it follows publishing"],
+      ["A2A", "Task based, between agents", "Another agent", "Peer agents. v1.0 is GA, v0.3 is preview", "A contract and trust surface to keep stable"]
+    ], "highlightCol": 0 },
+    { "t": "dials", "id": "w12-l3-protocol", "title": "Pick a protocol", "prompt": "Change the caller, the history owner and the channel.",
+      "dials": [
+        { "id": "caller", "label": "Who calls", "values": [ { "id": "ui", "label": "Chat UI or OpenAI-compatible SDK" }, { "id": "hook", "label": "Webhook, batch or custom stream" }, { "id": "voice", "label": "Real-time voice client" }, { "id": "peer", "label": "Another agent" } ] },
+        { "id": "history", "label": "Conversation history", "values": [ { "id": "platform", "label": "Platform keeps it" }, { "id": "own", "label": "I keep sessions" } ] },
+        { "id": "channel", "label": "Channel", "values": [ { "id": "teams", "label": "Teams or Microsoft 365" }, { "id": "none", "label": "No Microsoft 365 channel" } ] }
+      ],
+      "options": [
+        { "id": "resp", "name": "Responses", "summary": "Platform history, OpenAI-compatible." },
+        { "id": "inv", "name": "Invocations", "summary": "Your payload, your SSE." },
+        { "id": "ws", "name": "Invocations WebSocket", "summary": "Two-way streaming for voice." },
+        { "id": "a2a", "name": "A2A", "summary": "Peer agents, task based." }
+      ],
+      "scores": {
+        "resp": {
+          "caller": { "ui": { "s": 2, "why": "Any OpenAI-compatible SDK is the client." }, "hook": { "s": -1, "why": "A webhook payload does not fit a conversation shape." }, "voice": { "s": -2, "why": "No two-way audio stream." }, "peer": { "s": 0, "why": "Works as a tool call, but A2A models tasks." } },
+          "history": { "platform": { "s": 2, "why": "The platform keeps conversation history." }, "own": { "s": -1, "why": "You would fight the managed history." } },
+          "channel": { "teams": { "s": 2, "why": "Activity is bridged from Responses on publish." }, "none": { "s": 0, "why": "No channel advantage." } }
+        },
+        "inv": {
+          "caller": { "ui": { "s": 0, "why": "Works, but you build what Responses gives." }, "hook": { "s": 2, "why": "Built for webhooks, batch and custom streams." }, "voice": { "s": -1, "why": "Request and response, not a socket." }, "peer": { "s": 0, "why": "Possible, but not a peer contract." } },
+          "history": { "platform": { "s": -2, "why": "You manage sessions yourself." }, "own": { "s": 2, "why": "Full control of sessions and SSE." } },
+          "channel": { "teams": { "s": -2, "why": "Activity bridges from Responses, not Invocations." }, "none": { "s": 1, "why": "Free to shape the payload." } }
+        },
+        "ws": {
+          "caller": { "ui": { "s": -2, "why": "A chat UI does not need a socket." }, "hook": { "s": -1, "why": "Overkill for one-shot events." }, "voice": { "s": 2, "why": "Real-time voice with Pipecat, LiveKit or Voice Live." }, "peer": { "s": -2, "why": "Not a peer protocol." } },
+          "history": { "platform": { "s": -1, "why": "Sessions are yours to keep." }, "own": { "s": 1, "why": "Matches a stateful audio stream." } },
+          "channel": { "teams": { "s": -2, "why": "A real-time audio socket is not a Teams chat path (inference)." }, "none": { "s": 0, "why": "Neutral." } }
+        },
+        "a2a": {
+          "caller": { "ui": { "s": -1, "why": "Not a chat client contract." }, "hook": { "s": 0, "why": "Neutral." }, "voice": { "s": -2, "why": "Not an audio protocol." }, "peer": { "s": 2, "why": "Built for agent to agent tasks." } },
+          "history": { "platform": { "s": 0, "why": "Task state is protocol defined." }, "own": { "s": 0, "why": "Task state is protocol defined." } },
+          "channel": { "teams": { "s": -1, "why": "Not the Teams path." }, "none": { "s": 1, "why": "Fits cross-team calls with no channel." } }
+        }
+      },
+      "takeaway": "Responses is the default and the only route to Teams. Leave it when the payload, the stream or the caller is not a conversation." },
+    { "t": "code", "lang": "text", "title": "Endpoint shapes", "code": "{endpoint} = {project_endpoint}/agents/{name}/endpoint\n\nResponses:   {endpoint}/protocols/openai/responses\nInvocations: {endpoint}/protocols/invocations\nA2A:         {endpoint}/protocols/a2a\nWebSocket:   wss://{account}.services.ai.azure.com/api/projects/{project}/agents/{name}/endpoint/protocols/invocations_ws?api-version=v1", "caption": "From the hosted agents concept page, checked 2026-10-13. Declare protocols in azure.yaml (service azure.ai.agent) with azd, or with protocol_versions in the SDK." },
+    { "t": "diagram", "id": "w12-l3-d1", "title": "Teams message to hosted agent", "alt": "A Teams user message goes to Azure Bot Service, which bridges the Activity to the Responses endpoint of the hosted agent and returns the reply.", "src": "sequenceDiagram\n  participant U as Teams user\n  participant B as Azure Bot Service\n  participant A as Hosted agent\n  U->>B: Message\n  B->>A: Activity bridged to Responses\n  A-->>B: Reply\n  B-->>U: Reply", "caption": "Publishing creates the Azure Bot Service resource and users keep a stable endpoint while you roll versions behind it." },
+    { "t": "compare", "title": "Publishing scope", "intro": "Publishing to Microsoft Copilot and Teams is GA as of 2026-10-13.", "options": [
+      { "name": "Individual scope", "tag": "GA", "summary": "Previously called Shared (`publishScope` Shared). No admin approval.", "pros": ["Ships a pilot without waiting for approval"], "cons": ["Not listed under Built by your org"], "bestWhen": "A pilot or a small group needs the agent this week.", "avoidWhen": "The whole organization needs a managed listing." },
+      { "name": "Organization scope", "tag": "GA", "summary": "`publishScope` Tenant. An admin approves it in the Microsoft 365 admin center, then it is listed under Built by your org.", "pros": ["Managed company-wide listing", "Admin review before wide exposure"], "cons": ["Waits for admin approval"], "bestWhen": "The agent is production and widely used.", "avoidWhen": "You are still iterating on a prototype." },
+      { "name": "No publishing", "summary": "Call the agent's own endpoint programmatically.", "pros": ["No Bot Service resource", "No approval step"], "cons": ["No Teams or Microsoft 365 Copilot presence"], "bestWhen": "Callers are services, apps or other agents.", "avoidWhen": "People expect to chat with it in Teams." }
+    ] },
+    { "t": "failure", "title": "Failure modes", "items": [
+      { "symptom": "A voice client reconnects and the assistant forgets the conversation", "cause": "Invocations (WebSocket) leaves session state to you (inference from the protocol rules)", "fix": "Persist state in `$HOME` or the key-value store, keyed by a session id the client resends." },
+      { "symptom": "Organization publish stays pending", "cause": "The agent waits for admin approval in the Microsoft 365 admin center", "fix": "Request the approval, and use Individual scope for the pilot meanwhile." },
+      { "symptom": "Publishing fails with an authorization error", "cause": "A missing role (Azure Bot Service Contributor, Contributor or Owner, plus Foundry User on the project) or an unregistered `Microsoft.BotService` provider", "fix": "Grant the roles and register the provider before you publish [[r5]]." },
+      { "symptom": "A peer agent cannot call the endpoint", "cause": "The peer speaks a different A2A version. On hosted agents v1.0 is GA and v0.3 is preview", "fix": "Declare the version you serve and test the peer against it." }
+    ] }
+  ],
+  "quiz": [
+    { "id": "w12-l3-q1", "type": "single", "tag": "flip", "q": "A billing system posts JSON events to the agent and expects its own streaming format. There is no Microsoft 365 channel and the caller keeps its own sessions. Which protocol fits?", "options": ["Invocations", "Responses", "Invocations (WebSocket)", "A2A"], "answer": 0, "explain": "Invocations is for webhooks, batch work and custom streaming, and you manage sessions. Responses forces a conversation shape and platform-kept history. WebSocket is for real-time voice. A2A is a peer-agent task protocol, not a webhook receiver.", "difficulty": 1, "ref": "r2" },
+    { "id": "w12-l3-q2", "type": "match", "tag": "concept", "q": "Match each caller to the protocol the docs point to.", "pairs": [ { "l": "Chat UI with platform-kept history and Teams publishing", "r": "Responses" }, { "l": "Webhook or batch extraction with a custom payload", "r": "Invocations" }, { "l": "Real-time voice client with Voice Live in the container", "r": "Invocations (WebSocket)" }, { "l": "Agent owned by another team", "r": "A2A" } ], "explain": "Responses keeps history and bridges to Activity for Teams. Invocations hands payload and sessions to you. The WebSocket variant carries real-time audio. A2A models tasks between peer agents.", "difficulty": 1, "ref": "r2" },
+    { "id": "w12-l3-q3", "type": "single", "tag": "tradeoff", "q": "A team wants a pilot in Teams this week and a managed listing for the whole company next quarter. Which sequence matches how the scopes work?", "options": ["Organization scope first, because Individual scope needs a tenant-wide admin approval before anyone can use the agent in Teams", "Individual scope for both phases, because Organization scope is reserved for Microsoft-built agents", "Individual scope for the pilot, then Organization scope with admin approval and a Built by your org listing", "No publishing at all, because the Activity protocol works without an Azure Bot Service resource"], "answer": 2, "explain": "Individual scope needs no admin approval, which suits a pilot. Organization scope (`publishScope` Tenant) needs approval in the Microsoft 365 admin center and then lists under Built by your org. Individual scope does not need tenant approval, Organization scope is not Microsoft-only, and publishing creates the Azure Bot Service resource that carries Activity.", "difficulty": 2, "ref": "r5" }
+  ],
+  "defend": null,
+  "refs": ["r2", "r5"],
+  "takeaways": ["Start with Responses, add Invocations or WebSocket when the caller is not a chat", "Only Responses bridges to Activity for Teams and Microsoft 365", "Individual scope ships a pilot, Organization scope needs admin approval", "A2A v1.0 is GA and v0.3 is preview on hosted agents, so state the version you serve"]
+}

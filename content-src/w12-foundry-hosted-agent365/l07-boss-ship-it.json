@@ -1,0 +1,94 @@
+{
+  "id": "w12-l7",
+  "order": 7,
+  "title": "Boss: ship it with a name, a leash and a log",
+  "kind": "boss",
+  "minutes": 22,
+  "brief": "An interviewer asks you to take an agent to production on Microsoft's stack and leaves every dial open. Clarify, compare, pick, name the failures and say how you will measure and roll out.",
+  "blocks": [
+    { "t": "h", "text": "The five-step defend for a production agent", "level": 2 },
+    { "t": "scenario", "title": "The interviewer's setup", "known": ["An employee-facing agent answers questions and acts in internal systems", "It must run on Microsoft's stack", "Leadership wants it in production this quarter"], "ask": ["Is configuration enough, or does the agent need code, custom protocols or per-session files?", "Is a user present for each action, or does it run on a schedule or in group chats?", "How are document permissions modelled and how fast must a revocation take effect?", "Which preview features does the compliance bar allow?"], "tension": "Speed to launch pulls toward hosted code and broad access. Accountability pulls toward narrow identities and slower approval." },
+    { "t": "flow", "title": "Launch gates", "direction": "h", "steps": [
+      { "title": "Runtime and protocol", "md": "Prompt, hosted, self-hosted. Responses by default.", "tag": "level 1 to 3" },
+      { "title": "Identity and sponsor", "md": "Mode, blueprint boundary, sponsor and owner.", "tag": "level 5" },
+      { "title": "Tools and knowledge", "md": "Toolbox, Foundry IQ, ACL sync.", "tag": "level 4" },
+      { "title": "Guardrails, traces, evals", "md": "Gate on a golden set before widening.", "tag": "level 6" },
+      { "title": "Publish and register", "md": "Teams scope, Agent 365 registry.", "tag": "level 3 and 6" },
+      { "title": "Observe and retire", "md": "Dashboards, review, retirement dates.", "tag": "level 6" }
+    ] },
+    { "t": "table", "caption": "Defaults to propose and the dial that flips each", "head": ["Dial", "Default", "Flips to", "When"], "rows": [
+      ["Runtime", "Prompt agent", "Hosted agent, or self-hosted", "Code or per-session files are needed, or code must stay elsewhere"],
+      ["Protocol", "Responses", "Invocations, Invocations WebSocket", "A webhook caller, or real-time voice"],
+      ["Identity mode", "OBO", "S2S, or Agentic-User (Frontier preview)", "A scheduled job, or a team coworker in group chats"],
+      ["Knowledge", "Foundry IQ", "Custom retrieval, file search, memory", "Own ranking and eval, user uploads, or per-user facts"],
+      ["Governance join", "Native integration", "Agent 365 SDK, registry sync, Control Plane registration", "Framework code you own, another cloud, or a proxy at a gateway"],
+      ["Preview use", "GA features only", "Named preview features with a waiver", "A dated, signed-off exception for memory, agent guardrails or tool search"]
+    ], "highlightCol": 1 },
+    { "t": "callout", "kind": "interview", "title": "What interviewers listen for", "md": "Date-stamped status. Say 'tool search is preview as of 2026-10-13' and name the retirement dates (Workflows 2026-12-01, classic agents 2027-03-31). Then name who is accountable: the sponsor." }
+  ],
+  "quiz": [
+    { "id": "w12-l7-q1", "type": "single", "tag": "security", "q": "Which launch decision best limits the blast radius if one agent's credentials leak?", "options": ["One blueprint for every agent, so there is a single place to rotate secrets and review permissions for the whole fleet", "A client secret in Key Vault shared by all agents for simple rotation", "Separate blueprints for agents that cannot share credentials and permissions, federated to a managed identity", "Make every sponsor an owner so any of them can recover the agent"], "answer": 2, "explain": "Blueprint credentials are shared by every identity created from the blueprint, so the blueprint is the credential boundary. Separating blueprints and federating to a managed identity keeps a leak local and stores no secret. One blueprint or one shared secret widens the leak. Sponsors and owners hold different powers on purpose.", "difficulty": 3, "ref": "r17" },
+    { "id": "w12-l7-q2", "type": "order", "tag": "order", "q": "Put the launch gates in order.", "items": ["Choose the runtime and protocol", "Choose the identity mode, blueprint and sponsor", "Attach tools through a toolbox and knowledge with ACL-aware retrieval", "Turn on guardrails, tracing and evaluation", "Publish, then confirm the agent appears in the Agent 365 registry"], "explain": "Runtime and protocol decide where identity attaches. Identity must exist before tools and knowledge can run as the right caller. Guardrails and evaluation need tools in place to test. Publishing and registry checks come last, before the rollout widens.", "difficulty": 2, "ref": "r1" },
+    { "id": "w12-l7-q3", "type": "numeric", "tag": "numeric", "q": "A hosted agent's sustained peak CPU is 0.6 vCPU. Docs advise a larger size when peaks pass about 70 percent of allocation. What is the smallest sandbox, in vCPU, that stays at or under 70 percent?", "answer": 1, "tolerancePct": 0, "unit": "vCPU", "hint": "Sizes are 0.5, 1 and 2 vCPU.", "explain": "At 0.5 vCPU the peak is 120 percent of allocation, at 1 vCPU it is 60 percent and at 2 vCPU it is 30 percent. The 1 vCPU size is the smallest that stays under 70 percent, and it costs less per active session than 2 vCPU.", "difficulty": 2, "ref": "r2" }
+  ],
+  "defend": {
+    "prompt": "We built an agent that answers employee questions and takes actions in internal systems. Take it to production on Microsoft's stack. Walk me through runtime, identity, governance and observability, and tell me how you would know it is safe to widen the rollout.",
+    "timebox": "5 min",
+    "clarify": [
+      "Is configuration enough, or does it need custom code, protocols or per-session files?",
+      "Is a user present for each action, or does it run on a schedule or in group chats?",
+      "How are document permissions modelled, and how fast must a revoked permission take effect?",
+      "Which channels do people use: Teams, Microsoft 365 Copilot, an API, voice?",
+      "Which preview features does the compliance and support bar allow?",
+      "Where do other agents already run, and who owns their code?"
+    ],
+    "options": [
+      { "name": "Prompt agent, toolbox and Foundry IQ", "when": "Configuration is enough and the GA bar is high.", "tradeoff": "No custom protocols or per-session files. Least to manage." },
+      { "name": "Hosted agent on Responses", "when": "You need custom orchestration, `$HOME` state or per-session isolation.", "tradeoff": "Cost follows active sessions, long-running resilience is still preview on 2026-10-13, and the older preview backend retired on 2026-08-20." },
+      { "name": "Self-hosted agent registered for governance", "when": "Code must stay on another cloud or on premises.", "tradeoff": "You run isolation, scaling and identity wiring. Governance gives inventory, with the SDK adding code-level tools." }
+    ],
+    "modelAnswer": [
+      { "t": "p", "md": "**Clarify.** I would ask whether configuration is enough or code is needed, whether a user is present for each action, how document permissions work and how fast revocation must be, which channels are in play and how much preview the compliance bar allows. Those answers set runtime, identity mode and knowledge path." },
+      { "t": "p", "md": "**Options.** A prompt agent with a toolbox and Foundry IQ is the boring option and has the least to manage. A hosted agent buys code, protocols and per-session state at the price of active-session compute. A self-hosted agent registered with Agent 365 or the Control Plane is for code that must stay elsewhere." },
+      { "t": "p", "md": "**Pick and flip.** For an employee assistant that acts for the person I would start with a prompt agent. If code or files are needed I move to a hosted agent on Responses, so Teams and Microsoft 365 Copilot publishing works. Identity is OBO so access follows the user. Tools sit behind a toolbox with central auth and versions. Curated content goes through Foundry IQ under the caller's identity with ACL sync. Scheduled jobs get S2S under a separate blueprint. A group-chat coworker would need Agentic-User, which is Frontier preview, so I would flag it with the date." },
+      { "t": "list", "style": "ul", "items": [
+        "Flip to Invocations when the caller is a webhook or batch system, and to WebSocket for real-time voice.",
+        "Flip to custom retrieval when we need our own ranking and evals, and to file search for user uploads.",
+        "Flip to S2S when no user is present, and to the SDK when we own framework code and need governed tools."
+      ] },
+      { "t": "table", "head": ["Failure mode", "How I detect it"], "rows": [
+        ["403 despite correct RBAC from a token audience mismatch", "Decode the token and compare `aud` with the downstream resource id"],
+        ["One leaked credential exposes many agents", "Blueprint inventory: which identities share each blueprint, and are secrets stored at all"],
+        ["Hosted bill grows with concurrency", "Active-session CPU and memory against allocation, with the 70 percent rule"],
+        ["A toolbox promotion breaks consumers", "Staged test of the new version, tool-call accuracy before and after promotion"],
+        ["A preview dependency is retired", "A dated register: Workflows 2026-12-01, classic agents 2027-03-31"],
+        ["The registry misses agents", "Compare registry counts with the deployment inventory each week"]
+      ] },
+      { "t": "p", "md": "**Metrics and rollout.** I would track task success and groundedness on a golden set, tool-call accuracy, guardrail trigger and refusal rates, p95 latency, tokens per task, cost per active session, 403 rate and registry coverage. Rollout starts with an Individual-scope pilot, then Organization scope after admin approval. A canary is a second agent, because an endpoint serves one version. I widen only when evaluations and trace review pass, and every agent has a named sponsor and a retirement plan." }
+    ],
+    "rubric": [
+      { "pt": "Asks about code need, user presence, permission model and preview tolerance before naming a product", "w": 3 },
+      { "pt": "Compares at least two runtimes and names where each loses", "w": 2 },
+      { "pt": "Chooses an identity mode for the stated dials and explains the token subject", "w": 3 },
+      { "pt": "Separates credential boundaries (blueprints) and names sponsor and owner roles", "w": 2 },
+      { "pt": "Labels preview and retiring features with dates", "w": 2 },
+      { "pt": "Names failure modes with a detection signal each", "w": 2 },
+      { "pt": "Gives metrics and a staged rollout with a canary design that respects one version per endpoint", "w": 2 },
+      { "pt": "States what would flip the choice, including the governance join path", "w": 2 }
+    ],
+    "followUps": [
+      { "q": "Security finds the agent reading one person's mail while answering in a group chat. What changes?", "a": "OBO had to choose a user for a shared context. Move that workload to its own identity: Agentic-User if Frontier preview is acceptable, or a scoped S2S identity, and remove delegated mail access from the shared flow." },
+      { "q": "The hosted agent bill triples after launch. What do you check first?", "a": "Concurrent active sessions times allocation. Compare sustained peaks with the 70 percent guidance, right-size the next version, and ask whether a prompt agent covers the need." },
+      { "q": "How do you canary a new agent version when the endpoint serves 100 percent to one version?", "a": "Deploy it as a second agent, route a small share from the client or gateway, compare evaluation and trace metrics, then promote. Traffic splitting is not supported on the endpoint." }
+    ],
+    "redFlags": [
+      "Names hosted agents for everything with no cost or preview caveat",
+      "Gives every agent one shared secret or one blueprint",
+      "Treats a GA product announcement as proof that every mode is GA",
+      "Skips sponsors, so nobody is accountable for the agent",
+      "Has no detection signal for any failure mode"
+    ]
+  },
+  "refs": ["r1", "r2", "r12", "r17", "r28"],
+  "takeaways": ["Ask for the dials first, then pick the boring option and name what flips it", "Credential boundary, token audience and sponsor are the identity details that sink answers", "Date-stamp every preview and retirement claim", "Measure before you widen, and roll out through pilot, organization scope and a second-agent canary"]
+}

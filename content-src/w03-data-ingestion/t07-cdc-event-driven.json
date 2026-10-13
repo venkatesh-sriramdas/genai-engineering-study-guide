@@ -1,0 +1,110 @@
+{
+  "id": "w03-t07",
+  "order": 7,
+  "group": "Keeping it fresh",
+  "title": "CDC and event-driven pipelines",
+  "minutes": 8,
+  "difficulty": "advanced",
+  "summary": "Change data capture and storage events push changes to you in seconds. Delivery is at least once and unordered, so the pipeline must treat events as hints and write idempotently.",
+  "useIf": "Freshness must be seconds, the source emits changes (change feed, database log, storage events) and you can run a queue and workers.",
+  "avoidIf": "Hourly freshness is enough and a supported indexer exists: events add operational burden with no business gain.",
+  "explain": [
+    { "t": "p", "md": "Three event sources are common. The **Cosmos DB change feed** has two modes. Latest version mode records creates and updates, keeps only the newest change per item and does not capture deletes (use a soft-delete flag plus TTL). All versions and deletes mode records every create, update and delete in order, but it needs continuous backup, an opt-in flag, and can be read only within the backup retention window [[tr23]]. **Blob events** flow through Event Grid [[tr24]]. **Debezium** reads the database log and emits a delete event followed, for Kafka compaction, by a tombstone with a null value [[tr25]]." },
+    { "t": "p", "md": "None of them promises exactly once. Event Grid tries to deliver each event at least once, does not guarantee order, and retries on a schedule that starts at 10 seconds and backs off to every 12 hours up to 24 hours. The defaults are 30 attempts and a 1,440 minute time to live, and a failed event is dead-lettered only if you configured that [[tr26]]. Debezium can emit duplicates after a fault [[tr25]]. Items in one Cosmos DB transactional batch share a modification time and may arrive in any order [[tr23]]." },
+    { "t": "p", "md": "The practical answer is **effectively once**: at-least-once delivery plus an idempotent sink. Treat each event as a notification that item X changed. The worker re-reads the current state from the source, builds a stable key from the source id, and writes with `mergeOrUpload`. Re-reading makes stale and out-of-order events harmless, because the worker always indexes the latest state." },
+    { "t": "diagram", "id": "w03-t07-d1", "title": "Event as a hint, source as the truth", "alt": "The source emits a change event to Event Grid, which delivers it to a worker. The worker reads current state from the source, upserts to the index with a stable key and acknowledges the event.", "src": "sequenceDiagram\n  participant S as Source\n  participant E as Event Grid\n  participant W as Worker\n  participant X as Index\n  S->>E: change event\n  E->>W: deliver, at least once\n  W->>S: read current state\n  W->>X: mergeOrUpload with stable key\n  W-->>E: acknowledge" },
+    { "t": "callout", "kind": "gotcha", "title": "Large blobs fire early", "md": "To fire `BlobCreated` only after a block blob is fully committed, filter on the `CopyBlob`, `PutBlob`, `PutBlockList` or `FlushWithClose` calls [[tr24]]." }
+  ],
+  "whereToUse": [
+    "Searchable tickets, chat or order data that must be fresh within seconds",
+    "Cosmos DB backed applications that need search updates driven by the change feed",
+    "Blob uploads that trigger parsing and indexing through Event Grid",
+    "Relational databases streamed through log-based CDC such as Debezium into a queue",
+    "Pipelines that need replay, dead-letter handling and per-item observability"
+  ],
+  "whenToUse": {
+    "use": [
+      "Use events when the freshness target is seconds and the source can emit changes",
+      "Use all versions and deletes mode when hard deletes must be seen and continuous backup is available",
+      "Use re-read-on-event so ordering mistakes cannot overwrite new data with old",
+      "Use a dead-letter destination and alert on its depth"
+    ],
+    "avoid": [
+      "Avoid assuming exactly-once delivery or global ordering",
+      "Avoid latest version change feed alone when deletes matter and you cannot add a soft-delete flag",
+      "Avoid running an event pipeline for a corpus that changes nightly"
+    ],
+    "flips": [
+      "Freshness relaxes to 15 minutes or more: a GA indexer is cheaper to run",
+      "Hard deletes must be visible and continuous backup is off: add soft delete plus TTL or reconcile on a schedule",
+      "Events must be replayed after a bug: keep source state re-readable and key writes by stable id"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Scheduled indexer", "Supported source, minutes of lag", "Seconds of freshness, hard deletes", "5 minute floor, delete blind spots"],
+      ["Cosmos DB change feed, latest version", "Seconds, creates and updates only", "Hard deletes matter", "Only newest change per item, no deletes"],
+      ["Cosmos DB all versions and deletes", "Every change and delete in order", "No continuous backup, replay beyond retention", "Opt-in, retention window, newer API surface"],
+      ["Storage events (Event Grid)", "Files landing in Blob Storage", "You need ordering", "Duplicates, no order, early events on large uploads"],
+      ["Log-based CDC (Debezium)", "Relational source, deletes and history", "No platform team for Kafka-style infrastructure", "At-least-once, connector operations"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Old data overwrites newer data in the index", "cause": "Events arrived out of order and the worker indexed the event payload", "fix": "Re-read current state from the source or compare a version number before writing" },
+    { "symptom": "Duplicate chunks or double work after a failure", "cause": "At-least-once delivery from Event Grid or Debezium with a random key per attempt", "fix": "Derive keys from source id and position, and upsert" },
+    { "symptom": "Deleted Cosmos DB items stay searchable", "cause": "Latest version mode does not capture deletes", "fix": "Use a soft-delete flag plus TTL, or all versions and deletes mode where the prerequisites hold" },
+    { "symptom": "Events vanish after an outage", "cause": "Retries ended at 30 attempts or 1,440 minutes with no dead-letter destination", "fix": "Configure dead-lettering and a replay procedure" }
+  ],
+  "scenarios": [
+    {
+      "id": "w03-t07-s1",
+      "title": "Hard deletes in a Cosmos DB catalogue",
+      "situation": "A product catalogue in Cosmos DB feeds search. The application hard-deletes retired products and the code cannot change this quarter. Continuous backup is enabled and the consumer keeps up within minutes.",
+      "constraints": ["Hard deletes must reach the index", "Seconds to minutes of freshness", "Continuous backup enabled", "App code frozen"],
+      "unknowns": ["How long is the continuous backup retention?", "Can the consumer fall behind for days?"],
+      "question": "How do you propagate deletes?",
+      "options": [
+        { "name": "Read the change feed in all versions and deletes mode", "verdict": "best", "why": "It records deletes in order, and the prerequisites hold here.", "tradeoff": "Opt-in feature, readable only within the backup retention window, and starts only from now or a checkpoint." },
+        { "name": "Latest version mode plus a nightly id reconciliation", "verdict": "good", "why": "Works without extra prerequisites and catches deletes eventually.", "tradeoff": "Deleted products stay searchable until the next reconciliation." },
+        { "name": "Indexer on `_ts` with default settings", "verdict": "poor", "why": "Hard deletes are invisible to the indexer.", "tradeoff": "Right when the app uses a Boolean soft-delete field." }
+      ],
+      "flips": [
+        { "if": "Continuous backup is not enabled", "then": "Use latest version mode plus reconciliation, or change the app to soft delete." },
+        { "if": "The app can be changed", "then": "Soft delete plus TTL with the indexer is simplest." }
+      ],
+      "takeaway": "Decide how deletes reach you before you choose the event source."
+    },
+    {
+      "id": "w03-t07-s2",
+      "title": "Large uploads into Blob Storage",
+      "situation": "Users upload large files in many blocks. A worker is triggered per event. Sometimes it reads a half-written file or processes the same file twice.",
+      "constraints": ["Large multi-block uploads", "At-least-once delivery", "Cost of parsing is high", "Dead-letter is available"],
+      "unknowns": ["How often do duplicates happen?", "What does the worker do on a partial read?"],
+      "question": "What do you change?",
+      "options": [
+        { "name": "Filter events to completion calls, make the worker idempotent, and enable dead-lettering", "verdict": "best", "why": "It fixes early events at the source and makes duplicates harmless.", "tradeoff": "A little setup and a stable-key convention." },
+        { "name": "Add a fixed 10 minute delay before processing", "verdict": "poor", "why": "It guesses at upload time, still allows duplicates and delays every file.", "tradeoff": "Only acceptable as a stop-gap." },
+        { "name": "Retry the whole job whenever a read fails", "verdict": "good", "why": "Often works eventually.", "tradeoff": "Repeats expensive parsing and does not stop duplicates." }
+      ],
+      "flips": [
+        { "if": "Files are tiny single-block uploads", "then": "Early events are rare and idempotency alone suffices." },
+        { "if": "Freshness relaxes to hours", "then": "Switch to an indexer and drop the event path." }
+      ],
+      "takeaway": "Fix early events at the filter and duplicates in the sink."
+    }
+  ],
+  "quiz": [
+    { "id": "w03-t07-q1", "type": "single", "tag": "concept", "q": "What does Debezium guarantee about delivery?", "options": ["At least once, so duplicates can appear after a fault", "Exactly once with global ordering", "At most once", "Ordered delivery across all tables"], "answer": 0, "explain": "Debezium delivers at least once and may emit duplicates after a fault, so consumers should be idempotent. It does not promise exactly once or global ordering.", "ref": "tr25" },
+    { "id": "w03-t07-q2", "type": "multi", "tag": "flip", "q": "Which statements about Cosmos DB change feed modes are correct?", "options": ["Latest version mode does not capture deletes", "All versions and deletes mode needs continuous backup and an opt-in feature flag", "All versions and deletes mode can start from the beginning of time", "Latest version mode keeps only the most recent change per item"], "answers": [0, 1, 3], "explain": "Latest version drops deletes and intermediate changes. All versions and deletes needs continuous backup and can start only from now or a checkpoint, within the retention window.", "ref": "tr23" },
+    { "id": "w03-t07-q3", "type": "single", "tag": "bug", "q": "Stale data keeps replacing fresh data in the index. Events are consumed in parallel. What is the most reliable fix?", "options": ["Use a bigger queue", "Lower the retry count", "Re-read current source state on each event, or compare a version before writing", "Disable dead-lettering"], "answer": 2, "explain": "Ordering is not guaranteed, so you must make order irrelevant by indexing current state or comparing versions. Queue size, retry count and dead-lettering do not fix ordering.", "ref": "tr26" }
+  ],
+  "flashcards": [
+    { "front": "Event Grid delivery guarantees and defaults?", "back": "At least once, no ordering guarantee. Defaults: 30 attempts and 1,440 minute event TTL. Dead-letter only if configured." },
+    { "front": "What is effectively-once processing?", "back": "At-least-once delivery combined with an idempotent sink, such as a stable key and `mergeOrUpload`." },
+    { "front": "Why re-read the source on each change event?", "back": "Events can be duplicated or out of order. Indexing current state makes stale events harmless." }
+  ],
+  "related": ["w03-t01", "w03-t06", "w03-t08", "w03-t10", "w07-t15"],
+  "refs": ["tr23", "tr24", "tr25", "tr26"]
+}

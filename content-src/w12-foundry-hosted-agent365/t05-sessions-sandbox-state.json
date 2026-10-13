@@ -1,0 +1,110 @@
+{
+  "id": "w12-t05",
+  "order": 5,
+  "group": "Foundry Agent Service",
+  "title": "Sessions, sandbox lifecycle and state",
+  "minutes": 8,
+  "difficulty": "advanced",
+  "summary": "Compute follows the session, not the request. Each session gets a VM-isolated sandbox that moves between Active, Idle and Resumed, with `$HOME` and `/files` persisted across idle periods and deleted after 30 days of inactivity.",
+  "useIf": "You are designing where a hosted agent keeps working files, history and checkpoints, and how long they live.",
+  "avoidIf": "You run a prompt agent, where the platform owns conversation state and you have no sandbox to manage.",
+  "explain": [
+    { "t": "p", "md": "A **session ID** names a logical session with persisted state. The platform provisions compute on demand and restores the state onto it [[r2]]. Each session has its own VM-isolated sandbox with a persistent filesystem (`$HOME` and `/files`), which gives scale-to-zero with stateful resume and predictable cold starts [[r2]]. Files uploaded through `/files` land in `$HOME`. State is persisted when a session goes idle and restored on resume [[r2]]." },
+    { "t": "diagram", "id": "w12-t05-d1", "title": "Session lifecycle", "alt": "A session is Active while handling requests, becomes Idle after the idle timeout with state persisted, is Resumed on the next request, and is deleted after 30 days idle.", "src": "stateDiagram-v2\n  [*] --> Active: first request\n  Active --> Idle: idle timeout, state persisted\n  Idle --> Resumed: next request, state restored\n  Resumed --> Idle: idle timeout\n  Idle --> [*]: deleted after 30 days idle" },
+    { "t": "stats", "items": [
+      { "label": "Idle timeout", "value": "2 to 60 min", "note": "Set per agent version, default 15 [[r2]]" },
+      { "label": "Session deletion", "value": "30 days idle", "note": "Permanent [[r2]]" },
+      { "label": "Sandbox sizes", "value": "3 tiers", "note": "0.5 vCPU 1 GiB, 1 vCPU 2 GiB, 2 vCPU 4 GiB [[r2]]" },
+      { "label": "Disk budget", "value": "Up to 20 GiB", "note": "At 1 vCPU or larger, about 20 percent reserved, shared with the image and `$HOME` [[r2]]" }
+    ] },
+    { "t": "p", "md": "Besides the filesystem there is a **durable key-value state store** that survives crashes and idle eviction, can be partitioned per end user, and ages items out after a 30 day idle window by default [[r2]]. With the Responses protocol the platform keeps conversation history by conversation ID. With Invocations you manage sessions yourself [[r2]]." },
+    { "t": "callout", "kind": "preview", "title": "Long-running resilience (preview, checked 2026-10-13)", "md": "Background execution lets work continue after the request returns. Resilient execution lets a later process recover work after a crash or restart. They solve different problems [[tr2]]. Recovery **reenters the handler from its beginning**. It is not deterministic replay and does not restore local variables, so the handler must use durable checkpoints, idempotency keys or watermarks. Full crash recovery for Responses applies only to stored background responses that opt in [[tr2]]." }
+  ],
+  "whereToUse": [
+    "Agents that keep a working directory, downloaded files or caches across turns",
+    "Per-user workspaces where each end user maps to one session or state-store partition",
+    "Long extraction or research jobs that must survive a restart (preview resilience features)",
+    "Choosing idle timeouts per version to trade resume latency against active-session cost"
+  ],
+  "whenToUse": {
+    "use": [
+      "Use `$HOME` for files that belong to one session and may sit idle for a while",
+      "Use the state store for small key-value state that must outlive a crash",
+      "Use external storage you own for anything that must outlive 30 idle days or be shared across sessions"
+    ],
+    "avoid": [
+      "Do not rely on in-memory variables or paths outside `$HOME` and `/files` surviving idle (inference from what is documented as persisted)",
+      "Do not treat the session as a database: it is deleted after 30 days of inactivity",
+      "Do not size the sandbox for the whole agent: the cpu and memory you set describe one session, and billing multiplies by active sessions"
+    ],
+    "flips": [
+      "Data must be shared between users or sessions: move it to external storage",
+      "Resume latency hurts the user experience: raise the idle timeout, accepting more active-session time",
+      "A job outlives a single process: add resilient execution and idempotent checkpoints"
+    ]
+  },
+  "alternatives": {
+    "title": "Where state can live",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["`$HOME` and `/files`", "Per-session working files across turns", "Data must outlive 30 idle days or be shared", "Counts against the disk budget, deleted with the session"],
+      ["Durable key-value state store", "Small per-user state that survives crashes", "You need records older than the 30 day idle window", "Items age out by default [[r2]]"],
+      ["Platform conversation (Responses)", "Chat history by conversation ID", "Invocations callers or custom schemas", "Tied to the Responses contract"],
+      ["External database or blob store", "Long-lived or shared data, audits", "Tiny, short-lived scratch data", "You secure, back up and pay for it"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A user returns after five weeks and the workspace files are gone", "cause": "The session was permanently deleted after 30 days of inactivity", "fix": "Keep long-lived data in storage you own and treat session state as a cache [[r2]]." },
+    { "symptom": "After a crash the agent sends a duplicate email or payment", "cause": "Recovery reenters the handler from the beginning", "fix": "Persist an idempotency key or side-effect watermark before the unsafe call and check it on re-entry [[tr2]]." },
+    { "symptom": "Sandbox runs out of disk with a small image", "cause": "The disk budget is shared with the image and `$HOME` and about 20 percent is reserved", "fix": "Right-size the tier, prune uploads and offload large artifacts to storage [[r2]]." }
+  ],
+  "scenarios": [
+    {
+      "id": "w12-t05-s1",
+      "title": "Per-user data that must last 90 days",
+      "situation": "A hosted agent builds a per-user knowledge workspace. Users come back every few weeks and the data must remain for 90 days after the last visit.",
+      "constraints": ["Data must outlive 30 idle days", "Data may be shared across a user's sessions", "Azure storage is available"],
+      "unknowns": ["Is the data sensitive or regulated?", "How large is each workspace?"],
+      "question": "Where does the workspace live?",
+      "options": [
+        { "name": "External database or blob storage keyed by user", "verdict": "best", "why": "It outlives the 30 day session deletion and the 30 day state-store aging, and it can be shared across sessions.", "tradeoff": "You build access control, backup and RBAC for the agent identity." },
+        { "name": "Durable key-value state store partitioned per user", "verdict": "good", "why": "Survives crashes and idle eviction and partitions per end user.", "tradeoff": "Items age out after a 30 day idle window by default, so it does not meet 90 days without checking configuration." },
+        { "name": "Files in `$HOME`", "verdict": "poor", "why": "The session is deleted after 30 days of inactivity, taking `$HOME` with it.", "tradeoff": "Right for working files that only matter during an active engagement." }
+      ],
+      "flips": [
+        { "if": "Retention only needs to be 14 days", "then": "The state store or `$HOME` becomes acceptable and simpler." },
+        { "if": "Data is regulated", "then": "External storage with your own retention and deletion controls." }
+      ],
+      "takeaway": "Session state is a cache with a 30 day horizon, not a system of record."
+    },
+    {
+      "id": "w12-t05-s2",
+      "title": "Forty-minute job that sometimes crashes",
+      "situation": "A document extraction run takes about forty minutes and occasionally dies from memory pressure. Clients disconnect while it runs.",
+      "constraints": ["Preview features are allowed", "Steps call an external API that must not be repeated", "Clients can poll"],
+      "unknowns": ["Can each step be checkpointed?", "How large are intermediate artifacts?"],
+      "question": "How do you design for recovery?",
+      "options": [
+        { "name": "Resilient execution with durable checkpoints and idempotency keys", "verdict": "best", "why": "Recovery reenters the handler with the same identities, and checkpoints plus watermarks skip finished work and the unsafe call.", "tradeoff": "Preview, and you must write the resume logic." },
+        { "name": "Background mode only", "verdict": "poor", "why": "It keeps work going after the request returns but does not recover after the owning process stops.", "tradeoff": "Right for work that is cheap to rerun or tolerates loss." },
+        { "name": "Foreground call with a client retry", "verdict": "good", "why": "Simple, and a retry reruns from the start.", "tradeoff": "Repeats forty minutes of work and may repeat the external call." }
+      ],
+      "flips": [
+        { "if": "The job takes seconds and is safe to rerun", "then": "Safe rerun, with no checkpoints." },
+        { "if": "Preview is not allowed", "then": "Own the recovery in your framework checkpointer and an external job store." }
+      ],
+      "takeaway": "Background is not resilience, and recovery restarts the handler, so design for idempotency."
+    }
+  ],
+  "quiz": [
+    { "id": "w12-t05-q1", "type": "order", "tag": "order", "q": "Order the documented life of a hosted agent session.", "items": ["A request arrives and the sandbox is Active", "The idle timeout fires and `$HOME` and `/files` are persisted", "A later request restores state and the session is Resumed", "After 30 days of inactivity the session is permanently deleted"], "explain": "Active comes first, idle persists state, resume restores it, and deletion happens only after 30 inactive days.", "ref": "r2" },
+    { "id": "w12-t05-q2", "type": "numeric", "tag": "numeric", "q": "At 1 vCPU the disk budget is up to 20 GiB with about 20 percent reserved. About how many GiB remain to share between the image and `$HOME`?", "answer": 16, "tolerancePct": 5, "unit": "GiB", "hint": "20 times 0.8", "explain": "Reserve about 4 GiB (20 percent of 20), leaving about 16 GiB. This is derived from the documented figures, so treat it as an estimate.", "ref": "r2" },
+    { "id": "w12-t05-q3", "type": "single", "tag": "diagnose", "q": "After a crash a recovered handler repeats a non-idempotent call. What is the cause?", "options": ["Background mode replays outputs", "The idle timeout is too short", "Recovery reenters the handler from the beginning and the handler had no watermark", "The session was resumed on a larger sandbox"], "answer": 2, "explain": "Resilient recovery is not deterministic replay. The handler restarts from its beginning and must use checkpoints or watermarks. Idle timeout and sandbox size are unrelated.", "ref": "tr2" }
+  ],
+  "flashcards": [
+    { "front": "What is persisted when a hosted agent session goes idle?", "back": "`$HOME` and `/files` content. State is restored on resume. The session is deleted after 30 days of inactivity." },
+    { "front": "Background mode versus resilient execution?", "back": "Background keeps work running after the request returns. Resilience lets a later process recover it after a crash. Recovery restarts the handler, so use checkpoints (preview)." }
+  ],
+  "related": ["w12-t03", "w12-t06", "w10-t21", "w11-t24", "w12-l2"],
+  "refs": ["r2", "tr2"]
+}

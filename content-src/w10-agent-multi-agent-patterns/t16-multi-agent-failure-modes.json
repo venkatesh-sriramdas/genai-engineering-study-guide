@@ -1,0 +1,98 @@
+{
+  "id": "w10-t16",
+  "order": 16,
+  "group": "Multi-agent",
+  "title": "Multi-agent failure modes",
+  "minutes": 8,
+  "difficulty": "advanced",
+  "summary": "MAST, a failure taxonomy built from real traces, groups 14 failure modes into system design issues, inter-agent misalignment and task verification. Most are visible in traces if you look for them.",
+  "useIf": "You are reviewing, debugging or evaluating a multi-agent system and need a checklist of how such systems actually fail.",
+  "avoidIf": "You have one agent with no handoffs. A multi-agent taxonomy then adds little, and single-agent loop failures matter more.",
+  "explain": [
+    { "t": "p", "md": "*Why Do Multi-Agent LLM Systems Fail?* introduces **MAST**, the Multi-Agent System Failure Taxonomy. The authors built it from 150 traces with expert annotators (inter-annotator agreement kappa 0.88), then released **MAST-Data**, more than 1,600 annotated traces from 7 multi-agent frameworks, plus an LLM-as-a-judge annotator. The taxonomy has 14 failure modes in 3 categories. The paper was first submitted on 2025-03-17 and revised on 2025-10-26 [[r5]]. Its opening observation is that performance gains from multi-agent systems on popular benchmarks are often minimal, so understanding failures matters." },
+    { "t": "table", "caption": "The three MAST categories, mapped to detection and control", "head": ["Category", "Example modes in the paper", "What to look for in a trace", "Control"], "rows": [
+      ["System design issues", "Disobey task or role specification, step repetition, loss of conversation history, unaware of termination conditions", "Repeated steps, ignored constraints, runs that never end", "Clear roles and specs, hop and step caps, termination rules"],
+      ["Inter-agent misalignment", "Conversation reset, failure to ask for clarification, task derailment, information withholding, ignoring another agent's input, reasoning-action mismatch", "One agent has a fact another never received, goals drift, an action contradicts the stated reasoning", "Structured messages, shared state, full traces, clarification steps"],
+      ["Task verification", "Premature termination, no or incomplete verification, incorrect verification", "Run declares success without a check that could fail", "Independent verifier, external checks, completion criteria"]
+    ] },
+    { "t": "p", "md": "The verification finding is the most actionable. The paper describes a generated chess program that passed superficial checks even though the verifier was prompted to be thorough, and argues for more rigorous verification with external knowledge and collected test output [[r5]]. This matches Cognition's report that a review loop works best when the reviewer shares no context with the coder [[r4]] and Anthropic's advice to resume from checkpoints because errors compound in stateful agents [[r2]]. Treat the taxonomy as a review checklist: sample traces, label them by mode, and fix the largest bucket first. The authors' LLM judge can automate labelling, but you still calibrate it against your own annotations." },
+    { "t": "callout", "kind": "note", "title": "Read the numbers with care", "md": "Frequencies in the paper depend on the frameworks, models and tasks sampled. Use the modes as a vocabulary for your own traces, not as universal rates." }
+  ],
+  "whereToUse": [
+    "Post-incident reviews of a multi-agent run that went wrong",
+    "Designing evaluation sets that target coordination and verification faults",
+    "Architecture reviews of a proposed crew, before you build it",
+    "Labelling production traces with a judge to find the largest failure bucket",
+    "Interview answers about why multi-agent systems underperform expectations"
+  ],
+  "whenToUse": {
+    "use": ["You run two or more agents that pass work or messages", "Runs fail in ways a single prompt fix does not explain", "You need a shared vocabulary across engineers and reviewers"],
+    "avoid": ["Treating the percentages as universal failure rates", "Fixing symptoms in prompts before you have labelled traces", "Applying it to a single agent without handoffs"],
+    "flips": ["One bucket dominates your labelled traces: invest there first", "Verification failures dominate: add an independent verifier with external checks", "Inter-agent faults dominate: reduce agents, share full traces or merge roles"]
+  },
+  "alternatives": {
+    "title": "Ways to find multi-agent faults",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["MAST-style trace labelling", "You have traces and need a failure vocabulary", "No tracing exists yet", "Annotation effort, judge calibration [[r5]]"],
+      ["Outcome-only evals", "A final answer has a clear score", "Failures hide behind lucky outputs", "Misses process faults"],
+      ["Unit tests per agent", "Each agent has a clear contract", "Faults arise between agents", "Misses coordination faults"],
+      ["Human spot review", "Volume is low and stakes are high", "Volume is high", "Slow, inconsistent"],
+      ["Reduce to one agent", "Failures cluster in coordination", "Breadth truly needs parallel agents", "Loses parallel reads [[r2]]"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "The run reports success and a spot check fails", "cause": "No or incomplete verification, a task verification failure [[r5]]", "fix": "Add an independent verifier with a clean context and an external check such as tests or a schema." },
+    { "symptom": "Agents repeat steps or never stop", "cause": "Unaware of termination conditions, a system design failure [[r5]]", "fix": "Put termination rules, hop caps and budgets in the harness and make them visible to agents." },
+    { "symptom": "Agent B acts without a fact agent A already found", "cause": "Information withholding or loss of history between agents", "fix": "Pass structured state or artifact references, and share full traces instead of summaries [[r3]]." }
+  ],
+  "scenarios": [
+    {
+      "id": "w10-t16-s1",
+      "title": "Success reported, results wrong",
+      "situation": "A multi-agent pipeline reports completion on most tasks, but spot checks find that a sizeable share of outputs do not meet the spec. A reviewer agent exists, and it nearly always approves.",
+      "constraints": ["Traces exist for every run", "A reviewer agent shares the generator's context", "Spec can be partly checked by code"],
+      "unknowns": ["What share of failures does the reviewer miss on a labelled sample?", "Which spec items can be tested in code?"],
+      "question": "What do you fix first?",
+      "options": [
+        { "name": "Replace the shared-context reviewer with an independent verifier that runs external checks, and calibrate it on labelled failures", "verdict": "best", "why": "This targets the verification category directly, and independence plus external evidence catches what a same-context reviewer approves.", "tradeoff": "More cost per run and effort to build checks and a labelled set." },
+        { "name": "Add more agents to the pipeline", "verdict": "poor", "why": "It adds coordination faults without fixing the missing verification.", "tradeoff": "Right only when a specific capability is missing and measured." },
+        { "name": "Tighten the generator prompts", "verdict": "good", "why": "Cheap and may reduce some spec violations.", "tradeoff": "It does not detect failures, so wrong outputs still pass." }
+      ],
+      "flips": [
+        { "if": "Failures cluster in handoffs", "then": "Fix message structure and shared state before verification." },
+        { "if": "A single agent passes the same evals", "then": "Collapse the pipeline." }
+      ],
+      "takeaway": "Verification needs independence and evidence."
+    },
+    {
+      "id": "w10-t16-s2",
+      "title": "Where do we start with a failing crew?",
+      "situation": "A team's agent crew fails often and the causes look scattered. They have 500 traces, a judge model they trust somewhat, and one engineer-week.",
+      "constraints": ["500 traces available", "Limited review time", "Judge is not yet calibrated"],
+      "unknowns": ["How well does the judge agree with human labels on a small sample?", "Which failures cost the most?"],
+      "question": "How do you spend the week?",
+      "options": [
+        { "name": "Hand-label about fifty traces with the taxonomy, calibrate the judge on them, label the rest and fix the biggest bucket", "verdict": "best", "why": "It builds a vocabulary and a checked labeller, then aims effort at the largest bucket.", "tradeoff": "Up-front annotation effort, and rates will reflect your system only." },
+        { "name": "Trust the judge on all 500 traces without calibration", "verdict": "poor", "why": "Uncalibrated judges can mislabel systematically, so you may fix the wrong thing.", "tradeoff": "Acceptable once agreement with human labels is measured." },
+        { "name": "Rewrite every agent prompt", "verdict": "good", "why": "May lift quality somewhat.", "tradeoff": "No diagnosis, so you cannot tell which change helped." }
+      ],
+      "flips": [
+        { "if": "Judge agreement with humans is high", "then": "Label all traces with it and sample for audit." },
+        { "if": "One failure is clearly costly", "then": "Fix it first regardless of frequency." }
+      ],
+      "takeaway": "Label first, then fix the biggest bucket."
+    }
+  ],
+  "quiz": [
+    { "id": "w10-t16-q1", "type": "single", "tag": "concept", "q": "Which MAST category contains the failure mode no or incomplete verification?", "options": ["System design issues", "Task verification", "Inter-agent misalignment", "Tool failure"], "answer": 1, "explain": "MAST has three categories: system design issues, inter-agent misalignment and task verification. No or incomplete verification, incorrect verification and premature termination sit under task verification. Tool failure is not a MAST category. [[r5]]", "ref": "r5", "difficulty": 1 },
+    { "id": "w10-t16-q2", "type": "match", "tag": "diagnose", "q": "Match each trace symptom to the MAST category it most likely belongs to.", "pairs": [{ "l": "The agent repeats the same step many times and never stops", "r": "System design issues" }, { "l": "An agent ignores another agent's input and drifts off the task", "r": "Inter-agent misalignment" }, { "l": "The run ends with a success message and no check that could fail", "r": "Task verification" }], "explain": "Step repetition and unawareness of termination are system design issues. Ignored input and task derailment are inter-agent misalignment. Declaring success without a check, or with a wrong one, is task verification. [[r5]]", "ref": "r5", "difficulty": 2 }
+  ],
+  "flashcards": [
+    { "front": "What are MAST's three categories?", "back": "System design issues, inter-agent misalignment and task verification, covering 14 failure modes [[r5]]." },
+    { "front": "What data underlies MAST?", "back": "A taxonomy built from 150 traces (kappa 0.88), and MAST-Data with 1,600+ annotated traces across 7 frameworks, plus an LLM-as-a-judge annotator [[r5]]." },
+    { "front": "Which failure is most actionable to fix first in many crews?", "back": "Verification. Use an independent verifier with a clean context and external checks, since a same-context reviewer tends to approve [[r5]][[r4]]." }
+  ],
+  "related": ["w10-l3", "w10-t06", "w10-t11", "w10-t13", "w10-t14"],
+  "refs": ["r5", "r4", "r2", "r3"]
+}

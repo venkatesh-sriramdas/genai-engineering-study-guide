@@ -1,0 +1,111 @@
+{
+  "id": "w18-t04",
+  "order": 4,
+  "group": "Operating prompts",
+  "title": "Prompt optimization",
+  "minutes": 7,
+  "difficulty": "advanced",
+  "summary": "Optimizers search for better instructions, examples, tool descriptions or models against a metric on a dataset, so you re-tune programmatically instead of editing prompt strings by hand.",
+  "useIf": "You have a trustworthy metric, a few dozen labelled cases and prompts or models that change often.",
+  "avoidIf": "You have no metric or no review capacity. Without a metric there is nothing to optimize, and optimized prompts can regress on specific inputs.",
+  "explain": [
+    { "t": "p", "md": "Hand tuning is slow and subjective: edit, test, repeat. A **prompt optimizer** automates the loop. You supply a dataset and a metric. The optimizer proposes candidates, scores each on the same data, ranks them and returns the best. Three families matter." },
+    { "t": "list", "style": "ul", "items": [
+      "**DSPy** compiles declarative modules against a metric. In the paper, compiled pipelines beat standard few-shot prompting generally by over 25% with GPT-3.5 and 65% with llama2-13b-chat [[r12]]. MIPRO beat baselines on 5 of 7 programs by up to 13% with Llama-3-8B [[tr11]]. GEPA, reflective prompt evolution, beat GRPO by 6% on average and up to 20% with up to 35x fewer rollouts, and beat MIPROv2 by over 10% [[r13]]. All figures are author-reported [[r14]].",
+      "**Foundry agent optimizer** (Agent Service). For a prompt agent it can improve instructions, function-calling tool descriptions and model selection. For a hosted agent it can also improve skills [[r15]].",
+      "**OpenAI dataset-backed prompt optimizer**, deprecated with the Evals platform: read-only for existing users on 2026-10-31, shutdown scheduled for 2026-11-30. Its docs warn optimized prompts can perform worse on specific inputs and must be reviewed before production [[r11]]."
+    ] },
+    { "t": "diagram", "id": "w18-t04-d1", "title": "The optimizer loop and where you stay in charge", "alt": "A dataset and metric feed candidate generation. Candidates are scored and ranked, then a human review and a held-out check gate the release.", "src": "flowchart LR\n  D[Dataset and metric] --> G[Generate candidates]\n  G --> E[Score on dataset]\n  E --> R[Rank]\n  R --> H[Review and held-out check]\n  H --> P[Release via eval gate]\n  H -.->|reject| G" },
+    { "t": "p", "md": "In the Foundry optimizer an eval model scores responses and an optimization model proposes candidates. Candidates get a composite score from 0.0 to 1.0 and a prompt-agent winner can be promoted to a new agent version [[r15]]. The optimizer invokes your agent on every dataset task, so external tool calls really run. Use test endpoints or mocks. The pre-run cost estimate in the portal is modeled and is not a spending limit [[tr4]]. Treat it as preview as of 2026-10-13: the Learn page text did not state GA when checked, so verify status before relying on it." },
+    { "t": "callout", "kind": "gotcha", "title": "Optimizing the metric, not the job", "md": "An optimizer maximises what you measure. A thin dataset or a weak LLM judge produces prompts that win the benchmark and lose on real traffic. Hold out cases the optimizer never saw." }
+  ],
+  "whereToUse": [
+    "Multi-step LLM programs (retrieve, reason, answer) where each module has instructions and examples to tune",
+    "Agents on Foundry Agent Service with a dataset from real traces and built-in or custom evaluators",
+    "Teams that swap models often and want to re-optimize instead of hand-porting prompts",
+    "Improving function-calling tool descriptions so the model picks the right tool"
+  ],
+  "whenToUse": {
+    "use": [
+      "A metric you trust and a few dozen labelled or trace-derived cases exist",
+      "Models change often, so re-optimization saves repeated manual work",
+      "Reviewers can read the diff and a held-out set can confirm the gain"
+    ],
+    "avoid": [
+      "No metric: there is nothing to optimize against",
+      "Tools charge money or change state and you have no test endpoint or mocks",
+      "You need GA only and the optimizer is preview"
+    ],
+    "flips": [
+      "You can build a rubric and a golden set: an optimizer becomes viable",
+      "Models change quarterly instead of yearly: programmatic re-optimization beats hand tuning",
+      "Only function tools run client side: the optimizer can tune their descriptions but cannot evaluate their execution"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Hand tuning against a golden set", "Few prompts, rare model changes", "Dozens of prompts or frequent model swaps", "Slow, subjective, hard to repeat"],
+      ["DSPy compilers (MIPROv2, GEPA)", "Metric plus data exist, code-first team", "No metric, or non-code owners", "Metric overfitting. Figures are author-reported"],
+      ["Foundry agent optimizer", "Agents on Foundry with traces and evaluators", "GA-only rule or tools with side effects", "Preview as of 2026-10-13. Runs your agent per task"],
+      ["OpenAI dataset-backed optimizer", "Nothing new: plan the exit", "Any new project", "Read-only 2026-10-31, shutdown 2026-11-30"],
+      ["Fine-tuning", "Behaviour must be baked in at scale", "Instructions or examples fix the gap", "Data, training cost and model lock-in"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Benchmark score rises but live quality falls", "cause": "The dataset is thin or unrepresentative, or the judge rewards length or style", "fix": "Build the dataset from real traces, validate the judge against human labels and keep a held-out set." },
+    { "symptom": "Optimization run triggers real side effects", "cause": "The optimizer invokes the agent on every task, so external tool calls execute", "fix": "Point tools at test endpoints or mock them. Check cost and rate limits before the run." },
+    { "symptom": "An optimized prompt is accepted without review", "cause": "The winner looks better on aggregate and nobody reads the diff", "fix": "Review the before and after text, check regressions per slice and ship through the normal eval gate." }
+  ],
+  "scenarios": [
+    {
+      "id": "w18-t04-s1",
+      "title": "Agent with traces, mockable tools",
+      "situation": "An agent on Foundry Agent Service has run for months. You have 300 traced tasks with human-confirmed outcomes. A model change is planned next quarter. Tools can be pointed at a sandbox.",
+      "constraints": ["Representative dataset exists", "Tools can be mocked", "Preview features are acceptable in a staging path"],
+      "unknowns": ["Do the evaluators agree with human labels?", "How large is the cost estimate?"],
+      "question": "How do you improve the instructions?",
+      "options": [
+        { "name": "Keep hand tuning", "verdict": "good", "why": "Familiar and under control.", "tradeoff": "You repeat the effort at every model change and results vary by editor." },
+        { "name": "Run the agent optimizer on a sandboxed copy with a held-out slice, then review and promote", "verdict": "best", "why": "Data, evaluators and safe tools are in place, and review plus a held-out slice guard against overfitting.", "tradeoff": "Preview feature, run cost and review time." },
+        { "name": "Run it against production tools to get realistic results", "verdict": "poor", "why": "The optimizer invokes the agent on every task, so real calls would run and could charge or change state.", "tradeoff": "Only acceptable for read-only tools with no cost or rate-limit concern." }
+      ],
+      "flips": [
+        { "if": "Your policy allows GA features only", "then": "Hand tune or use an open-source optimizer in your own pipeline." },
+        { "if": "Evaluators disagree with human labels", "then": "Fix the evaluators before optimizing." }
+      ],
+      "takeaway": "Optimize only with a trusted metric, safe tools and a held-out check."
+    },
+    {
+      "id": "w18-t04-s2",
+      "title": "Subjective tone, no metric",
+      "situation": "A marketing assistant must write in a brand voice. Reviewers disagree on what good looks like and there are only 15 examples.",
+      "constraints": ["No agreed metric", "15 examples", "Brand risk is moderate"],
+      "unknowns": ["Can reviewers agree on a rubric?", "Can more examples be collected?"],
+      "question": "Do you run an optimizer?",
+      "options": [
+        { "name": "Run DSPy on the 15 examples", "verdict": "good", "why": "Works mechanically with few-shot data.", "tradeoff": "Small data overfits, so expect high variance and keep a human in the loop." },
+        { "name": "Hand tune and build a rubric and a larger example set first", "verdict": "best", "why": "Without a metric an optimizer has no target, and the rubric is the asset that later enables optimization.", "tradeoff": "Slower start and reviewer time." },
+        { "name": "Optimize against an unvalidated LLM judge scoring 'brand fit'", "verdict": "poor", "why": "The optimizer will overfit to the judge's biases, not to what reviewers want.", "tradeoff": "Viable after the judge is calibrated against human ratings on a held-out set." }
+      ],
+      "flips": [
+        { "if": "Reviewers converge on a rubric and 100 labelled cases exist", "then": "An optimizer becomes viable." },
+        { "if": "Brand risk is high", "then": "Keep human review on every release." }
+      ],
+      "takeaway": "No metric means no optimizer. Build the metric first."
+    }
+  ],
+  "quiz": [
+    { "id": "w18-t04-q1", "type": "single", "tag": "diagnose", "q": "Optimized prompts score higher offline but real users report worse answers. What is the best first fix?", "options": ["Use a larger optimization model and rerun the same optimization", "Remove the metric", "Turn up temperature", "Rebuild the dataset from real traces and add a held-out set"], "answer": 3, "explain": "The usual cause is a thin or unrepresentative dataset or an over-optimized metric. A bigger optimizer model, removing the metric or raising temperature do not repair the mismatch.", "ref": "r15" },
+    { "id": "w18-t04-q2", "type": "multi", "tag": "security", "q": "Before running the Foundry agent optimizer, which actions are sensible?", "options": ["Point external tools at test endpoints or mocks", "Check that tool calls will not charge money or mutate state", "Assume client-side function tools are executed and evaluated", "Treat the pre-run cost estimate as a spending cap"], "answers": [0, 1], "explain": "The optimizer invokes the agent on every dataset task, so tool calls run. Client-side function tools are not evaluated, and the estimate is modeled, not a limit.", "ref": "tr4" },
+    { "id": "w18-t04-q3", "type": "single", "tag": "flip", "q": "What makes programmatic optimization (DSPy style) more attractive than hand tuning?", "options": ["Models change often and you have a trusted metric", "You have no labelled data and no metric to optimize against", "You need zero review of the final prompt", "The prompt is a single sentence"], "answer": 0, "explain": "Re-optimizing against a metric saves repeated manual work when models change. Without data or a metric an optimizer cannot work, and review remains necessary.", "ref": "r12" }
+  ],
+  "flashcards": [
+    { "front": "What does DSPy compile modules against?", "back": "A metric on a dataset. It tunes instructions and examples programmatically so you can re-optimize when the model changes." },
+    { "front": "What risk does the OpenAI optimizer doc call out?", "back": "Optimized prompts can perform worse on specific inputs, so they must be reviewed before production." },
+    { "front": "Why must you mock tools during Foundry agent optimization?", "back": "The optimizer invokes your agent on every dataset task, so external calls execute and can charge money or change state." }
+  ],
+  "related": ["w18-l2", "w18-t03", "w12-t14", "w14-t08", "w14-t09", "w10-t06"],
+  "refs": ["r11", "r12", "r13", "r14", "r15", "tr4", "tr11"]
+}

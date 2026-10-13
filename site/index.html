@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="Follow the Question: an offline, dial-and-defend field guide to GenAI and AI engineering.">
+  <title>Follow the Question</title>
+  <link rel="icon" type="image/svg+xml" href="assets/img/favicon.svg">
+
+  <script>
+    /* Set theme, text size and layout flags before first paint to avoid a flash.
+       Reads the same key as assets/js/store.js. Never throws. */
+    (function () {
+      var root = document.documentElement, s = {};
+      try {
+        var raw = window.localStorage.getItem('ftq.v1');
+        if (raw) { var p = JSON.parse(raw); if (p && typeof p === 'object' && p.settings) s = p.settings; }
+      } catch (e) { s = {}; }
+      var pref = s.theme === 'light' || s.theme === 'dark' ? s.theme : 'auto';
+      var dark = false;
+      try { dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches; } catch (e) { dark = false; }
+      root.setAttribute('data-theme', pref === 'auto' ? (dark ? 'dark' : 'light') : pref);
+      root.setAttribute('data-theme-pref', pref);
+      var fs = Number(s.fontScale);
+      if (fs >= 0.8 && fs <= 1.5) root.style.setProperty('--font-scale', String(fs));
+      if (s.facilitator === true) root.setAttribute('data-facilitator', 'on');
+      if (s.sidebarCollapsed === true) root.setAttribute('data-sidebar', 'collapsed');
+      root.classList.add('js');
+    })();
+  </script>
+
+  <link rel="stylesheet" href="assets/css/tokens.css">
+  <link rel="stylesheet" href="assets/css/base.css">
+  <link rel="stylesheet" href="assets/css/layout.css">
+  <link rel="stylesheet" href="assets/css/components.css">
+  <link rel="stylesheet" href="assets/css/print.css" media="print">
+</head>
+<body>
+  <a class="skip-link" href="#main" id="skip-link">Skip to main content</a>
+
+  <div class="app" id="app" data-world="home">
+    <header class="topbar" id="topbar" role="banner" aria-label="Site header"></header>
+
+    <div class="app-body" id="app-body">
+      <nav class="sidebar" id="sidebar" aria-label="Guide navigation"></nav>
+      <div class="sidebar-scrim" id="sidebar-scrim" hidden></div>
+
+      <div class="content-col" id="content-col">
+        <div class="banners" id="banners"></div>
+        <nav class="crumbs" id="crumbs" aria-label="Breadcrumb" hidden></nav>
+        <main class="main" id="main" tabindex="-1" aria-live="off">
+          <div class="boot" id="boot" role="status">
+            <div class="boot__mark" aria-hidden="true"></div>
+            <p class="boot__text">Loading Follow the Question</p>
+          </div>
+          <noscript>
+            <div class="noscript-card">
+              <h1>JavaScript is required</h1>
+              <p>Follow the Question is an interactive study guide that runs entirely in your browser. Turn on JavaScript for this page and reload it. Nothing is sent over the network.</p>
+            </div>
+          </noscript>
+        </main>
+        <footer class="footer" id="footer" role="contentinfo"></footer>
+      </div>
+
+      <aside class="rail" id="rail" aria-label="On this page" hidden></aside>
+    </div>
+  </div>
+
+  <div id="dialog-root"></div>
+  <div class="toasts" id="toasts" role="region" aria-label="Notifications" aria-live="polite"></div>
+  <div class="sr-only" id="route-announcer" role="status" aria-live="polite" aria-atomic="true"></div>
+
+  <script src="assets/js/ns.js"></script>
+  <script src="assets/js/icons.js"></script>
+  <script src="content/manifest.js"></script>
+  <script src="content/search-index.js"></script>
+  <script src="assets/js/md.js"></script>
+  <script src="assets/js/store.js"></script>
+  <script src="assets/js/diagrams.js"></script>
+  <script src="assets/js/dials.js"></script>
+  <script src="assets/js/quiz.js"></script>
+  <script src="assets/js/flashcards.js"></script>
+  <script src="assets/js/defend.js"></script>
+  <script src="assets/js/scenario.js"></script>
+  <script src="assets/js/render.js"></script>
+  <script src="assets/js/labs-registry.js"></script>
+  <script src="assets/js/search.js"></script>
+  <script src="assets/js/library.js"></script>
+  <script src="assets/js/labs-view.js"></script>
+  <script src="assets/js/home.js"></script>
+  <script src="assets/js/topics-view.js"></script>
+  <script src="assets/js/dashboard.js"></script>
+  <script src="assets/js/shell.js"></script>
+  <script src="assets/js/router.js"></script>
+  <script src="assets/js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,108 @@
+{
+  "id": "w11-t19",
+  "order": 19,
+  "group": "Orchestrations",
+  "title": "Concurrent orchestration",
+  "minutes": 6,
+  "difficulty": "core",
+  "summary": "Several agents run on the same input at the same time, then an aggregator combines their answers. Latency is about the slowest agent. Cost is the sum.",
+  "useIf": "You want independent perspectives, an ensemble or voting, and the agents do not need each other's output.",
+  "avoidIf": "Agents depend on one another, or you cannot afford multiplied token cost for a small quality gain.",
+  "explain": [
+    { "t": "p", "md": "Build with `ConcurrentBuilder(participants=[...]).build()` (Python) or `AgentWorkflowBuilder.BuildConcurrent(agents)` (.NET). Participants are agents or executors. Under the hood this is a fan-out to all participants, a barrier, and a fan-in to an aggregator. The **default aggregator** returns one `AgentResponse` containing **one assistant message per participant**. Replace it with a callback via `.with_aggregator(fn)`, for example to ask a summarizer agent to merge the answers. Only the aggregator's output is terminal unless you set `intermediate_output_from` [[tr24]]." },
+    { "t": "formula", "title": "Latency and cost of a concurrent run", "expr": "latency ~ max(agent latencies) + aggregator latency;  cost ~ sum(agent costs) + aggregator cost", "vars": [ { "k": "agent latencies", "v": "Per-participant time to finish" }, { "k": "aggregator", "v": "Default is free (concatenation); a summarizer agent adds a model call" } ], "example": "Three agents at 4, 5 and 9 seconds plus a 3 second summarizer: about 9 + 3 = 12 seconds, versus 21 seconds if run in sequence. Token cost is three full agent runs plus the summarizer." },
+    { "t": "p", "md": "**How to use it well.** Participants can be agents or custom executors, so a rules-based check can run beside model reviewers. Give each participant a distinct role and instruction, otherwise you pay for several near-identical answers. Treat the aggregator as a design decision: concatenation leaves reconciliation to the reader, a summarizer agent adds a model call, and a voting function is free but needs comparable answers. In a graph, concurrency comes from the fan-out edge and the superstep barrier, so the checkpoint after the step contains all participants' results [[tr24]] [[tr14]]." },
+    { "t": "diagram", "id": "w11-t19-d1", "title": "Fan-out, barrier, fan-in", "alt": "The input fans out to three agents that run at the same time; a barrier waits for all of them; an aggregator produces the output.", "src": "flowchart LR\n  I[Input] --> A1[Researcher]\n  I --> A2[Marketer]\n  I --> A3[Legal]\n  A1 --> B[Barrier]\n  A2 --> B\n  A3 --> B\n  B --> G[Aggregator]\n  G --> O[Output]" },
+    { "t": "tabs", "tabs": [
+      { "label": "C#", "blocks": [ { "t": "code", "lang": "csharp", "code": "var workflow = AgentWorkflowBuilder.BuildConcurrent([researcher, marketer, legal]);\n\nvar messages = new List<ChatMessage> { new(ChatRole.User, \"We launch a budget eBike for commuters.\") };\nawait using StreamingRun run = await InProcessExecution.RunStreamingAsync(workflow, messages);\nawait run.TrySendMessageAsync(new TurnToken(emitEvents: true));\nawait foreach (WorkflowEvent evt in run.WatchStreamAsync())\n    if (evt is AgentResponseUpdateEvent e) Console.WriteLine($\"{e.ExecutorId}: {e.Update.Text}\");" } ] },
+      { "label": "Python", "blocks": [ { "t": "code", "lang": "python", "code": "async def summarize(results: list[AgentExecutorResponse]) -> str:\n    parts = [f'{r.executor_id}:\\n{r.agent_response.messages[-1].text}' for r in results]\n    reply = await summarizer.run('\\n\\n'.join(parts))\n    return reply.messages[-1].text\n\nworkflow = (ConcurrentBuilder(participants=[researcher, marketer, legal])\n            .with_aggregator(summarize)\n            .build())\nasync for event in workflow.run('We launch a budget eBike.', stream=True):\n    if event.type == 'output':\n        print(event.data)" } ] }
+    ] }
+  ],
+  "whereToUse": [
+    "Multi-perspective review: security, legal and cost reviewers on the same change",
+    "Ensembles and voting where disagreement is a signal",
+    "Fast multi-source research: each agent queries a different corpus",
+    "Latency-sensitive fan-out where the sequential sum would be too slow"
+  ],
+  "whenToUse": {
+    "use": [
+      "Participants are independent and can share the same input",
+      "Wall-clock time matters more than token cost",
+      "You can write a sensible aggregator (merge, vote, rank)"
+    ],
+    "avoid": [
+      "One participant needs another's output: use sequential",
+      "Rate limits or quotas are tight: parallel calls spike TPM and RPM",
+      "The aggregator would concatenate unrelated answers that a user then has to reconcile"
+    ],
+    "flips": [
+      "Quota or budget is tight: run fewer participants, or serialise the expensive ones",
+      "Agents should challenge each other over rounds: move to group chat"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Concurrent", "Independent views, latency = slowest", "Dependent steps", "Cost is the sum, quota spikes"],
+      ["Sequential", "Dependent steps", "Independent work", "Latency is the sum"],
+      ["Group chat", "Iterative debate and refinement", "One-shot independent opinions", "Many rounds, shared full history"],
+      ["Custom fan-out with selection", "Only some branches needed per input", "All branches always needed", "Selection function to maintain"],
+      ["Single agent with sub-tasks in the prompt", "Cheap and simple", "Perspectives conflict", "One model sees everything and anchors"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A 429 rate-limit error appears only when the orchestration runs", "cause": "All participants call the model at the same time", "fix": "Add retry with backoff in the chat client, or stagger and cap parallel participants" },
+    { "symptom": "Final output shows only one combined message and not each agent's", "cause": "Only the aggregator is terminal by default", "fix": "Set `intermediate_output_from` to see participant outputs" },
+    { "symptom": "Answers contradict each other and the user is confused", "cause": "The default aggregator concatenates messages", "fix": "Add a custom aggregator that reconciles, ranks or votes, and keep a record of the sources" }
+  ],
+  "scenarios": [
+    {
+      "id": "w11-t19-s1",
+      "title": "Pre-merge review of a large change",
+      "situation": "A review bot analyses a diff for security, performance and style. Three specialist agents each take 15 to 40 seconds. Developers will wait about a minute. Quota is ample.",
+      "constraints": ["Independent reviewers", "Under 60 seconds", "Ample quota"],
+      "unknowns": ["How should findings be merged?", "Do reviewers need each other's findings?", "How are duplicates handled?"],
+      "question": "Which orchestration?",
+      "options": [
+        { "name": "Concurrent with a custom aggregator that merges and de-duplicates findings", "verdict": "best", "why": "Reviewers are independent, so latency is about the slowest (40 seconds) and the aggregator produces one report.", "tradeoff": "Three full model runs in tokens, and an aggregator call to maintain." },
+        { "name": "Sequential reviewers", "verdict": "poor", "why": "Latency would be up to 85 seconds with no benefit, since reviewers do not depend on each other.", "tradeoff": "Right if later reviewers should see earlier findings." },
+        { "name": "A single reviewer agent covering all three areas", "verdict": "good", "why": "Cheapest and simplest.", "tradeoff": "Quality in each area may fall, and findings are not separated by role." }
+      ],
+      "flips": [
+        { "if": "Quota is tight", "then": "Limit parallel participants or batch by priority." },
+        { "if": "Reviewers should react to each other", "then": "Use group chat." }
+      ],
+      "takeaway": "Concurrent trades tokens for latency when the work is independent."
+    },
+    {
+      "id": "w11-t19-s2",
+      "title": "Cost-capped FAQ assistant",
+      "situation": "An FAQ assistant answers 50,000 questions a month. A proposal suggests asking three agents each time and voting. The budget has no headroom.",
+      "constraints": ["Tight budget", "Low-risk answers", "Latency fine"],
+      "unknowns": ["Measured error rate of a single agent?", "Is there an eval set?"],
+      "question": "Do you adopt concurrent voting?",
+      "options": [
+        { "name": "No: keep one agent, measure errors, and add voting only for question classes where it measurably helps", "verdict": "best", "why": "Voting triples token cost for every question and the benefit is unproven for low-risk FAQs.", "tradeoff": "You accept the single agent's error rate until the eval proves otherwise." },
+        { "name": "Use concurrent voting for every question", "verdict": "poor", "why": "Triple cost with no measured gain.", "tradeoff": "Right for high-stakes answers where one error is expensive." },
+        { "name": "Vote only when the first agent reports low confidence", "verdict": "good", "why": "Spends extra cost only where doubt exists.", "tradeoff": "Needs a reliable confidence signal and a router." }
+      ],
+      "flips": [
+        { "if": "Wrong answers carry legal or safety risk", "then": "Pay for the ensemble and add a reviewer." },
+        { "if": "The budget increases 3x", "then": "Vote on a sample, measure and decide with data." }
+      ],
+      "takeaway": "Parallel agents multiply cost: buy them with evidence."
+    }
+  ],
+  "quiz": [
+    { "id": "w11-t19-q1", "type": "numeric", "tag": "numeric", "q": "Three concurrent agents take 6, 8 and 11 seconds and an aggregator takes 2 seconds. What is the approximate end-to-end time in seconds?", "answer": 13, "tolerancePct": 0, "unit": "s", "explain": "A concurrent run waits for the slowest participant (11 s), then runs the aggregator (2 s): 13 s. Sequentially the agents alone would take 25 s.", "ref": "tr24" },
+    { "id": "w11-t19-q2", "type": "single", "tag": "concept", "q": "What does the default concurrent aggregator return?", "options": ["Only the fastest agent's reply", "A vote count", "A model-written summary", "One `AgentResponse` with one assistant message per participant"], "answer": 3, "explain": "The default aggregator returns one `AgentResponse` with one assistant message per participant. A custom callback replaces it.", "ref": "tr24" }
+  ],
+  "flashcards": [
+    { "front": "What bounds latency in a concurrent orchestration?", "back": "The slowest participant plus the aggregator, because of the superstep barrier." },
+    { "front": "How do you replace the default aggregation?", "back": "`ConcurrentBuilder(...).with_aggregator(callback)`, which receives the participants' executor responses." },
+    { "front": "What is the main cost risk of concurrent runs?", "back": "Cost is the sum of all participants, and parallel calls spike TPM and RPM against quotas." }
+  ],
+  "related": ["w11-t18", "w11-t23", "w10-t04", "w16-t02"],
+  "refs": ["tr24", "tr14"]
+}

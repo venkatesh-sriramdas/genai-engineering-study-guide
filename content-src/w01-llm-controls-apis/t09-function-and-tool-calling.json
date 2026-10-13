@@ -1,0 +1,115 @@
+{
+  "id": "w01-t09",
+  "order": 9,
+  "group": "Structured interaction",
+  "title": "Function and tool calling",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "The model returns a tool call with JSON arguments, your code runs it, and you send the result back. Strict schemas, tool_choice and loop limits decide how reliable that cycle is.",
+  "useIf": "The model must fetch data or take actions, and you need arguments that your code can trust.",
+  "avoidIf": "A single structured answer is enough. A schema-constrained output needs no tool loop.",
+  "explain": [
+    { "t": "p", "md": "You describe each **tool** with a name, a description and a JSON schema. The model never runs anything. It returns a `function_call` item (Responses) or a tool call (Chat) with arguments, **your application** executes it, and you return the result tagged with the `call_id`. The loop repeats until the model answers in text [[r9]]." },
+    { "t": "diagram", "id": "w01-t09-d1", "title": "The tool-calling loop", "alt": "The app sends messages and tool schemas to the model, which returns a tool call. The app runs the tool and returns the result to the model, which produces the final answer.", "src": "sequenceDiagram\n  participant App\n  participant Model\n  participant Tool\n  App->>Model: messages and tool schemas\n  Model-->>App: tool call with arguments\n  App->>Tool: run with arguments\n  Tool-->>App: result or error\n  App->>Model: result with call id\n  Model-->>App: final answer" },
+    { "t": "table", "caption": "Controls (check date 2026-10-13)", "head": ["Control", "OpenAI", "Anthropic"], "compact": true, "rows": [
+      ["Choice", "`tool_choice`: `auto` (default), `required`, a named function, `allowed_tools`, `none`", "`tool_choice`: `auto`, `any`, `tool`, `none`"],
+      ["Parallel calls", "`parallel_tool_calls: false` gives zero or one call", "`disable_parallel_tool_use`, default `false`"],
+      ["Strict arguments", "`strict: true` recommended. Chat stays non-strict by default", "`strict: true` on the tool"],
+      ["Limits", "Responses `max_tool_calls`", "Forced `any` or `tool` returns 400 on Opus 5.5, Sonnet 5.5, Fable 5.1 and Mythos 5.1, and with manual extended thinking [[r50]]"]
+    ] },
+    { "t": "p", "md": "In Responses, omitting `strict` makes the API try to normalise the schema to strict and fall back to non-strict, which then shows `strict: false` [[r9]]. A fine-tuned model that makes several calls in one turn loses strict mode. **Custom tools** take free text instead of JSON. Definitions count as input tokens, the guide suggests fewer than 20 functions at the start of a turn, and `tool_search` with `defer_loading` loads large catalogs on demand on gpt-5.4 and later." },
+    { "t": "callout", "kind": "gotcha", "title": "Reasoning plus tools needs Responses on newer OpenAI models", "md": "From GPT-5.4, Chat Completions does not support tool calling with `reasoning_effort` other than `none`. GPT-6 Astra and 6.1 Sol need Responses for tools, and Azure `gpt-5.6-sol` fails with \"Function tools with reasoning_effort are not supported\" even when you omit effort, because the default is `medium` [[r6]] [[r2]] [[r15]]." },
+    { "t": "p", "md": "GPT-6 adds **async tool calling**: set `async: true` on a tool and the model keeps working while your application runs it. You return the result with the original `call_id`, and your application still runs the tool [[tr6]]." }
+  ],
+  "whereToUse": [
+    "Retrieval from private systems, such as order status, tickets or inventory",
+    "Actions: create a ticket, send a message, update a record, with approval gates",
+    "Calculators and code execution for tasks models do poorly in text",
+    "Agent loops that plan, call tools and read results",
+    "Wrapping an internal API with a validated argument schema"
+  ],
+  "whenToUse": {
+    "use": [
+      "The answer needs live data or a side effect",
+      "You can describe each tool with a clear schema and purpose",
+      "You can validate arguments and authorise inside the tool"
+    ],
+    "avoid": [
+      "Large catalogs loaded at once, which waste tokens and confuse selection",
+      "Letting the model decide authorisation, since tools must check permissions themselves",
+      "Unbounded loops with no iteration cap"
+    ],
+    "flips": [
+      "Catalog exceeds about 20 tools: use `tool_search` with `defer_loading` or a pre-selection step",
+      "Reasoning plus tools on a newer OpenAI model: use Responses",
+      "A tool takes minutes: use async tool calling or a task pattern"
+    ]
+  },
+  "alternatives": {
+    "title": "Ways to connect a model to capabilities",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Native function calling", "A few tools, one application", "Many apps share the same tools", "Schemas live in each app"],
+      ["Built-in tools (web search, file search, code interpreter)", "The platform already offers the capability", "You need custom systems", "Platform coupling and extra charges"],
+      ["MCP tools", "Tools are shared across hosts and teams", "A single private function suffices", "Server operations and auth"],
+      ["Structured output only", "You want a typed answer, no side effect", "The model needs fresh data", "No retrieval or action"],
+      ["Hard-coded workflow", "Steps are known and fixed", "Steps depend on what the model finds", "Rigid code"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Arguments fail validation in some calls", "cause": "Strict mode is off, or a fine-tuned model lost it after multi-call turns", "fix": "Set `strict: true`, validate again in code and return errors as tool output" },
+    { "symptom": "The model picks the wrong tool from a long list", "cause": "Many similar tools and long descriptions crowd the context", "fix": "Shrink the catalog, sharpen descriptions, or load tools on demand with `tool_search`" },
+    { "symptom": "Forced tool choice returns 400 on a recent Claude model", "cause": "`any` and `tool` are not accepted on Opus 5.5, Sonnet 5.5, Fable 5.1 and Mythos 5.1", "fix": "Use `auto` with a strict tool or structured outputs" },
+    { "symptom": "The loop runs for dozens of calls", "cause": "No iteration cap and tool errors are swallowed", "fix": "Cap calls, return concise errors, and stop on repeated failures" }
+  ],
+  "scenarios": [
+    {
+      "id": "w01-t09-s1",
+      "title": "A catalog of 120 internal tools",
+      "situation": "An internal assistant exposes 120 tools. Selection errors rise and every request pays for the full list of definitions.",
+      "constraints": ["Tools vary widely by team", "Model supports `tool_search` (gpt-5.4 or later)", "Cost and accuracy both matter"],
+      "unknowns": ["How often are most tools unused?", "Can tools be grouped by task?"],
+      "question": "What do you change?",
+      "options": [
+        { "name": "Use `tool_search` with `defer_loading` so only relevant tools are loaded per turn", "verdict": "best", "why": "It cuts input tokens and confusion, and the guide recommends it for large catalogs on gpt-5.4 and later [[r9]].", "tradeoff": "Adds a search step, and weak tool descriptions make search miss." },
+        { "name": "Send all 120 tools and lower temperature", "verdict": "poor", "why": "Definitions stay in every request and temperature does not fix selection.", "tradeoff": "Passing every tool is fine for a catalog under about 20." },
+        { "name": "Pre-select a subset with your own retriever before each call", "verdict": "good", "why": "Works on any model and you control the logic.", "tradeoff": "You build and maintain the selector and its evals." }
+      ],
+      "flips": [
+        { "if": "The model does not support `tool_search`", "then": "Use your own pre-selection by task or embeddings." },
+        { "if": "Tools are shared across hosts", "then": "Consider MCP with a gateway." }
+      ],
+      "takeaway": "Load only the tools a turn needs."
+    },
+    {
+      "id": "w01-t09-s2",
+      "title": "Forcing structured behaviour on a recent Claude model",
+      "situation": "A workflow sets `tool_choice` to a named tool so the model always returns structured data. After moving to Claude Sonnet 5.5 every call returns 400.",
+      "constraints": ["Output must always be structured", "Claude Sonnet 5.5", "No side effects are needed"],
+      "unknowns": ["Is a tool needed at all, or only a typed answer?"],
+      "question": "How do you fix it?",
+      "options": [
+        { "name": "Retry with `tool_choice: any`", "verdict": "poor", "why": "`any` and `tool` both return 400 on Sonnet 5.5.", "tradeoff": "Forced choice still works on models that accept it." },
+        { "name": "Use `tool_choice: auto` with a strict tool, or structured outputs through `output_config.format`", "verdict": "best", "why": "No side effect is needed, so structured outputs give a typed answer with schema validity and no forced choice [[r50]] [[r32]].", "tradeoff": "You must design a schema and handle refusals." },
+        { "name": "Pin the old model to avoid the change", "verdict": "good", "why": "Keeps current behaviour.", "tradeoff": "Defers the migration to a retirement date." }
+      ],
+      "flips": [
+        { "if": "A real tool call must run", "then": "Keep `auto`, a strict tool and a clear description." },
+        { "if": "You must keep forced choice", "then": "Use a model that accepts it, and document the dependency." }
+      ],
+      "takeaway": "When no action is needed, use structured outputs, not a forced tool."
+    }
+  ],
+  "quiz": [
+    { "id": "w01-t09-q1", "type": "order", "tag": "order", "q": "Order the steps of one tool-calling round trip.", "items": ["App sends messages and tool schemas", "Model returns a tool call with arguments", "App runs the tool", "App returns the result with the call id", "Model writes the final answer"], "explain": "The model only proposes calls. Your application executes them and returns results tagged with the call id before the model answers." },
+    { "id": "w01-t09-q2", "type": "single", "tag": "bug", "q": "Azure `gpt-5.6-sol` fails with 'Function tools with reasoning_effort are not supported' even though the request omits effort. Why?", "options": ["The default effort is `medium`, which Chat Completions cannot use with tools", "The effort parameter is required", "Strict mode is off", "The tool list is too long"], "answer": 0, "explain": "Omitting effort applies the model default of `medium`, and Chat Completions does not support tools with effort other than `none`. Use Responses or set effort to `none`." },
+    { "id": "w01-t09-q3", "type": "multi", "tag": "security", "q": "Which practices keep tool calling safe?", "options": ["Authorise inside each tool using the caller's identity", "Trust the arguments because the schema is strict", "Cap the number of tool calls", "Return tool errors as text so the model can recover"], "answers": [0, 2, 3], "explain": "Tools must check permissions, loops need caps and errors should be returned. A strict schema ensures shape, not that the arguments are safe." }
+  ],
+  "flashcards": [
+    { "front": "Who executes a tool call?", "back": "Your application. The model only returns the call, and you send back the result with the `call_id`." },
+    { "front": "What does `parallel_tool_calls: false` do on OpenAI?", "back": "The model makes zero or one tool call per turn." },
+    { "front": "What is the OpenAI guidance for the number of tools?", "back": "Fewer than 20 functions at the start of a turn (soft advice). Use `tool_search` with `defer_loading` for large catalogs on gpt-5.4 and later." }
+  ],
+  "related": ["w01-t08", "w01-t11", "w08-t02", "w08-t15", "w08-t17", "w01-l4"],
+  "refs": ["r9", "r6", "r2", "r15", "r50", "r32", "tr6"]
+}

@@ -1,0 +1,96 @@
+{
+  "id": "w10-t14",
+  "order": 14,
+  "group": "Multi-agent",
+  "title": "Group chat and debate",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "Several agents share one conversation, and a manager picks who speaks next until a stop rule fires. It suits review, maker-checker loops and structured debate, and it costs more with every round and every agent.",
+  "useIf": "The goal is better judgement from several perspectives on one artifact, there is an objective stop test, and the agents are mostly read-only.",
+  "avoidIf": "Plain delegation or a linear pipeline is enough, latency is tight, or nothing can say when the discussion is done.",
+  "explain": [
+    { "t": "p", "md": "**Group chat** orchestration models a collaborative conversation among agents coordinated by an orchestrator that decides who speaks next. In Agent Framework the agents form a star topology around the orchestrator, speaker selection can be round-robin, prompt-based or custom, and all agents see the full conversation history [[tr1]]. The Azure guide says the pattern suits brainstorming, debate, quality control and maker-checker loops, that agents are typically read-only, and that all output lands in one accumulating thread, which gives transparency and auditability [[r9]]. **Debate** is a special case: multiple model instances propose answers and argue over several rounds to reach a common one, which the original paper reports improves reasoning and factual validity [[tr6]]." },
+    { "t": "diagram", "id": "w10-t14-d1", "title": "Star topology with a chat manager", "alt": "A chat manager sits in the middle of three agents. It selects the next speaker, all agents read the shared transcript, and a stop rule ends the chat.", "src": "flowchart TB\n  M{Chat manager}\n  M --> A[Maker]\n  M --> B[Checker]\n  M --> C[Domain reviewer]\n  A --> T[(Shared transcript)]\n  B --> T\n  C --> T\n  T --> M" },
+    { "t": "formula", "title": "Why chat cost grows faster than the number of messages", "expr": "input_tokens = sum over turns i of (task + message_size x i)", "vars": [{ "k": "turn i", "v": "every agent rereads the whole transcript before replying" }], "example": "3 agents, 4 rounds, 12 messages of 300 tokens on a 500 token task: 12 x 500 + 300 x (0 + ... + 11) = **25,800 input tokens**, while the transcript itself is only 4,100 tokens." },
+    { "t": "p", "md": "Control matters more than creativity. Microsoft advises limiting group chat to three or fewer agents, because more agents make loops harder to control, and says to avoid it when the chat manager has no objective way to tell the task is complete [[r9]]. Stop rules exist in code: `MaximumIterationCount` on the C# round-robin manager, and `termination_condition` and `max_rounds` in the Python builder [[tr1]]. A maker-checker loop also needs acceptance criteria, an iteration cap and a fallback such as escalation to a person [[r9]]." },
+    { "t": "callout", "kind": "tip", "title": "Let a human chair", "md": "The Azure guide notes humans can take the chat manager role to steer the conversation, which turns group chat into a supervised review session [[r9]]." }
+  ],
+  "whereToUse": [
+    "Design or proposal reviews with distinct reviewer roles",
+    "Maker-checker loops for content, code review or compliance checks",
+    "Decision-support sessions where a person joins the thread",
+    "Ideation where agents with different knowledge sources build on each other",
+    "Factual or reasoning tasks where debate is measured to help"
+  ],
+  "whenToUse": {
+    "use": ["An objective test says when the discussion is done", "Agents are read-only or write only to the transcript", "Value of a second and third perspective outweighs the transcript cost"],
+    "avoid": ["Linear pipelines or simple delegation are enough", "Real-time response is required", "More than about three agents are needed to coordinate [[r9]]"],
+    "flips": ["The stop test is vague: fix the acceptance criteria first, or use a fixed round count", "Cost climbs with rounds: cap rounds and summarise the transcript between them", "Agents need to take actions: split them out, keep chat for judgement only"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Group chat (this topic)", "Review, debate, maker-checker, human can join", "No stop test, many agents, tight latency", "Quadratic transcript cost [[r9]]"],
+      ["Evaluator-optimizer", "One generator and one critic, clear criteria", "Several perspectives are needed", "Two calls per round"],
+      ["Voting (concurrent)", "Independent opinions, no discussion needed", "Reasoning needs cross-examination", "N times the cost, no interaction"],
+      ["Supervisor", "Delegation to specialists", "You want perspectives to react to each other", "Hub bottleneck"],
+      ["Single stronger model", "Quality is limited by capability, not perspective", "A critique role adds independent checks", "Higher per-call cost"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "The chat never ends or rambles", "cause": "No objective completion test and no iteration cap [[r9]]", "fix": "Set maximum rounds, a termination condition on a checkable state and a fallback on cap." },
+    { "symptom": "Agents agree politely and add no value", "cause": "Roles are vague and share the same model, prompt and context", "fix": "Give agents distinct criteria, evidence sources or models, and measure whether the chat improves outcomes." },
+    { "symptom": "Token cost far exceeds the value of the result", "cause": "Every agent rereads the whole transcript every turn", "fix": "Limit agents and rounds, summarise earlier rounds and compare against a single stronger call." }
+  ],
+  "scenarios": [
+    {
+      "id": "w10-t14-s1",
+      "title": "Review with a person in the loop",
+      "situation": "A team wants proposals reviewed from cost, risk and user-impact perspectives before a human decision. The reviewers do not change systems, and a manager will join the thread.",
+      "constraints": ["Read-only agents", "Human can join", "Objective stop: all three reviewers sign off or the manager stops it", "Latency of minutes is fine"],
+      "unknowns": ["How many rounds usually settle the review?", "What happens when reviewers disagree at the cap?"],
+      "question": "Which orchestration fits?",
+      "options": [
+        { "name": "Group chat with three reviewers, a round cap and a human chair", "verdict": "best", "why": "It matches the pattern's strengths: read-only roles, multiple perspectives, an audit-friendly thread and human steering.", "tradeoff": "Transcript cost grows each round and the cap needs a fallback." },
+        { "name": "Three independent reviewers in parallel, merged by one summariser", "verdict": "good", "why": "Cheaper, because reviewers do not reread each other.", "tradeoff": "No cross-examination, so disagreements surface only in the merge." },
+        { "name": "Handoff mesh among reviewers", "verdict": "poor", "why": "Reviewers take turns owning the task rather than building on each other, and loop risk rises.", "tradeoff": "Right for conversations where one reviewer should take over the user." }
+      ],
+      "flips": [
+        { "if": "Reviews are independent and volume is high", "then": "Run parallel reviewers and merge." },
+        { "if": "No human is available at the cap", "then": "Return the transcript with unresolved issues flagged." }
+      ],
+      "takeaway": "Chat suits review where the transcript is the product."
+    },
+    {
+      "id": "w10-t14-s2",
+      "title": "Debate for a factual question",
+      "situation": "A product wants to improve accuracy on a factual question-answering feature, and a proposal says to have three models debate for four rounds. Latency is interactive and cost per query matters.",
+      "constraints": ["Interactive latency", "Cost sensitive", "Ground truth can be checked with retrieval"],
+      "unknowns": ["Does debate beat a retrieval check on your golden set?", "What share of queries are hard enough to need more than one pass?"],
+      "question": "Do you adopt multi-round debate?",
+      "options": [
+        { "name": "Add retrieval-based verification first, and debate only on queries the verifier flags", "verdict": "best", "why": "An external check beats opinion, and debate cost is paid only where it may help.", "tradeoff": "Needs a verifier and routing logic." },
+        { "name": "Run three-model, four-round debate on every query", "verdict": "poor", "why": "It multiplies latency and tokens on all traffic for gains you have not measured here.", "tradeoff": "Right for offline, high-stakes analysis where cost and time are secondary." },
+        { "name": "Keep one call and tune the prompt", "verdict": "good", "why": "Cheapest and fastest.", "tradeoff": "No added accuracy mechanism for hard cases." }
+      ],
+      "flips": [
+        { "if": "The task is offline and high stakes", "then": "Debate or maker-checker becomes affordable." },
+        { "if": "Retrieval verification does not catch the errors", "then": "Measure debate on the failing slice only." }
+      ],
+      "takeaway": "Debate is a costly last lever, not a default."
+    }
+  ],
+  "quiz": [
+    { "id": "w10-t14-q1", "type": "single", "tag": "tradeoff", "q": "What does Microsoft's guide say about the number of agents in a group chat?", "options": ["Use at least ten for diversity", "The number does not affect control", "Always match the number of tools", "Consider limiting it to three or fewer, since more agents make loops harder to control"], "answer": 3, "explain": "The guide recommends limiting group chat to three or fewer agents to keep control, and to avoid it when the manager cannot objectively decide completion. [[r9]]", "ref": "r9", "difficulty": 1 },
+    { "id": "w10-t14-q2", "type": "numeric", "tag": "numeric", "q": "Three agents run a round-robin chat for 4 rounds, so 12 messages. The task prompt is 500 tokens, each message adds 300 tokens and each agent reads the whole transcript before replying. How many input tokens are read in total?", "answer": 25800, "tolerancePct": 1, "unit": "tokens", "hint": "Message i (starting at 0) reads 500 + 300 x i tokens.", "explain": "Sum over i = 0 to 11 of (500 + 300 i) = 12 x 500 + 300 x 66 = 6,000 + 19,800 = 25,800. The final transcript holds only 500 + 3,600 = 4,100 tokens, but it is reread at every turn." },
+    { "id": "w10-t14-q3", "type": "single", "tag": "flip", "q": "A group chat keeps running because reviewers never agree. Which change helps most?", "options": ["Add more reviewers", "Define acceptance criteria the manager can test, and cap rounds with a fallback", "Raise the temperature of all agents", "Let agents choose their own speaking order with no manager"], "answer": 1, "explain": "A manager needs an objective completion test and a cap, otherwise the loop has no end [[r9]]. More reviewers and higher temperature add noise, and removing the manager removes the stop control.", "ref": "r9", "difficulty": 2 }
+  ],
+  "flashcards": [
+    { "front": "How does Agent Framework group chat choose the next speaker?", "back": "An orchestrator in a star topology uses round-robin, prompt-based or custom selection. All agents see the full conversation history [[tr1]]." },
+    { "front": "Name the stop controls in Agent Framework group chat.", "back": "MaximumIterationCount on the C# round-robin manager, and termination_condition and max_rounds in the Python builder [[tr1]]." },
+    { "front": "Why does group chat cost grow faster than its message count?", "back": "Every agent rereads the whole transcript before each reply, so input tokens grow roughly quadratically with turns." }
+  ],
+  "related": ["w10-l3", "w10-t06", "w10-t10", "w10-t16"],
+  "refs": ["tr1", "r9", "tr6"]
+}

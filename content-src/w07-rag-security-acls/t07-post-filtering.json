@@ -1,0 +1,116 @@
+{
+  "id": "w07-t07",
+  "order": 7,
+  "group": "Access control options",
+  "title": "Post-filtering",
+  "minutes": 7,
+  "difficulty": "core",
+  "summary": "Retrieve the top candidates first, then drop the ones the caller may not read. It is simple, and it fails when most candidates are denied.",
+  "useIf": "Nearly every document is visible to nearly every caller, or the index cannot filter on permissions.",
+  "avoidIf": "Access is selective: a caller sees a few percent of the corpus, or denied text must never leave the index.",
+  "explain": [
+    { "t": "p", "md": "A post-filter runs **after** ranking. The app asks the index for the top candidates, checks each against an ACL source and keeps the allowed ones. The problem is arithmetic. If the caller may read a fraction *f* of the corpus, a top-k list holds about k times *f* allowed documents, and relevance does not care about permissions." },
+    { "t": "formula", "title": "Over-fetch for a post-filter", "expr": "k_fetch = ceil(k_needed / f)", "vars": [ { "k": "k_needed", "v": "results wanted after filtering" }, { "k": "f", "v": "visible fraction: the share of the corpus the caller may read" } ], "example": "For 10 results, f = 50% needs 20 candidates, f = 10% needs 100 and f = 2% needs 500. This is the lab's model, which assumes relevance is independent of permission: the *ACL decision space* lab shows the group-based case (f = 5%, k = 10, 3x over-fetch) returning a median of 1 result with about 22% empty answers." },
+    { "t": "p", "md": "Large over-fetch costs rerank and latency, so **filter immediately after retrieval, before the reranker, logs and caches**. Denied text that reaches those stages is a leak surface even if the user never sees it. That is the main reason a post-filter fails an audit for regulated content." },
+    { "t": "callout", "kind": "gotcha", "title": "Your pre-filter may be a post-filter", "md": "In Azure AI Search, `vectorFilterMode` has three values: `preFilter`, `postFilter` and `strictPostFilter` (preview). New indexes default to `preFilter`, but indexes created before about 2023-10-15 default to `postFilter`, which can miss results for selective filters. `strictPostFilter` finds the global top k first and has the highest risk of false negatives [[tr19]]." },
+    { "t": "table", "caption": "Where a post-filter is acceptable", "head": ["Dial", "Acceptable", "Not acceptable"], "rows": [
+      ["Visible fraction", "50% or more", "A few percent"],
+      ["Data sensitivity", "Internal, low impact", "Regulated or contractual"],
+      ["Index capability", "Cannot filter on custom fields", "Supports filterable ACL fields"],
+      ["Stage order", "Filter before rerank, logs, cache", "Filter after any of them"]
+    ] }
+  ],
+  "whereToUse": [
+    "Prototypes and small corpora where nearly all content is public to the audience",
+    "A search service that cannot be changed to hold ACL fields",
+    "A second check after a pre-filter, using the live source for the top few hits",
+    "Wikis and handbooks where only a minority of pages are restricted"
+  ],
+  "whenToUse": {
+    "use": ["The visible fraction is high", "You cannot add ACL fields to the index", "A permission lookup per candidate is cheap and fast"],
+    "avoid": ["Access is selective and top-k must stay full", "Denied text must not reach rerankers, logs or caches", "Each caller sees a tiny slice of a large corpus"],
+    "flips": ["The visible fraction falls below about 10%: move the filter into the index", "A regulator or contract forbids denied text outside the index: pre-filter or isolate", "A reranker is expensive: filter first or the over-fetch bill grows"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Post-filter (this topic)", "Most documents are visible, index cannot filter", "Access is selective", "Wasted top-k, empty answers, wider leak surface"],
+      ["Pre-filter in the index", "Group-based, selective access", "Rules cannot be flattened to allow lists", "Sync lag, recall to measure"],
+      ["Live check on top hits only", "Few hits, per-document rights", "High query volume", "Latency and source load"],
+      ["Physical isolation", "Tenant boundary is the rule", "Per-document rules inside tenants", "Cost and limits"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Some users get one result or none", "cause": "Over-fetch is fixed while their visible fraction is small", "fix": "Compute k_fetch from the caller's visible fraction, cap it, and fall back to a pre-filter" },
+    { "symptom": "Restricted text appears in logs and traces", "cause": "Candidates were logged before the filter ran", "fix": "Filter first, then log ids and decisions only" },
+    { "symptom": "Recall drops although the code never filters in the index", "cause": "The index defaults to postFilter for vector queries", "fix": "Set vectorFilterMode explicitly and recreate old indexes to use preFilter" }
+  ],
+  "scenarios": [
+    {
+      "id": "w07-t07-s1",
+      "title": "Five percent visible, top ten required",
+      "situation": "An assistant over 2 million chunks needs ten results per query. Callers belong to team groups and see about 5% of the corpus. The search service can filter on a filterable field. The p95 budget is 800 ms.",
+      "constraints": ["Visible fraction about 5%", "Index supports filters", "p95 budget 800 ms"],
+      "unknowns": ["Can ACL fields be added at ingest?", "How often do group memberships change?"],
+      "question": "Where do you filter?",
+      "options": [
+        { "name": "Keep the post-filter and fetch 10", "verdict": "poor", "why": "About half a result survives on average, and many queries return nothing.", "tradeoff": "Only works when nearly everything is visible." },
+        { "name": "Post-filter with over-fetch of 200 and an early filter", "verdict": "good", "why": "Restores result count.", "tradeoff": "Ten times the fetch, more reranker load and denied text in your code." },
+        { "name": "Move the permission filter into the index as a security filter", "verdict": "best", "why": "Ranking sees only allowed chunks, so top-k stays full [[r13]].", "tradeoff": "Needs ACL capture at ingest, a sync story and a recall check under selective filters." }
+      ],
+      "flips": [
+        { "if": "The visible fraction rises to 80%", "then": "A post-filter with small over-fetch is simpler and fine." },
+        { "if": "ACL fields cannot be added to the index", "then": "Over-fetch and early filtering is the only option, so cap the cost." }
+      ],
+      "takeaway": "At low visible fractions the filter belongs inside the index."
+    },
+    {
+      "id": "w07-t07-s2",
+      "title": "Auditors forbid denied text outside the index",
+      "situation": "A legal-hold corpus is queried by case teams. Auditors require that restricted text never reaches application logs, rerankers or caches unless the caller may read it. Visibility varies widely.",
+      "constraints": ["Denied text must stay in the index", "Visibility varies", "Audit evidence required"],
+      "unknowns": ["Which stages log candidate text today?", "Can ACLs be copied into the index?"],
+      "question": "Which approach passes the audit?",
+      "options": [
+        { "name": "Pre-filter in the index and log only ids and decisions", "verdict": "best", "why": "Denied text never leaves the engine, and the logs hold no restricted content.", "tradeoff": "ACL sync lag must be stated and tested." },
+        { "name": "Post-filter with a very large over-fetch", "verdict": "poor", "why": "Over-fetch does not change who sees denied text: your code, reranker and logs still do.", "tradeoff": "Fine for public content where denied text is not sensitive." },
+        { "name": "Post-filter inside a hardened service that never logs candidates", "verdict": "good", "why": "Contains the exposure to one trusted component.", "tradeoff": "You must prove the isolation and still waste top-k." }
+      ],
+      "flips": [
+        { "if": "The index cannot hold ACLs", "then": "The hardened post-filter service is the fallback." },
+        { "if": "Only some matters are restricted", "then": "Apply the strict path to those matters only." }
+      ],
+      "takeaway": "Ask which stage sees denied text, and not only whether the user sees it."
+    },
+    {
+      "id": "w07-t07-s3",
+      "title": "Recall drops on an older index",
+      "situation": "A team reports poor recall for restricted callers on a vector index created in 2022. Their filter is a security filter and queries use the default settings.",
+      "constraints": ["Index created before October 2023", "Selective filters", "Vector queries with default settings"],
+      "unknowns": ["What is vectorFilterMode set to?", "Was the index ever recreated?"],
+      "question": "What do you do?",
+      "options": [
+        { "name": "Switch to strictPostFilter", "verdict": "poor", "why": "It finds the global top k first and has the highest risk of false negatives for selective filters [[tr19]].", "tradeoff": "It is a preview mode and suits cases where global ranking matters more than recall." },
+        { "name": "Recreate the index and set vectorFilterMode to preFilter explicitly", "verdict": "best", "why": "Older indexes default to postFilter and need to be recreated to use preFilter [[tr19]].", "tradeoff": "A rebuild and re-embedding window." },
+        { "name": "Raise k to compensate", "verdict": "good", "why": "A quick mitigation.", "tradeoff": "More candidates per query and still lossy at small visible fractions." }
+      ],
+      "flips": [
+        { "if": "Recreating the index is not possible this quarter", "then": "Raise k as a stopgap and track recall for restricted callers." },
+        { "if": "The index is newer than October 2023", "then": "preFilter is already the default. Look at sync and ACL data instead." }
+      ],
+      "takeaway": "Check which filter mode your engine really uses."
+    }
+  ],
+  "quiz": [
+    { "id": "w07-t07-q1", "type": "numeric", "tag": "numeric", "q": "A caller may read 4% of the corpus. You need 10 results after a post-filter. About how many candidates must you fetch?", "answer": 250, "tolerancePct": 5, "unit": "candidates", "hint": "k_fetch = ceil(k_needed / f)", "explain": "10 divided by 0.04 is 250. This assumes relevance is independent of permission, so real numbers vary. It shows why post-filtering gets expensive as f shrinks.", "ref": "r13" },
+    { "id": "w07-t07-q2", "type": "single", "tag": "security", "q": "You must keep a post-filter for now. Where should it run?", "options": ["After the reranker, so only the final list is checked", "At the client, after the answer streams", "Immediately after retrieval, before the reranker, logs and caches", "After the model generates the answer"], "answer": 2, "explain": "Filtering first keeps denied text away from rerankers, logs and caches. Later stages already saw it, and a model cannot be trusted to omit what it saw.", "ref": "r22" }
+  ],
+  "flashcards": [
+    { "front": "What is the over-fetch formula for a post-filter?", "back": "k_fetch = ceil(k_needed / f), where f is the visible fraction. At f = 2% and 10 wanted results, fetch 500. It assumes relevance is independent of permission." },
+    { "front": "What does a post-filter expose that a pre-filter does not?", "back": "Denied text reaches your code, rerankers, logs and caches before it is dropped. A pre-filter keeps it inside the index." },
+    { "front": "Which Azure AI Search vector filter mode is the default for newer indexes?", "back": "preFilter. Indexes created before about 2023-10-15 default to postFilter and must be recreated to use preFilter." }
+  ],
+  "related": ["w07-t06", "w07-t08", "w07-l3", "w07-l4", "w04-t18"],
+  "refs": ["r13", "r22", "tr19"]
+}

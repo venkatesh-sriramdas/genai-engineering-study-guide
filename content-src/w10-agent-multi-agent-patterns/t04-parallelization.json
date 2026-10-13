@@ -1,0 +1,96 @@
+{
+  "id": "w10-t04",
+  "order": 4,
+  "group": "Workflow patterns",
+  "title": "Parallelization",
+  "minutes": 7,
+  "difficulty": "core",
+  "summary": "Run several model calls at the same time and combine the results. Sectioning splits a task into independent parts. Voting repeats one task to get diverse answers.",
+  "useIf": "Subtasks are independent, or you want several independent attempts at the same question, and cost and rate limits allow the extra calls.",
+  "avoidIf": "Branches need each other's output, share state they could corrupt, or you have no rule for combining conflicting results.",
+  "explain": [
+    { "t": "p", "md": "Anthropic describes two variations of **parallelization** [[r1]]. In **sectioning** you break a task into independent subtasks that run at once, for example screening a request for policy problems in one call while another call answers it. In **voting** you run the same task several times and combine the outputs, for example several reviewers checking code for vulnerabilities. Microsoft's concurrent orchestration is the same fan-out and fan-in shape, also called scatter-gather or map-reduce, and its documentation lists brainstorming, ensemble reasoning and quorum voting as fits [[r9]][[tr2]]." },
+    { "t": "diagram", "id": "w10-t04-d1", "title": "Fan-out and fan-in", "alt": "One input fans out to three parallel branches. An aggregator merges their results into one output.", "src": "flowchart LR\n  I[Input] --> A[Branch A]\n  I --> B[Branch B]\n  I --> C[Branch C]\n  A --> G[Aggregate]\n  B --> G\n  C --> G\n  G --> O[Output]" },
+    { "t": "formula", "title": "Latency and cost of a fan-out", "expr": "latency = max(branch_latency) + aggregate_latency     cost = sum(branch_cost) + aggregate_cost", "vars": [{ "k": "aggregate", "v": "code or an LLM call that merges, votes or ranks the branch outputs" }], "example": "Branches of 4 s, 6 s and 5 s plus a 2 s merge take **8 s**, against 17 s in sequence. The token bill is still the sum of all three." },
+    { "t": "p", "md": "Voting has a research root: self-consistency samples several reasoning paths and takes the most consistent answer, and the paper reports gains such as +17.9 percent on GSM8K over greedy chain-of-thought [[tr5]]. The catch is that you pay for every vote, and votes from the same model share its blind spots. Sectioning needs a clean boundary: if two branches edit the same artifact or touch the same external system, they need a conflict rule, or they should not run in parallel [[r9]]." },
+    { "t": "callout", "kind": "warn", "title": "Check quota before you fan out", "md": "Parallel branches hit tokens-per-minute and requests-per-minute limits together. Cap concurrency and handle throttling (HTTP 429) with backoff, or the speed gain turns into retries." }
+  ],
+  "whereToUse": [
+    "Running a guardrail check alongside the main answer call",
+    "Summarising or classifying many independent documents or sections",
+    "Multi-perspective review, such as security, cost and readability reviewers",
+    "Voting on high-stakes classifications where a single call is unreliable",
+    "Prefetching several retrieval sources at once"
+  ],
+  "whenToUse": {
+    "use": ["Branches do not depend on each other", "Wall-clock time matters and quota allows the concurrency", "A clear aggregation rule exists: merge, majority vote, ranking or a judge"],
+    "avoid": ["Agents must build on each other's work in sequence", "Branches write to shared state without a conflict strategy", "Quota or cost makes parallel calls infeasible", "Aggregation logic is so complex that it lowers quality [[r9]]"],
+    "flips": ["Subtasks turn out to depend on each other: switch to a chain", "Votes agree almost always: cut the voters, you are paying for no information", "The split cannot be known in advance: move to orchestrator-workers"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Sectioning (this topic)", "Independent parts, latency matters", "Parts depend on each other", "Tokens add up, merge step needed"],
+      ["Voting (this topic)", "A single call is unreliable on a high-stakes label", "Errors are correlated across votes", "N times the cost for one answer"],
+      ["Prompt chain", "Steps depend on each other", "Steps are independent and latency is tight", "Latency is the sum"],
+      ["Orchestrator-workers", "Subtasks are decided at run time", "Subtasks are known and fixed", "Lead call plus synthesis"],
+      ["One larger, slower call", "Quota is tight, task is small", "Task has clear independent parts", "Higher per-call latency"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Bursts of 429 errors and slower-than-sequential runs", "cause": "Fan-out exceeded rate limits and every branch retried", "fix": "Cap concurrency, add jitter to retries and queue branches." },
+    { "symptom": "The merged answer contradicts itself", "cause": "Branches made conflicting decisions with no rule for resolving them", "fix": "Define precedence or a tie-break, or serialise the branches that touch the same thing." },
+    { "symptom": "Voting adds cost but no accuracy", "cause": "Voters are the same model with the same prompt, so errors are correlated", "fix": "Vary prompts, models or evidence, and measure whether votes ever disagree." }
+  ],
+  "scenarios": [
+    {
+      "id": "w10-t04-s1",
+      "title": "Many independent sections",
+      "situation": "A job reads a 60-section document and must produce a short finding for each section, then one combined report. Sections do not reference each other. The model quota allows about 20 concurrent calls.",
+      "constraints": ["Sections are independent", "Quota caps concurrency near 20", "Report merge is a final step"],
+      "unknowns": ["Is there a wall-clock deadline?", "Do findings need a shared glossary or style?"],
+      "question": "How do you run it?",
+      "options": [
+        { "name": "Sectioning with concurrency capped at the quota, then one merge call", "verdict": "best", "why": "Independent parts parallelise cleanly and the cap avoids self-inflicted throttling.", "tradeoff": "Total tokens equal sequential processing, and style can drift across sections unless the prompt pins it." },
+        { "name": "Sequential chain over all 60 sections", "verdict": "good", "why": "Simple, steady and consistent in style.", "tradeoff": "Latency is about 60 calls long for no dependency reason." },
+        { "name": "Fire all 60 calls at once", "verdict": "poor", "why": "It overruns the quota and triggers throttling and retries.", "tradeoff": "Fine only when quota comfortably exceeds the fan-out, for instance in a batch tier." }
+      ],
+      "flips": [
+        { "if": "A deadline is hours away", "then": "A batch API or queue can lower cost, at the price of latency." },
+        { "if": "Sections reference earlier ones", "then": "Chain the dependent sections and parallelise the rest." }
+      ],
+      "takeaway": "Parallelise what is independent, and size the fan-out to your quota."
+    },
+    {
+      "id": "w10-t04-s2",
+      "title": "Voting on a risky label",
+      "situation": "A classifier decides whether a message needs human review. A missed case is costly, and the single-call model is right about 90 percent of the time.",
+      "constraints": ["Cost of a miss is high", "Latency of two seconds is acceptable", "Volume is moderate"],
+      "unknowns": ["Do the votes disagree on the hard cases or all fail together?", "Is a human review queue available for disagreements?"],
+      "question": "Do you add voting?",
+      "options": [
+        { "name": "Three diverse votes with a human queue for disagreements", "verdict": "best", "why": "Disagreement is a useful signal, and diversity in prompts or models reduces correlated errors.", "tradeoff": "Triple the classification cost and added review work." },
+        { "name": "Run the same prompt five times at temperature zero", "verdict": "poor", "why": "Near-identical outputs add cost without new information.", "tradeoff": "Sampling at higher temperature is closer to self-consistency, but still shares the model's blind spots." },
+        { "name": "Keep one call and tighten the prompt", "verdict": "good", "why": "Cheapest, and prompt fixes may close part of the gap.", "tradeoff": "No signal on uncertain cases, so misses stay silent." }
+      ],
+      "flips": [
+        { "if": "Votes never disagree on a labelled sample", "then": "Drop to one call and spend the budget elsewhere." },
+        { "if": "Volume grows ten times", "then": "Vote only when a cheap first call is low confidence." }
+      ],
+      "takeaway": "Votes are worth paying for only when they can disagree for informative reasons."
+    }
+  ],
+  "quiz": [
+    { "id": "w10-t04-q1", "type": "numeric", "tag": "numeric", "q": "Three branches take 4 s, 6 s and 5 s and run in parallel. Merging takes 2 s. How many seconds does the fan-out take end to end?", "answer": 8, "tolerancePct": 0, "unit": "s", "hint": "Parallel time is the slowest branch plus the merge.", "explain": "max(4, 6, 5) + 2 = 8 s. Sequential would be 4 + 6 + 5 + 2 = 17 s. The token cost is the sum of all branches either way." },
+    { "id": "w10-t04-q2", "type": "single", "tag": "tradeoff", "q": "Which is the strongest reason NOT to parallelise two agents?", "options": ["They use different prompts", "Each takes more than a second", "Both write to the same document with no conflict rule", "Their outputs are in different formats"], "answer": 2, "explain": "Concurrent writes to shared state without a conflict strategy are named in Microsoft's list of cases to avoid. Different prompts, durations and formats are normal in parallel branches. [[r9]]", "ref": "r9", "difficulty": 2 },
+    { "id": "w10-t04-q3", "type": "single", "tag": "concept", "q": "What is the difference between sectioning and voting?", "options": ["Sectioning runs different independent subtasks, voting runs the same task several times", "Sectioning is sequential, voting is parallel", "Sectioning needs a judge model, voting does not", "They are the same pattern with different names"], "answer": 0, "explain": "Sectioning divides work into independent parts, while voting repeats the same task for diverse outputs. Both are parallel, and either may use code or a model to aggregate. [[r1]]", "ref": "r1", "difficulty": 1 }
+  ],
+  "flashcards": [
+    { "front": "Name the two variations of parallelization.", "back": "Sectioning (independent subtasks at once) and voting (the same task run several times for diverse outputs) [[r1]]." },
+    { "front": "Formula for fan-out latency?", "back": "max(branch latency) plus the aggregation step. Cost is the sum of all branches plus aggregation." },
+    { "front": "Why might voting add cost but no accuracy?", "back": "Votes from the same model and prompt share blind spots, so errors correlate. Diversify prompts, models or evidence and check that votes ever disagree." }
+  ],
+  "related": ["w10-l1", "w10-t02", "w10-t05", "w10-t14"],
+  "refs": ["r1", "r9", "tr2", "tr5"]
+}

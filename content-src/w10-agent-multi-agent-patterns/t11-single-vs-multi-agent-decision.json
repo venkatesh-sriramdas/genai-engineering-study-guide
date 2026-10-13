@@ -1,0 +1,132 @@
+{
+  "id": "w10-t11",
+  "order": 11,
+  "group": "Multi-agent",
+  "title": "Single vs multi-agent: the decision",
+  "minutes": 10,
+  "difficulty": "core",
+  "summary": "Start with one agent. Add agents only when a named dial forces it: breadth that exceeds one context, tool overload, separate trust boundaries, or independent reads that can run in parallel.",
+  "useIf": "Someone proposes a team of agents and you must decide whether the extra cost, latency and failure modes are justified.",
+  "avoidIf": "Do not use a crew to fix a weak prompt, poor tools or missing evals, and do not parallelise coupled writes.",
+  "explain": [
+    { "t": "p", "md": "The vendors who build agents agree on the default. Microsoft says to use the lowest level of complexity that reliably meets your requirements and calls a single agent with tools often the right default for enterprise use cases [[r9]]. OpenAI says to maximise a single agent's capabilities first, and to split when prompts hold many if-then-else branches or when tool selection fails after you clarify tool descriptions. Tool overload depends on similarity: some systems handle more than 15 distinct tools while others struggle with fewer than 10 overlapping ones [[r19]]." },
+    { "t": "table", "caption": "The six dials, one agent against many", "head": ["Dial", "Single agent", "Multi-agent", "Evidence"], "rows": [
+      ["Latency", "Serial loop, one context", "Parallel reads cut time, handoffs and synthesis add hops", "Parallel subagents cut research time by up to 90 percent, vendor-reported [[r2]]"],
+      ["Cost", "About 4x chat tokens", "About 15x chat tokens", "Anthropic's own traffic [[r2]]"],
+      ["Context isolation", "One window fills up", "Each worker gets a fresh window", "Anthropic and LangChain list isolation as a benefit [[r6]][[r32]]"],
+      ["Debuggability", "One trace", "Many traces and message hops", "MAST: 14 failure modes across 7 frameworks [[r5]]"],
+      ["Blast radius", "One identity holds all tools", "Per-agent tools and identities", "Separate security boundaries justify the cost [[r9]]"],
+      ["Consistency", "Single-threaded decisions", "Parallel writers make conflicting choices", "Cognition 2025-06-12 and 2026-04-22 [[r3]][[r4]]"]
+    ] },
+    { "t": "p", "md": "The evidence is not contradictory. Anthropic's lead-plus-subagents system beat a single agent by 90.2 percent on its internal research eval, which is breadth-first reading. Cognition argued against parallel designs in 2025 and, on 2026-04-22, kept that view for parallel writers while reporting that agents contributing intelligence works when writes stay single-threaded and a clean-context reviewer checks the work [[r2]][[r3]][[r4]]. Both are vendor-reported." },
+    { "t": "dials", "id": "w10-t11-pick", "title": "Single agent or which crowd?", "prompt": "Flip the dials to see which topology wins.", "dials": [
+      { "id": "coupling", "label": "Subtask coupling", "values": [{ "id": "reads", "label": "Independent reads" }, { "id": "writes", "label": "Coupled writes" }] },
+      { "id": "value", "label": "Value per run", "values": [{ "id": "low", "label": "Low" }, { "id": "high", "label": "High" }] },
+      { "id": "boundary", "label": "Trust boundaries", "values": [{ "id": "one", "label": "One boundary" }, { "id": "split", "label": "Separate teams or data" }] }
+    ], "options": [
+      { "id": "single", "name": "Single agent with tools", "summary": "One loop, one context, one identity." },
+      { "id": "writer", "name": "One writer plus read-only helpers", "summary": "Helpers investigate, one agent writes." },
+      { "id": "orch", "name": "Orchestrator-workers", "summary": "Lead plans, workers run in parallel." },
+      { "id": "mesh", "name": "Handoff mesh of specialists", "summary": "Control transfers between owners." }
+    ], "scores": {
+      "single": {
+        "coupling": { "reads": { "s": 0, "why": "Works, but long reading fills one context." }, "writes": { "s": 2, "why": "Single-threaded decisions stay consistent." } },
+        "value": { "low": { "s": 2, "why": "Cheapest option wins when value per run is low." }, "high": { "s": 0, "why": "Fine, but may leave quality on the table." } },
+        "boundary": { "one": { "s": 1, "why": "No need to split permissions." }, "split": { "s": -2, "why": "One identity would hold every team's tools." } }
+      },
+      "writer": {
+        "coupling": { "reads": { "s": 1, "why": "Helpers parallelise reading." }, "writes": { "s": 2, "why": "One writer, helpers only read: Cognition's working shape." } },
+        "value": { "low": { "s": -1, "why": "Extra calls rarely pay back." }, "high": { "s": 1, "why": "Extra reading improves quality." } },
+        "boundary": { "one": { "s": 0, "why": "Neutral." }, "split": { "s": -1, "why": "Helpers share the writer's trust boundary by default." } }
+      },
+      "orch": {
+        "coupling": { "reads": { "s": 2, "why": "Breadth-first reads are the best case." }, "writes": { "s": -2, "why": "Parallel writers conflict on shared artifacts." } },
+        "value": { "low": { "s": -2, "why": "About 15x chat tokens needs high value." }, "high": { "s": 2, "why": "Tokens buy breadth and quality." } },
+        "boundary": { "one": { "s": 0, "why": "Neutral." }, "split": { "s": 1, "why": "Workers can hold separate tools and identities." } }
+      },
+      "mesh": {
+        "coupling": { "reads": { "s": -1, "why": "Specialists work one at a time, not in parallel." }, "writes": { "s": 0, "why": "One owner at a time, but ownership moves." } },
+        "value": { "low": { "s": -1, "why": "Every hop is another model call." }, "high": { "s": 0, "why": "Acceptable if specialists add value." } },
+        "boundary": { "one": { "s": -1, "why": "Hops add risk with no boundary benefit." }, "split": { "s": 2, "why": "Each specialist keeps its own tools and permissions." } }
+      }
+    }, "takeaway": "Name the dial that forces each added agent. If you cannot, stay on one." }
+  ],
+  "whereToUse": [
+    "Architecture reviews where a team proposes a crew of agents",
+    "Interview answers that ask whether a workload needs multiple agents",
+    "Budget reviews: estimating the token multiplier before building",
+    "Deciding when a growing tool list should be split across specialists",
+    "Explaining to stakeholders why a single agent is the default"
+  ],
+  "whenToUse": {
+    "use": ["Independent reads can run in parallel and value per run is high", "One agent's tool list is overloaded after you improved descriptions [[r19]]", "Different teams, data or permissions need separate agents and identities"],
+    "avoid": ["Subtasks are coupled writes to one artifact", "A prompt, tool or eval problem is the real cause of poor quality", "Value per run does not cover roughly 15x tokens"],
+    "flips": ["Writes are coupled: keep one writer and make the rest read-only", "Trust boundaries are separate: multi-agent is justified even at higher cost", "Your evals show no gain over the single-agent baseline: collapse back to one"]
+  },
+  "alternatives": {
+    "title": "Topologies compared",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Single agent with tools", "One domain, coupled work, tight budget", "Breadth overflows context or tools overload", "Long runs fill the context"],
+      ["Single writer plus read-only helpers", "Reads parallelise, writes must stay consistent", "Little reading to parallelise", "Writer is a serial bottleneck"],
+      ["Orchestrator-workers", "Breadth-first, high-value research", "Coupled writes, low value", "About 15x chat tokens [[r2]]"],
+      ["Handoff mesh", "Specialists take over a conversation", "Route is obvious at the start", "Loops and bouncing [[r9]]"],
+      ["Group chat", "Review and debate of a draft", "No objective stop test", "Transcript cost grows each round [[r9]]"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "The crew costs far more than the single agent and quality is about the same", "cause": "No baseline comparison on a golden set", "fix": "Measure the single-agent baseline first and keep the crew only if it wins on your eval." },
+    { "symptom": "Two agents produce contradicting pieces of one deliverable", "cause": "Parallel writers made implicit decisions without seeing each other's actions [[r3]]", "fix": "One writer, read-only helpers, and full traces shared instead of summaries." },
+    { "symptom": "Nobody can find where a run went wrong", "cause": "Failures hide in handoffs, verification gaps or misaligned goals [[r5]]", "fix": "Trace every hop, add an independent verifier and review traces with a MAST-style checklist." }
+  ],
+  "scenarios": [
+    {
+      "id": "w10-t11-s1",
+      "title": "A tool list that keeps growing",
+      "situation": "A single agent has grown to dozens of tools from several teams. It picks the wrong tool about one request in five, and each team wants its own agent.",
+      "constraints": ["One trust boundary", "Many tools, several with overlapping purposes", "Tool descriptions have not been reviewed"],
+      "unknowns": ["Do overlapping tool names and descriptions explain the errors?", "Can tools be loaded on demand instead of all at once?"],
+      "question": "What do you do first?",
+      "options": [
+        { "name": "Clarify and de-duplicate tool descriptions, load tools on demand, and split into specialists only if selection still fails", "verdict": "best", "why": "OpenAI's guidance is to split after clearer descriptions fail, and overlap is the usual cause of tool overload.", "tradeoff": "It takes careful tool review work, and the split may still be needed later." },
+        { "name": "Split immediately into one agent per team, behind a supervisor", "verdict": "good", "why": "It reduces tool lists per agent and gives each team ownership.", "tradeoff": "More hops and tokens, and the supervisor must still route correctly." },
+        { "name": "Raise the model's reasoning effort and keep every tool", "verdict": "poor", "why": "More thinking does not fix ambiguous tool descriptions and it raises cost on every call.", "tradeoff": "Reasonable once descriptions are clean and errors persist on hard cases." }
+      ],
+      "flips": [
+        { "if": "Teams need separate permissions", "then": "Split by trust boundary regardless of tool count." },
+        { "if": "Errors vanish after clearer descriptions", "then": "Stay with one agent." }
+      ],
+      "takeaway": "Fix the tools before you add agents."
+    },
+    {
+      "id": "w10-t11-s2",
+      "title": "Separate data owners",
+      "situation": "Two teams own sensitive data in different systems with different permission models. One assistant must answer questions that touch both, and a prompt injection in one source must not reach the other.",
+      "constraints": ["Separate trust boundaries", "Different permission models", "Cross-domain questions are common"],
+      "unknowns": ["Does each system support delegated user identity?", "How are results combined without leaking raw data?"],
+      "question": "What do you build?",
+      "options": [
+        { "name": "One agent per data owner with its own identity and tools, called by a supervisor that sees approved results only", "verdict": "best", "why": "Permissions stay with the owner and an injection in one source cannot reach the other tools.", "tradeoff": "More tokens, more hops and a combining step to maintain." },
+        { "name": "One agent with the union of both teams' permissions", "verdict": "poor", "why": "A single injection could reach everything, and the blast radius is the whole union.", "tradeoff": "Acceptable only when both systems sit under one owner and one trust boundary." },
+        { "name": "One agent using the user's delegated identity for both systems", "verdict": "good", "why": "Downstream systems enforce the user's rights, so access is bounded by the caller.", "tradeoff": "An injected instruction can still misuse the user's combined rights in one context." }
+      ],
+      "flips": [
+        { "if": "One team owns both systems", "then": "A single agent becomes reasonable." },
+        { "if": "Rights are enforced only in the agent", "then": "Do not rely on delegation, split the agents." }
+      ],
+      "takeaway": "Trust boundaries can justify agents that parallel reads never would."
+    }
+  ],
+  "quiz": [
+    { "id": "w10-t11-q1", "type": "single", "tag": "concept", "q": "Which reading fits both Anthropic's research result and Cognition's argument?", "options": ["Multi-agent always beats a single agent", "Single agents always beat multi-agent", "Parallel reads across agents can pay off, but parallel writers to one artifact conflict", "Both posts say never use more than two agents"], "answer": 2, "explain": "Anthropic's gain came from breadth-first reading with a lead and subagents. Cognition's concern was implicit conflicting decisions by parallel writers, and its 2026-04-22 follow-up kept single-threaded writes. [[r2]][[r4]]", "ref": "r4", "difficulty": 2 },
+    { "id": "w10-t11-q2", "type": "multi", "tag": "flip", "q": "Which dial changes justify splitting one agent into several?", "options": ["Tool selection keeps failing after tool descriptions were clarified", "The team wants more impressive diagrams", "Different data owners need separate identities and permissions", "The prompt has several if-then-else branches that a single prompt handles poorly"], "answers": [0, 2, 3], "explain": "OpenAI names branching prompts and failing tool selection as signals, and Microsoft names separate security boundaries. Diagram appeal is not a dial. [[r19]][[r9]]", "ref": "r19", "difficulty": 2 },
+    { "id": "w10-t11-q3", "type": "numeric", "tag": "numeric", "q": "A single agent run costs 40,000 tokens. Using Anthropic's reported multipliers, roughly how many tokens would a multi-agent run use if a typical chat is 10,000 tokens and multi-agent systems use about 15x chat?", "answer": 150000, "tolerancePct": 5, "unit": "tokens", "hint": "Apply 15x to the chat baseline, not to the agent run.", "explain": "The multipliers are relative to chat: 15 x 10,000 = 150,000 tokens. The agent run at 40,000 is about 4x chat, so the multi-agent run is roughly 3.75x the agent run. These are vendor-reported averages from one system. [[r2]]", "ref": "r2", "difficulty": 2 }
+  ],
+  "flashcards": [
+    { "front": "OpenAI's two signals to split a single agent?", "back": "Prompts with many if-then-else branches, and tool selection that still fails after clearer tool descriptions. Tool overload depends on overlap [[r19]]." },
+    { "front": "Cognition's updated view in 2026-04-22?", "back": "Parallel writers still fail. Multiple agents contributing intelligence works when writes stay single-threaded and a clean-context reviewer checks [[r4]]." },
+    { "front": "What is the token cost of each rung, per Anthropic?", "back": "About 4x chat for an agent and about 15x for a multi-agent system, vendor-reported [[r2]]." }
+  ],
+  "related": ["w10-l3", "w10-l7", "w10-t01", "w10-t05", "w10-t12", "w10-t16"],
+  "refs": ["r2", "r3", "r4", "r5", "r6", "r9", "r11", "r19", "r32"]
+}

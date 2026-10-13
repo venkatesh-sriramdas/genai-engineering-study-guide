@@ -1,0 +1,121 @@
+{
+  "id": "w02-t03",
+  "order": 3,
+  "group": "Latency fundamentals",
+  "title": "Prefill vs decode",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "Prefill reads the whole prompt in parallel and is compute-bound. Decode emits one token per step and is memory-bandwidth-bound. Prompt length drives the first, output length drives the second.",
+  "useIf": "You need to decide whether a slow call is a prompt problem or an output problem, and which lever fits.",
+  "avoidIf": "You only call a hosted model and the slowness is clearly queueing or rate limiting, not model time.",
+  "explain": [
+    { "t": "p", "md": "Generation has two phases with different physics. **Prefill** processes every prompt token in one parallel pass. It saturates GPU compute, takes a long time per iteration, and builds the KV cache. It sets TTFT. **Decode** then emits one token per request per iteration. Each step does little arithmetic but must read the model weights and the KV cache from memory, so it is **memory-bandwidth-bound** and low on compute use. Because each step is light, batching many decodes together is very effective [[r9]]." },
+    { "t": "table", "caption": "Two phases, two sets of levers", "head": ["Property", "Prefill", "Decode"], "rows": [
+      ["Work per step", "All prompt tokens at once", "One token per request"],
+      ["Bound by", "GPU compute", "Memory bandwidth"],
+      ["Sets", "TTFT (with queueing)", "TPOT and most of TTLT"],
+      ["Grows with", "Prompt length", "Output length and KV size"],
+      ["Levers", "Prefix caching, shorter prompt, chunking", "Fewer output tokens, smaller model, speculation, KV quantization"]
+    ] },
+    { "t": "formula", "title": "Why decode speed has a ceiling", "expr": "tokens per second per stream <= memory bandwidth / bytes read per token", "vars": [
+      { "k": "bytes read per token", "v": "model weights plus the KV cache of that sequence" },
+      { "k": "batching", "v": "shares one weight read across many requests, so system TPS scales while per-user speed does not" }
+    ], "example": "Derived and illustrative, not a measurement: an 8B model in bf16 is about 16 GB. On a GPU with 2,000 GB/s of memory bandwidth, one stream reads about 16 GB per token, so the ceiling is about 125 tokens per second before KV reads." },
+    { "t": "p", "md": "The levers are asymmetric. OpenAI's latency guide gives the rule of thumb that cutting 50% of output tokens may cut about 50% of latency, while cutting 50% of the prompt may give only 1% to 5% [[r15]]. Azure adds that output tokens are the main driver of total latency, so check token counts before declaring a regression [[r14]]. Long prompts still matter for TTFT, and at very long contexts the share grows." },
+    { "t": "callout", "kind": "gotcha", "title": "The phases fight when they share a batch", "md": "A long prefill in the same batch as running decodes stalls them, which shows up as ITL spikes for other users. That is the throughput-latency tension that chunked prefill and prefill/decode disaggregation address [[r9]] [[r28]] [[r29]]." }
+  ],
+  "whereToUse": [
+    "Diagnosing a slow call: a long prompt points to prefill, a long answer points to decode",
+    "Choosing between prompt caching (prefill) and output limits (decode)",
+    "Sizing a self-hosted fleet, where prefill and decode need different tuning",
+    "Reading why a reasoning model is slow: hidden reasoning tokens extend decode",
+    "Explaining to a stakeholder why trimming the prompt rarely fixes a slow answer"
+  ],
+  "whenToUse": {
+    "use": [
+      "TTFT is high and prompts are long or retrieval-heavy (prefill levers)",
+      "TTLT is high and answers are long or reasoning is on (decode levers)",
+      "You host the model and see stalls when long prompts arrive"
+    ],
+    "avoid": [
+      "Do not trim input to fix a decode-dominated delay: 50% fewer input tokens may give 1% to 5%",
+      "Do not tune batch or chunk settings on a hosted API where you cannot reach them",
+      "Do not read a single average as proof of health: TTFT and TPOT can move in opposite directions"
+    ],
+    "flips": [
+      "Context reaches tens of thousands of tokens: prefill becomes a large share, so caching and trimming pay off",
+      "Reasoning effort rises: hidden tokens extend decode, so cap effort or output before touching the prompt",
+      "Concurrency grows on your own GPUs: decode batches well, but long prefills start to stall streams"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Lever", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Prefix caching", "Long stable prefix, TTFT bound", "Short prompts or unique prefixes", "Write premium on some providers"],
+      ["Cut output tokens", "Output-dominated latency", "Answers need the length", "May reduce completeness"],
+      ["Smaller or routed model", "Easy tasks dominate", "Hard tasks need the large model", "Quality risk, eval needed"],
+      ["Trim input", "Context is padded with irrelevant text", "Prompt is already tight", "Can drop needed evidence"],
+      ["Chunked prefill or disaggregation", "Self-hosted, mixed long and short traffic", "Hosted API, low load", "Operational complexity"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Trimming the prompt by half barely moves total latency", "cause": "The call is decode-dominated: long output or hidden reasoning tokens", "fix": "Cap output, lower reasoning effort, or use a smaller model first [[r15]]" },
+    { "symptom": "Other users' streams stutter when one long prompt arrives", "cause": "A large prefill shares a batch with decodes", "fix": "Enable chunked prefill or separate prefill and decode capacity [[r9]]" },
+    { "symptom": "TTFT scales with prompt length although output is short", "cause": "Prefill grows with prompt tokens", "fix": "Cache the stable prefix and cut retrieved context" }
+  ],
+  "scenarios": [
+    {
+      "id": "w02-t03-s1",
+      "title": "Retrieval-heavy answers on a hosted model",
+      "situation": "A support assistant sends about 30,000 tokens of policy text and retrieved passages to a hosted model and gets back about 200 tokens. Users complain about a 6 second wait before text starts.",
+      "constraints": ["Hosted API", "Short output", "Most of the 30,000 tokens are the same policy text on every call"],
+      "unknowns": ["How much of the prompt is identical across calls?", "How often do calls arrive relative to cache lifetime?"],
+      "question": "Which lever first?",
+      "options": [
+        { "name": "Cache the stable policy prefix and keep retrieved text after it", "verdict": "best", "why": "TTFT is dominated by prefill of a long, mostly repeated prompt. Reusing the prefill state attacks exactly that.", "tradeoff": "Hits need an identical prefix, enough traffic inside the cache lifetime and, on some providers, a write premium." },
+        { "name": "Cut max output tokens", "verdict": "poor", "why": "Output is only 200 tokens, so there is almost nothing to cut.", "tradeoff": "Right when long answers dominate total time." },
+        { "name": "Switch to a smaller model", "verdict": "good", "why": "Prefill is cheaper on a smaller model.", "tradeoff": "Quality risk on policy questions, and caching often gives more for less risk." }
+      ],
+      "flips": [
+        { "if": "Each call has unique 30,000-token documents", "then": "Caching cannot help. Retrieve less, rerank harder or use a smaller model." },
+        { "if": "Answers grow to 2,000 tokens", "then": "Decode dominates, so output length becomes the first lever." }
+      ],
+      "takeaway": "Long prompt and short answer means attack prefill."
+    },
+    {
+      "id": "w02-t03-s2",
+      "title": "Reasoning-heavy analyst tool",
+      "situation": "An analysis tool sends a 1,500-token prompt and waits 40 seconds for an answer. Usage data shows large hidden reasoning token counts. A teammate proposes shortening the prompt.",
+      "constraints": ["Small prompt", "Reasoning model", "Accuracy matters but 40 seconds is too slow"],
+      "unknowns": ["Does accuracy hold at lower reasoning effort?", "Is there an eval set to test that?"],
+      "question": "What do you do?",
+      "options": [
+        { "name": "Lower reasoning effort or cap output, checked against an eval set", "verdict": "best", "why": "Latency is decode time over many hidden tokens, so cutting generated tokens attacks the cause.", "tradeoff": "Accuracy may fall on the hardest questions, so measure it." },
+        { "name": "Shorten the prompt", "verdict": "poor", "why": "A 1,500-token prompt is a small share of a 40 second call.", "tradeoff": "Helps when prompts are tens of thousands of tokens." },
+        { "name": "Add prompt caching", "verdict": "good", "why": "It trims TTFT a little and lowers cost.", "tradeoff": "It does not touch the long decode phase." }
+      ],
+      "flips": [
+        { "if": "Easy and hard questions can be told apart cheaply", "then": "Route easy ones to low effort and keep high effort for hard ones." },
+        { "if": "The result is not needed interactively", "then": "Run it as a background or batch job." }
+      ],
+      "takeaway": "Hidden reasoning tokens make a call decode-bound."
+    }
+  ],
+  "quiz": [
+    { "id": "w02-t03-q1", "type": "single", "tag": "concept", "q": "Why is batching decode requests so effective?", "options": ["Decode is compute-bound and batching adds more compute", "Batching shortens the prompt of each request", "Batching removes the KV cache", "Each decode step is memory-bandwidth-bound, so one weight read can serve many requests"], "answer": 3, "explain": "Decode does little arithmetic per step and is limited by reading weights and KV from memory, so sharing one weight read across a batch raises throughput. Prefill, not decode, is the compute-bound phase.", "difficulty": 1, "ref": "r9" },
+    { "id": "w02-t03-q2", "type": "numeric", "tag": "numeric", "q": "A 7B model in bf16 is about 14 GB. On a GPU with 2,000 GB/s of memory bandwidth, what is the upper bound on tokens per second for one stream, ignoring KV reads?", "answer": 143, "tolerancePct": 5, "unit": "tokens per second", "hint": "bandwidth / bytes per token", "explain": "Each token reads about 14 GB, so 2,000 / 14 is about 143 tokens per second. Real systems are lower because KV reads, overheads and kernels add cost. The point is that decode speed is set by bytes moved, not by FLOPs.", "difficulty": 2, "ref": "r9" },
+    { "id": "w02-t03-q3", "type": "match", "tag": "diagnose", "q": "Match each symptom to its dominant phase.", "pairs": [
+      { "l": "TTFT grows with a 30,000-token prompt", "r": "Prefill" },
+      { "l": "Streams crawl at 15 tokens per second on a short prompt", "r": "Decode" },
+      { "l": "A long prompt stalls other users' streams", "r": "Prefill and decode sharing a batch" }
+    ], "explain": "Long prompts lengthen prefill and TTFT. A slow stream on a short prompt is decode speed. Stalls for others come from mixing a large prefill into a batch of decodes.", "difficulty": 2, "ref": "r9" }
+  ],
+  "flashcards": [
+    { "front": "Why is prefill compute-bound and decode memory-bound?", "back": "Prefill processes all prompt tokens in parallel and saturates compute. Decode emits one token per step and mostly reads weights and KV from memory." },
+    { "front": "Which cuts latency more: halving output tokens or halving input tokens?", "back": "Halving output may cut about 50% of latency. Halving input may give only 1% to 5%, more at very long contexts." },
+    { "front": "What do chunked prefill and disaggregation fix?", "back": "Stalls and interference when long prefills share capacity with decodes." }
+  ],
+  "related": ["w02-t01", "w02-t07", "w02-t09", "w02-l2"],
+  "refs": ["r9", "r14", "r15", "r28", "r29"]
+}

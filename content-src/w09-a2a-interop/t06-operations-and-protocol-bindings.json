@@ -1,0 +1,144 @@
+{
+  "id": "w09-t06",
+  "order": 6,
+  "group": "Protocol",
+  "title": "Operations and protocol bindings",
+  "minutes": 8,
+  "difficulty": "advanced",
+  "summary": "A2A defines one set of operations (send, stream, get, list, cancel, subscribe, push config, extended card) and exposes them through three functionally equivalent bindings: JSON-RPC, gRPC and HTTP+JSON.",
+  "useIf": "You implement or call an A2A endpoint and must pick a binding or debug a call across stacks.",
+  "avoidIf": "You hand-roll the wire format when an SDK exists: the SDK handles method names, headers and streaming for the binding you choose.",
+  "explain": [
+    { "t": "p", "md": "The spec defines a canonical data model in Protocol Buffers and requires every binding to provide functionally equivalent behaviour [[r1]]. The operations are `SendMessage`, `SendStreamingMessage`, `GetTask`, `ListTasks`, `CancelTask`, `SubscribeToTask`, four push-notification config operations and `GetExtendedAgentCard`. `SendMessage` returns a Task or a direct Message." },
+    { "t": "table", "caption": "Operation mapping [[r1]]", "head": ["Operation", "JSON-RPC and gRPC method", "HTTP+JSON endpoint"], "rows": [
+      ["Send a message", "`SendMessage`", "`POST /message:send`"],
+      ["Send and stream", "`SendStreamingMessage`", "`POST /message:stream`"],
+      ["Get a task", "`GetTask`", "`GET /tasks/{id}`"],
+      ["List tasks (cursor pagination, scoped to the caller)", "`ListTasks`", "`GET /tasks`"],
+      ["Cancel a task", "`CancelTask`", "`POST /tasks/{id}:cancel`"],
+      ["Reattach to a stream", "`SubscribeToTask`", "`POST /tasks/{id}:subscribe`"],
+      ["Extended card", "`GetExtendedAgentCard`", "`GET /extendedAgentCard`"]
+    ] },
+    { "t": "p", "md": "**JSON-RPC 2.0** runs over HTTP (`application/json`, PascalCase method names). **HTTP+JSON** is REST style and SHOULD use the media type `application/a2a+json`. **gRPC** uses the proto service. Streaming is Server-Sent Events for JSON-RPC and HTTP+JSON and native streams for gRPC. Two service parameters travel as HTTP headers (or gRPC metadata): `A2A-Version` (`Major.Minor`) and `A2A-Extensions`. An unsupported version returns `VersionNotSupportedError`, and an empty header means 0.3 [[r1]] [[r4]]." },
+    { "t": "p", "md": "Which binding you can use is set by the card's ordered `supportedInterfaces` (first is preferred) and by platform limits. Foundry's incoming A2A for v1.0 supports **JSON-RPC only**, text only and no streaming (checked 2026-10-13) [[r17]]. The Agent Framework .NET client prefers HTTP+JSON over JSON-RPC by default and lets you override it with `A2AClientOptions.PreferredBindings` [[r15]]. A `tenant` field lets one endpoint host many agents." }
+  ],
+  "whereToUse": [
+    "Choosing a binding when you publish an agent for browsers, mobile apps or other services",
+    "Calling a Foundry-hosted agent, which accepts only JSON-RPC for v1.0",
+    "Debugging a failed call: matching the method or endpoint, version header and media type",
+    "Internal high-throughput agent meshes that already run gRPC",
+    "Gateway rules that route by path, such as `/message:send`, or by method name"
+  ],
+  "whenToUse": {
+    "use": [
+      "JSON-RPC for the widest SDK and platform support, including Foundry",
+      "HTTP+JSON when clients are browsers or REST tooling and you want resource-style URLs",
+      "gRPC for internal service meshes with typed contracts and native streaming"
+    ],
+    "avoid": [
+      "Do not assume every peer supports every binding: read the card",
+      "Do not omit `A2A-Version`: servers may default to 0.3",
+      "Do not build a custom binding unless you can document equivalent error mappings"
+    ],
+    "flips": [
+      "The peer is Foundry for v1.0: JSON-RPC is the only option",
+      "A browser must call the agent directly: HTTP+JSON with SSE is the natural fit",
+      "Payload throughput dominates inside one cluster: gRPC reduces overhead"
+    ]
+  },
+  "alternatives": {
+    "title": "The three bindings",
+    "head": ["Binding", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["JSON-RPC 2.0 over HTTP", "Broad support, simple clients, Foundry peers", "You want REST resources and cacheable GETs", "Everything is a POST to one URL"],
+      ["HTTP+JSON", "Browsers, REST gateways, resource URLs", "The peer implements only JSON-RPC", "You must confirm the peer lists this binding in its card"],
+      ["gRPC", "Typed internal meshes, native streaming", "Browsers cannot call native gRPC directly", "Tooling and firewall changes"]
+    ]
+  },
+  "pitfalls": [
+    {
+      "symptom": "A client built for v0.3 cannot parse replies from a v1.0 agent",
+      "cause": "v1.0 uses SCREAMING_SNAKE_CASE enums, drops the `kind` discriminator and renames operations (`message/send` became `SendMessage`) [[r2]]",
+      "fix": "Send `A2A-Version`, read `protocolVersion` per interface and support both versions during migration"
+    },
+    {
+      "symptom": "A client picks HTTP+JSON but the server only serves JSON-RPC",
+      "cause": "The client preferred a binding by default instead of choosing from the card's interfaces",
+      "fix": "Select from `supportedInterfaces` and set preferred bindings explicitly [[r15]]"
+    },
+    {
+      "symptom": "Foundry returns 400 with a version-ambiguous problem",
+      "cause": "The `A2A-Version` header and the `a2a-version` query value disagreed",
+      "fix": "Send one selector, or make both equal. With none, Foundry serves 0.3 [[r17]]"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "w09-t06-s1",
+      "title": "Calling a Foundry-hosted agent",
+      "situation": "Your orchestrator must call an agent hosted in Foundry Agent Service using A2A v1.0. The orchestrator's SDK defaults to HTTP+JSON and wants streaming for a chat UI.",
+      "constraints": ["Callee is Foundry, v1.0", "Orchestrator prefers HTTP+JSON", "UI wants streaming"],
+      "unknowns": ["Can the UI accept non-streaming replies?", "Does the SDK allow preferred bindings?"],
+      "question": "What do you configure?",
+      "options": [
+        { "name": "JSON-RPC, non-streaming, `A2A-Version: 1.0`, Entra token", "verdict": "best", "why": "It matches what Foundry supports for v1.0: JSON-RPC, text, no streaming.", "tradeoff": "The UI cannot stream tokens from this peer." },
+        { "name": "HTTP+JSON with streaming", "verdict": "poor", "why": "Foundry v1.0 does not support HTTP+JSON, gRPC or streaming.", "tradeoff": "Right for peers whose card lists those bindings." },
+        { "name": "Put a streaming facade in front of polling", "verdict": "good", "why": "Keeps the UI responsive while the call stays JSON-RPC.", "tradeoff": "More moving parts and still no token streaming." }
+      ],
+      "flips": [
+        { "if": "Foundry later declares streaming for v1.0 on its card", "then": "Enable SSE after reading the card." },
+        { "if": "The peer is not Foundry", "then": "Choose the binding from its card." }
+      ],
+      "takeaway": "The callee's declared bindings beat the client's default."
+    },
+    {
+      "id": "w09-t06-s2",
+      "title": "Internal agent mesh at high volume",
+      "situation": "Forty internal agents exchange hundreds of requests per second inside one cluster that already runs gRPC with mutual TLS. Streaming progress is common.",
+      "constraints": ["Same cluster and platform team", "High request rate", "gRPC tooling available"],
+      "unknowns": ["Do all agent SDKs support gRPC?", "Do any browsers call these agents directly?"],
+      "question": "Which binding do you standardize on?",
+      "options": [
+        { "name": "gRPC with native streaming", "verdict": "best", "why": "Typed contracts and lower overhead fit an internal mesh that already runs gRPC.", "tradeoff": "Browsers need a gateway and some SDKs may lack gRPC." },
+        { "name": "JSON-RPC over HTTP", "verdict": "good", "why": "Works everywhere and is easier to debug with curl.", "tradeoff": "Higher serialization overhead and SSE instead of native streams." },
+        { "name": "A custom binding", "verdict": "poor", "why": "It must define equivalent error mappings and nobody else supports it.", "tradeoff": "Only justified by a transport the three standard bindings cannot use." }
+      ],
+      "flips": [
+        { "if": "External partners need to call the agents", "then": "Offer JSON-RPC or HTTP+JSON at the edge." },
+        { "if": "Some agent SDKs lack gRPC", "then": "Standardize on JSON-RPC." }
+      ],
+      "takeaway": "Pick the binding your platform and peers already run."
+    }
+  ],
+  "quiz": [
+    {
+      "id": "w09-t06-q1",
+      "type": "match",
+      "tag": "concept",
+      "q": "Match each HTTP+JSON endpoint to its operation.",
+      "pairs": [
+        { "l": "`POST /message:send`", "r": "Send a message" },
+        { "l": "`POST /message:stream`", "r": "Send and stream" },
+        { "l": "`GET /tasks/{id}`", "r": "Get a task" },
+        { "l": "`POST /tasks/{id}:cancel`", "r": "Cancel a task" }
+      ],
+      "explain": "The endpoints map one to one to `SendMessage`, `SendStreamingMessage`, `GetTask` and `CancelTask`."
+    },
+    {
+      "id": "w09-t06-q2",
+      "type": "single",
+      "tag": "bug",
+      "q": "A client sends no `A2A-Version` header to a server that supports 1.0 and 0.3. Which version does the spec say applies?",
+      "options": ["1.0", "0.3", "The latest the client's SDK supports", "The call is rejected with 401"],
+      "answer": 1,
+      "explain": "An empty version header means 0.3. This is why clients should always send the version explicitly. Servers return `VersionNotSupportedError` for versions they do not support, and 401 is an authentication error."
+    }
+  ],
+  "flashcards": [
+    { "front": "Which three bindings does A2A v1.0 define?", "back": "JSON-RPC 2.0 over HTTP, gRPC and HTTP+JSON. All must be functionally equivalent." },
+    { "front": "Which binding does a Foundry agent accept for incoming A2A v1.0?", "back": "JSON-RPC only, with text modality and no streaming (checked 2026-10-13)." },
+    { "front": "What do an empty `A2A-Version` header and an unsupported version mean?", "back": "Empty means 0.3. An unsupported version returns `VersionNotSupportedError`." }
+  ],
+  "related": ["w09-t03", "w09-t07", "w09-l04", "w09-t10", "w11-t25"],
+  "refs": ["r1", "r2", "r4", "r15", "r17"]
+}

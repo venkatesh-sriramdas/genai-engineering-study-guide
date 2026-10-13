@@ -1,0 +1,118 @@
+{
+  "id": "w16-t05",
+  "order": 5,
+  "group": "Capacity",
+  "title": "Deployment types and capacity: PAYG, global, data zone, PTU",
+  "minutes": 9,
+  "difficulty": "core",
+  "summary": "Azure sells model capacity as pay-as-you-go Global, Data Zone or regional Standard, as Priority processing, and as provisioned throughput (PTU). The choice follows traffic shape, residency and how tightly latency must hold.",
+  "useIf": "You must pick how to buy tokens for a production workload and defend the choice with numbers.",
+  "avoidIf": "Traffic is unknown. Start on Global Standard, measure, then size commitments.",
+  "explain": [
+    { "t": "p", "md": "Foundry offers `GlobalStandard`, `DataZoneStandard`, `Standard` (a single geography), the provisioned types `GlobalProvisionedManaged`, `DataZoneProvisionedManaged` and `ProvisionedManaged`, the batch types `GlobalBatch` and `DataZoneBatch`, and `DeveloperTier`. Microsoft advises starting with Global Standard. Global may process in any region, Data Zone stays inside the US, EU or APAC zone, and Standard stays in one geography; data at rest stays in the designated geography. Global and Data Zone Standard are not a failover: if the primary region has an interruption, all traffic initially routed to it is affected, so neither replaces a second region [[r5]]." },
+    { "t": "p", "md": "**PTU** capacity is held whether or not requests arrive. It is billed per PTU per hour or through 1-month or 1-year reservations. Quota is per subscription, region and deployment type, and **quota does not guarantee capacity**; neither do reservations, so create the deployment first. Cached tokens do not consume PTU capacity [[r6]]. **Priority processing** is a pay-as-you-go tier set per deployment or with `service_tier: \"priority\"` per request. Its target is a p50 token rate per 5-minute window, not a per-request guarantee [[r10]]. **Spillover** sends non-200 overflow from a full PTU deployment to a standard one in the same resource, for all requests or per request through `x-ms-spillover-deployment` [[r7]]." },
+    { "t": "formula", "title": "PTU sizing", "expr": "normalized TPM = peak RPM x prompt tokens x (1 - cache rate) + output-to-input ratio x peak RPM x response tokens; PTUs = normalized TPM / input TPM per PTU, rounded up to the model increment", "vars": [ { "k": "input TPM per PTU", "v": "model specific, from the sizing doc" }, { "k": "increment", "v": "smallest step of PTUs for that model" } ], "example": "Doc example: 1,000 RPM, 200-token prompt, 20-token response, ratio 8, 3,400 input TPM per PTU, increment 5. 360,000 / 3,400 = 105.88, so 110 PTUs. At a 50% cache rate it is 260,000 / 3,400 = 76.47, so 80 PTUs [[r7]]." },
+    { "t": "table", "caption": "Capacity options at a glance", "head": ["Option", "Processing boundary", "Wins when", "Loses when"], "rows": [
+      ["Global Standard", "Any region", "Default, newest models, highest quota", "Residency limits; variance at large steady volume"],
+      ["Data Zone Standard", "US, EU or APAC zone", "Zone-level residency", "Newest models arrive later"],
+      ["Priority processing", "Global or Data Zone Standard (US)", "Bursty, latency-sensitive, no commitment", "Price premium; p50 target only"],
+      ["Provisioned (PTU) with spillover", "Global, Data Zone or regional", "Steady, high volume, stable latency", "Spiky or small traffic; idle cost; capacity not guaranteed"]
+    ] }
+  ],
+  "whereToUse": [
+    "Launch planning: Global Standard first, then measure peak RPM and token mix",
+    "EU-resident workloads: Data Zone Standard or Data Zone Provisioned",
+    "Business-hour apps with bursts: Priority processing instead of a commitment",
+    "Steady high-volume APIs with p95 targets: PTU plus spillover",
+    "Cost reviews: compare reservations with measured utilization"
+  ],
+  "whenToUse": {
+    "use": ["Provisioned: traffic is predictable and high enough to keep PTUs busy", "Priority: latency matters but traffic is bursty", "Data Zone: a residency boundary applies", "Spillover: provisioned baseline with occasional peaks"],
+    "avoid": ["PTUs for small or spiky traffic: capacity bills while idle", "Assuming a quota or reservation gives capacity in a region", "Spillover for Azure DeepSeek or Meta Llama, which are not supported"],
+    "flips": ["A high prompt cache rate lowers PTU count, so redesign prefixes before sizing", "A new residency rule moves you from Global to Data Zone and may delay model availability", "Traffic becomes steady 24 hours a day: reservations beat hourly PTU billing at high utilization"]
+  },
+  "alternatives": {
+    "title": "Pay-as-you-go versus provisioned",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Global Standard", "Unknown or variable traffic", "Strict residency, tight latency variance", "Shared capacity, 429s at peaks"],
+      ["Data Zone Standard", "Zone residency needed", "Latest model on day one", "Smaller pool than Global"],
+      ["Priority", "Bursts with latency targets", "You need a hard SLA", "Premium price, p50 per 5 minutes only [[r10]]"],
+      ["PTU with spillover", "Steady volume, stable latency", "Spiky traffic, small scale", "Idle cost; scale-up capacity can be unavailable [[r6]]"],
+      ["Batch or Flex", "Delay-tolerant work", "Interactive", "No real-time SLA (see the batch topic)"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A PTU deployment cannot be created despite a reservation", "cause": "Quota and reservations do not guarantee regional capacity", "fix": "Create the deployment first, then buy the reservation; keep a second region in mind" },
+    { "symptom": "PTU bill is high and utilization low", "cause": "Sized for peak on spiky traffic", "fix": "Size PTUs for the baseline, spill the peaks over to Standard, and use Batch for async work" },
+    { "symptom": "Cache breakpoints have no effect on a PTU-M deployment", "cause": "PTU-M keeps caching but has no breakpoints and no `cache_write_tokens`", "fix": "Order the prompt for implicit reuse; count cached tokens as free capacity" }
+  ],
+  "scenarios": [
+    {
+      "id": "w16-t05-s1",
+      "title": "Steady API inside an EU boundary",
+      "situation": "An internal API serves a steady 800 requests per minute around the clock. A p95 latency target exists. Policy keeps processing inside the EU.",
+      "constraints": ["Traffic is steady", "EU processing boundary", "Latency variance must be low"],
+      "unknowns": ["What is the prompt cache rate?", "Is capacity available in the target region?", "What does the model's increment of PTUs look like?"],
+      "question": "How do you buy capacity?",
+      "options": [
+        { "name": "Data Zone Provisioned sized for the baseline, spillover to Data Zone Standard", "verdict": "best", "why": "Steady volume keeps PTUs busy, the zone satisfies residency, and spillover covers peaks.", "tradeoff": "Idle cost if volume drops, and capacity must exist before you commit." },
+        { "name": "Global Standard", "verdict": "poor", "why": "Global may process outside the EU, which breaks the boundary.", "tradeoff": "Right when residency is not a constraint and traffic is variable." },
+        { "name": "Priority processing in a Data Zone", "verdict": "good", "why": "No commitment and better latency than plain Standard.", "tradeoff": "Only a p50 target per 5 minutes, and a price premium at steady volume." }
+      ],
+      "flips": [
+        { "if": "Traffic falls to a few hundred requests a day", "then": "Drop PTUs for Data Zone Standard." },
+        { "if": "A prefix redesign lifts the cache rate to 50%", "then": "Resize down: the sizing example falls from 110 to 80 PTUs." }
+      ],
+      "takeaway": "Steady, residency-bound traffic favours provisioned capacity with spillover."
+    },
+    {
+      "id": "w16-t05-s2",
+      "title": "A business-hours copilot",
+      "situation": "A copilot is used from 08:00 to 18:00 on weekdays with sharp morning and post-lunch bursts. Latency matters during bursts. The team wants no multi-month commitment.",
+      "constraints": ["Spiky, business-hours traffic", "No commitment wanted", "Global processing allowed"],
+      "unknowns": ["How strict is the latency target?", "What is the peak-to-average ratio?"],
+      "question": "Which mode fits?",
+      "options": [
+        { "name": "Priority processing on a Global Standard deployment", "verdict": "best", "why": "It targets stable token rates during bursts without capacity held overnight.", "tradeoff": "Premium price, and the target is a p50 per 5 minutes, not a per-request guarantee." },
+        { "name": "Plain Global Standard", "verdict": "good", "why": "Cheapest, fine if bursts are mild.", "tradeoff": "Latency and 429s vary at peaks." },
+        { "name": "PTU sized for the burst peak", "verdict": "poor", "why": "Capacity is paid for at night and weekends and sits idle.", "tradeoff": "Right when traffic is high and steady all day." }
+      ],
+      "flips": [
+        { "if": "A hard latency SLA is contractual", "then": "Provisioned capacity with spillover." },
+        { "if": "Usage becomes 24 by 7", "then": "Re-run the PTU sizing and compare with reservations." }
+      ],
+      "takeaway": "Bursty traffic is a Priority case. Provisioned capacity is for steady load."
+    },
+    {
+      "id": "w16-t05-s3",
+      "title": "A pilot heading to production",
+      "situation": "A pilot has a few hundred users. Production is expected to be ten times larger, but nobody has measured token mix, cache rate or peak RPM.",
+      "constraints": ["Traffic unknown", "Budget approval needs a number", "Three months to launch"],
+      "unknowns": ["Can the pilot log RPM and token counts per request?", "What is the lead time for PTU capacity in the target region?"],
+      "question": "What is the plan?",
+      "options": [
+        { "name": "Stay on Global Standard, instrument tokens and cache rate, size PTUs from measured peaks", "verdict": "best", "why": "The sizing formula needs peak RPM, prompt and response tokens and cache rate, all of which the pilot can measure.", "tradeoff": "Costs a pilot cycle before any commitment saving." },
+        { "name": "Buy a one-year reservation up front based on projected users", "verdict": "poor", "why": "A reservation does not guarantee capacity and the sizing inputs are guesses.", "tradeoff": "Right once utilization is measured and stable." },
+        { "name": "Use Flex processing for production", "verdict": "poor", "why": "Flex has no SLA and can return 429 for lack of capacity, so interactive users suffer.", "tradeoff": "Right for delay-tolerant work only." }
+      ],
+      "flips": [
+        { "if": "Measured utilization is steady above a PTU break-even", "then": "Move the baseline to PTUs and spill over." },
+        { "if": "Launch needs capacity guarantees in three weeks", "then": "Create the provisioned deployment early to prove capacity exists." }
+      ],
+      "takeaway": "Measure first, then size. Do not commit on projections."
+    }
+  ],
+  "quiz": [
+    { "id": "w16-t05-q1", "type": "numeric", "tag": "numeric", "q": "Peak 600 RPM, 500-token prompts, 100-token responses, output-to-input ratio 4, cache rate 40%, 2,500 input TPM per PTU, increment 5. How many PTUs?", "answer": 170, "tolerancePct": 1, "unit": "PTUs", "hint": "Normalized TPM first, then divide and round up to a multiple of 5", "explain": "Normalized TPM = 600 x 500 x 0.6 + 4 x 600 x 100 = 180,000 + 240,000 = 420,000. Divided by 2,500 is 168, rounded up to the increment of 5 gives 170 [[r7]].", "difficulty": 3 },
+    { "id": "w16-t05-q2", "type": "multi", "tag": "concept", "q": "Which statements about PTU are correct?", "options": ["Capacity is held whether or not requests arrive", "A reservation guarantees capacity in a region", "Cached tokens do not consume PTU capacity", "Quota does not guarantee capacity"], "answers": [0, 2, 3], "explain": "Provisioned capacity bills while idle, cached tokens are free of PTU use, and quota is not capacity. Reservations also do not guarantee capacity, so create the deployment first [[r6]].", "difficulty": 2 },
+    { "id": "w16-t05-q3", "type": "single", "tag": "flip", "q": "A workload moves from no residency rule to an EU-only rule. Which change follows?", "options": ["Move to Flex processing", "Move from Global Standard to Data Zone (EU) types", "Raise quota on Global Standard"], "answer": 1, "explain": "Data Zone keeps processing inside the zone. Flex and quota do not change where data is processed [[r5]].", "difficulty": 1 }
+  ],
+  "flashcards": [
+    { "front": "Does PTU quota guarantee capacity?", "back": "No. Quota and reservations do not guarantee capacity. Create the deployment first." },
+    { "front": "How does spillover work?", "back": "Non-200 overflow from a full PTU deployment goes to a standard deployment in the same resource, for all requests or per request via `x-ms-spillover-deployment`." },
+    { "front": "What is Priority processing's latency target?", "back": "A p50 token rate per 5-minute window by model, for example 80 TPS for gpt-5.6-sol. It is a target, not a per-request guarantee." }
+  ],
+  "related": ["w16-t04", "w16-t06", "w16-t11", "w16-l3", "w12-t19"],
+  "refs": ["r5", "r6", "r7", "r10"]
+}

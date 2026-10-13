@@ -1,0 +1,118 @@
+{
+  "id": "w02-l7",
+  "order": 7,
+  "title": "Boss: make it feel instant",
+  "kind": "boss",
+  "minutes": 25,
+  "brief": "An interviewer says: the assistant feels slow and costs too much, so make it feel instant without breaking correctness or isolation between users. Nothing else is given. Build a budget, rank the levers, then defend your plan.",
+  "blocks": [
+    { "t": "h", "text": "Warm-up: build the latency budget", "level": 2 },
+    { "t": "lab", "id": "latency-budget", "intro": "Load the Interactive chat preset and find where first-token time goes. Turn on the parallel guard, then streaming, then a prompt cache hit (it cuts model TTFT by an assumed 50%), then the smaller-model toggle. Finally set every p95 to 3 times its p50 and compare the typical path, the simulated p95 and the sum of p95s. All defaults are illustrative, not product measurements." },
+    { "t": "diagram", "id": "w02-l7-path", "title": "Request path with the input guard beside retrieval", "alt": "Flowchart. After authentication the input guard and the retrieval branch of rewrite, embed, retrieve and rerank run in parallel. Both feed prompt assembly, then model time to first token, then streamed tokens, then the output guard.", "src": "flowchart LR\n  A[Auth] --> B[Input guard]\n  A --> R[Rewrite]\n  R --> E[Embed]\n  E --> V[Retrieve]\n  V --> K[Rerank]\n  B --> M[Assemble prompt]\n  K --> M\n  M --> T[Model TTFT]\n  T --> S[Stream tokens]\n  S --> O[Output guard]", "caption": "Time to first token is auth plus the longer of the guard and the retrieval branch, then assembly and model TTFT. If the guard is the shorter branch, running it in parallel is free." },
+    { "t": "dials", "id": "w02-l7-lever", "title": "Which latency lever for which bottleneck", "prompt": "Flip where the time goes, who is waiting and how strict the quality bar is.", "dials": [
+      { "id": "neck", "label": "Bottleneck", "values": [{ "id": "out", "label": "Long answers dominate" }, { "id": "pre", "label": "Long prompts dominate TTFT" }, { "id": "ser", "label": "Serial stages before the first token" }, { "id": "tail", "label": "p95 spikes from queueing" }] },
+      { "id": "who", "label": "Audience", "values": [{ "id": "live", "label": "A user is watching" }, { "id": "async", "label": "Nobody is waiting" }] },
+      { "id": "bar", "label": "Quality bar", "values": [{ "id": "strict", "label": "Strict, regressions are costly" }, { "id": "relaxed", "label": "Relaxed, small losses are fine" }] }
+    ], "options": [
+      { "id": "outcap", "name": "Shorten the output", "summary": "Cap tokens, add stop sequences, ask for concise formats." },
+      { "id": "cache", "name": "Cache the prefix", "summary": "Static first, provider prompt caching." },
+      { "id": "small", "name": "Smaller or routed model", "summary": "Trade capability for speed and cost." },
+      { "id": "par", "name": "Parallelize stages", "summary": "Run the guard beside retrieval, drop needless steps." },
+      { "id": "capacity", "name": "Priority or provisioned capacity", "summary": "Buy steadier timing." }
+    ], "scores": {
+      "outcap": {
+        "neck": { "out": { "s": 2, "why": "Output tokens drive total time, and 50% fewer can cut about 50% of latency." }, "pre": { "s": 0, "why": "Output length does not change prefill." }, "ser": { "s": 0, "why": "It does not touch stages before the model." }, "tail": { "s": 1, "why": "Shorter outputs free batch slots sooner." } },
+        "who": { "live": { "s": 1, "why": "Short answers feel quick." }, "async": { "s": 0, "why": "Nobody is watching the clock." } },
+        "bar": { "strict": { "s": -1, "why": "Truncation can drop required content." }, "relaxed": { "s": 1, "why": "Terse answers are acceptable." } }
+      },
+      "cache": {
+        "neck": { "out": { "s": 0, "why": "It skips prefill only." }, "pre": { "s": 2, "why": "It skips prefill of the stable prefix, which sets TTFT." }, "ser": { "s": 0, "why": "Rewrite, retrieval and guards are untouched." }, "tail": { "s": 0, "why": "It does not reduce queueing." } },
+        "who": { "live": { "s": 1, "why": "A lower TTFT is felt directly." }, "async": { "s": 1, "why": "Still cuts cost for background work." } },
+        "bar": { "strict": { "s": 2, "why": "The output is unchanged." }, "relaxed": { "s": 0, "why": "The gain is the same whatever the bar." } }
+      },
+      "small": {
+        "neck": { "out": { "s": 1, "why": "Faster decode shortens long answers." }, "pre": { "s": 1, "why": "Smaller models also prefill faster." }, "ser": { "s": 0, "why": "It does not remove serial stages." }, "tail": { "s": 0, "why": "Smaller models can still queue." } },
+        "who": { "live": { "s": 0, "why": "Faster, but it must still pass the quality bar." }, "async": { "s": 1, "why": "Cheaper bulk work." } },
+        "bar": { "strict": { "s": -2, "why": "It can miss the bar, so it needs an eval gate." }, "relaxed": { "s": 2, "why": "You can trade quality for speed and cost." } }
+      },
+      "par": {
+        "neck": { "out": { "s": 0, "why": "Generation is serial." }, "pre": { "s": 0, "why": "Prefill is one call." }, "ser": { "s": 2, "why": "The path costs the longer of the guard and retrieval, not the sum." }, "tail": { "s": -1, "why": "Branches run together, so the slowest one sets the pace and widens the tail." } },
+        "who": { "live": { "s": 1, "why": "It cuts time before the first token." }, "async": { "s": -1, "why": "Extra complexity for no user benefit." } },
+        "bar": { "strict": { "s": 1, "why": "Same models, same output." }, "relaxed": { "s": 0, "why": "The gain does not depend on the bar." } }
+      },
+      "capacity": {
+        "neck": { "out": { "s": 0, "why": "Capacity does not shorten answers." }, "pre": { "s": 0, "why": "It does not shorten prefill." }, "ser": { "s": 0, "why": "It does not touch serial stages." }, "tail": { "s": 2, "why": "Priority or provisioned capacity cuts queueing variance." } },
+        "who": { "live": { "s": 1, "why": "A steadier first token." }, "async": { "s": -2, "why": "A premium for latency nobody needs. Use batch." } },
+        "bar": { "strict": { "s": 1, "why": "Same models, steadier timing." }, "relaxed": { "s": 0, "why": "Neutral." } }
+      }
+    }, "takeaway": "The lever follows the bottleneck. Caching wins on prefill, output caps on long answers, parallelism on serial stages, capacity on queueing, and a smaller model only where the quality bar allows." },
+    { "t": "callout", "kind": "interview", "title": "How this round is scored", "md": "Use the five steps of Dial-and-Defend: clarify the dials, list options including the boring one, pick and say what flips it, name failure modes and how you would detect them, then name metrics and the rollout. Say the isolation rule out loud before you propose any cache that stores answers." }
+  ],
+  "quiz": [
+    { "id": "w02-l7-q1", "type": "numeric", "tag": "numeric", "q": "Stage times in milliseconds: auth 20, rewrite 400, embed 40, retrieve 80, rerank 120, input guard 300, prompt assembly 10, model TTFT 600. Ignore network. The input guard starts at the same time as the rewrite stage and the retrieval branch (rewrite, embed, retrieve, rerank) runs serially beside it. What is the time to first token?", "answer": 1270, "tolerancePct": 1, "unit": "ms", "hint": "auth + max(guard, retrieval branch) + assembly + model TTFT", "explain": "The retrieval branch takes 400 + 40 + 80 + 120 = 640 ms, longer than the 300 ms guard, so the guard is hidden: 20 + 640 + 10 + 600 = 1,270 ms. Run serially it would be 1,570 ms. If the guard were the longer branch, it would set the pace instead.", "difficulty": 2, "ref": "r14" },
+    { "id": "w02-l7-q2", "type": "single", "tag": "diagnose", "q": "On weekdays at 09:00, p95 TTFT rises and stays high. The cached-token ratio is flat, TPOT is flat, and prompt and output lengths are unchanged. Which cause fits best?", "options": ["Prefill got slower because the prompt cache lifetime expired overnight and reset at 09:00", "Queueing on a deployment shared with another workload adds wait before prefill", "Decode got slower because the KV cache is full and sequences are being preempted", "The client library started buffering the stream, which delays the first visible token"], "answer": 1, "explain": "With prompt length, cache ratio and TPOT all flat, the extra time is before prefill starts: queueing, usually from a workload sharing the deployment. Azure advises separate deployments per workload. A cache expiry would show in the cached-token ratio. A full KV cache would slow TPOT. Buffering affects what the client sees, not the server-side TTFT metric.", "difficulty": 3, "ref": "r14" },
+    { "id": "w02-l7-q3", "type": "single", "tag": "flip", "q": "Suppose revocation of a document permission must take effect immediately, and answers are built from permissioned documents. Which previously acceptable choice becomes unacceptable?", "options": ["Provider prefix caching of the system prompt and tool definitions", "Streaming the answer to the user token by token as the model generates it", "A semantic cache keyed only on the question text, with a one-hour TTL", "Running the input guard in parallel with the retrieval branch to hide its latency"], "answer": 2, "explain": "A cached answer outlives the permission it was built under, and a key on question text alone ignores who asks. Prefix caching of static instructions stores no answers. Streaming and parallel guards do not change what a user may see.", "difficulty": 2, "ref": "r16" }
+  ],
+  "defend": {
+    "prompt": "Our RAG assistant feels slow and costs too much. Make it feel instant without breaking correctness or isolation between users. Walk me through your approach.",
+    "timebox": "5 min",
+    "clarify": [
+      "Which number feels slow: time to first word, stream speed or total time, and at which percentile?",
+      "Where does the time go today: queue, rewrite, retrieval, guards, prefill or decode? Do we have per-stage traces bucketed by output tokens?",
+      "What may never be shared between users, and how quickly must a permission revocation take effect?",
+      "How stable is the prompt prefix, how many requests per minute hit it, and what is the gap between requests?",
+      "Is there an eval set, so a smaller model or a shorter output can be tested instead of guessed?"
+    ],
+    "options": [
+      { "name": "Boring first: stream, cap output, static-first prompt", "when": "Always. It costs almost nothing and removes the common causes.", "tradeoff": "Streaming changes perception, not total time. Output caps can truncate required content." },
+      { "name": "Provider prompt caching with per-tenant keys", "when": "A long stable prefix, enough requests inside the lifetime, and prefill-dominated TTFT.", "tradeoff": "Write premium of 1.25x on GPT-5.6+ and Anthropic, silent misses from prefix drift, and a cold cache after failover." },
+      { "name": "Parallelize and trim the pipeline", "when": "Serial rewrite, retrieval and guard stages before the first token.", "tradeoff": "More concurrent work and a wider tail. A blocked request wastes the retrieval it started." },
+      { "name": "Semantic or response cache", "when": "Public content, paraphrase-heavy traffic and tolerance for staleness.", "tradeoff": "Can return wrong, stale or foreign answers. Unsafe for permissioned data without a scoped key." },
+      { "name": "Smaller or routed model, or a capacity tier", "when": "Output-dominated latency with a relaxed quality bar, or p95 spikes from queueing.", "tradeoff": "Quality risk without an eval gate, a split prompt cache across models, and a premium for priority or provisioned capacity." }
+    ],
+    "modelAnswer": [
+      { "t": "p", "md": "**Clarify.** I would first ask which number is slow, at which percentile, and where the time goes. I want per-stage traces: queue, rewrite, retrieval, rerank, guards, prefill and decode, bucketed by output tokens. I would also ask what must never be shared between users, how stable the prompt prefix is, and whether an eval set exists." },
+      { "t": "p", "md": "**Options.** The boring set is streaming, an output cap and a static-first prompt. Then provider prompt caching, parallel stages, a smaller or routed model, a capacity tier, and last the answer caches that skip the model. I would rank them by how little they risk correctness: caches that only reuse prefill state never change the answer, so they come before anything that stores answers." },
+      { "t": "p", "md": "**Pick, and what flips it.** For an interactive RAG chat over permissioned data with a long stable prefix I would stream, restructure the prompt so static content comes first, turn on prompt caching with a per-tenant key, run the input guard beside retrieval, skip query rewrite where the eval set shows no loss, and cap output length. Only then would I test a smaller or routed model against the eval set. I would add a semantic cache only for public, paraphrase-heavy content, partitioned by scope and versions." },
+      { "t": "table", "head": ["If this dial changes", "The choice changes to"], "rows": [
+        ["Answers come from permissioned data and revocation is immediate", "No answer caches. Prefix caching only, with per-tenant keys"],
+        ["Prefix is below the minimum, or gaps exceed the lifetime", "Caching will not hit. Prewarm, extend the lifetime, or skip it"],
+        ["Output tokens dominate", "Output cap or a smaller model. Caching helps little"],
+        ["Prefill dominates", "Prompt caching and a shorter retrieved context"],
+        ["p95 spikes come from queueing", "Separate deployments, then priority or provisioned capacity"],
+        ["The quality bar is strict", "No smaller model without an eval gate"]
+      ] },
+      { "t": "p", "md": "**Failure modes and detection.** A prompt-cache regression raises no error, so I alert on cached tokens divided by prompt tokens. A semantic cache can return near-miss answers, so I measure the false-hit rate on a labelled pair set and tag partitions with versions. A parallel guard that finishes after tokens have streamed can leave unsafe text on screen, so I hold the first chunks or design a retraction. Per-stage tracing shows whether the parallel path really hid the shorter branch." },
+      { "t": "p", "md": "**Metrics and rollout.** I track TTFT p95, TPOT p95, TTLT p95 bucketed by output tokens, cache hit ratio, cost per successful task, quality on the eval set and, for semantic caching, the false-hit rate. I roll changes out behind flags, compare on the same traffic, and set rollback thresholds before the first percent of users sees a change." }
+    ],
+    "rubric": [
+      { "pt": "Asks which latency number is slow and requests per-stage traces before choosing a lever", "w": 3 },
+      { "pt": "Explains that TTFT is prefill and queueing while total time is dominated by output tokens", "w": 2 },
+      { "pt": "Offers at least three options including the boring one (stream, cap output, static-first prompt)", "w": 2 },
+      { "pt": "Ranks prompt caching ahead of answer caches because it never changes the answer", "w": 2 },
+      { "pt": "Protects isolation: no shared answer caches over permissioned data, scoped keys, per-tenant cache keys", "w": 3 },
+      { "pt": "Parallelizes independent stages and notes the guard and streaming retraction risk", "w": 2 },
+      { "pt": "States a flip condition for each lever tied to a dial", "w": 2 },
+      { "pt": "Names detection and metrics: cache ratio alert, p95 by output bucket, eval gate, false-hit rate, rollout and rollback", "w": 2 }
+    ],
+    "followUps": [
+      { "q": "One prefix receives 400 requests per minute and the hit ratio is poor. What do you do?", "a": "OpenAI and Azure document about 15 requests per minute per prefix and key before overflow to other machines, so shard across at least 27 stable keys (400 / 15 is 26.7), keep the mapping stable and watch the ratio. A key never guarantees a hit." },
+      { "q": "Security worries that timing could reveal whether a competitor asked a question. What changes?", "a": "Gu et al. found global cache sharing across users at several providers. Use a per-customer `prompt_cache_key` on GPT-5.6 and later, keep tenant text out of shared prefixes, avoid cross-tenant answer caches, and set `cache_salt` on self-hosted engines." },
+      { "q": "Finance wants a smaller model everywhere. How do you respond?", "a": "Test it on the eval set by task type. Cutting output tokens often beats a model swap for latency. A router splits the prompt cache across models, so measure the combined effect on cost and hit rate before rolling it out." }
+    ],
+    "redFlags": [
+      "Proposes a shared semantic cache across tenants without a partition key",
+      "Says streaming makes the model faster",
+      "Puts a timestamp or the user question at the top of the prompt",
+      "Names a tool or capacity tier before asking where the time goes"
+    ]
+  },
+  "refs": ["r14", "r15", "r1", "r12", "r16", "r2"],
+  "takeaways": [
+    "Build the budget by stage, then attack the stage that dominates",
+    "Run independent stages in parallel and watch for the guard and streaming interaction",
+    "Rank levers by risk to correctness: prefix caching before answer caching",
+    "State the isolation rule before proposing any cache that stores answers",
+    "Every lever has a dial where it loses, so say what would flip your pick"
+  ]
+}

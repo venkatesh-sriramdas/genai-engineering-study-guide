@@ -1,0 +1,102 @@
+/* Follow the Question: print styles. Owner: E1.
+   Hides the chrome, expands collapsed content, keeps cards whole, prints link URLs.
+   With facilitator mode on, answers that the renderer has revealed stay visible. */
+
+@page { margin: 16mm 14mm; }
+
+:root, [data-theme="dark"] {
+  color-scheme: light;
+  --bg: #fff;
+  --surface: #fff;
+  --surface-2: #f4f5f9;
+  --surface-3: #e9ebf3;
+  --border: #cfd4e4;
+  --border-strong: #9aa3c0;
+  --text: #111;
+  --text-2: #222;
+  --muted: #444;
+  --link: #1a237e;
+  --code-bg: #f1f2f7;
+  --shadow-1: none;
+  --shadow-2: none;
+  --ok: #15803d; --ok-soft: #dcfce7;
+  --warn: #b45309; --warn-soft: #fef3c7;
+  --bad: #b91c1c; --bad-soft: #fee2e2;
+  --info: #1d4ed8; --info-soft: #dbeafe;
+  --preview: #7e22ce; --preview-soft: #f3e8ff;
+}
+
+html { font-size: 11pt; }
+html, body { background: #fff !important; color: #111 !important; }
+body { min-height: 0; }
+
+/* chrome */
+.skip-link, .topbar, .sidebar, .sidebar-scrim, .rail, .banners, .crumbs, .app-footer, .toasts, .toc-panel, .toc-slot,
+#dialog-root, dialog, .level-head__actions, .ui-tip, .search-trigger, .boot {
+  display: none !important;
+}
+.app-body { display: block !important; }
+.content-col { min-height: 0; display: block; }
+.main { padding: 0 !important; }
+.view, .view.level, .view--narrow { max-width: none !important; }
+.print-only { display: block !important; }
+.print-head { margin: 0 0 8pt; padding-bottom: 6pt; border-bottom: 1px solid #999; font-size: 9pt; color: #444; }
+
+/* level header becomes a plain title block */
+.level-head { border: 0 !important; border-bottom: 2px solid #111 !important; border-radius: 0 !important; background: none !important; box-shadow: none !important; padding: 0 0 8pt !important; margin-bottom: 12pt !important; }
+.level-head__title { font-size: 20pt; }
+.level-head__status { display: none; }
+
+/* never cut a card or block in half */
+.ui-card, .ref, .lvl, .world-oneliner, pre, figure, table, tr, blockquote {
+  break-inside: avoid;
+  page-break-inside: avoid;
+  box-shadow: none !important;
+}
+h1, h2, h3, h4 { break-after: avoid; page-break-after: avoid; }
+
+/* expand overflow and collapsed content */
+.table-wrap, pre { overflow: visible !important; max-height: none !important; }
+pre, code { white-space: pre-wrap !important; word-break: break-word; }
+details > summary { list-style: none; }
+details > summary::-webkit-details-marker { display: none; }
+.print-tab-label { display: block !important; margin: 8pt 0 4pt; font-weight: 700; font-size: 9pt; letter-spacing: 0.06em; text-transform: uppercase; color: #444; }
+
+/* show where links go */
+.main a[href^="http"]::after { content: " (" attr(href) ")"; font-size: 8.5pt; font-weight: 400; color: #444; word-break: break-all; }
+.main a[href^="#"]::after, .main a.ref__title .ui-icon, .main a[href^="javascript"]::after { content: none; }
+.ref__title .ui-icon, .ui-btn .ui-icon { display: none; }
+
+/* interactive controls have no use on paper */
+.ui-btn, .ui-toggle, .search-form, .dropzone { display: none !important; }
+
+/* animations and decoration off */
+*, *::before, *::after { animation: none !important; transition: none !important; }
+.hero__art, .world-hero__art, .jm-box { display: none !important; }
+.world-hero { background: none !important; color: #111 !important; box-shadow: none; border: 1px solid #999; }
+.world-hero * { color: #111 !important; }
+
+/* answers: the renderer reveals them when facilitator mode is on, so make sure nothing hides them */
+html[data-facilitator="on"] [data-answer-key],
+html[data-facilitator="on"] .answer-key,
+html[data-facilitator="on"] [class*="answer-key"],
+html[data-facilitator="on"] [class*="model-answer"] { display: block !important; visibility: visible !important; max-height: none !important; }
+html:not([data-facilitator="on"]) [data-answer-key] { display: none !important; }
+
+/* topics: the cheat sheet prints as a landscape table, the index prints as plain rows */
+@page cheat { size: A4 landscape; margin: 12mm; }
+.cheatsheet { page: cheat; }
+.cs-actions, .tx-bar, .nav-top { display: none !important; }
+.cs-table { min-width: 0 !important; width: 100%; font-size: 9pt; }
+.cs-table thead { display: table-header-group; }
+.cs-table thead th { position: static !important; background: #eceef6 !important; color: #111 !important; }
+.cs-table tr { break-inside: avoid; page-break-inside: avoid; }
+.cs-group th { background: #f4f5f9 !important; color: #111 !important; }
+.cs-use, .cs-avoid { box-shadow: none !important; }
+.cs-use { border-left: 3px solid #15803d !important; }
+.cs-avoid { border-left: 3px solid #b45309 !important; }
+.cs-table a::after { content: none !important; }
+.tx-row { display: block !important; break-inside: avoid; }
+.tx-cell { margin-top: 3pt; }
+.tx-chapter { break-before: auto; }
+.world-hero__actions, .tx-chapter__links, .world-section__link { display: none !important; }

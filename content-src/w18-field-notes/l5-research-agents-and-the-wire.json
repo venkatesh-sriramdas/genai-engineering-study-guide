@@ -1,0 +1,53 @@
+{
+  "id": "w18-l5",
+  "order": 5,
+  "title": "Research agents and the wire to the screen",
+  "kind": "problem",
+  "minutes": 20,
+  "brief": "A product team wants an agent that researches for minutes, then shows progress and asks for approval in the user's interface. Source control, data boundary, cost and platform churn are open. Decide how to build the research agent and how its events reach the UI.",
+  "blocks": [
+    { "t": "h", "text": "Deep research options and the AG-UI event stream", "level": 2 },
+    { "t": "compare", "title": "Three ways to get deep research", "intro": "A deep research agent plans, searches, reads and writes a cited report. Architecturally it is orchestrator-workers from world 10, so it carries the same token bill: Anthropic reported about 15x chat tokens for multi-agent research [[r47]].", "options": [
+      { "name": "Build on your own sources", "summary": "An orchestrator plans, workers read internal corpora through MCP or file search, and a verifier checks citations.", "pros": ["You control sources, citations and the data boundary", "Not exposed to a vendor's model retirement"], "cons": ["You build planning, verification and cost control", "More engineering and evaluation work"], "bestWhen": "Internal or regulated corpora, or you must prove where every claim came from.", "avoidWhen": "A one-off public-web report where speed to value matters most.", "meta": [{ "k": "Data boundary", "v": "yours" }, { "k": "Effort", "v": "high" }] },
+      { "name": "Vendor deep research model", "tag": "Deprecated", "summary": "`o3-deep-research` and `o4-mini-deep-research` run through the Responses API and need at least one data source: web search, remote MCP or file search [[r37]].", "pros": ["Little code to write", "Can combine web search, MCP and file search"], "cons": ["OpenAI's deprecation notice lists 2026-07-23 as the shutdown date, with gpt-5.6-sol as the replacement", "Changing the model ID alone is not a complete migration"], "bestWhen": "Nothing new. Use it to read legacy code and plan the migration.", "avoidWhen": "Any new build that needs a stable model ID.", "meta": [{ "k": "Status", "v": "deprecated, checked 2026-10-13" }, { "k": "Needs", "v": "a data source" }] },
+      { "name": "Foundry agent with web search or MCP", "summary": "Microsoft recommends `o3-deep-research` with web search or an MCP tool, or the latest GA Agents API with a current GPT model and web search, instead of the deprecated Deep Research tool [[r38]].", "pros": ["Runs inside Foundry Agent Service", "Choice of tools and models"], "cons": ["The old tool used Grounding with Bing, so data leaves the Azure compliance boundary", "Retirement dates differ by platform"], "bestWhen": "Public-web research on Azure with a tool set you can swap.", "avoidWhen": "Confidential data must not leave the compliance boundary.", "meta": [{ "k": "Old tool", "v": "deprecated" }, { "k": "Azure retirement", "v": "2026-11-19" }] }
+    ] },
+    { "t": "table", "caption": "Churn to track, checked 2026-10-13", "head": ["Item", "Date", "What to do"], "rows": [
+      ["OpenAI `o3-deep-research` and `o4-mini-deep-research`", "Deprecation notice lists 2026-07-23 as shutdown", "The date has passed as of 2026-10-13. Review tools and configuration, because the docs say changing the model ID alone is not enough [[r37]]."],
+      ["Foundry Deep Research tool (classic)", "Deprecated. The page cites 2026-11-19 as the `o3-deep-research` retirement on Azure", "Migrate to `o3-deep-research` with web search or MCP, or the latest GA Agents API with web search. The old tool needed the `2025-05-15-preview` API, West US or Norway East, and Grounding with Bing [[r38]]."],
+      ["Why the dates differ", "Two platforms, two schedules", "Azure's schedule governs Azure deployments. This is an inference, so confirm in the model retirement schedule before you commit."]
+    ], "highlightCol": 1 },
+    { "t": "diagram", "id": "w18-d1", "title": "An AG-UI run that pauses for approval", "alt": "Sequence between a client app and an agent backend: run starts, content events stream, the run finishes with an interrupt outcome, and the client starts a new run with a resume array.", "src": "sequenceDiagram\n  participant UI as Client app\n  participant A as Agent backend\n  UI->>A: Start run\n  A-->>UI: RunStarted\n  A-->>UI: Text and tool call events\n  A-->>UI: RunFinished, outcome interrupt\n  UI->>A: New run with resume array\n  A-->>UI: RunFinished, outcome success", "caption": "A paused run is a finished run. Resuming means starting a new run that answers every open interrupt." },
+    { "t": "table", "caption": "AG-UI event categories [[r39]]. AG-UI sits beside MCP (agent to tools) and A2A (agent to agent).", "head": ["Category", "Example events", "Use it for"], "rows": [
+      ["Lifecycle", "RunStarted, RunFinished, RunError, StepStarted, StepFinished", "Framing a run. RunStarted and either RunFinished or RunError are mandatory."],
+      ["Text message", "TextMessageStart, TextMessageContent, TextMessageEnd", "Streaming assistant text."],
+      ["Tool call", "ToolCallStart, ToolCallArgs, ToolCallEnd, ToolCallResult", "Showing tool use and results."],
+      ["State management", "StateSnapshot, StateDelta, MessagesSnapshot", "Keeping shared state and messages in sync."],
+      ["Activity", "ActivitySnapshot, ActivityDelta", "Ongoing activity progress."],
+      ["Subagent", "SubagentStarted, SubagentFinished, SubagentError", "Tracking subagents and attributing their output."],
+      ["Special", "Raw, Custom", "Custom functionality."],
+      ["Draft", "Proposed events", "Under development. Do not depend on them in production."]
+    ], "highlightCol": 0 },
+    { "t": "failure", "title": "Research agent and UI failure modes", "items": [
+      { "symptom": "A research run costs many times a chat answer", "cause": "Multi-agent research spends about 15x chat tokens in Anthropic's data [[r47]]", "fix": "Check value per run, set token and step budgets with stop reasons, and cap subagent counts." },
+      { "symptom": "The report cites sources that do not support its claims", "cause": "No verification step between drafting and publishing", "fix": "A verifier with a clean context checks each claim against the cited source, and unsupported claims are removed or flagged." },
+      { "symptom": "Confidential data reaches a public search service", "cause": "A web-grounded tool such as Grounding with Bing sends data outside the Azure compliance boundary [[r38]]", "fix": "Use MCP or file search over internal corpora for sensitive questions, and review terms before enabling web grounding." },
+      { "symptom": "The pipeline breaks on a model shutdown date", "cause": "Deep research model IDs were hard-coded and the replacement was never tested", "fix": "Track retirement notices, abstract the model choice and test the replacement with real tool configuration [[r37]]." },
+      { "symptom": "The UI hangs after the agent asks for approval", "cause": "The client ignores a RunFinished event whose outcome is interrupt, or resumes without a resume array that addresses every open interrupt", "fix": "Handle the interrupt outcome, show the request and start a new run with the resume array [[r39]]." }
+    ] },
+    { "t": "callout", "kind": "note", "title": "Where Agent Framework fits", "md": "Microsoft Agent Framework has an AG-UI integration page, so an agent hosted there can stream these events to a web or mobile client [[r40]]. World 11 covers hosting." }
+  ],
+  "quiz": [
+    { "id": "w18-l5-q1", "type": "single", "tag": "diagnose", "difficulty": 2, "q": "Users see a spinner forever after the agent asks for approval. The last event received by the client is shown. What is wrong?", "code": { "lang": "text", "code": "RunStarted\nTextMessageStart ... TextMessageEnd\nToolCallStart ... ToolCallResult\nRunFinished { outcome: { type: \"interrupt\", interrupts: [ ... ] } }\n(client keeps waiting for more events)" }, "options": ["The server crashed after sending the tool result, so the client should restart the whole run from the beginning", "The client treats RunFinished as the end of the run instead of a pause, and never starts a resume run", "The text message events were not chunked, so the UI is still buffering them", "Subagent events are missing, which blocks the UI from rendering the approval"], "answer": 1, "explain": "RunFinished with outcome interrupt means the run paused for human input. The client must show the request and start a new run whose input carries a resume array for every open interrupt. A crash would produce RunError, and chunking or subagent events do not control the pause.", "ref": "r39" },
+    { "id": "w18-l5-q2", "type": "order", "tag": "order", "difficulty": 2, "q": "Put the steps of an AG-UI approval pause in order.", "items": ["RunStarted opens the run", "Text and tool call events stream to the UI", "RunFinished arrives with outcome interrupt", "The user answers in the client", "The client starts a new run carrying a resume array"], "explain": "The run streams content, then ends with an interrupt outcome. Only after the user responds does the client start a new run whose input includes the resume array.", "ref": "r39" },
+    { "id": "w18-l5-q3", "type": "single", "tag": "tradeoff", "difficulty": 2, "q": "A team must research across confidential internal documents. Which route fits?", "options": ["The vendor deep research model with web search only, because setup is minimal and nothing has to be built", "The old Foundry Deep Research tool, because Grounding with Bing improves recall", "A vendor deep research model with no data source attached, so it relies on its training data", "Orchestrator-workers on MCP or file search over the internal corpus, keeping data inside your boundary"], "answer": 3, "explain": "Internal corpora favour building on MCP or file search, which keeps data inside your boundary. Web search cannot see internal documents, Grounding with Bing sends data outside the Azure compliance boundary, and the deep research models require at least one data source.", "ref": "r38" }
+  ],
+  "defend": null,
+  "refs": ["r37", "r38", "r47", "r39", "r40"],
+  "takeaways": [
+    "Deep research is orchestrator-workers with a citation verifier. Budget it like multi-agent work.",
+    "Verify model retirement dates before committing: OpenAI and Azure keep separate schedules for deep research models.",
+    "In AG-UI a paused run is a finished run with outcome interrupt. Resume with a new run and a resume array.",
+    "AG-UI connects agent to UI, beside MCP for tools and A2A for other agents."
+  ]
+}

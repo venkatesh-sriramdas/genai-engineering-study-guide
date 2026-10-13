@@ -1,0 +1,117 @@
+{
+  "id": "w17-t08",
+  "order": 8,
+  "group": "Operating governance",
+  "title": "Documentation and transparency",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "Transparency has three audiences: builders who consume model documentation, regulators who ask for technical records, and users who must be told they face an AI or AI-made content. Write a versioned system card and design the user disclosure.",
+  "useIf": "You ship an AI system and must explain what it is for, how it was evaluated and what users are told.",
+  "avoidIf": "You plan one static document for every audience: a regulator file, an engineer's card and a user notice answer different questions.",
+  "explain": [
+    { "t": "p", "md": "**Model cards** (Mitchell et al.) are short documents that accompany a trained model and report how it performs across conditions; **datasheets for datasets** (Gebru et al.) do the same for data [[tr6]] [[tr7]]. Microsoft's **Transparency Notes** help system owners understand how a technology works, which choices change behaviour, and why to think about the whole system, including people and environment [[tr8]]. As a deployer, read them and carry the relevant limits into your own documentation." },
+    { "t": "p", "md": "The EU AI Act sets minimum records. For high-risk systems, **technical documentation** must be drawn up before the system is placed on the market, kept up to date and contain at least the Annex IV elements; SMEs and small mid-caps may use a simplified form [[tr3]]. **GPAI providers** keep technical documentation for the AI Office and authorities (Annex XI), give downstream providers information (Annex XII), maintain a copyright policy and publish a training-content summary. The documentation duties do not apply to open-source models, except those with systemic risk [[tr4]]. **User disclosure** under Article 50: people must be told they are interacting with an AI system unless obvious, synthetic outputs must be machine-readable marked, deployers must disclose deep fakes and AI-generated public-interest text unless human-reviewed under editorial responsibility, and the information must be clear and distinguishable at the latest at first interaction [[r6]]." },
+    { "t": "diagram", "id": "w17-t08-d1", "title": "The documentation stack", "alt": "A provider's model card or Transparency Note feeds your system card. The system card feeds regulator-facing technical documentation and user-facing disclosure.", "src": "flowchart LR\n  M[Model card or Transparency Note] --> S[Your system card]\n  S --> T[Technical documentation]\n  S --> U[User disclosure]\n  T --> R[Regulator]\n  U --> E[End user]" },
+    { "t": "table", "caption": "Documents, audiences and triggers", "head": ["Document", "Audience", "Contents", "Trigger"], "rows": [
+      ["Model card or Transparency Note", "Builders and deployers", "Capabilities, limits, evaluation, intended use", "Provider releases a model"],
+      ["System card (yours, author synthesis)", "Reviewers, auditors, support", "Intended and excluded uses, data and permissions, models and versions, eval results with dates, limits, oversight design", "Every release"],
+      ["Technical documentation (Annex IV)", "Authorities, notified bodies", "Evidence of compliance for high-risk systems", "Before market placement, kept current"],
+      ["User disclosure", "End users", "AI interaction notice, synthetic content labels", "First interaction or exposure"]
+    ] }
+  ],
+  "whereToUse": [
+    "Release checklists: update the system card with every model or prompt change",
+    "Vendor reviews: collect model cards and Transparency Notes",
+    "High-risk systems: maintain technical documentation under Article 11",
+    "Public chat or generation features: design the Article 50 disclosure UI",
+    "Open-weight publishing: check Article 53 duties before release"
+  ],
+  "whenToUse": {
+    "use": ["A system affects people or decisions", "Customers, auditors or regulators ask what it does and how it was tested", "Models or prompts change often and drift must be traceable", "Synthetic content or chat reaches the public"],
+    "avoid": ["Marketing claims in documentation without eval evidence", "A disclosure buried in terms of service", "Publishing exploit details of your defences in public documents"],
+    "flips": ["The system is high-risk: add Annex IV technical documentation and keep it current", "You publish a general-purpose model: add Article 53 documents and the training summary", "Users cannot be reached at first interaction: use persistent labels"]
+  },
+  "alternatives": {
+    "title": "Documentation approaches compared",
+    "head": ["Approach", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Versioned system card per release", "Most AI products", "Docs are not owned", "Drift if not part of release gates"],
+      ["Wiki page", "Early prototypes", "Audits or regulators", "Stale and unreviewed"],
+      ["Auto-generated from eval and config", "Many systems, frequent change", "Narrative context is needed", "Needs tooling; may omit judgement"],
+      ["Model card only", "You only consume a model", "You ship a system with your own data and tools", "Misses system-level risks"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "The system card contradicts what the product does", "cause": "Prompts, tools or models changed and the card did not", "fix": "Make the card a release artefact with an owner and a review step" },
+    { "symptom": "Disclosure is missed by users", "cause": "The notice is in terms of service rather than at first interaction", "fix": "Show a clear notice at first interaction, in an accessible form [[r6]]" },
+    { "symptom": "Claims of accuracy are challenged", "cause": "Numbers were quoted without dataset, date or method", "fix": "State the eval set, version, date and confidence, and link the report" }
+  ],
+  "scenarios": [
+    {
+      "id": "w17-t08-s1",
+      "title": "An internal agent on a third-party model",
+      "situation": "A team deploys an internal agent built on a hosted model. It can search documents and send messages. Nobody has written down what it is for or how it was tested.",
+      "constraints": ["Internal users only", "Not high-risk", "Releases happen weekly"],
+      "unknowns": ["Who reviews changes?", "Which eval reports exist?"],
+      "question": "What documentation do you produce?",
+      "options": [
+        { "name": "A short versioned system card: purpose, exclusions, data and permissions, model and prompt versions, eval results, limits and contact, reviewed each release", "verdict": "best", "why": "It is proportionate, traceable and reuses the provider's Transparency Note for model limits.", "tradeoff": "Costs a few hours per release, so automate where possible." },
+        { "name": "Link the provider's Transparency Note and stop", "verdict": "good", "why": "Cheap.", "tradeoff": "It describes the model, not your system's data, tools and approvals." },
+        { "name": "No document: the code is the documentation", "verdict": "poor", "why": "Reviewers and auditors cannot see intended use, evals or limits.", "tradeoff": "Acceptable for a throwaway prototype." }
+      ],
+      "flips": [
+        { "if": "The agent affects hiring or credit decisions", "then": "Treat it as potentially high-risk and add Annex IV-style records." },
+        { "if": "Releases become daily", "then": "Generate the card from config and eval outputs." }
+      ],
+      "takeaway": "Document the system, not only the model."
+    },
+    {
+      "id": "w17-t08-s2",
+      "title": "Marketing publishes AI-made video and text",
+      "situation": "A marketing team publishes AI-generated video of a person and an AI-written article on a matter of public interest in the EU.",
+      "constraints": ["Deployer role", "Public audience", "Some content is lightly edited by an editor"],
+      "unknowns": ["Is the video a deep fake?", "Does an editor hold editorial responsibility and review the text?"],
+      "question": "What disclosure do you apply?",
+      "options": [
+        { "name": "Disclose the video as artificially generated or manipulated, and disclose the article as AI-generated unless it was human-reviewed under editorial responsibility", "verdict": "best", "why": "Article 50(4) puts these duties on deployers, with the editorial-review exception for text.", "tradeoff": "Visible labels may reduce engagement." },
+        { "name": "Disclose nothing because the provider marks outputs", "verdict": "poor", "why": "Provider marking under Article 50(2) does not replace the deployer's disclosure duty.", "tradeoff": "Right only if the content falls outside the deep-fake and public-interest cases." },
+        { "name": "Put a general note in the website footer", "verdict": "good", "why": "Some transparency.", "tradeoff": "It may not be clear and distinguishable at the time of exposure." }
+      ],
+      "flips": [
+        { "if": "An editor reviews and holds editorial responsibility for the text", "then": "The text disclosure exception applies." },
+        { "if": "The video is evidently artistic or satirical", "then": "Disclosure is limited to the existence of generated content, in a way that does not hamper enjoyment." }
+      ],
+      "takeaway": "Deployers disclose. Provider marking is a separate duty."
+    },
+    {
+      "id": "w17-t08-s3",
+      "title": "Releasing open weights",
+      "situation": "A lab plans to release an open-licence general-purpose model with public weights. It asks whether the Article 53 documentation duties apply.",
+      "constraints": ["Free and open-source licence", "Weights and architecture are public", "The model is not assessed as systemic-risk"],
+      "unknowns": ["Is any systemic-risk threshold met?", "Who prepares the training-content summary?"],
+      "question": "What do you plan?",
+      "options": [
+        { "name": "Publish the copyright policy and the training-content summary, and confirm the exemption scope and systemic-risk status with counsel", "verdict": "best", "why": "Article 53(2) exempts points (a) and (b) for qualifying open-source models, but copyright policy and the training summary remain, and the exemption fails for systemic-risk models.", "tradeoff": "Legal review and a public summary of training content." },
+        { "name": "Assume the open licence exempts everything", "verdict": "poor", "why": "Only the technical documentation and downstream information duties are exempt.", "tradeoff": "Right for none of the remaining duties." },
+        { "name": "Prepare full Annex XI and XII documentation anyway", "verdict": "good", "why": "Safe and useful to downstream users.", "tradeoff": "More work than the exemption requires." }
+      ],
+      "flips": [
+        { "if": "The model is classed as systemic-risk", "then": "No exemption: prepare all documentation and follow Article 55." },
+        { "if": "The licence or weights are not fully open", "then": "The exemption may not apply." }
+      ],
+      "takeaway": "Read the exemption text. It is narrower than 'open source'."
+    }
+  ],
+  "quiz": [
+    { "id": "w17-t08-q1", "type": "single", "tag": "concept", "q": "By when must Article 50 transparency information be provided to the people concerned?", "options": ["Within 30 days of first use", "Only on request", "At the latest at the time of first interaction or exposure"], "answer": 2, "explain": "Article 50(5) requires the information to be clear and distinguishable at the latest at the time of the first interaction or exposure, and to meet accessibility requirements [[r6]].", "difficulty": 1 },
+    { "id": "w17-t08-q2", "type": "multi", "tag": "tradeoff", "q": "Which belong in a useful system card?", "options": ["Intended and excluded uses", "Model and prompt versions", "Eval results with dates", "Marketing claims without evidence"], "answers": [0, 1, 2], "explain": "Purpose, versions and dated eval results make a card traceable. Unsupported claims create liability.", "difficulty": 1 },
+    { "id": "w17-t08-q3", "type": "single", "tag": "flip", "q": "A provider releases an open-licence general-purpose model with systemic risk. What happens to the Article 53(2) exemption?", "options": ["It applies fully", "It does not apply", "It applies only to the copyright policy"], "answer": 1, "explain": "The exemption from technical documentation and downstream information duties does not apply to general-purpose models with systemic risk [[tr4]].", "difficulty": 3 }
+  ],
+  "flashcards": [
+    { "front": "What does a model card do?", "back": "A short document accompanying a model that reports performance across conditions (Mitchell et al.). Datasheets for datasets do the same for data (Gebru et al.)." },
+    { "front": "Where must Article 50 information appear?", "back": "Clear and distinguishable, at the latest at the first interaction or exposure, and accessible. A terms-of-service clause is not enough." },
+    { "front": "What do GPAI providers document under Article 53?", "back": "Technical documentation (Annex XI), downstream provider information (Annex XII), a copyright policy and a public training-content summary. Open-source models are exempt from the first two unless systemic-risk." }
+  ],
+  "related": ["w17-t04", "w17-t05", "w17-t09", "w17-l5", "w14-t01"],
+  "refs": ["r6", "tr3", "tr4", "tr6", "tr7", "tr8"]
+}

@@ -1,0 +1,101 @@
+{
+  "id": "w05-t07",
+  "order": 7,
+  "group": "Query transformation",
+  "title": "Query rewriting",
+  "minutes": 7,
+  "difficulty": "core",
+  "summary": "Query rewriting turns what the user typed into what the index can match: cleaned, expanded or made standalone using the conversation. It also adds a model call and the risk of changing the meaning.",
+  "useIf": "Queries are short, vague, full of pronouns from earlier turns or use different vocabulary from the documents.",
+  "avoidIf": "Queries are identifiers or exact phrases that a rewrite could paraphrase away, or the latency budget is tight.",
+  "explain": [
+    { "t": "p", "md": "Three different jobs hide under 'rewriting'. **Cleaning** applies the same normalisation to the query that you applied to chunks before embedding, for example lowercasing [[r8]]. **Standalone rewriting** turns a follow-up such as 'and for contractors?' plus the chat history into a complete question. **Expansion** produces variants with other vocabulary. The Azure Architecture Center lists augmentation, decomposition, rewriting and HyDE as query translation methods [[r8]]." },
+    { "t": "flow", "title": "A safe rewrite pipeline", "direction": "h", "steps": [
+      { "title": "Collect", "md": "Latest question and the last few turns." },
+      { "title": "Rewrite", "md": "A small model writes one standalone question.", "tag": "LLM call" },
+      { "title": "Guard", "md": "Check that identifiers, quoted phrases and numbers survived." },
+      { "title": "Search both", "md": "Run the original and the rewrite in parallel." },
+      { "title": "Fuse", "md": "Merge the lists with RRF, then rerank." }
+    ] },
+    { "t": "p", "md": "**Platform options.** Azure AI Search has a preview generative rewrite, `queryRewrites: \"generative|count-N\"` with N from 1 to 10. It needs `queryLanguage` set to a supported locale (71 are listed), runs rewrites as extra queries scored by BM25 or RRF, then rescored by the semantic ranker. `debug: queryRewrites` is for testing only [[r28]]. OpenAI's Retrieval API offers `rewrite_query=true` [[r30]]. Agentic retrieval takes chat history and plans subqueries itself [[r4]]." },
+    { "t": "callout", "kind": "gotcha", "title": "A rewrite can delete the token that mattered", "md": "A model that 'improves' `ERR-4012 after upgrade` into 'problems after software update' has thrown away the one exact match. Keep the original query in the mix, preserve quoted strings and identifiers, and compare recall against a no-rewrite baseline before shipping." },
+    { "t": "p", "md": "**Cost.** A rewrite is a serial model call before retrieval, so it adds its full latency to every query unless you route only the queries that need it, such as those with pronouns or very few words (author suggestion). Measure the lift on a labelled set, because a rewrite that helps follow-ups can hurt identifier queries." }
+  ],
+  "whereToUse": [
+    "Multi-turn chat assistants where follow-up questions depend on earlier turns",
+    "Search boxes where users type two or three words",
+    "Corpora written in formal vocabulary while users use colloquial terms",
+    "Pipelines that add a query language or locale before a service-side rewrite"
+  ],
+  "whenToUse": {
+    "use": ["Follow-ups need context to be searchable", "Queries are very short or vague", "A labelled set shows recall lift over no rewrite", "Latency allows one extra small-model call"],
+    "avoid": ["Identifier-heavy queries unless the identifier is guarded", "Strict latency budgets without a routing rule", "A rewrite model that sees untrusted documents or has no guard against injected instructions"],
+    "flips": ["Recall@10 drops on identifier queries: keep the original query and fuse", "Only follow-ups benefit: rewrite only when the history is non-empty", "Questions are multi-part: use decomposition rather than one rewrite"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["No rewrite, clean only", "Clear, self-contained queries", "Follow-ups and vague queries", "Cheapest"],
+      ["Standalone rewrite with history", "Chat with pronouns and ellipsis", "Single-turn search", "A serial LLM call, drift risk"],
+      ["Service-side generative rewrite (Azure, preview)", "You want variants scored inside the service", "You need GA-only features", "Preview, needs `queryLanguage`, extra queries [[r28]]"],
+      ["Multi-query expansion", "Recall is low on ambiguous queries", "Precision is the problem", "N searches and dedupe"],
+      ["Agentic planning", "Complex, context-dependent questions", "Simple lookups, tight latency", "Extra model calls, mostly preview [[r4]]"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Recall drops on error-code queries after enabling rewrite", "cause": "The model paraphrased away the identifier", "fix": "Search the original and the rewrite together, and guard identifiers and quoted text" },
+    { "symptom": "Follow-up answers are about the wrong topic", "cause": "The rewrite used too much or too little history, or the wrong turn", "fix": "Pass a bounded window of turns and log the rewritten query for review" },
+    { "symptom": "Latency rises on every query", "cause": "A serial LLM rewrite runs for single-turn queries that did not need it", "fix": "Route: rewrite only when there is history or the query is very short" }
+  ],
+  "scenarios": [
+    {
+      "id": "w05-t07-s1",
+      "title": "Chat assistant with follow-ups",
+      "situation": "Users ask 'What is the notice period?' then 'And for contractors?'. The second query returns generic contractor pages.",
+      "constraints": ["Multi-turn chat", "Latency budget of two seconds", "No identifiers in these questions"],
+      "unknowns": ["How many turns of history matter?", "Is a small fast model available?"],
+      "question": "What do you add?",
+      "options": [
+        { "name": "A standalone-question rewrite from a bounded window of recent turns, logged for review", "verdict": "best", "why": "It supplies the missing context, and the latency fits the budget.", "tradeoff": "One extra model call, and a rewrite can drift, so review a sample." },
+        { "name": "Embed the last user message only", "verdict": "poor", "why": "'And for contractors?' contains no topic to retrieve.", "tradeoff": "Fine for single-turn search." },
+        { "name": "Concatenate the whole chat history into the query", "verdict": "good", "why": "Keeps context without a model call.", "tradeoff": "Dilutes the query with unrelated terms, hurting precision." }
+      ],
+      "flips": [
+        { "if": "Latency is very tight", "then": "Use a small model or rule-based carry-over of the last entity." },
+        { "if": "Follow-ups depend on several earlier turns and answers", "then": "Use a larger rewrite window with a stronger model, and log rewrites so drift is visible." }
+      ],
+      "takeaway": "Rewrite to repair missing context."
+    },
+    {
+      "id": "w05-t07-s2",
+      "title": "Support search with error codes",
+      "situation": "Engineers type short queries like `ERR-4012 upgrade`. A proposed LLM rewrite will 'make queries more descriptive'.",
+      "constraints": ["Identifier-heavy traffic", "Tight latency", "BM25 plus vector hybrid in place"],
+      "unknowns": ["What share of queries have history?", "Can you A/B against no rewrite?"],
+      "question": "Do you ship the rewrite?",
+      "options": [
+        { "name": "Skip rewrite for single-turn identifier queries, or run original and rewrite in parallel with a guard", "verdict": "best", "why": "The exact token is the value, and fusing original and rewrite keeps it.", "tradeoff": "Extra retrieval cost when both run." },
+        { "name": "Replace the query with the rewrite everywhere", "verdict": "poor", "why": "It risks deleting the identifier and adds latency.", "tradeoff": "Right for conversational traffic with no codes." },
+        { "name": "Use the Azure generative rewrite at count-5", "verdict": "good", "why": "Variants are scored beside the original query inside the service.", "tradeoff": "Preview, extra queries and a locale requirement [[r28]]." }
+      ],
+      "flips": [
+        { "if": "Most traffic becomes natural-language symptoms", "then": "Enable rewriting broadly and keep the original query in the fusion." },
+        { "if": "Rewrites are shown to raise latency past the budget with no recall gain", "then": "Drop the rewrite and rely on hybrid plus the reranker." }
+      ],
+      "takeaway": "Keep the original query in the mix."
+    }
+  ],
+  "quiz": [
+    { "id": "w05-t07-q1", "type": "single", "tag": "diagnose", "q": "After adding an LLM rewrite, recall@10 rises on conversational queries and falls on error-code queries. What is the most likely fix?", "options": ["Raise the chunk size", "Disable the vector leg", "Increase the rewrite temperature", "Run the original query beside the rewrite and guard identifiers"], "answer": 3, "explain": "The rewrite is paraphrasing identifiers away. Keeping the original in the fusion and guarding identifiers restores exact matches. The other options do not address the loss, and a higher temperature adds drift." },
+    { "id": "w05-t07-q2", "type": "multi", "tag": "concept", "q": "Select the jobs that count as query rewriting.", "options": ["Lowercasing the query as the chunks were lowercased", "Turning a follow-up into a standalone question", "Generating alternative phrasings", "Shrinking chunk overlap"], "answers": [0, 1, 2], "explain": "Cleaning, standalone rewriting and expansion are all rewriting. Chunk overlap is an ingestion setting." },
+    { "id": "w05-t07-q3", "type": "single", "tag": "tradeoff", "q": "Which Azure parameter must be set for the preview generative query rewrite to work?", "options": ["`queryLanguage` set to a supported locale", "`maxTextRecallSize` above 5,000", "`orderBy` on the score", "`k` above 50"], "answer": 0, "explain": "The Azure rewrite page requires `queryLanguage` set to a supported locale. The other parameters are not prerequisites [[r28]]." }
+  ],
+  "flashcards": [
+    { "front": "What are the three jobs called query rewriting?", "back": "Cleaning to match chunk normalisation, standalone rewriting from chat history, and expansion into variants." },
+    { "front": "What is the main risk of an LLM query rewrite?", "back": "Drift: it can paraphrase away identifiers or change meaning. Keep the original query in the fusion." },
+    { "front": "What does Azure's `queryRewrites` accept?", "back": "`generative|count-N` with N from 1 to 10, plus a supported `queryLanguage`. Preview." }
+  ],
+  "related": ["w05-t08", "w05-t09", "w05-t10", "w05-l4", "w14-t06"],
+  "refs": ["r4", "r8", "r28", "r30"]
+}

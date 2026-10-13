@@ -1,0 +1,115 @@
+{
+  "id": "w12-t08",
+  "order": 8,
+  "group": "Tools and knowledge",
+  "title": "Toolboxes and the managed MCP endpoint",
+  "minutes": 7,
+  "difficulty": "core",
+  "summary": "A toolbox curates tools once and exposes them behind one managed MCP-compatible endpoint with central authentication, guardrails and versioning. Any MCP client can use it, not only Foundry agents.",
+  "useIf": "Several agents or runtimes share tools, and you want one credential, governance and release point.",
+  "avoidIf": "The tool is not toolbox-eligible or must execute inside your own process.",
+  "explain": [
+    { "t": "p", "md": "A **toolbox** is a managed resource that groups tools behind a single MCP-compatible endpoint. It centralizes authentication (Entra ID and OAuth identity passthrough), applies guardrails at toolbox level and supports **versioning**: create a version, test it, promote it to default, and every consuming agent picks it up with no redeploy [[r3]]. Toolboxes are created in Foundry but are not limited to Foundry agents: any MCP-compatible runtime can consume one, including Agent Framework, LangGraph or custom code [[r3]]. In Agent Framework hosted agents use `FoundryToolbox` in Python or `AddFoundryToolboxes` in .NET [[r2]]." },
+    { "t": "diagram", "id": "w12-t08-d1", "title": "One endpoint in front of many tools", "alt": "Prompt agents, hosted agents, Agent Framework and other MCP clients connect to one toolbox endpoint, which fronts MCP servers, OpenAPI tools, search, code interpreter and A2A agents.", "src": "flowchart LR\n  A1[Prompt and hosted agents] --> TB[Toolbox: one MCP endpoint]\n  A2[Agent Framework or LangGraph] --> TB\n  A3[Any MCP client] --> TB\n  TB --> T1[MCP servers]\n  TB --> T2[OpenAPI]\n  TB --> T3[Search and code interpreter]\n  TB --> T4[A2A agents]" },
+    { "t": "table", "caption": "Toolbox lifecycle, from the overview page (checked 2026-10-13)", "head": ["Phase", "What you do", "Status"], "rows": [
+      ["Build", "Curate tools, publish once, set auth centrally", "GA [[r3]]"],
+      ["Discover", "Tool search exposes only `tool_search` and `call_tool`, with pin, add-context and auto-pin controls", "Preview [[r3]]"],
+      ["Consume", "Agents connect to one endpoint and discover tools at runtime", "GA [[r3]]"],
+      ["Skills", "Versioned, immutable multi-step workflows delivered as MCP resources", "Preview [[r3]]"]
+    ] },
+    { "t": "p", "md": "**Tool search** matters because every tool definition sent with a request adds input tokens, competes for context and can lower selection accuracy when hundreds of tools are present [[r3]]. Tool search and skills work only through a toolbox [[r3]]. Auth options for tools and remote MCP servers are key-based, Entra (agent identity or project managed identity), OAuth identity passthrough (OBO) and unauthenticated where appropriate [[r1]]." },
+    { "t": "callout", "kind": "gotcha", "title": "Not everything fits in a toolbox", "md": "In a toolbox: MCP, web search, Azure AI Search, code interpreter, file search, OpenAPI, A2A, browser automation, Fabric IQ and Work IQ. Direct integration only: function calling (client-side execution), Grounding with Bing, computer use, image generation, SharePoint, Fabric data agent and Azure Functions [[r3]]." }
+  ],
+  "whereToUse": [
+    "A platform team publishing an approved tool catalog for many agent teams",
+    "Mixed runtimes (prompt agents, hosted agents, Agent Framework, LangGraph) that must share the same tools",
+    "Releasing a tool change once and rolling it out to every consumer through version promotion",
+    "Catalogs large enough that sending every tool definition would waste context (tool search, preview)"
+  ],
+  "whenToUse": {
+    "use": [
+      "More than one agent needs the same tools",
+      "You want credentials and guardrails in one governed place",
+      "You want to promote tool versions without redeploying agents"
+    ],
+    "avoid": [
+      "A single agent with one private tool and no reuse: direct integration is less to manage",
+      "The tool is on the direct-only list (for example SharePoint or computer use)",
+      "Execution must stay in your process: use function calling"
+    ],
+    "flips": [
+      "Catalog grows to dozens or hundreds of tools: add tool search, accepting preview status",
+      "A tool needs per-user identity: use OAuth identity passthrough (OBO) so the user's permissions apply",
+      "Policy forbids preview features: use toolbox without tool search or skills"
+    ]
+  },
+  "alternatives": {
+    "title": "How tools can reach an agent",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Toolbox endpoint", "Shared tools, central auth, versioned promotion", "Tool is direct-only or runs in your process", "One more resource to govern [[r3]]"],
+      ["Direct tool integration", "One agent, or a direct-only tool", "Many agents repeat the same config", "Credentials and configs duplicated"],
+      ["Function calling", "Execution must stay in your process", "You want platform-run tools", "Client executes the tool, so the optimizer does not evaluate it [[r25]]"],
+      ["Plain remote MCP server connection", "Single MCP server, no curation", "You need grouping, versions, tool search", "No toolbox-level guardrails or promotion"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Model picks the wrong tool or ignores the right one", "cause": "Hundreds of tool definitions compete for context and selection accuracy drops", "fix": "Use tool search (preview) with pinned critical tools and organization terms as added context [[r3]]." },
+    { "symptom": "A tool call returns 401 although the toolbox is configured", "cause": "The token audience is the MCP server URL rather than the downstream resource ID", "fix": "Set the audience to the resource ID such as `https://storage.azure.com` [[r4]]." },
+    { "symptom": "Consumers broke after a tool update", "cause": "A new toolbox version was promoted to default without testing", "fix": "Create a version, test it, then promote. Skills are immutable per version, so pin the one you tested [[r3]]." }
+  ],
+  "scenarios": [
+    {
+      "id": "w12-t08-s1",
+      "title": "Platform team serving many agents",
+      "situation": "A platform team supports ten agent teams that use five common tools. Credentials must be managed centrally and tool changes must roll out without redeploying agents.",
+      "constraints": ["Mixed runtimes", "Central credential control", "Promotion without redeploy"],
+      "unknowns": ["Do any tools need per-user identity?", "Is preview allowed for tool search?"],
+      "question": "How do you expose the tools?",
+      "options": [
+        { "name": "One toolbox with versioned promotion", "verdict": "best", "why": "One endpoint, central auth and guardrails, and promoting a default version updates every consumer.", "tradeoff": "A new governed resource that must be tested before each promotion." },
+        { "name": "Copy each tool configuration into every agent", "verdict": "poor", "why": "Credentials and configs drift across ten teams and a change needs ten redeploys.", "tradeoff": "Fine for a single agent with one private tool." },
+        { "name": "Plain MCP server connection per agent", "verdict": "good", "why": "Reuses the server and is simple to start.", "tradeoff": "No grouping, versioning or toolbox-level guardrails." }
+      ],
+      "flips": [
+        { "if": "The catalog grows to hundreds of tools", "then": "Add tool search (preview) so tool definitions do not flood context." },
+        { "if": "Only one agent uses the tools", "then": "Direct integration is less to manage." }
+      ],
+      "takeaway": "Toolboxes pay off when sharing and release control matter."
+    },
+    {
+      "id": "w12-t08-s2",
+      "title": "Tool that is not toolbox-eligible",
+      "situation": "An agent must search a SharePoint site and drive a browser UI through computer use. The platform team wants everything in the toolbox.",
+      "constraints": ["SharePoint and computer use are required", "Toolbox is the team's standard", "Low volume"],
+      "unknowns": ["Is there an alternative route to the SharePoint content, such as a knowledge base?", "Who approves the direct credentials?"],
+      "question": "What do you do?",
+      "options": [
+        { "name": "Use direct tool integration for those tools and keep the rest in the toolbox", "verdict": "best", "why": "SharePoint and computer use appear in the direct-only column of the support table.", "tradeoff": "Two paths to govern, and those tools sit outside toolbox versioning." },
+        { "name": "Insist on the toolbox for all tools", "verdict": "poor", "why": "The toolbox does not support those tools, so the requirement cannot be met.", "tradeoff": "Right for tools in the supported list." },
+        { "name": "Wrap them as client-side functions", "verdict": "good", "why": "You can reach the same systems from your own code.", "tradeoff": "You build, secure and run the wrappers, and the optimizer cannot evaluate their execution." }
+      ],
+      "flips": [
+        { "if": "SharePoint content can come through a Foundry IQ knowledge base", "then": "Consume the knowledge base instead of the direct tool." },
+        { "if": "The tool list in the docs expands to include them", "then": "Move them into the toolbox." }
+      ],
+      "takeaway": "Check the support table before you standardize on a path."
+    }
+  ],
+  "quiz": [
+    { "id": "w12-t08-q1", "type": "match", "tag": "concept", "q": "Match each tool to where the docs say it can be used.", "pairs": [
+      { "l": "Code interpreter", "r": "Toolbox and direct integration" },
+      { "l": "SharePoint", "r": "Direct integration only" },
+      { "l": "Function calling", "r": "Direct only, executed client-side" },
+      { "l": "Tool search", "r": "Toolbox only" }
+    ], "explain": "Code interpreter is in both columns. SharePoint, computer use and Azure Functions are direct only. Function calling executes client-side. Tool search and skills exist only through a toolbox.", "ref": "r3" },
+    { "id": "w12-t08-q2", "type": "single", "tag": "tradeoff", "q": "What is the main reason to add tool search to a large toolbox?", "options": ["It makes tools run faster", "It removes the need for authentication", "It keeps tool definitions out of the context until needed", "It lets function calling run server-side"], "answer": 2, "explain": "Tool search hides tools by default and exposes `tool_search` and `call_tool`, which saves input tokens and improves selection. It does not change execution speed, auth or function calling. It is preview.", "ref": "r3" },
+    { "id": "w12-t08-q3", "type": "multi", "tag": "concept", "q": "Which are documented toolbox capabilities?", "options": ["One MCP-compatible endpoint", "Versioning with promotion to default", "Use only by Foundry agents", "Centralized authentication and toolbox-level guardrails"], "answers": [0, 1, 3], "explain": "Toolboxes front tools with one endpoint, support version promotion and centralize auth and guardrails. Any MCP-compatible client can consume them, so they are not Foundry-only.", "ref": "r3" }
+  ],
+  "flashcards": [
+    { "front": "What does a Foundry toolbox give you that a plain MCP server does not?", "back": "Curated grouping, central auth, toolbox-level guardrails, versioning with promotion to default, and (preview) tool search and skills." },
+    { "front": "Which tools cannot be added to a toolbox?", "back": "Function calling (client-side), Grounding with Bing, computer use, image generation, SharePoint, Fabric data agent and Azure Functions. Use direct integration." }
+  ],
+  "related": ["w12-t09", "w12-t11", "w08-t15", "w08-t16", "w11-t05", "w12-l4"],
+  "refs": ["r1", "r2", "r3", "r4", "r25"]
+}

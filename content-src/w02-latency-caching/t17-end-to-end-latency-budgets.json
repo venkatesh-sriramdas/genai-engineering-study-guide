@@ -1,0 +1,117 @@
+{
+  "id": "w02-t17",
+  "order": 17,
+  "group": "Other caches and budgets",
+  "title": "End-to-end latency budgets",
+  "minutes": 10,
+  "difficulty": "core",
+  "summary": "A latency budget splits a target such as time to first token into stage allowances. Run independent stages in parallel, watch the tail not the mean, and attack the stage that dominates before touching the others.",
+  "useIf": "A request crosses several stages (auth, rewrite, retrieval, guards, model, output checks) and you must hit a latency target.",
+  "avoidIf": "The system is a single model call with no other stages. Use the TTFT and TPOT topics directly.",
+  "explain": [
+    { "t": "p", "md": "Pick the number the user feels, usually TTFT for a streamed chat or TTLT for a programmatic call, then give each stage an allowance and measure p50 and p95 per stage. Total latency is the sum along the **critical path**, not the sum of all stages. Stages that do not depend on each other, such as an input guard and retrieval, can run in parallel and drop off the path [[r14]] [[r15]]." },
+    { "t": "table", "caption": "Illustrative budget in milliseconds (not measurements)", "head": ["Stage", "p50", "On the critical path?"], "rows": [
+      ["Authentication", "20", "Yes"],
+      ["Query rewrite (LLM call)", "250", "Yes, and the first candidate to remove for simple queries"],
+      ["Embedding, retrieval, rerank", "60 + 120 + 150", "Yes, 330 together"],
+      ["Input guard", "80", "No when run beside retrieval (330 hides 80)"],
+      ["Prompt assembly", "10", "Yes"],
+      ["Model time to first token", "600", "Yes, shrinks with prompt caching"],
+      ["Network", "50", "Yes"]
+    ] },
+    { "t": "p", "md": "Run sequentially, these sum to 1,340 ms. With the guard in parallel the path is 1,260 ms. Dropping the LLM rewrite for standalone queries gives 1,010 ms. Each step is a different dial, and the lab below lets you try them together." },
+    { "t": "lab", "id": "latency-budget", "intro": "Load the Interactive chat preset and find where first-token time goes. Turn on the parallel guard, then streaming, then a prompt cache hit (it cuts model TTFT by an assumed 50%), then the smaller-model toggle. Finally set every p95 to 3 times its p50 and compare the typical path, the simulated p95 and the sum of the p95s. All defaults are illustrative, not product measurements." },
+    { "t": "p", "md": "**Tails.** The sum of stage p95s overstates the end-to-end p95, but fan-out makes the slowest call decide. If each of 100 parallel calls is slow 1% of the time, 63% of requests see at least one slow call [[tr4]]. Defences are per-stage deadlines, a fallback when a stage is late (skip the rerank, serve without the rewrite) and **hedged requests**: after about the p95 delay send a duplicate and take the first reply. In a Google benchmark a 10 ms hedge cut the 99.9th percentile of 1,000 reads from 1,800 ms to 74 ms for 2% more requests [[tr4]]." },
+    { "t": "p", "md": "**Streaming and guards.** Streaming lowers perceived latency but not total time [[r14]]. An output guard that needs the whole answer defeats it, so budget TTLT, or guard in chunks. Pair latency with output token counts, and set separate SLIs: TTFT p95, TTLT p95 per output-length bucket, and cache hit ratio [[r14]]." }
+  ],
+  "whereToUse": [
+    "RAG assistants with rewrite, retrieval, rerank, guard and generation stages",
+    "Agents that fan out to many tool calls and wait for the slowest",
+    "Voice and live-assist products with a hard first-response budget",
+    "Gateway designs that add token limits, content safety and caching in front of the model",
+    "Incident reviews that ask which stage moved the p95"
+  ],
+  "whenToUse": {
+    "use": [
+      "More than one stage contributes noticeable time before the first token",
+      "Some stages are independent and could run in parallel",
+      "You have per-stage percentiles from traces, not only an end-to-end average"
+    ],
+    "avoid": [
+      "Treating the sum of p95s as the p95 of the whole path",
+      "Optimising a stage that is under 5% of the path while the model call is 60%",
+      "Budgeting only for p50 when the product promise is a tail percentile"
+    ],
+    "flips": [
+      "An output guard needs the full text: the target becomes TTLT, so stream status and guard in chunks if allowed",
+      "Fan-out grows: tail amplification matters more than any single stage's p50",
+      "The model call dominates: use caching, a smaller or routed model and shorter output before tuning the rest"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with other latency levers",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Parallelise independent stages", "Guard and retrieval can overlap", "Stages depend on each other", "More concurrent load, failure handling"],
+      ["Remove or condition a stage", "Rewrite helps few queries", "Every query needs it", "Quality impact on hard queries"],
+      ["Prompt caching and a smaller model", "Model TTFT dominates", "TTFT is already small", "Quality or write-premium risk"],
+      ["Hedged requests", "Tail from idempotent, cheap calls", "Calls are costly or not idempotent", "Extra load, must cancel the loser"],
+      ["Streaming", "Humans read the answer", "A program or full-text guard consumes it", "Does not cut total time"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Mean latency improved but complaints continue", "cause": "The tail moved little, or fan-out makes slow calls common", "fix": "Track p95 and p99 per stage, add deadlines and hedge idempotent reads [[tr4]]" },
+    { "symptom": "Streaming was enabled and the first word is still late", "cause": "TTFT is dominated by stages before the model, such as rewrite and rerank", "fix": "Chart the budget by stage and shorten or parallelise the biggest pre-model stage" },
+    { "symptom": "A regression is blamed on infrastructure", "cause": "Answers got longer, which raises TTLT but not TTFT", "fix": "Bucket TTLT by output tokens before opening an incident [[r14]]" }
+  ],
+  "scenarios": [
+    {
+      "id": "w02-t17-s1",
+      "title": "Chat that must start in 1.2 seconds",
+      "situation": "An interactive RAG assistant takes 1,340 ms to the first token at p50 on the illustrative budget above. The product target is 1,200 ms at p50 and 1,800 ms at p95. Answers stream.",
+      "constraints": ["Stages: auth, rewrite, embed, retrieve, rerank, guard, assembly, model, network", "Target is TTFT, not TTLT", "Quality must not drop for hard queries"],
+      "unknowns": ["What share of queries need the LLM rewrite?", "Is a stable prefix available for caching?"],
+      "question": "Which changes do you make first?",
+      "options": [
+        { "name": "Run the input guard beside retrieval and skip the rewrite for standalone queries, then cache the stable prefix", "verdict": "best", "why": "The guard drops 80 ms and the skipped rewrite 250 ms for most queries, taking the path to about 1,010 ms. A prefix cache then trims model TTFT.", "tradeoff": "Hard follow-up queries still need the rewrite, so route by a cheap check." },
+        { "name": "Turn on streaming", "verdict": "poor", "why": "It is already on. Streaming changes perceived total time, not the time before the first token.", "tradeoff": "Right when the target is felt completion time and answers are long." },
+        { "name": "Switch to a smaller model", "verdict": "good", "why": "It lowers model TTFT directly.", "tradeoff": "It risks quality, and the larger savings are available without that risk." }
+      ],
+      "flips": [
+        { "if": "Guard policy forbids running before retrieval completes", "then": "Keep it sequential and focus on the rewrite and prefix cache." },
+        { "if": "Model TTFT is 60% of the path after changes", "then": "Move to caching and model choice next." }
+      ],
+      "takeaway": "Remove or overlap pre-model stages before spending quality on the model."
+    },
+    {
+      "id": "w02-t17-s2",
+      "title": "Agent step that waits on 20 tool calls",
+      "situation": "An agent step issues 20 read-only calls in parallel and waits for all. Each call has a p50 of 120 ms and 1% of calls take over 2 seconds. Users see the step stall about one in five times.",
+      "constraints": ["Parallel fan-out of 20", "Calls are idempotent reads", "A partial answer is acceptable for non-critical sources"],
+      "unknowns": ["Which sources are critical?", "Can slow calls be cancelled?"],
+      "question": "How do you protect the tail?",
+      "options": [
+        { "name": "Set per-call deadlines, hedge idempotent reads after about the p95 delay, and degrade when non-critical sources are late", "verdict": "best", "why": "With 20 calls the chance of one slow call is about 18%, so tail control matters. Hedging is cheap for idempotent reads and a deadline bounds the step.", "tradeoff": "Hedges add a small share of extra calls and need cancellation of the loser." },
+        { "name": "Retry every timeout immediately and without limit", "verdict": "poor", "why": "It multiplies load during incidents and still waits for the slowest retry.", "tradeoff": "Fine for a single rare call, with backoff and a cap." },
+        { "name": "Raise the timeout so slow calls finish", "verdict": "good", "why": "It returns complete data.", "tradeoff": "The step waits for the slowest call, so the stall remains." }
+      ],
+      "flips": [
+        { "if": "Calls are not idempotent or are costly", "then": "Do not hedge. Use deadlines and fallbacks only." },
+        { "if": "Fan-out drops to 3 calls", "then": "The tail matters far less. Simple deadlines may be enough." }
+      ],
+      "takeaway": "Fan-out turns rare slow calls into common slow requests."
+    }
+  ],
+  "quiz": [
+    { "id": "w02-t17-q1", "type": "numeric", "tag": "numeric", "q": "Stages in ms: auth 20, rewrite 250, embed 60, retrieve 120, rerank 150, input guard 80, assembly 10, model TTFT 600, network 50. The guard runs in parallel with embed, retrieve and rerank. What is the time to first token in ms?", "answer": 1260, "tolerancePct": 1, "unit": "ms", "hint": "The parallel branch costs the longer of 80 and 60 + 120 + 150", "explain": "20 + 250 + max(80, 330) + 10 + 600 + 50 = 1,260. Without the overlap the sum is 1,340, so the guard hides 80 ms.", "difficulty": 2, "ref": "r14" },
+    { "id": "w02-t17-q2", "type": "numeric", "tag": "diagnose", "q": "A request fans out to 100 parallel calls and each call is slow 1% of the time, independently. What percentage of requests see at least one slow call?", "answer": 63.4, "tolerancePct": 3, "unit": "%", "hint": "1 - 0.99^100", "explain": "0.99^100 is about 0.366, so 1 - 0.366 = 0.634. The Tail at Scale paper states the 63% figure for this case.", "difficulty": 2, "ref": "tr4" },
+    { "id": "w02-t17-q3", "type": "single", "tag": "tradeoff", "q": "When are hedged requests an appropriate defence against tail latency?", "options": ["For non-idempotent writes that must run once", "For cheap, idempotent calls, sent after about the p95 delay with the loser cancelled", "For every call from the first attempt, to be safe", "Only when the mean is already low"], "answer": 1, "explain": "Hedging duplicates work, so it fits idempotent, cheap calls and is triggered late to cap extra load. Duplicating writes is unsafe, hedging everything doubles cost, and the mean is not the trigger.", "difficulty": 2, "ref": "tr4" }
+  ],
+  "flashcards": [
+    { "front": "What is the critical path in a latency budget?", "back": "The longest chain of dependent stages. Stages that overlap, such as a guard beside retrieval, add only if they are longer than the chain they overlap." },
+    { "front": "Why does fan-out make the tail matter?", "back": "With 100 parallel calls that are each slow 1% of the time, 63% of requests see at least one slow call." },
+    { "front": "What did the Tail at Scale benchmark show for hedging?", "back": "A 10 ms hedge cut the 99.9th percentile of 1,000 reads from 1,800 ms to 74 ms for about 2% more requests." }
+  ],
+  "related": ["w02-t01", "w02-t02", "w02-t14", "w02-l7"],
+  "refs": ["r14", "r15", "r13", "tr4"]
+}

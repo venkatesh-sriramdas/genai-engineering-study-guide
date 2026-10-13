@@ -1,0 +1,109 @@
+{
+  "id": "w03-t10",
+  "order": 10,
+  "group": "Quality and failure",
+  "title": "Failure handling: dead letters, backpressure and replay",
+  "minutes": 9,
+  "difficulty": "advanced",
+  "summary": "Ingestion fails in three ways: transient errors you retry, poison items you quarantine, and overload you absorb with backpressure. A dead-letter queue and idempotent replay make all three recoverable.",
+  "useIf": "Your pipeline calls rate-limited services (embeddings, parsers, source APIs) or processes untrusted files at volume.",
+  "avoidIf": "A tiny batch job runs under supervision: log failures and rerun it.",
+  "explain": [
+    { "t": "p", "md": "Classify a failure before you react. **Transient** (429, 503, a timeout): retry with exponential backoff and jitter. **Permanent or poison** (a corrupt PDF, an unsupported type): stop retrying and quarantine. **Partial** (some items in a batch failed): push returns HTTP 207, so read the per-document status and retry only the failed keys, while 503 means wait and retry [[tr2]]. Indexers expose `maxFailedItems` and `maxFailedItemsPerBatch`: a positive integer tolerates that many failures and `-1` continues no matter how many errors occur [[tr8]]." },
+    { "t": "p", "md": "A **dead-letter queue** holds what could not be processed. Service Bus gives each queue a DLQ sub-queue. A message moves there when its delivery count passes the limit (default 10, reason `MaxDeliveryCountExceeded`), and nothing cleans it up automatically, so you need alerts on depth and age [[tr27]]. Event Grid dead-letters only if you configure a destination, and it drops events on errors such as 400, 413 and 403 when you do not [[tr26]]." },
+    { "t": "p", "md": "**Backpressure** protects the slowest stage, usually the embedding call. Azure OpenAI allows 2,048 inputs and 300,000 tokens per embeddings request, quota is scoped to the subscription, and 429 can appear even when usage metrics look below quota [[tr28]]. Use a bounded queue, a shared concurrency limiter and a token-bucket on embedding calls, honour `Retry-After` where given [[tr29]], and pause intake when the limiter is saturated. **Replay** is safe only if writes are idempotent (see the idempotency topic). After a fix, move DLQ messages back to the main queue. For indexers, Reset Indexer is GA and Reset Documents is preview [[tr9]]." },
+    { "t": "diagram", "id": "w03-t10-d1", "title": "Retry, quarantine and replay loop", "alt": "A worker takes items from a queue and calls the embedding service then the index. Transient failures go to a retry with backoff and back to the queue. Permanent failures or too many attempts go to a dead-letter queue, then are fixed and replayed to the queue.", "src": "flowchart LR\n  Q[Queue] --> W[Worker]\n  W --> E[Embed call]\n  E --> P[Push to index]\n  W -->|transient| R[Retry with backoff]\n  R --> Q\n  W -->|permanent or max tries| D[Dead-letter queue]\n  D --> F[Fix and replay]\n  F --> Q" }
+  ],
+  "whereToUse": [
+    "Event-driven pipelines where a single corrupt file can block a queue",
+    "Backfills and re-embedding runs that must stay inside embedding quota",
+    "Crawlers of rate-limited APIs such as Graph and SharePoint",
+    "Indexer configurations that need an error budget, not all-or-nothing runs",
+    "Operations runbooks that define who inspects and replays dead letters"
+  ],
+  "whenToUse": {
+    "use": [
+      "Use retries with backoff and jitter for transient errors only",
+      "Use a DLQ with alerts on depth and age for poison items",
+      "Use a shared limiter and bounded queue to keep embedding calls inside quota",
+      "Use idempotent writes so replay is safe"
+    ],
+    "avoid": [
+      "Avoid infinite retry loops, which let one bad item hold the queue",
+      "Avoid `maxFailedItems` of `-1` unless you alert on error counts separately",
+      "Avoid unbounded parallelism against a quota-limited API"
+    ],
+    "flips": [
+      "Volume is small and supervised: log failures and rerun, skip the DLQ",
+      "Latency matters more than completeness for a source: drop low-value failures after a warning, with a counter",
+      "Quota is subscription-wide and shared with other workloads: add a central limiter, not per-worker limits"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Mechanism", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Retry with backoff and jitter", "Transient 429, 503, timeouts", "Poison items that never succeed", "Latency; retry storms if uncapped"],
+      ["Dead-letter queue and replay", "Poison items, bugs fixed later", "Nobody watches the DLQ", "No automatic cleanup, needs alerts and a runbook"],
+      ["Indexer error budget (`maxFailedItems`)", "Pull indexers over messy files", "You need every item or nothing", "`-1` hides systematic failure"],
+      ["Backpressure and rate limiting", "Embedding or API quota is the bottleneck", "Throughput must be maximal and quota is ample", "Slower intake, limiter tuning"],
+      ["Skip and log", "Low-value, optional content", "Every document matters (legal, support)", "Silent data gaps"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "The whole queue stalls on one file", "cause": "A poison item is retried forever and blocks consumers", "fix": "Cap attempts, dead-letter with a reason and move on" },
+    { "symptom": "429 errors multiply under load", "cause": "Workers retry immediately and in parallel, so throttled calls count against limits", "fix": "Back off with jitter, honour `Retry-After` and share one limiter" },
+    { "symptom": "The DLQ holds thousands of messages nobody reads", "cause": "Service Bus never cleans the DLQ automatically and no alert was set", "fix": "Alert on DLQ depth and oldest age and assign an owner" },
+    { "symptom": "An indexer reports success while documents are missing", "cause": "`maxFailedItems` is `-1`, so errors never fail the run", "fix": "Set a finite budget and alert on the error count per run" }
+  ],
+  "scenarios": [
+    {
+      "id": "w03-t10-s1",
+      "title": "Five million chunks against an embedding quota",
+      "situation": "A re-embedding backfill must finish in a week. The embedding deployment shares quota with a live assistant that must not be starved. Occasional 429 responses appear.",
+      "constraints": ["Shared subscription quota", "Live traffic must stay healthy", "One week to finish", "Checkpointed, idempotent writes"],
+      "unknowns": ["What share of quota can the backfill use?", "Are there quiet hours?"],
+      "question": "How do you drive the backfill?",
+      "options": [
+        { "name": "Bounded workers behind a shared token-bucket limiter, honour `Retry-After`, checkpoint progress, run harder in quiet hours", "verdict": "best", "why": "It uses spare quota without starving the live assistant and survives restarts.", "tradeoff": "Slower than flat-out and the limiter needs tuning." },
+        { "name": "One sequential worker", "verdict": "good", "why": "Safe and simple.", "tradeoff": "May miss the one week target at five million chunks." },
+        { "name": "Maximum parallelism with immediate retries", "verdict": "poor", "why": "It triggers 429 storms and can starve production traffic.", "tradeoff": "Right only on a dedicated deployment that nothing else uses." }
+      ],
+      "flips": [
+        { "if": "A separate deployment is available for the backfill", "then": "Run it harder, limited only by that quota." },
+        { "if": "The deadline is tight", "then": "Request more quota or use a batch-style option before raising concurrency." }
+      ],
+      "takeaway": "Treat quota as a shared resource and meter your own consumption."
+    },
+    {
+      "id": "w03-t10-s2",
+      "title": "One poison file in every few thousand",
+      "situation": "An event-driven pipeline handles support attachments. Roughly one in a few thousand files crashes the parser. These files sometimes matter for compliance.",
+      "constraints": ["Occasional poison files", "Some files matter legally", "Queue with delivery counts", "Team on call during business hours"],
+      "unknowns": ["Is the parser failure deterministic?", "Who owns the DLQ?"],
+      "question": "What do you do with the failing files?",
+      "options": [
+        { "name": "Dead-letter after the max delivery count, alert on depth, fix the parser, replay", "verdict": "best", "why": "The queue keeps flowing, nothing is lost and replay is safe with idempotent writes.", "tradeoff": "Someone must own the DLQ and the runbook." },
+        { "name": "Skip the file and write a warning log", "verdict": "good", "why": "Simple and keeps flow.", "tradeoff": "Risks silent gaps for compliance files unless the log is monitored." },
+        { "name": "Retry until it works", "verdict": "poor", "why": "A deterministic failure never succeeds and blocks consumers.", "tradeoff": "Right for transient errors with capped attempts." }
+      ],
+      "flips": [
+        { "if": "The content is optional and low value", "then": "Skip and log with a counter is enough." },
+        { "if": "A parser upgrade fixes the class of failure", "then": "Replay the whole DLQ after the upgrade." }
+      ],
+      "takeaway": "Quarantine what you cannot process, and make replay a routine."
+    }
+  ],
+  "quiz": [
+    { "id": "w03-t10-q1", "type": "numeric", "tag": "numeric", "q": "You embed 10,000 chunks of 500 tokens each. Limits per request are 2,048 inputs and 300,000 tokens in total. What is the minimum number of requests?", "answer": 17, "tolerancePct": 0, "unit": "requests", "explain": "The token limit binds first: 300,000 / 500 = 600 inputs per request. 10,000 / 600 = 16.7, so 17 requests. The 2,048 input limit alone would suggest 5.", "ref": "tr28" },
+    { "id": "w03-t10-q2", "type": "single", "tag": "diagnose", "q": "An indexer run succeeds but many documents are missing. `maxFailedItems` is `-1`. What does that setting do?", "options": ["Fails the run on the first error", "Retries each item forever", "Skips unsupported content types only", "Continues no matter how many errors occur"], "answer": 3, "explain": "A positive integer is the number of tolerated failures, and `-1` continues regardless of errors, which hides problems. It does not fail on the first error or retry forever.", "ref": "tr8" },
+    { "id": "w03-t10-q3", "type": "multi", "tag": "tradeoff", "q": "Which are good practices for a DLQ in an ingestion pipeline?", "options": ["Alert on depth and oldest message age", "Record the failure reason with each message", "Rely on automatic cleanup", "Make writes idempotent so replay is safe"], "answers": [0, 1, 3], "explain": "Alerts, failure reasons and idempotent writes make dead letters actionable. Service Bus does not clean the DLQ automatically, so cleanup is your job.", "ref": "tr27" }
+  ],
+  "flashcards": [
+    { "front": "Service Bus DLQ default max delivery count and reason code?", "back": "Default 10. The reason is `MaxDeliveryCountExceeded`. Nothing cleans the DLQ automatically." },
+    { "front": "Embeddings request limits on Azure OpenAI?", "back": "2,048 inputs and 300,000 tokens per request, summed across inputs. Compute both limits when batching." },
+    { "front": "Why can a 429 appear below your token quota?", "back": "Bursts can exceed rate limits even when usage metrics look fine. Smooth traffic with a limiter and backoff." }
+  ],
+  "related": ["w03-t01", "w03-t07", "w03-t08", "w16-t04", "w16-t08"],
+  "refs": ["tr2", "tr8", "tr9", "tr26", "tr27", "tr28", "tr29"]
+}

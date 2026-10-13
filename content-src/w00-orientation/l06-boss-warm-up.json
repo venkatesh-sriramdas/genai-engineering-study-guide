@@ -1,0 +1,76 @@
+{
+  "id": "w00-l6",
+  "order": 6,
+  "title": "Boss warm-up: draft the replies",
+  "kind": "boss",
+  "minutes": 12,
+  "brief": "A team wants an assistant that drafts replies to customer emails. They have not said how many, how risky or how fast. Practise all five moves in three minutes, aloud.",
+  "blocks": [
+    { "t": "h", "text": "Warm up before the real boss levels", "level": 2 },
+    { "t": "flow", "title": "Your 3-minute shape", "direction": "h", "steps": [
+      { "title": "Clarify", "md": "Three or four questions about volume, risk, data needs and review.", "tag": "30 s" },
+      { "title": "Options", "md": "Name three or four, including the boring one.", "tag": "30 s" },
+      { "title": "Pick and flip", "md": "Choose for assumed dials and say what flips it.", "tag": "60 s" },
+      { "title": "Failure modes", "md": "Two failures, each with a detection signal.", "tag": "30 s" },
+      { "title": "Metrics and rollout", "md": "Two metrics and a staged rollout.", "tag": "30 s" }
+    ] },
+    { "t": "callout", "kind": "interview", "title": "How to use this level", "md": "Set a timer for three minutes and answer aloud before you open the model answer. Then score yourself with the rubric. The goal is the shape, not a perfect design." }
+  ],
+  "quiz": [
+    { "id": "w00-l6-q1", "type": "single", "tag": "tradeoff", "q": "Which opening is strongest for this question?", "options": ["I would fine-tune a model on our past replies so it learns the company voice and policy", "I would build RAG with a vector database over every past email in the archive", "I would first ask about volume, tone rules, approval and the cost of a wrong reply", "I would use the largest available model at temperature 0 and send the drafts directly"], "answer": 2, "explain": "The strongest answers ask for dials before naming a technology. Fine-tuning is weak for facts, a vector database may be unnecessary, and the largest model at temperature 0 sends outbound text with no review or risk analysis.", "difficulty": 1 },
+    { "id": "w00-l6-q2", "type": "multi", "tag": "concept", "q": "Select every item that belongs in step 5, metrics and rollout.", "options": ["Share of drafts that humans send with no edits", "Policy violations caught per thousand drafts", "A staged rollout: shadow mode, then a small canary", "The list of options you considered", "The dials you asked about at the start"], "answers": [0, 1, 2], "explain": "Edit rate and violation rate are metrics, and a staged rollout is the rollout plan. The options belong in step 2 and the dials belong in step 1.", "difficulty": 1 },
+    { "id": "w00-l6-q3", "type": "single", "tag": "flip", "q": "You proposed human-reviewed drafts. The team asks to auto-send replies for one low-risk category. Which dial moved, and what changes?", "options": ["Risk fell for one category, so auto-send there with monitoring", "Risk is irrelevant to the design, so remove review for every category", "Volume moved, so switch to fine-tuning for every reply category", "Latency moved, so remove evaluation because the reviewers are gone"], "answer": 0, "explain": "The risk dial moved for one category, so the flip is narrow: auto-send there with monitoring and a rollback switch, and keep review for the rest. Removing review everywhere ignores risk, and the other options change dials that did not move.", "difficulty": 2 }
+  ],
+  "defend": {
+    "prompt": "A team wants an assistant that drafts replies to customer emails. How would you approach it?",
+    "timebox": "3 min",
+    "clarify": [
+      "How many emails arrive per day, and how fast must a draft appear?",
+      "Who reviews drafts before sending, and what does a wrong reply cost?",
+      "What data do replies need: policy documents, past replies or live account data?",
+      "Which tone and compliance rules apply, and is any customer data restricted?",
+      "Which languages and channels are in scope?"
+    ],
+    "options": [
+      { "name": "Prompt with templates and style rules", "when": "A small set of reply types and stable policies.", "tradeoff": "Cheap and simple, but policies drift and long prompts raise cost per draft." },
+      { "name": "RAG over policies and past replies", "when": "A large or changing policy set where citations help reviewers.", "tradeoff": "Retrieval quality becomes the ceiling, and it adds moving parts." },
+      { "name": "Tools for account and order lookups", "when": "Replies need live data from a system of record.", "tradeoff": "Tool permissions and extra latency need care." },
+      { "name": "Fine-tuning for tone", "when": "A consistent voice is needed at high volume, or a smaller model is wanted.", "tradeoff": "Weak for facts, so it does not replace retrieval." },
+      { "name": "Human approval before sending", "when": "A wrong reply is costly.", "tradeoff": "Slower and needs reviewer time." }
+    ],
+    "modelAnswer": [
+      { "t": "p", "md": "**1. Clarify the dials.** I would ask how many emails arrive and how fast a draft must appear, who reviews drafts and what a wrong reply costs, what data a reply needs, and which tone and compliance rules apply." },
+      { "t": "p", "md": "**2. List the options, including the boring one.** The boring option is a prompt with templates and style rules. The alternatives are RAG over policies and past replies, tools for live account lookups, fine-tuning for tone and human approval before sending." },
+      { "t": "p", "md": "**3. Pick for the stated dials, and say what flips it.** With no more detail I would assume moderate volume, a policy set that changes monthly, per-customer data and a human reviewer. I would start with a prompt plus RAG over the policies, a lookup tool for order data and human approval. If one reply category is low risk I would allow auto-send there. If the policy set is tiny and stable I would drop RAG and use a cached prompt. If volume grows a lot I would add routing and caching." },
+      { "t": "p", "md": "**4. Name failure modes and how I would detect them.** A draft invents a policy, which I would catch with a groundedness check and a golden set of real emails. A draft leaks another customer's data, which I would catch with access checks on every lookup and a leakage test set." },
+      { "t": "p", "md": "**5. Name metrics and the rollout.** I would track the share of drafts sent with no edits, policy violations per thousand drafts, p95 time to a draft and cost per draft. I would run in shadow mode first, then a small canary, with a switch to roll back." }
+    ],
+    "rubric": [
+      { "pt": "Asks about volume, risk, data needs and review before naming a technology", "w": 3 },
+      { "pt": "Names at least three options, including the boring one", "w": 2 },
+      { "pt": "Picks for stated or assumed dials instead of a favourite tool", "w": 2 },
+      { "pt": "States at least one explicit flip condition with a dial and a threshold", "w": 3 },
+      { "pt": "Names failure modes with a detection signal", "w": 2 },
+      { "pt": "Names metrics and a staged rollout", "w": 2 }
+    ],
+    "followUps": [
+      { "q": "The team wants to auto-send password-reset replies. What changes?", "a": "The risk dial is low for that category, so allow auto-send only there with groundedness and policy checks and a rollback switch. Keep review elsewhere and watch the edit rate and complaint rate." },
+      { "q": "Volume grows tenfold. What breaks first?", "a": "Latency and cost per draft, and retrieval load. Flip toward routing, prompt caching and batch processing for non-urgent replies, which worlds 1, 2 and 16 cover." },
+      { "q": "How would you test the assistant before launch?", "a": "Build a golden set of real emails with approved replies, judge drafts with a rubric plus human spot checks, and compare in shadow mode before any customer sees a draft. World 14 covers evaluation." }
+    ],
+    "redFlags": [
+      "Names a vector database or a model before asking any question",
+      "Treats fine-tuning as the way to add policy knowledge",
+      "Offers one option only",
+      "Ignores risk and review for outbound customer messages",
+      "Ends without metrics or a rollout plan"
+    ]
+  },
+  "refs": ["r23", "r24", "r26", "r27"],
+  "takeaways": [
+    "Practise the five moves aloud against a timebox until the shape is automatic",
+    "Assume dials when you cannot ask, and say that you are assuming",
+    "A good flip names one dial and one threshold",
+    "Close with metrics and a staged rollout, not with a tool name"
+  ]
+}

@@ -1,0 +1,115 @@
+{
+  "id": "w11-t15",
+  "order": 15,
+  "group": "Workflows",
+  "title": "Shared state and checkpoints",
+  "minutes": 10,
+  "difficulty": "advanced",
+  "summary": "Executors share data through workflow state and survive restarts through checkpoints written at the end of each superstep. A checkpoint holds executor state, pending messages, pending requests and shared state, and is a trust boundary.",
+  "useIf": "A workflow is long, must resume after a failure or pause, or needs audit snapshots.",
+  "avoidIf": "The workflow finishes in seconds and a rerun is cheaper than storing and securing checkpoints.",
+  "explain": [
+    { "t": "p", "md": "**Shared state.** Python: `ctx.set_state(key, value)` and `ctx.get_state(key)`. .NET: `QueueStateUpdateAsync` and `ReadStateAsync` with an optional `scopeName` (null means the executor's private scope; a shared name makes it visible to executors using the same name). The writer sees its own update at once; other executors see it in the **next superstep** [[tr17]]. Pass ids through messages and keep big payloads in state." },
+    { "t": "p", "md": "**Checkpoints** are created at the end of each superstep and capture executor state, pending messages for the next superstep, pending requests and responses, and shared state. Python 1.13.0 (2026-07-30) also writes an entry checkpoint before the first superstep and when request responses arrive, a minor breaking change for code that depends on checkpoint counts or order [[tr18]]. **Resume**: Python `workflow.run(checkpoint_id=..., checkpoint_storage=...)`; .NET `ResumeStreamingAsync(workflow, checkpoint, checkpointManager)` or `run.RestoreCheckpointAsync`. Executors with their own fields save them in `on_checkpoint_save` / `on_checkpoint_restore` (Python) or `OnCheckpointingAsync` / `OnCheckpointRestoredAsync` (.NET) [[tr18]]." },
+    { "t": "table", "caption": "Python checkpoint storage (one `CheckpointStorage` protocol, swap without code changes)", "head": ["Storage", "Package", "Survives restart", "Use"], "rows": [
+      ["`InMemoryCheckpointStorage`", "`agent-framework`", "No", "Tests, demos, short flows, and when pickle is unacceptable"],
+      ["`FileCheckpointStorage(storage_path)`", "`agent-framework`", "Yes, one machine", "Local development; path is required, no default"],
+      ["`CosmosCheckpointStorage`", "`agent-framework-azure-cosmos` (Beta)", "Yes, cross-process", "Production, distributed resume"],
+      ["`FoundryCheckpointStore`", "Foundry hosting (Beta)", "Yes, managed by the host", "Native workflows on Foundry Responses hosting"],
+      ["Custom `CheckpointStorage`", "yours", "Yes", "Non-pickle serialization, regulated stores"]
+    ] },
+    { "t": "tabs", "tabs": [
+      { "label": "C#", "blocks": [ { "t": "code", "lang": "csharp", "code": "CheckpointManager manager = CheckpointManager.CreateInMemory();\nStreamingRun run = await InProcessExecution.RunStreamingAsync(workflow, input, manager);\nawait foreach (WorkflowEvent e in run.WatchStreamAsync())\n    if (e is SuperStepCompletedEvent s) { CheckpointInfo? cp = s.CompletionInfo?.Checkpoint; }\n\n// resume in a rebuilt workflow: same topology and executor identities\nvar rebuilt = WorkflowFactory.BuildWorkflow();\nawait using var resumed = await InProcessExecution\n    .ResumeStreamingAsync(rebuilt, run.Checkpoints[5], manager);\n\n// agents inside the graph need stable ids\nvar intake = chatClient.AsAIAgent(new ChatClientAgentOptions { Id = \"intake-agent\", Name = \"Assistant\" });" } ] },
+      { "label": "Python", "blocks": [ { "t": "code", "lang": "python", "code": "async with (\n    DefaultAzureCredential() as cred,\n    CosmosCheckpointStorage(\n        endpoint='https://<acct>.documents.azure.com:443/', credential=cred,\n        database_name='agent-framework', container_name='workflow-checkpoints',\n        allowed_checkpoint_types=['my_app.models:Ticket'],\n    ) as storage,\n):\n    wf = WorkflowBuilder(start_executor=start, checkpoint_storage=storage)\\\n        .add_edge(start, step_b).build()\n    async for e in wf.run(payload, stream=True): ...\n    cps = await storage.list_checkpoints(workflow_name=wf.name)\n\n    # later, new process, rebuilt graph with the same executor ids\n    async for e in new_wf.run(checkpoint_id=cps[-1].checkpoint_id,\n                              checkpoint_storage=storage, stream=True): ..." } ] }
+    ] },
+    { "t": "callout", "kind": "warn", "title": "Checkpoint storage is a code-execution trust boundary", "md": "File, Cosmos and Foundry stores serialize non-JSON state with `pickle` behind a restricted unpickler by default (File since python-1.0.1, 2026-04-09; Cosmos since python-1.1.0, 2026-04-21). Allow more types with `allowed_checkpoint_types=['module:qualname']` (types only, not functions). Never load checkpoints from untrusted or tampered sources; if pickle is unacceptable use in-memory storage or a custom store [[tr18]]." }
+  ],
+  "whereToUse": [
+    "Long pipelines where a worker can die mid-run",
+    "Human approval steps that may wait hours: pending requests are stored and re-emitted on restore",
+    "Compliance workflows that keep a snapshot after each step for audit",
+    "Moving a run between environments or instances"
+  ],
+  "whenToUse": {
+    "use": [
+      "Losing progress would be costly in time, tokens or side effects",
+      "You can keep topology and executor ids stable between runs and deploys",
+      "The storage backend is private infrastructure with controlled access"
+    ],
+    "avoid": [
+      "Short, cheap workflows where a rerun is acceptable",
+      "Untrusted storage or multi-tenant buckets without strict access control",
+      "Side effects that are not idempotent: resume may repeat work after the last checkpoint"
+    ],
+    "flips": [
+      "Resume must work across processes: move from file to Cosmos or a custom store",
+      "Pickle is not allowed by policy: use in-memory storage (no durability) or write a custom serializer, or use the Durable Extension"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["MAF checkpoint storage", "Resume a graph in the Agent Framework runtime", "You need distributed workers and zero idle compute", "You run the host and secure the store"],
+      ["Durable Extension (Durable Task)", "Durable workflows across stateless workers, waits without compute", "Package maturity matters (Beta, preview)", "Different runtime and ops model"],
+      ["Session serialization only", "Chat state and approvals", "Graph state between steps", "No superstep resume"],
+      ["Idempotent rerun", "Cheap, deterministic steps", "Expensive or side-effecting steps", "Duplicate cost or effects"],
+      ["Database tables you design", "Total control of schema", "You want built-in resume semantics", "You reinvent the runtime"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Resume fails or the graph restarts from the beginning", "cause": "The rebuilt workflow has a different topology or executor identities; in .NET agents without a stable `ChatClientAgentOptions.Id` (and unchanged `Name`) get new executor ids", "fix": "Give every agent a fixed logical id, keep names unchanged, never use user or request ids as agent ids" },
+    { "symptom": "Old checkpoints fail to load after an upgrade", "cause": "Restricted unpickler since 2026-04: custom classes are rejected until allowed", "fix": "List types in `allowed_checkpoint_types` or `register_checkpoint_type`, or start a new checkpoint lineage" },
+    { "symptom": "A test asserting checkpoint counts broke on Python 1.13.0", "cause": "Entry checkpoints are written before the first superstep and on response delivery since Python 1.13.0 (2026-07-30)", "fix": "Assert on content and resumability, not on counts or order" }
+  ],
+  "scenarios": [
+    {
+      "id": "w11-t15-s1",
+      "title": "Nightly pipeline on a fleet of workers",
+      "situation": "A batch workflow takes 90 minutes and runs on whichever worker picks it up. A worker is evicted about once a week. Re-running costs about 20 in model tokens.",
+      "constraints": ["Cross-process resume", "Cost of rerun is real", "Azure estate with Entra auth"],
+      "unknowns": ["Are steps idempotent?", "Is pickle allowed by security policy?", "How long are checkpoints retained?"],
+      "question": "Which checkpoint storage do you choose?",
+      "options": [
+        { "name": "`CosmosCheckpointStorage` with managed identity, scoped container and an explicit `allowed_checkpoint_types`", "verdict": "best", "why": "Cross-process and durable, RBAC-controlled, and unpickling is restricted to listed types.", "tradeoff": "Beta package, request units to provision, and the container is a trust boundary you must lock down." },
+        { "name": "`FileCheckpointStorage` on a local disk", "verdict": "poor", "why": "A replacement worker cannot see the evicted worker's disk.", "tradeoff": "Fine on one machine for development." },
+        { "name": "`InMemoryCheckpointStorage`", "verdict": "poor", "why": "Lost with the process, so it gives no recovery.", "tradeoff": "Right for tests and when pickle is forbidden and reruns are cheap." }
+      ],
+      "flips": [
+        { "if": "Policy forbids pickle", "then": "Write a custom `CheckpointStorage` with JSON-only state or move to the Durable Extension." },
+        { "if": "Rerun costs a few cents", "then": "Skip checkpoints and make steps idempotent." }
+      ],
+      "takeaway": "Pick storage by who must read the checkpoint: the same process, the same machine or any worker."
+    },
+    {
+      "id": "w11-t15-s2",
+      "title": "Sensitive-data workflow with audit",
+      "situation": "A workflow processes health claims. Auditors want a snapshot per step. Checkpoints would contain claim text. The security team rejects shared storage accounts.",
+      "constraints": ["Sensitive payloads", "Per-step audit", "Private storage only"],
+      "unknowns": ["Is encryption at rest with customer keys required?", "Who may read checkpoints?", "Are payloads needed in checkpoints or can they be ids?"],
+      "question": "What is your approach?",
+      "options": [
+        { "name": "Keep payloads out of messages and state (store ids, fetch from the system of record), use a private checkpoint store with RBAC and encryption, restrict allowed types", "verdict": "best", "why": "Checkpoints hold only references, the store is private, and unpickling is restricted.", "tradeoff": "Extra fetches per step and design discipline." },
+        { "name": "Checkpoint everything to a shared file share", "verdict": "poor", "why": "Sensitive content in a broadly readable store, and a writable store is a code-execution risk.", "tradeoff": "Only for non-sensitive demos." },
+        { "name": "Disable checkpointing", "verdict": "good", "why": "No stored copy.", "tradeoff": "No resume and no per-step audit snapshots." }
+      ],
+      "flips": [
+        { "if": "Auditors need full snapshots", "then": "Use encrypted storage with customer-managed keys and strict retention." },
+        { "if": "Runs are short and reruns are safe", "then": "Skip checkpointing." }
+      ],
+      "takeaway": "Checkpoint what you can afford to leak, and lock down the rest."
+    }
+  ],
+  "quiz": [
+    { "id": "w11-t15-q1", "type": "single", "tag": "diagnose", "q": "After redeploying a .NET service, resuming a checkpoint fails. The workflow contains local `ChatClientAgent` instances created without options ids. What is the likely cause?", "options": ["The checkpoint expired", "Checkpoints cannot be resumed after deploy", "Executor identities no longer match because the agents lack stable `ChatClientAgentOptions.Id` values", "The superstep count changed"], "answer": 2, "explain": "A rehydrated workflow must keep topology and executor identities. Assign stable ids (and keep `Name` unchanged) to each agent.", "ref": "tr18" },
+    { "id": "w11-t15-q2", "type": "multi", "tag": "security", "q": "Which are true about Python file and Cosmos checkpoint security? Select all.", "options": ["Non-JSON state is serialized with pickle behind a restricted unpickler by default", "`allowed_checkpoint_types` entries must resolve to types, not functions", "Loading checkpoints from tampered storage is safe because of the restricted unpickler", "`InMemoryCheckpointStorage` avoids pickle but is not durable"], "answers": [0, 1, 3], "explain": "The docs call checkpoint storage a trust boundary: never load from untrusted or tampered sources, even with the restricted unpickler.", "ref": "tr18" },
+    { "id": "w11-t15-q3", "type": "single", "tag": "concept", "q": "When does another executor see a state value written in a superstep?", "options": ["In the next superstep, while the writer sees it at once", "Immediately in the same superstep", "Only after the workflow completes", "Never, state is private"], "answer": 0, "explain": "Visibility follows superstep rules: the writer reads its own update in the same handler, others from the next superstep.", "ref": "tr17" }
+  ],
+  "flashcards": [
+    { "front": "What does a checkpoint contain?", "back": "Executor state, pending messages for the next superstep, pending requests and responses, and shared state. Created at the end of each superstep." },
+    { "front": "What must stay the same for a rebuilt workflow to resume?", "back": "Topology and executor identities. In .NET give agents a stable `ChatClientAgentOptions.Id` and keep `Name` unchanged." },
+    { "front": "Which Python checkpoint stores use pickle?", "back": "File, Cosmos and Foundry stores, behind a restricted unpickler. Extend with `allowed_checkpoint_types=['module:qualname']`." }
+  ],
+  "related": ["w11-t14", "w11-t16", "w11-t24", "w10-t21"],
+  "refs": ["tr17", "tr18"]
+}

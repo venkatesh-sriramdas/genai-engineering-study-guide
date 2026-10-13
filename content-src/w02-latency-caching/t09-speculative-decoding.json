@@ -1,0 +1,116 @@
+{
+  "id": "w02-t09",
+  "order": 9,
+  "group": "KV cache and serving",
+  "title": "Speculative decoding",
+  "minutes": 8,
+  "difficulty": "advanced",
+  "summary": "A cheap draft proposes several tokens and the large model verifies them in one pass. Accepted tokens come at the price of one step, and the output distribution stays the same.",
+  "useIf": "You run your own model, single-stream decode speed matters, and load is low to medium so the GPU is memory-bound with spare compute.",
+  "avoidIf": "The GPU is saturated by large batches, or the draft agrees with the target too rarely to pay for itself.",
+  "explain": [
+    { "t": "p", "md": "Decode generates one token per step and is memory-bandwidth-bound, so compute sits idle. **Speculative decoding** uses that spare compute. A cheap **draft** proposes a few tokens. The large **target** model scores all of them in a single parallel pass, keeps the longest prefix it agrees with and samples one more token itself. The paper shows the output distribution is unchanged and reports 2x to 3x faster decoding on T5-XXL with identical outputs [[r19]]." },
+    { "t": "flow", "title": "One speculative step", "direction": "h", "steps": [
+      { "title": "Draft", "md": "The draft proposes k tokens cheaply.", "tag": "small" },
+      { "title": "Verify", "md": "The target scores all k in one parallel pass.", "tag": "large" },
+      { "title": "Accept", "md": "Keep the agreeing prefix, resample the first disagreement.", "tag": "unchanged output" },
+      { "title": "Repeat", "md": "Continue from the new end of the text.", "tag": "loop" }
+    ] },
+    { "t": "formula", "title": "Expected tokens per target pass", "expr": "E[tokens] = (1 - a^(k+1)) / (1 - a)", "vars": [
+      { "k": "a", "v": "acceptance rate, the chance a drafted token is accepted (assumed independent)" },
+      { "k": "k", "v": "number of drafted tokens per step" }
+    ], "example": "With a = 0.8 and k = 4: (1 - 0.8^5) / 0.2 = 3.36 tokens per target pass. With a = 0.5 it is 1.94. A drafter that is cheap but rarely right gains little. Formula from the speculative decoding paper [[r19]]." },
+    { "t": "p", "md": "**Variants.** A separate draft model, EAGLE (which drafts at the feature level instead of the token level [[tr9]]), multi-token prediction heads on the target itself, and lightweight n-gram or suffix methods that need no extra model. vLLM enables them through `--speculative-config` with a `method` and `num_speculative_tokens`. Its documentation says speculation reduces inter-token latency under medium-to-low QPS, memory-bound workloads, that model-based methods give the best latency reduction, and that n-gram and suffix methods give modest speedups without adding workload during peak traffic [[tr18]]." },
+    { "t": "callout", "kind": "note", "title": "The hosted cousin", "md": "OpenAI's latency guide suggests Predicted Outputs when most of the output is already known, for example a small edit to a large document [[r15]]." }
+  ],
+  "whereToUse": [
+    "Interactive self-hosted assistants at low to medium load, where per-user speed is the goal",
+    "Code editing and document revision, where output copies much of the input",
+    "Large target models whose single-stream decode is slow",
+    "Workloads with a good small draft from the same model family",
+    "Edit-in-place tasks on hosted APIs through Predicted Outputs"
+  ],
+  "whenToUse": {
+    "use": [
+      "Decode is memory-bound and GPUs have spare compute at your load",
+      "Outputs are predictable enough for a draft to agree often",
+      "Exact output equivalence matters, since the distribution is unchanged"
+    ],
+    "avoid": [
+      "GPUs run at high batch saturation, where verification competes for real compute",
+      "The draft model rarely agrees, as in highly creative, high-entropy text",
+      "You have no memory left for a draft model and no lightweight method fits"
+    ],
+    "flips": [
+      "Traffic grows and batches saturate: gains shrink, so switch to a lighter method or turn it off",
+      "No good draft exists: use n-gram or suffix methods for repetitive outputs",
+      "You need maximum throughput, not per-user speed: spend effort on batching and quantization first"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with other ways to speed decode",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Speculative decoding (draft or EAGLE)", "Low to medium load, memory-bound decode", "Saturated batches, low acceptance", "Extra model or heads, tuning k"],
+      ["N-gram or suffix speculation", "Repetitive or copy-heavy outputs", "Novel text", "Modest gains, little downside"],
+      ["Smaller model", "Task is easy", "Task needs the large model", "Quality drop"],
+      ["Weight quantization", "Memory-bound and capacity-bound", "Quality-sensitive tasks", "Eval gate needed"],
+      ["Fewer output tokens", "Output is longer than needed", "Output length is required", "May shorten answers"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Speculation made throughput worse at peak", "cause": "Batches are saturated, so verifying drafted tokens costs real compute", "fix": "Use a lighter method or disable it above a load threshold, and measure at peak traffic [[tr18]]" },
+    { "symptom": "Little speedup although speculation is on", "cause": "Low acceptance rate because the draft diverges from the target", "fix": "Pick a better-matched draft or EAGLE head, lower k, and watch acceptance metrics [[r19]]" },
+    { "symptom": "Out-of-memory after enabling a draft model", "cause": "The draft weights and KV take memory from the target's cache", "fix": "Account for draft memory in capacity planning, or choose a method without a separate model" }
+  ],
+  "scenarios": [
+    {
+      "id": "w02-t09-s1",
+      "title": "Code assistant at modest load",
+      "situation": "A team self-hosts a large code model for an editor plugin. Load is moderate. Users edit existing files, so output copies a lot of input. Streams run at 20 tokens per second and users want faster.",
+      "constraints": ["Self-hosted", "Low to medium QPS", "Output overlaps input heavily"],
+      "unknowns": ["Is a matched small draft or EAGLE head available?", "How much GPU memory is free?"],
+      "question": "Which lever do you try first?",
+      "options": [
+        { "name": "Spend on larger batches and more GPUs", "verdict": "good", "why": "It raises capacity.", "tradeoff": "It does not make a single stream faster, which is the complaint." },
+        { "name": "Enable speculative decoding with a matched draft or EAGLE head", "verdict": "best", "why": "Decode is memory-bound at this load, copy-heavy output gives high acceptance, and the output is unchanged.", "tradeoff": "Needs extra memory and tuning of the number of drafted tokens." },
+        { "name": "Quantize KV to 2 bits", "verdict": "poor", "why": "KV quantization is for memory capacity, not single-stream speed, and carries quality risk.", "tradeoff": "Right when KV memory caps concurrency." }
+      ],
+      "flips": [
+        { "if": "Load rises until batches saturate", "then": "Expect smaller gains and test turning it off at peak." },
+        { "if": "No suitable draft exists", "then": "Try n-gram or suffix speculation, which suit copy-heavy output." }
+      ],
+      "takeaway": "Speculation speeds single streams when decode has idle compute."
+    },
+    {
+      "id": "w02-t09-s2",
+      "title": "Saturated fleet, cost pressure",
+      "situation": "A high-traffic service keeps its GPUs at near full batch occupancy all day. Per-user speed is acceptable. Finance wants a lower cost per token. A teammate proposes adding a draft model.",
+      "constraints": ["Self-hosted", "High QPS, saturated batches", "Goal is cost per token, not single-stream speed"],
+      "unknowns": ["What is the batch occupancy at peak?", "Is memory free for a draft model?"],
+      "question": "What do you recommend?",
+      "options": [
+        { "name": "Add a model-based draft for speed", "verdict": "poor", "why": "At saturation there is little spare compute, so verification competes with real work and a draft model takes memory.", "tradeoff": "Right at low to medium load where decode leaves compute idle." },
+        { "name": "Look at weight quantization and batching efficiency", "verdict": "best", "why": "These raise tokens per GPU hour, which is the cost metric, and they do not rely on idle compute.", "tradeoff": "Quantization needs an eval gate for quality." },
+        { "name": "Try n-gram or suffix speculation", "verdict": "good", "why": "The docs describe modest gains without extra workload at peak traffic.", "tradeoff": "Gains are small, and only for repetitive output." }
+      ],
+      "flips": [
+        { "if": "Traffic drops overnight to low load", "then": "Enable model-based speculation during the quiet window." },
+        { "if": "A latency SLO for single streams is added", "then": "Revisit speculation with a measured threshold." }
+      ],
+      "takeaway": "Match the optimisation to the metric: speed for one user, or cost across many."
+    }
+  ],
+  "quiz": [
+    { "id": "w02-t09-q1", "type": "numeric", "tag": "numeric", "q": "A drafter has acceptance rate 0.8 and proposes 4 tokens per step. Using E = (1 - a^(k+1)) / (1 - a), how many tokens does one target pass yield on average?", "answer": 3.36, "tolerancePct": 3, "unit": "tokens", "hint": "0.8^5 = 0.32768", "explain": "(1 - 0.32768) / 0.2 = 3.36. At acceptance 0.5 the same formula gives about 1.94, so a draft that agrees less often gains much less.", "difficulty": 2, "ref": "r19" },
+    { "id": "w02-t09-q2", "type": "single", "tag": "concept", "q": "What does speculative decoding do to the distribution of the generated text?", "options": ["It leaves it unchanged, because the target verifies every drafted token", "It slightly shifts it toward the draft model", "It makes sampling deterministic", "It lowers quality in exchange for speed"], "answer": 0, "explain": "Rejection-based verification makes the output distribution identical to sampling from the target alone. The speedup comes from computing several tokens in parallel, not from approximating.", "difficulty": 1, "ref": "r19" },
+    { "id": "w02-t09-q3", "type": "multi", "tag": "flip", "q": "Which conditions shrink the benefit of speculative decoding?", "options": ["GPUs saturated by large batches at high QPS", "A low acceptance rate between draft and target", "Low-QPS, memory-bound single streams", "Copy-heavy output with an n-gram method"], "answers": [0, 1], "explain": "Saturation removes the spare compute that verification uses, and low acceptance wastes drafted tokens. Memory-bound low load and copy-heavy output are where speculation helps.", "difficulty": 2, "ref": "tr18" }
+  ],
+  "flashcards": [
+    { "front": "How does speculative decoding keep outputs identical?", "back": "The target verifies all drafted tokens in one pass, keeps the agreeing prefix and resamples the first disagreement, so the distribution is unchanged." },
+    { "front": "When does speculation help most, and when does it fade?", "back": "It helps at low to medium QPS in memory-bound decode. Gains shrink as batches saturate or acceptance falls." },
+    { "front": "What is EAGLE?", "back": "A speculative sampling method that drafts at the feature level (second-to-top-layer features) instead of the token level." }
+  ],
+  "related": ["w02-t03", "w02-t07", "w02-t10", "w02-l2"],
+  "refs": ["r19", "tr9", "tr18", "r15"]
+}

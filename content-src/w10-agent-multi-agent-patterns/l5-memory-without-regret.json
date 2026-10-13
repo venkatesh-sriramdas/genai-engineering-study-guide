@@ -1,0 +1,98 @@
+{
+  "id": "w10-l5",
+  "order": 5,
+  "title": "Memory without regret",
+  "kind": "problem",
+  "minutes": 18,
+  "brief": "The assistant should remember things across sessions, but the personalization value, the delete rules, the network posture and the trust in whatever gets written are all undecided. Decide what to store, who may write it and how it is read back.",
+  "blocks": [
+    { "t": "h", "text": "Memory types, policies and the attack surface", "level": 2 },
+    { "t": "table", "caption": "CoALA separates working memory from three long-term types [[r28]]. MemGPT adds the idea of virtual context management across memory tiers [[r29]].", "head": ["Type", "What it holds", "Typical write", "Typical read"], "rows": [
+      ["Working", "The live context window: task, recent turns, scratchpad", "Every step", "Always in context"],
+      ["Episodic", "Specific past events or interactions", "After a session, or on an explicit remember command", "Retrieve by similarity or recency when a similar situation recurs"],
+      ["Semantic", "Durable facts about the user, the domain or the world", "Extraction from conversations, then consolidation", "At session start or per turn"],
+      ["Procedural", "Rules and how-to steps for recurring workflows", "Reviewed edits and learned corrections", "Load for the matching workflow"]
+    ], "highlightCol": 0 },
+    { "t": "list", "style": "ul", "items": [
+      "**Write policies:** an explicit user command, extraction at the end of a session, or background consolidation that merges duplicates and resolves contradictions.",
+      "**Read policies:** load a profile once at session start, retrieve summaries on every turn, or let the agent call a memory tool on demand.",
+      "**Foundry Agent Service memory (preview, checked 2026-10-13)** names three types, all enabled by default: user profile (retrieved at conversation start), chat summary (retrieved per turn) and procedural (retrieved for recurring workflows). It works in three phases: extraction, consolidation and retrieval [[r13]].",
+      "**Claude's memory tool** is client side: Claude requests file operations under `/memories` and your application executes them, so path traversal protection is your job. Its GA status was not stated on the page when checked [[r41]]."
+    ] },
+    { "t": "flow", "title": "A write path with gates", "direction": "h", "steps": [
+      { "title": "Candidate", "md": "The agent or an extractor proposes a memory from the conversation.", "tag": "extract" },
+      { "title": "Screen", "md": "Scan for injection, PII and policy. Reject instruction-like text.", "tag": "guard" },
+      { "title": "Consolidate", "md": "Merge duplicates, resolve contradictions, add provenance and a TTL.", "tag": "merge" },
+      { "title": "Store with scope", "md": "Tenant and user scope on every record, plus a delete handle.", "tag": "isolate" },
+      { "title": "Retrieve", "md": "Top-k within scope. Show age and source and treat the text as data, not instructions.", "tag": "read" }
+    ] },
+    { "t": "dials", "id": "w10-l5-memory", "title": "Design the memory layer", "prompt": "Flip the dials. Stateless is on the board because it wins when personalization is worth little.",
+      "dials": [
+        { "id": "value", "label": "Personalization value", "values": [ { "id": "low", "label": "Low, stateless is fine" }, { "id": "high", "label": "High, history changes answers" } ] },
+        { "id": "privacy", "label": "Delete and retention rules", "values": [ { "id": "relaxed", "label": "Relaxed, a default TTL is fine" }, { "id": "strict", "label": "Strict: delete on request, audit, residency" } ] },
+        { "id": "network", "label": "Network posture", "values": [ { "id": "open", "label": "Public endpoints allowed" }, { "id": "isolated", "label": "Private network or VNet required" } ] },
+        { "id": "trust", "label": "Write source", "values": [ { "id": "vetted", "label": "Vetted staff or users" }, { "id": "untrusted", "label": "Untrusted users or documents can influence writes" } ] }
+      ],
+      "options": [
+        { "id": "thread", "name": "Thread state only", "summary": "No long-term memory." },
+        { "id": "managed", "name": "Managed memory (Foundry, preview)", "summary": "Extraction, consolidation and retrieval as a service." },
+        { "id": "library", "name": "Library store you host", "summary": "Mem0 or a LangGraph store on your infrastructure." },
+        { "id": "files", "name": "Client-side memory files", "summary": "Your app executes file operations on request." },
+        { "id": "bespoke", "name": "Bespoke database with review", "summary": "Your schema, a validation gate and a review queue." }
+      ],
+      "scores": {
+        "thread": {
+          "value": { "low": { "s": 2, "why": "No long-term state to secure, delete or poison." }, "high": { "s": -2, "why": "Personalization cannot outlive the thread." } },
+          "privacy": { "relaxed": { "s": 0, "why": "Neutral." }, "strict": { "s": 2, "why": "Nothing persists beyond the thread, so there is little to delete." } },
+          "network": { "open": { "s": 0, "why": "Neutral." }, "isolated": { "s": 1, "why": "No extra service to isolate." } },
+          "trust": { "vetted": { "s": 0, "why": "Neutral." }, "untrusted": { "s": 1, "why": "Nothing to poison." } }
+        },
+        "managed": {
+          "value": { "low": { "s": -1, "why": "Extraction and consolidation cost for little gain." }, "high": { "s": 2, "why": "User profile, chat summary and procedural memory come built in." } },
+          "privacy": { "relaxed": { "s": 1, "why": "Default TTL and item-level CRUD cover basic needs." }, "strict": { "s": -1, "why": "It is preview. Confirm deletion, key and residency coverage before promising them." } },
+          "network": { "open": { "s": 1, "why": "Fits Agent Service as it is." }, "isolated": { "s": -2, "why": "VNet integration is not supported as of 2026-10-13." } },
+          "trust": { "vetted": { "s": 0, "why": "Neutral." }, "untrusted": { "s": -1, "why": "Extraction from untrusted text stores untrusted memories. Add prompt-injection detection and adversarial tests." } }
+        },
+        "library": {
+          "value": { "low": { "s": -1, "why": "You run and secure a store for little gain." }, "high": { "s": 1, "why": "Mem0 reports gains on LOCOMO (vendor-authored), and you own the stack." } },
+          "privacy": { "relaxed": { "s": 0, "why": "Neutral." }, "strict": { "s": 1, "why": "You control retention, deletion and region." } },
+          "network": { "open": { "s": 0, "why": "Neutral." }, "isolated": { "s": 1, "why": "Self-host inside your own network." } },
+          "trust": { "vetted": { "s": 0, "why": "Neutral." }, "untrusted": { "s": -1, "why": "Same poisoning exposure, and you build the defences." } }
+        },
+        "files": {
+          "value": { "low": { "s": 0, "why": "Cheap but unnecessary." }, "high": { "s": 1, "why": "Notes and preferences in files cover many agents." } },
+          "privacy": { "relaxed": { "s": 0, "why": "Neutral." }, "strict": { "s": 1, "why": "Plain files are easy to inspect, version and delete." } },
+          "network": { "open": { "s": 0, "why": "Neutral." }, "isolated": { "s": 2, "why": "It runs in your app, so there is no extra network surface." } },
+          "trust": { "vetted": { "s": 0, "why": "Neutral." }, "untrusted": { "s": 0, "why": "Your app executes every operation, so it must block path traversal and review writes." } }
+        },
+        "bespoke": {
+          "value": { "low": { "s": -2, "why": "Heavy to build for little gain." }, "high": { "s": 1, "why": "Full control of schema and retrieval." } },
+          "privacy": { "relaxed": { "s": -1, "why": "More machinery than the rules need." }, "strict": { "s": 2, "why": "Row-level delete, audit, tenant isolation and a review queue by design." } },
+          "network": { "open": { "s": 0, "why": "Neutral." }, "isolated": { "s": 2, "why": "It runs wherever your database runs." } },
+          "trust": { "vetted": { "s": 0, "why": "Neutral." }, "untrusted": { "s": 2, "why": "A validation gate and a review queue sit in front of every write." } }
+        }
+      },
+      "takeaway": "Treat every memory write as untrusted input. The less you trust the writers, the more a gate and a delete path matter." },
+    { "t": "failure", "title": "Memory failure modes", "items": [
+      { "symptom": "The assistant pushes a recommendation or link no one asked for, across many users", "cause": "Poisoned memory. MINJA plants records through ordinary queries with no direct write access [[r23]]. AgentPoison reports above 80% attack success at a poison rate below 0.1% [[r24]].", "fix": "Screen every write, keep provenance, treat recalled text as data, and run adversarial tests. Foundry's docs advise Content Safety prompt-injection detection plus adversarial testing [[r13]]." },
+      { "symptom": "A user asks to be forgotten and an old preference still appears", "cause": "Derived summaries survive, or records are not tied to a deletable scope", "fix": "Scope every record, support item-level delete and TTL, delete derived artifacts and test deletion end to end." },
+      { "symptom": "One tenant's fact appears for another tenant", "cause": "Scope missing or shared on retrieval", "fix": "Make scope mandatory on every read and write. Foundry's low-level APIs require an explicit `scope`. Test with cross-scope probes." },
+      { "symptom": "The assistant keeps citing an outdated fact", "cause": "No consolidation or recency handling, so contradictions pile up", "fix": "Consolidate on write, store timestamps, prefer the newest record and expire with a TTL." },
+      { "symptom": "Latency and tokens per turn climb as memory grows", "cause": "Too many memories retrieved every turn", "fix": "Cap top-k, load the profile once per session and retrieve per-turn summaries only when needed." }
+    ] },
+    { "t": "callout", "kind": "preview", "title": "Foundry memory limits, preview as of 2026-10-13", "md": "100 scopes per store, 10,000 memories per scope, and 1,000 search plus 1,000 update requests per minute. It needs compatible Azure OpenAI chat and embedding deployments and does not support VNet integration. The latest preview added item-level create, read, update and delete, a store default TTL and direct remember-or-forget commands [[r13]]. Mem0 reports 91% lower p95 latency and over 90% token savings against a full-context baseline on LOCOMO, but the paper is vendor-authored [[r40]]." }
+  ],
+  "quiz": [
+    { "id": "w10-l5-q1", "type": "match", "tag": "concept", "difficulty": 1, "q": "Match each memory type to what it stores.", "pairs": [ { "l": "Working memory", "r": "The contents of the live context window" }, { "l": "Episodic memory", "r": "Records of specific past interactions" }, { "l": "Semantic memory", "r": "Durable facts about a user or a domain" }, { "l": "Procedural memory", "r": "Rules and how-to steps for recurring workflows" } ], "explain": "The CoALA split ties each type to a different read pattern: working memory is always in context, episodic is recalled by situation, semantic by topic and procedural by workflow.", "ref": "r28" },
+    { "id": "w10-l5-q2", "type": "single", "tag": "security", "difficulty": 3, "q": "Researchers show an attacker can plant malicious memory records through ordinary queries, with no direct write access to the memory store. Which control addresses that path?", "options": ["Encrypt the memory store at rest with a customer-managed key so the planted records cannot be read", "Restrict the memory API so that only administrators can create records, and keep the agent read-only", "Screen every write as untrusted input and test adversarially", "Raise the embedding dimension so that poisoned records separate from genuine ones"], "answer": 2, "explain": "The agent writes memories on the user's behalf, so the attack arrives through normal use. Screening, provenance and adversarial testing address that. Encryption at rest does not stop poisoned content, an admin-only API breaks the agent's own writes without screening them, and a larger embedding does not detect malicious text.", "ref": "r23" },
+    { "id": "w10-l5-q3", "type": "single", "tag": "flip", "difficulty": 2, "q": "Personalization is valuable, and the security team requires private-network-only access for the agent's data services. Which choice changes, and why?", "options": ["Managed Foundry memory stays the best choice because it is the only option that includes extraction", "A client-side or self-hosted store, since Foundry memory has no VNet support as of 2026-10-13", "Fall back to thread state only, because personalization is impossible once the network is isolated", "Keep Foundry memory and raise its scope limit"], "answer": 1, "explain": "The Foundry memory page lists VNet integration as unsupported in preview, so an isolation requirement moves you to a store you can place inside the network. Thread-only memory gives up the value you wanted, and the scope limit has nothing to do with network posture.", "ref": "r13" }
+  ],
+  "defend": null,
+  "refs": ["r28", "r29", "r13", "r41", "r23", "r24", "r40", "r6", "r37"],
+  "takeaways": [
+    "Name the memory type before you pick a store: working, episodic, semantic or procedural.",
+    "Design the write path first: screen, consolidate, scope, then retrieve.",
+    "Every write is untrusted input. MINJA and AgentPoison show poisoning without direct write access.",
+    "Foundry memory is preview with limits and no VNet support as of 2026-10-13. Isolation or strict deletion rules can flip you to a store you control."
+  ]
+}

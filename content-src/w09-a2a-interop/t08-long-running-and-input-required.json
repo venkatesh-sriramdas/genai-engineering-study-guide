@@ -1,0 +1,153 @@
+{
+  "id": "w09-t08",
+  "order": 8,
+  "group": "Interaction modes",
+  "title": "Long-running and input-required tasks",
+  "minutes": 8,
+  "difficulty": "advanced",
+  "summary": "Long A2A tasks can pause in INPUT_REQUIRED or AUTH_REQUIRED and resume when the client replies on the same task. Clients must persist ids, choose an update mode and plan for retention and restarts.",
+  "useIf": "A remote agent's job may run for minutes to days, ask clarifying questions or need credentials mid-way.",
+  "avoidIf": "Every call finishes in one reply: skip task persistence and interrupted-state handling.",
+  "explain": [
+    { "t": "p", "md": "An interrupted state means the agent stopped for the client. In `TASK_STATE_INPUT_REQUIRED` it needs more input, from a human or from the client agent. In `TASK_STATE_AUTH_REQUIRED` it needs authorization. The client continues by sending a new message with the **same `taskId` and `contextId`**. Mismatched ids are rejected, and a message with only `taskId` lets the server infer the context [[r1]]." },
+    { "t": "diagram", "id": "w09-t08-d1", "title": "An input-required round trip", "alt": "The client sends a request and gets a working task. The agent later moves the task to input required with a question. The client gets an answer from a human and replies on the same task. The task completes with an artifact.", "src": "sequenceDiagram\n  participant H as Human\n  participant C as Client agent\n  participant A as Remote agent\n  C->>A: SendMessage returnImmediately\n  A-->>C: Task WORKING\n  A-->>C: Task INPUT_REQUIRED with question\n  C->>H: Ask the question\n  H-->>C: Answer\n  C->>A: Message with same taskId and contextId\n  A-->>C: Task COMPLETED with artifact" },
+    { "t": "p", "md": "For **in-task authorization** the agent uses a Task, moves it to `AUTH_REQUIRED` and explains what it needs. The credential should arrive out of band. The spec is explicit that agents MUST NOT treat the state transition itself as authorization, and a credential obtained in that state MUST NOT be assumed to authorize later messages unless an implementation, issuer or extension says so. A client that is itself an agent can pass the request up by moving its own task to `AUTH_REQUIRED` [[r1]]." },
+    { "t": "p", "md": "Duration is an operations problem. Agents MAY expire contexts and SHOULD document the policy [[r1]]. Foundry keeps A2A tasks and contexts for 60 days from the most recent write, and each write resets the clock (checked 2026-10-13) [[r17]]. In Agent Framework, `A2AAgent` returns a continuation token when you pass `background=True` (Python) or `AllowBackgroundResponses` (.NET), supports `poll_task` or resubscribing, and stores `context_id`, `task_id` and `task_state` in the session so the next message continues an input-required task or references a finished one with `reference_task_ids` [[r15]]." }
+  ],
+  "whereToUse": [
+    "Approval flows where a remote agent must ask a human before an irreversible step",
+    "Research or analysis agents that ask clarifying questions before spending hours",
+    "Agents that need user-delegated OAuth consent partway through a task",
+    "Orchestrators that persist task ids so work survives a restart of the caller",
+    "Nested delegation chains where an inner agent escalates a question outward"
+  ],
+  "whenToUse": {
+    "use": [
+      "Persist `taskId`, `contextId` and the last state wherever the client can restart",
+      "Reply to `INPUT_REQUIRED` on the same task to keep the agent's progress and context",
+      "Choose polling, streaming or push by duration, and always be able to fall back to `GetTask`"
+    ],
+    "avoid": [
+      "Do not auto-answer questions on consequential decisions without a written policy",
+      "Do not treat an `AUTH_REQUIRED` credential as blanket authorization for the rest of the task",
+      "Do not rely on a stream staying open across a long human delay"
+    ],
+    "flips": [
+      "Retention at the remote agent is shorter than the human delay: start a new task with the answer included",
+      "A policy answers the question: let the client agent reply automatically and log it",
+      "The credential would pass through several agents: negotiate an out-of-band or extension-based exchange bound to the requesting agent"
+    ]
+  },
+  "alternatives": {
+    "title": "Ways to handle a pause",
+    "head": ["Approach", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Reply on the same task", "Context and progress matter", "Retention expired or the agent restarted without state", "Client must persist ids and handle retention"],
+      ["Cancel and start a new task", "Retention is short or state is cheap", "The task did expensive work already", "Loses partial work, may repeat cost"],
+      ["Auto-answer by policy", "Low-risk, well-defined questions", "Decisions with financial or safety impact", "Wrong answers go unnoticed without logging"],
+      ["Escalate to the caller's own user", "A human must decide", "No human is reachable in time", "Chains of `INPUT_REQUIRED` across agents add delay"]
+    ]
+  },
+  "pitfalls": [
+    {
+      "symptom": "An answer to a clarifying question starts a fresh task",
+      "cause": "The reply omitted `taskId`, or used a new `contextId`, so the server treated it as a new request",
+      "fix": "Echo the `taskId` and `contextId` from the interrupted task [[r1]]"
+    },
+    {
+      "symptom": "A destructive step ran after the client replied to `AUTH_REQUIRED`",
+      "cause": "The agent treated the state change or the credential as authorization for the operation",
+      "fix": "Define and check authorization for each sensitive operation; the state alone authorizes nothing [[r1]]"
+    },
+    {
+      "symptom": "Conversation context disappears after weeks or a restart",
+      "cause": "The remote agent expired the context or lost in-memory state, and the client stored no ids",
+      "fix": "Persist ids and state, design for expiry (Foundry: 60 days from last write) and fall back to a new task [[r17]]"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "w09-t08-s1",
+      "title": "A nested question inside a delegation chain",
+      "situation": "An orchestrator delegates a procurement task to a supplier agent. The supplier asks which cost centre to use. The orchestrator's own user is a finance analyst working in a chat session.",
+      "constraints": ["Interrupted task in a chain", "Financial impact if wrong", "A human is reachable within minutes"],
+      "unknowns": ["Does policy define a default cost centre?", "How long does the supplier keep the task?"],
+      "question": "How does the orchestrator respond?",
+      "options": [
+        { "name": "Move its own task to `INPUT_REQUIRED`, ask the analyst and reply on the supplier's task", "verdict": "best", "why": "The decision stays with the person accountable and the supplier's progress is preserved.", "tradeoff": "Adds human delay to the chain." },
+        { "name": "Answer from the orchestrator's memory of past cost centres", "verdict": "good", "why": "Fast when the context makes the answer unambiguous.", "tradeoff": "A stale or wrong inference posts to the wrong ledger." },
+        { "name": "Pick the most common cost centre and continue", "verdict": "poor", "why": "A guess on a financial field defeats the reason the supplier asked.", "tradeoff": "Fine only where a documented policy defines the default." }
+      ],
+      "flips": [
+        { "if": "A written policy defines the cost centre by department", "then": "Reply automatically and log the policy used." },
+        { "if": "The analyst is unreachable for days and retention is short", "then": "Cancel and restart with the answer in the first message." }
+      ],
+      "takeaway": "Escalate consequential questions to the person who owns the decision."
+    },
+    {
+      "id": "w09-t08-s2",
+      "title": "The caller restarts in the middle of a six-hour task",
+      "situation": "A caller running on autoscaled containers starts a six-hour analysis task. Containers are replaced several times a day and no state survives in memory.",
+      "constraints": ["Caller process is not durable", "Very long task", "Cost of repeating six hours is high"],
+      "unknowns": ["Can the caller store ids in a database?", "Does the agent declare push or streaming?"],
+      "question": "How does the caller keep track of the task?",
+      "options": [
+        { "name": "Persist `taskId` and `contextId`, then reattach with `GetTask` or `SubscribeToTask` after each restart", "verdict": "best", "why": "The task lives at the agent, so a new container can pick up the same handle.", "tradeoff": "A durable store and a recovery path to build." },
+        { "name": "Block on a single `SendMessage` call", "verdict": "poor", "why": "A restart drops the connection and the caller loses its only handle.", "tradeoff": "Right for jobs shorter than the container lifetime." },
+        { "name": "Re-submit the request after every restart", "verdict": "good", "why": "Simple to code and works if the agent is idempotent.", "tradeoff": "May start duplicate six-hour tasks and double the cost." }
+      ],
+      "flips": [
+        { "if": "The agent supports push and the caller has a stable endpoint", "then": "Receive completion by webhook and still keep ids for recovery." },
+        { "if": "The task takes 20 seconds", "then": "Blocking is fine." }
+      ],
+      "takeaway": "The task handle belongs in durable storage, not in a process."
+    }
+  ],
+  "quiz": [
+    {
+      "id": "w09-t08-q1",
+      "type": "order",
+      "tag": "order",
+      "q": "Put the steps of an input-required round trip in order.",
+      "items": [
+        "Client starts the task and gets a working task",
+        "Agent moves the task to `INPUT_REQUIRED` with a question",
+        "Client obtains the answer from a human or policy",
+        "Client replies with the same `taskId` and `contextId`",
+        "Agent resumes and completes with an artifact"
+      ],
+      "explain": "The agent pauses the task, the client resolves the question outside the protocol and then replies on the same task so progress and context continue."
+    },
+    {
+      "id": "w09-t08-q2",
+      "type": "single",
+      "tag": "security",
+      "q": "A client supplies a credential while a task is in `AUTH_REQUIRED`. What does the spec say about later messages on that task?",
+      "options": [
+        "The credential is automatically valid for the rest of the task",
+        "It is valid only for streaming operations",
+        "It replaces the transport authentication",
+        "It MUST NOT be assumed to authorize later messages unless the implementation, issuer or an extension defines that"
+      ],
+      "answer": 3,
+      "explain": "The spec says the state alone authorizes nothing and scope and validity are defined by the implementation, credential issuer or an extension. Transport authentication still applies to every request."
+    },
+    {
+      "id": "w09-t08-q3",
+      "type": "single",
+      "tag": "flip",
+      "q": "On Foundry, a task was last written 50 days ago. A client sends a reply today. How long until it expires?",
+      "options": ["10 days", "Immediately, because it is older than 30 days", "60 days from today, because each write resets retention", "It never expires"],
+      "answer": 2,
+      "explain": "Foundry retains A2A tasks and contexts for 60 days from the most recent write and each new write resets the period (checked 2026-10-13)."
+    }
+  ],
+  "flashcards": [
+    { "front": "How does a client resume an `INPUT_REQUIRED` task?", "back": "By sending a new message with the same `taskId` and `contextId`. Mismatched ids are rejected." },
+    { "front": "What does `AUTH_REQUIRED` authorize by itself?", "back": "Nothing. Agents MUST NOT treat the state transition as authorization. Scope and validity come from the implementation, issuer or an extension." },
+    { "front": "How long does Foundry retain A2A tasks and contexts?", "back": "60 days from the most recent write. Each write resets the period (checked 2026-10-13)." },
+    { "front": "How does Agent Framework surface a long A2A task?", "back": "As a continuation token when background responses are enabled. Use `poll_task` or resubscribe, and session state keeps `context_id`, `task_id` and `task_state`." }
+  ],
+  "related": ["w09-t04", "w09-t07", "w09-t09", "w10-t21", "w10-t22", "w11-t16", "w11-t24"],
+  "refs": ["r1", "r15", "r17"]
+}

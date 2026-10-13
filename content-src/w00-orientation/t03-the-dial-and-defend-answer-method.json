@@ -1,0 +1,141 @@
+{
+  "id": "w00-t03",
+  "order": 3,
+  "group": "Answering well",
+  "title": "The Dial-and-Defend answer method",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "Five moves that turn a design question into a defensible answer: clarify the dials, list options, pick and flip, name failure modes with detection, then state metrics and rollout.",
+  "useIf": "You face an open design question and need a structure that shows judgement under time pressure.",
+  "avoidIf": "The question is a factual lookup with one right answer, such as a parameter name.",
+  "explain": [
+    { "t": "p", "md": "A **dial** is a fact about the situation that changes the best answer: corpus size, update rate, permission model, tenancy, latency target, risk and cost. Interviewers leave dials unspecified on purpose. A strong answer finds them before naming a technology, then defends a choice **for those dials** and says which dial change would flip it." },
+    { "t": "flow", "title": "The five moves", "direction": "v", "steps": [
+      { "title": "1. Clarify the dials", "md": "Ask two to four questions that would change the answer. State assumptions for anything unanswered.", "tag": "30 s" },
+      { "title": "2. List the options", "md": "Name every sensible option, including the boring baseline to beat.", "tag": "45 s" },
+      { "title": "3. Pick and flip", "md": "Choose for the stated dials. Say which dial and threshold would flip the choice.", "tag": "60 s" },
+      { "title": "4. Failure modes", "md": "For the choice, name how it fails and how you would detect it.", "tag": "60 s" },
+      { "title": "5. Metrics and rollout", "md": "State what you will measure, the threshold that counts as good, and how you ship safely.", "tag": "45 s" }
+    ] },
+    { "t": "p", "md": "**Worked example.** Prompt: make an assistant answer questions about information the model never saw. Dials: the corpus is 80,000 tokens, changes monthly, one tenant, p95 latency under 4 seconds, low risk. Options: prompt with the documents (the boring baseline), RAG, fine-tuning. Pick the prompt with caching. Flip: if the corpus outgrows the window or permissions become per user, move to RAG. Failure: answers degrade deep in a long prompt, detected by a golden set with answers placed at different depths. Metrics: groundedness, p95 latency, cost per answered question. Rollout: shadow traffic, then a small cohort." },
+    { "t": "table", "caption": "The dial checklist", "head": ["Dial", "Question to ask", "Why it moves the answer"], "rows": [
+      ["Corpus", "How large, how structured?", "Decides prompt, RAG or index design"],
+      ["Update rate", "How often does it change?", "Decides ingestion and cache lifetime"],
+      ["Permissions", "Who may see what, and how fast does revocation need to apply?", "Decides filters, indexes and live checks"],
+      ["Tenancy", "One tenant or many?", "Decides isolation and cache keys"],
+      ["Latency", "What p95 does the user feel?", "Decides streaming, caches and model size"],
+      ["Risk", "What does a wrong answer cost?", "Decides guardrails and human review"],
+      ["Cost", "What is the budget per task?", "Decides routing and model choice"]
+    ] },
+    { "t": "callout", "kind": "interview", "title": "Say the flip aloud", "md": "The sentence that separates good from great is the flip: \"If the corpus outgrows the window, or permissions become per user, I switch to RAG.\" It names a dial and a threshold, so the interviewer can test it." }
+  ],
+  "whereToUse": [
+    "Design interviews for AI engineer and architect roles",
+    "Design reviews, where it keeps debate on constraints instead of favourite tools",
+    "Written proposals: each section maps to one move",
+    "Coaching sessions, where a facilitator scores answers against the five moves",
+    "Boss rounds in this guide, which use the same rubric"
+  ],
+  "whenToUse": {
+    "use": [
+      "The question names a goal but not the constraints",
+      "Several options are plausible and the choice depends on facts you can ask for",
+      "You have 3 to 10 minutes to speak",
+      "You need to show that you can change your mind for good reasons"
+    ],
+    "avoid": [
+      "The interviewer asks for one specific fact, so answer it first and then add the method",
+      "You already have all the dials stated, so skip move 1 and say so",
+      "The prompt is a coding exercise with one correct output"
+    ],
+    "flips": [
+      "Time is 90 seconds: keep one clarifying question, two options, one flip and one failure mode",
+      "Risk is high: spend more of the time on failure modes, detection and human review",
+      "The interviewer pushes back with a new constraint: restate it as a dial change and re-run moves 2 to 3"
+    ]
+  },
+  "alternatives": {
+    "title": "Answer styles compared",
+    "head": ["Style", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Dial-and-Defend", "The question is open and trade-offs decide the answer", "A single fact is asked", "Needs practice to stay within the timebox"],
+      ["Name the technology", "The interviewer wants a quick pointer", "The context matters", "Sounds confident, hides that you did not check constraints"],
+      ["Recite every technique", "A survey question asks for the landscape", "A decision is required", "No judgement shown, long and unfocused"],
+      ["Whiteboard the architecture first", "You are given time for diagrams", "Dials are unknown", "Draws a design that may not fit the constraints"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "The answer starts with a product name", "cause": "The candidate skipped the clarify step", "fix": "Open with two or three questions about the dials, then state assumptions" },
+    { "symptom": "The pick has no flip condition", "cause": "The candidate treated the choice as universal", "fix": "End the pick with: if dial X crosses threshold Y, I switch to Z" },
+    { "symptom": "Failure modes are generic, such as hallucination", "cause": "No link between the chosen option and how it breaks", "fix": "Tie each failure to the option, and add how you would detect it, for example a golden set or a trace alert" },
+    { "symptom": "The answer ends at the architecture", "cause": "Metrics and rollout were treated as optional", "fix": "Close with metrics, thresholds, shadow traffic and a rollback trigger" }
+  ],
+  "scenarios": [
+    {
+      "id": "w00-t03-s1",
+      "title": "The open design prompt",
+      "situation": "An interviewer says: design an assistant that helps support agents answer customer questions. You have 5 minutes and no other detail.",
+      "constraints": ["Five minute timebox", "Dials are unspecified", "The interviewer will answer a few questions"],
+      "unknowns": ["How large and how fast-changing is the knowledge?", "Who may see which content?", "What is the latency target and the cost of a wrong answer?"],
+      "question": "How do you open?",
+      "options": [
+        { "name": "State assumptions without asking", "verdict": "good", "why": "Fast, and acceptable when the interviewer declines to answer.", "tradeoff": "You may assume a dial wrongly and defend the wrong design." },
+        { "name": "Ask 3 targeted dial questions, state assumptions for the rest, then list options with a baseline", "verdict": "best", "why": "It shows that the answer depends on facts and it fits the timebox.", "tradeoff": "Uses about 30 seconds that a rival answer would spend on design." },
+        { "name": "Start by naming a managed search service and a vector index", "verdict": "poor", "why": "It commits to RAG before knowing size, permissions or latency, so it may be the wrong layer.", "tradeoff": "Naming a stack is right once the dials are known and RAG is the pick." }
+      ],
+      "flips": [
+        { "if": "The interviewer says the knowledge is a 30-page handbook", "then": "Offer a prompt with the handbook as the baseline and show when RAG would replace it." },
+        { "if": "The interviewer says each agent sees only their region's data", "then": "Lead with permission filters and per-user access in the options." }
+      ],
+      "takeaway": "Dials first, technology second."
+    },
+    {
+      "id": "w00-t03-s2",
+      "title": "High-risk answer in four minutes",
+      "situation": "The prompt is a loan-advice assistant. Wrong answers can cause financial harm and the interviewer says you have four minutes.",
+      "constraints": ["High risk", "Four minute timebox", "Regulated domain"],
+      "unknowns": ["Is a human in the loop before advice reaches the customer?", "What evidence must be kept?"],
+      "question": "How do you spend the time?",
+      "options": [
+        { "name": "Spend three minutes on retrieval design", "verdict": "poor", "why": "Retrieval quality matters, but the stated risk puts safety and oversight first.", "tradeoff": "Deep retrieval design is right when risk is low and the question is about search quality." },
+        { "name": "Compress moves 1 to 3 into half the time, spend the rest on failure modes, detection, human review and rollout", "verdict": "best", "why": "In a high-risk domain the interviewer listens for how it fails and how you catch it.", "tradeoff": "The option comparison is shorter, so name the boring baseline in one sentence." },
+        { "name": "Give equal time to all five moves", "verdict": "good", "why": "Balanced and safe.", "tradeoff": "Under-weights the high-risk dial, which should earn more time." }
+      ],
+      "flips": [
+        { "if": "Risk is low and the topic is internal search", "then": "Shift time toward options and metrics." },
+        { "if": "The interviewer asks to go deeper on one move", "then": "Drop the others to one sentence each and go deep there." }
+      ],
+      "takeaway": "Weight your time by the dial that carries the most risk."
+    },
+    {
+      "id": "w00-t03-s3",
+      "title": "The interviewer changes a constraint",
+      "situation": "You chose a prompt with cached documents. The interviewer says the corpus is ten times larger and each user sees only some documents.",
+      "constraints": ["The new facts are a size change and a permission change", "You must respond in under a minute"],
+      "unknowns": ["What does a user's permission set look like?", "How fast do permissions change?"],
+      "question": "What do you say?",
+      "options": [
+        { "name": "Throw away the design and start again from the beginning", "verdict": "good", "why": "Safe, but slow.", "tradeoff": "It wastes the baseline, metrics and failure thinking you already did." },
+        { "name": "Defend the prompt design with a larger window", "verdict": "poor", "why": "Per-user permissions and size break the single prompt design.", "tradeoff": "Defending your pick is right only when the new fact does not cross your stated threshold." },
+        { "name": "Restate both as dial changes, switch to RAG with access filters, and explain what you keep", "verdict": "best", "why": "You show that you reason from dials and that your earlier flip condition predicted this.", "tradeoff": "You must be ready to cover ingestion and ACL capture next." }
+      ],
+      "flips": [
+        { "if": "The new facts do not cross your stated flip threshold", "then": "Keep the choice and show the arithmetic." },
+        { "if": "Revocation must apply in seconds", "then": "Add a live permission check on sensitive hits." }
+      ],
+      "takeaway": "Treat pushback as a dial change, not as an attack."
+    }
+  ],
+  "quiz": [
+    { "id": "w00-t03-q1", "type": "order", "tag": "order", "q": "Put the five moves in order.", "items": ["Clarify the dials", "List the options", "Pick and say what would flip it", "Name failure modes and how to detect them", "State metrics and rollout"], "explain": "You cannot list good options before the dials are known, and you cannot name failure modes before you pick an option. Metrics and rollout close the answer." },
+    { "id": "w00-t03-q2", "type": "single", "tag": "flip", "q": "Which sentence is a proper flip condition?", "options": ["If the corpus outgrows the window or permissions become per user, I switch to RAG", "RAG is generally better", "I would also consider fine-tuning", "It depends on the use case"], "answer": 0, "explain": "A flip names a dial and a threshold and the option you switch to. The other statements are opinions, an extra option or a hedge with no condition." },
+    { "id": "w00-t03-q3", "type": "multi", "tag": "tradeoff", "q": "Which are dials you would ask about for a new assistant?", "options": ["Update rate of the content", "Permission model", "The colour of the user interface", "Latency target at p95"], "answers": [0, 1, 3], "explain": "Update rate, permissions and latency each change which option wins. The interface colour does not affect the architecture choice." }
+  ],
+  "flashcards": [
+    { "front": "List the five moves of Dial-and-Defend.", "back": "Clarify the dials, list the options (with the boring baseline), pick and flip, name failure modes with detection, then metrics and rollout." },
+    { "front": "What makes a flip condition good?", "back": "It names a dial, a threshold and the option you switch to, for example: if permissions become per user, I move to RAG." },
+    { "front": "Name the seven dials in the checklist.", "back": "Corpus, update rate, permissions, tenancy, latency, risk and cost." }
+  ],
+  "related": ["w00-t04", "w00-l3", "w00-l6", "w01-t14"],
+  "refs": ["r26", "r27", "tr1"]
+}

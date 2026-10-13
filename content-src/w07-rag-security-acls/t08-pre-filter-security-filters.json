@@ -1,0 +1,116 @@
+{
+  "id": "w07-t08",
+  "order": 8,
+  "group": "Access control options",
+  "title": "Pre-filtering with security filters",
+  "minutes": 9,
+  "difficulty": "core",
+  "summary": "Each chunk stores the identities allowed to read it, and the app adds a search.in filter built from the caller's identities. The engine filters before it ranks. This is the GA, any-API-version pattern in Azure AI Search.",
+  "useIf": "Permissions map to users or groups that you can copy onto every chunk, and a sync lag of minutes to hours is acceptable.",
+  "avoidIf": "Revocation must take effect in seconds, or access is decided by rules (deny, sharing links) that cannot be flattened into allow lists.",
+  "explain": [
+    { "t": "p", "md": "A security filter is a plain string-comparison technique: a `Collection(Edm.String)` field on each chunk lists the principals allowed to read it, and the query carries a filter such as `group_ids/any(g:search.in(g, 'id1, id2'))`. It works on any API version and is GA [[r13]]. Because the filter runs before ranking, top-k holds only allowed chunks and recall stays stable." },
+    { "t": "tabs", "tabs": [
+      { "label": "Field", "blocks": [ { "t": "code", "lang": "json", "title": "Index field", "code": "{ \"name\": \"group_ids\", \"type\": \"Collection(Edm.String)\", \"filterable\": true, \"retrievable\": false }" } ] },
+      { "label": "Query", "blocks": [ { "t": "code", "lang": "json", "title": "POST /docs/search body", "code": "{ \"search\": \"parental leave policy\",\n  \"filter\": \"group_ids/any(g:search.in(g, 'a1b2c3, d4e5f6, public'))\",\n  \"vectorFilterMode\": \"preFilter\" }" } ] },
+      { "label": "ACL update", "blocks": [ { "t": "code", "lang": "json", "title": "Index action that patches only the ACL field", "code": "{ \"value\": [ { \"@search.action\": \"merge\", \"id\": \"chunk-42\", \"group_ids\": [\"a1b2c3\"] } ] }" } ] }
+    ] },
+    { "t": "p", "md": "Design the field with care. **The pattern has no authentication**: the principal is only a string, so your code must derive it from a validated token and build the filter server side. `retrievable: false` only hides the field from responses and is not field-level security. Update ACLs with `merge` or `mergeOrUpload`, so a revocation can patch one field without re-embedding [[r13]]." },
+    { "t": "p", "md": "`search.in` equals a chain of `eq ... or` but is faster. The docs report sub-second responses with hundreds or thousands of values, no explicit cap on the count, a limit set by the maximum request size, and latency that grows with the number of values [[r14]]. Use POST: a GET URL is limited to 8 KB and the payload to 16 MB [[r20]]. For vector queries set `vectorFilterMode` to `preFilter` explicitly [[tr19]]." },
+    { "t": "callout", "kind": "gotcha", "title": "Empty means nobody, never everybody", "md": "Store an explicit public marker (for example a `public` entry that every caller's list includes). If an empty ACL means public, a failed ACL capture at ingest silently publishes the document." }
+  ],
+  "whereToUse": [
+    "Enterprise search where permissions are exported from a directory or file share",
+    "Multi-department assistants with a department or role tag per chunk",
+    "Shared multi-tenant indexes, with the tenant id as one more filtered field",
+    "Any system whose identity provider is not Entra, so native token-based ACLs do not apply"
+  ],
+  "whenToUse": {
+    "use": ["Permissions reduce to allow lists of users or groups", "You need GA and a stable API", "You own group resolution and ACL sync"],
+    "avoid": ["Deny rules, sharing links and guests that cannot be flattened", "Revocation in seconds with only a pull indexer", "Callers with so many effective groups that the filter grows past the request budget"],
+    "flips": ["Revocation must be instant: add a live check on sensitive hits", "Content is in ADLS Gen2 or SharePoint and preview is acceptable: consider native ACLs", "A caller can hold thousands of groups: send only the groups that appear on documents, or switch to roles"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Security filter (this topic)", "Group-based access, any identity system, GA needed", "Rich rules, instant revocation", "You write group resolution and sync code"],
+      ["Native ACL and RBAC scopes (preview)", "Entra identities, ADLS Gen2 or Blob content", "You need GA or a non-Entra identity", "Preview, no SLA, ACL entry limits"],
+      ["Post-filter", "Nearly all visible, index cannot filter", "Access is selective", "Starved top-k, wider leak surface"],
+      ["Live check", "Per-document rights, fast revocation", "High query volume", "Latency and source load"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A revoked user still sees a document", "cause": "The index was not updated after the ACL change", "fix": "Push a merge on change events, bound sync lag, and test revocation with a canary user" },
+    { "symptom": "A document with no ACL shows to everyone", "cause": "An empty field was treated as public", "fix": "Require an explicit public marker and fail closed on empty" },
+    { "symptom": "Filter requests are slow or rejected", "cause": "Thousands of group ids in one filter, sent as a GET", "fix": "Send POST, expand membership server side and send only groups that appear on documents" },
+    { "symptom": "Users inject their own filter", "cause": "The client sends the filter string", "fix": "Build the filter only on the server from a validated token" }
+  ],
+  "scenarios": [
+    {
+      "id": "w07-t08-s1",
+      "title": "Custom identity system, GA required",
+      "situation": "A product uses its own directory service, not Entra. Each user belongs to about 120 groups. The assistant goes to production next quarter and requires a supported API. A revoked grant must stop working within 15 minutes.",
+      "constraints": ["Non-Entra identity", "GA required", "Revocation within 15 minutes", "About 120 groups per user"],
+      "unknowns": ["Does the directory emit change events?", "How many chunks does one ACL change touch?"],
+      "question": "How do you enforce permissions?",
+      "options": [
+        { "name": "Native ACL filters driven by the user's Entra token", "verdict": "poor", "why": "They are preview, rely on Entra identities and are not recommended for production [[r11]].", "tradeoff": "Right when content sits in ADLS Gen2 or SharePoint with Entra identities and a pilot is acceptable." },
+        { "name": "Security filter, with change events from the directory triggering a merge of the ACL field", "verdict": "best", "why": "GA, works with any identity, and a push merge lands as soon as the change event arrives, well inside 15 minutes.", "tradeoff": "You own the change feed and group resolution." },
+        { "name": "Security filter refreshed by a nightly full rebuild", "verdict": "good", "why": "Simple to run.", "tradeoff": "Up to a day of stale grants, which misses the 15-minute target." }
+      ],
+      "flips": [
+        { "if": "Revocation tightens to seconds", "then": "Keep the filter and add a live check on sensitive hits." },
+        { "if": "The identity system becomes Entra and preview is allowed", "then": "Native ACLs remove your group-expansion code." }
+      ],
+      "takeaway": "GA plus a custom identity system points to security filters with push updates."
+    },
+    {
+      "id": "w07-t08-s2",
+      "title": "Callers with thousands of effective groups",
+      "situation": "Large customers have callers who hold up to 3,000 effective groups through nesting. The index has 40 million chunks and documents carry a few hundred distinct principal ids in total.",
+      "constraints": ["Up to 3,000 groups per caller", "Few distinct principals on documents", "Sub-second filter latency wanted"],
+      "unknowns": ["Which principals actually appear on documents?", "How often does membership change?"],
+      "question": "How do you build the filter?",
+      "options": [
+        { "name": "Send all 3,000 ids in a GET request URL", "verdict": "poor", "why": "A GET URL is limited to 8 KB, and latency grows with the value count [[r20]].", "tradeoff": "Fine for callers with a handful of groups." },
+        { "name": "Intersect the caller's groups with the set of principals that appear on documents, and send that set by POST", "verdict": "best", "why": "Groups no document references cannot grant access, so the filter shrinks to what matters. This is design reasoning, not a vendor feature.", "tradeoff": "You maintain the principal set at ingest and refresh it when new principals appear." },
+        { "name": "Send all 3,000 ids by POST", "verdict": "good", "why": "The docs report sub-second results with hundreds or thousands of values [[r14]].", "tradeoff": "Latency still grows with count and payload size." }
+      ],
+      "flips": [
+        { "if": "Most callers hold under 50 groups", "then": "Send the full list by POST and skip the intersection." },
+        { "if": "Access can be expressed as a few roles", "then": "Use role claims and shrink the filter further." }
+      ],
+      "takeaway": "Shrink the filter to principals that appear on documents."
+    },
+    {
+      "id": "w07-t08-s3",
+      "title": "Public documents and failed ACL capture",
+      "situation": "Some documents are readable by everyone and others by groups. A connector sometimes fails to read a file's permissions and writes an empty list. The team treats an empty list as public.",
+      "constraints": ["Mixed public and restricted content", "Connector can fail silently", "Revocation within hours"],
+      "unknowns": ["How often does ACL capture fail?", "Is there an alert on empty ACLs?"],
+      "question": "How do you change the design?",
+      "options": [
+        { "name": "Keep empty as public and alert on empty lists", "verdict": "poor", "why": "An unnoticed failure publishes restricted documents in the meantime.", "tradeoff": "Acceptable only when every document is public by design." },
+        { "name": "Write an explicit public marker for public documents, treat empty as nobody and quarantine unknown ACLs", "verdict": "best", "why": "A failed capture hides the document instead of publishing it.", "tradeoff": "Failures cause missing results until fixed, so alert on quarantined counts." },
+        { "name": "Re-read permissions from the source on every query", "verdict": "good", "why": "Always accurate.", "tradeoff": "Adds latency and source load and discards the point of the index filter." }
+      ],
+      "flips": [
+        { "if": "Most documents are public", "then": "Keep the marker and add a cheap per-hit check for the restricted minority." },
+        { "if": "Revocation tightens to minutes", "then": "Push ACL merges on change events." }
+      ],
+      "takeaway": "Fail closed: empty means nobody."
+    }
+  ],
+  "quiz": [
+    { "id": "w07-t08-q1", "type": "single", "tag": "security", "q": "Setting retrievable to false on the ACL field gives which protection?", "options": ["Field-level security: callers cannot filter on it", "It hides the field from responses only. The filter is the control", "It encrypts the stored principal ids", "It makes the field read-only"], "answer": 1, "explain": "retrievable: false keeps the field out of search results. Filtering still works, and it is not field-level security. It does not encrypt or make anything read-only.", "ref": "r13" },
+    { "id": "w07-t08-q2", "type": "multi", "tag": "concept", "q": "Which statements about the security filter pattern are correct? Choose all that apply.", "options": ["It works with any API version", "It authenticates the caller", "The ACL field can be updated with merge or mergeOrUpload", "The filter is applied before ranking"], "answers": [0, 2, 3], "explain": "The pattern is API-agnostic, ACLs can be patched with merge actions and the filter runs before ranking. It does not authenticate anyone: your code must derive the principal from a validated token.", "ref": "r13" }
+  ],
+  "flashcards": [
+    { "front": "Which field settings does a security filter use in Azure AI Search?", "back": "A Collection(Edm.String) field with filterable true and retrievable false. retrievable false hides it from responses but is not field-level security." },
+    { "front": "Does the security filter pattern authenticate users?", "back": "No. The principal is only a string. Your code must validate the token, resolve identities and build the filter on the server." },
+    { "front": "Why store an explicit public marker?", "back": "If empty means public, a failed ACL capture publishes a restricted document. With empty meaning nobody, the failure hides it instead." }
+  ],
+  "related": ["w07-t06", "w07-t07", "w07-t11", "w07-t14", "w07-t15", "w07-l3"],
+  "refs": ["r11", "r13", "r14", "r20", "tr19"]
+}

@@ -1,0 +1,95 @@
+{
+  "id": "w10-t20",
+  "order": 20,
+  "group": "Context and memory",
+  "title": "Memory policies, poisoning and privacy",
+  "minutes": 9,
+  "difficulty": "advanced",
+  "summary": "A memory layer needs written policies for what gets stored, how it is read, when it expires and how it is deleted. Every write is untrusted input, because attackers can plant memories through ordinary conversation.",
+  "useIf": "An agent writes to long-term memory, or reads memory that other users, tools or web content could influence.",
+  "avoidIf": "Do not rely on a memory store that you cannot scope per user, expire, audit and delete from.",
+  "explain": [
+    { "t": "p", "md": "Treat memory like any other data store that takes input from users and tools. A **write policy** says what is worth keeping: durable facts and preferences, not secrets, transient chatter or instructions found in tool output. A **read policy** says which memories may enter context: scoped to the user or tenant, relevant enough, recent enough, shown with provenance and treated as data, not commands. **Expiry** limits staleness and exposure. **Deletion** must reach every copy, including summaries and embeddings derived from the original." },
+    { "t": "diagram", "id": "w10-t20-d1", "title": "A memory write path with gates", "alt": "A candidate memory is screened for injection and personal data, consolidated against existing items, tagged with scope, source and expiry, and stored. Reads filter by scope and show provenance.", "src": "flowchart LR\n  C[Candidate memory] --> S[Screen: injection, PII]\n  S --> K[Consolidate: dedupe, resolve conflicts]\n  K --> T[Tag: scope, source, expiry]\n  T --> D[(Memory store)]\n  D -->|scope filter| R[Read with provenance]" },
+    { "t": "p", "md": "The threat is real. MINJA shows an attacker can plant malicious memory records through ordinary queries and outputs, with no direct write access to the memory bank [[r23]]. AgentPoison poisons long-term memory or a RAG store to install a backdoor, reporting average attack success above 80 percent at a poison rate below 0.1 percent with under 1 percent impact on benign use [[r24]]. Foundry's memory documentation advises Azure AI Content Safety prompt-injection detection plus adversarial testing [[r13]]." },
+    { "t": "p", "md": "Managed controls exist but are bounded. Foundry memory (preview, checked 2026-10-13) added item-level create, read, update and delete, a default TTL per store and direct remember-or-forget commands. Its limits are 100 scopes per store, 10,000 memories per scope and 1,000 search plus 1,000 update requests per minute, and low-level APIs need an explicit `scope` [[r13]]. On privacy, GDPR Article 17 gives data subjects a right to erasure without undue delay where listed grounds apply, with exceptions such as legal obligations and legal claims [[tr11]]. A deletion path that cannot remove a person's memories, derived summaries and index entries is a design gap, not a detail." },
+    { "t": "callout", "kind": "warn", "title": "Memory is a persistence layer for injection", "md": "A one-time injected instruction that lands in memory returns in every later session. Screen writes, record the source of each memory, and prefer user-confirmed writes for anything that changes behaviour." }
+  ],
+  "whereToUse": [
+    "Any assistant with cross-session memory of user preferences or history",
+    "Agents that browse the web or read email and might store what they read",
+    "Multi-tenant systems where memory must not cross tenants",
+    "Compliance reviews of what an agent stores about people",
+    "Red-team plans for agents with write access to memory"
+  ],
+  "whenToUse": {
+    "use": ["Every memory has a scope, source, timestamp and expiry", "Writes from untrusted content are screened or require confirmation", "A tested path deletes by user and scope across derived data"],
+    "avoid": ["Letting the model write any text it likes into shared memory", "Storing sensitive data because it might be useful later", "Keeping memories indefinitely with no review"],
+    "flips": ["Memory content can steer actions: require user confirmation or review before it becomes active", "Regulated data is involved: store less, expire sooner and log access", "Web or email content feeds the agent: quarantine memories derived from it with lower trust"]
+  },
+  "alternatives": {
+    "title": "Write policies compared",
+    "head": ["Policy", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Model writes freely", "Low-stakes, single-user, private", "Untrusted content or shared stores", "Poisoning, privacy leaks [[r23]]"],
+      ["Screened writes (injection and PII checks)", "General assistants", "Attackers craft benign-looking text", "Extra latency, false positives [[r13]]"],
+      ["User-confirmed writes", "Memory changes behaviour or stores sensitive data", "High-volume, low-value facts", "Friction, but strong control"],
+      ["Rules-based extraction (schema fields only)", "Fixed profile attributes", "Open-ended episodic recall", "Misses useful context"],
+      ["No long-term memory", "Risk outweighs value", "Personalisation is the product", "Simplest to secure"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "The agent changes behaviour across sessions after reading a web page", "cause": "An instruction from untrusted content was stored as memory [[r23]]", "fix": "Screen writes, tag the source, quarantine untrusted-source memories and require confirmation before they affect actions." },
+    { "symptom": "A deletion request leaves traces in answers", "cause": "Derived summaries or embeddings were not removed with the source item", "fix": "Track lineage from source to derivatives and delete by user and scope across all of them." },
+    { "symptom": "Stale facts keep winning over newer ones", "cause": "No expiry, recency or conflict rule", "fix": "Set a TTL, prefer newer items on conflict and show timestamps in retrieval." }
+  ],
+  "scenarios": [
+    {
+      "id": "w10-t20-s1",
+      "title": "Erasure request in a multi-tenant assistant",
+      "situation": "A user asks the operator to erase everything stored about them. The assistant keeps profile facts, per-session summaries and embeddings, across several tenants.",
+      "constraints": ["Per-user erasure obligation", "Multiple derived artifacts", "Tenant isolation required"],
+      "unknowns": ["Are there legal grounds that limit erasure?", "Where else is the data copied: logs, backups, caches?"],
+      "question": "What do you need in place?",
+      "options": [
+        { "name": "Scoped memory with lineage from source to summaries and embeddings, and a tested delete-by-user path", "verdict": "best", "why": "It lets you remove every derived copy and prove it, and scoping prevents cross-tenant effects.", "tradeoff": "More design work up front, plus a plan for logs and backups." },
+        { "name": "Delete the raw chat only", "verdict": "poor", "why": "Summaries and embeddings still encode the personal data.", "tradeoff": "Enough only if nothing derived is ever stored." },
+        { "name": "Disable memory for that user and keep the data", "verdict": "good", "why": "Stops future use quickly.", "tradeoff": "It does not erase the data, so the obligation is unmet." }
+      ],
+      "flips": [
+        { "if": "A legal obligation requires retention", "then": "Restrict processing and document the exception." },
+        { "if": "Memory is only thread-scoped and short-lived", "then": "A TTL may satisfy deletion without extra machinery." }
+      ],
+      "takeaway": "Design deletion before you ship the first memory."
+    },
+    {
+      "id": "w10-t20-s2",
+      "title": "Browsing agent that remembers",
+      "situation": "A research agent reads web pages and stores notes in long-term memory that later runs trust. Some pages are written by people who benefit from steering the agent.",
+      "constraints": ["Untrusted content feeds memory", "Memory shapes future actions", "Runs are unattended"],
+      "unknowns": ["Which memories can affect tool use?", "Can sources be rated by trust level?"],
+      "question": "How do you protect memory?",
+      "options": [
+        { "name": "Tag every memory with its source, quarantine web-derived items as data only, screen for injection and require review before they influence actions", "verdict": "best", "why": "It limits persistence of injected instructions and keeps a trail for investigation.", "tradeoff": "Slower learning and some review work." },
+        { "name": "Store whatever the agent summarises and trust it later", "verdict": "poor", "why": "A poisoned page can plant a memory that returns in every run, as the research on memory poisoning shows.", "tradeoff": "Acceptable only in a sandbox with no consequential tools." },
+        { "name": "Disable memory for this agent", "verdict": "good", "why": "Removes the persistence risk.", "tradeoff": "Loses cross-run learning, so each run restarts from scratch." }
+      ],
+      "flips": [
+        { "if": "Sources are all internal and trusted", "then": "Lighter screening may be enough." },
+        { "if": "Memories can trigger write tools", "then": "Add approval gates on those tools." }
+      ],
+      "takeaway": "Persisted text is persisted risk, so trace and gate it."
+    }
+  ],
+  "quiz": [
+    { "id": "w10-t20-q1", "type": "multi", "tag": "security", "q": "Which controls reduce the risk of memory poisoning?", "options": ["Tag each memory with its source and trust level", "Screen candidate memories for injection before storing them", "Let any retrieved memory act as a system instruction", "Require confirmation before untrusted-source memories affect actions"], "answers": [0, 1, 3], "explain": "Provenance, screening and confirmation limit persistence and use of planted instructions. Letting memory act as a system instruction gives attackers authority. [[r23]][[r24]]", "ref": "r24", "difficulty": 2 },
+    { "id": "w10-t20-q2", "type": "single", "tag": "concept", "q": "What does MINJA demonstrate?", "options": ["Memory can only be attacked with direct write access to the store", "Attackers can plant malicious memory records through ordinary queries and outputs", "Vector stores cannot be poisoned", "Poisoning needs more than half of the memory bank"], "answer": 1, "explain": "MINJA is a query-only attack: the attacker needs no direct write access to the memory bank. AgentPoison further shows success above 80 percent at a poison rate below 0.1 percent. [[r23]][[r24]]", "ref": "r23", "difficulty": 2 }
+  ],
+  "flashcards": [
+    { "front": "What do AgentPoison's numbers show?", "back": "Average attack success above 80 percent at a poison rate below 0.1 percent, with under 1 percent impact on benign use [[r24]]." },
+    { "front": "Four parts of a memory policy?", "back": "Write policy, read policy (scope, relevance, provenance), expiry and deletion that reaches derived summaries and embeddings." },
+    { "front": "Foundry memory limits, preview as of 2026-10-13?", "back": "100 scopes per store, 10,000 memories per scope, 1,000 search and 1,000 update requests per minute, no VNet support [[r13]]." }
+  ],
+  "related": ["w10-l5", "w10-t19", "w10-t22", "w10-t17"],
+  "refs": ["r23", "r24", "r13", "tr11"]
+}

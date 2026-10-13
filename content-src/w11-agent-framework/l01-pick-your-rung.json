@@ -1,0 +1,87 @@
+{
+  "id": "w11-l1",
+  "order": 1,
+  "title": "Pick your rung: function, agent, Harness or workflow",
+  "kind": "problem",
+  "minutes": 18,
+  "brief": "A team has a job that may need tools, a long run or a human sign-off, and has already chosen Agent Framework. Before any code, decide which rung of the framework the job needs. The dials are not given, so name the ones that matter.",
+  "blocks": [
+    { "t": "h", "text": "What is stable and what is not", "level": 2 },
+    { "t": "p", "md": "Agent Framework is the direct successor to Semantic Kernel and AutoGen, built by the same teams (topic w11-t01). Version 1.0 was announced for .NET and Python on 2026-04-03 [[r13]]. Since then the packages move fast: Python `agent-framework` went from 1.11.0 on 2026-07-10 to 1.21.0 on 2026-10-08, ten minor releases in 90 days, and it requires Python 3.10 or later [[r14]]. Semantic Kernel v1.x stays supported for at least one year after GA, so about 2027-04 at the earliest [[r25]]. One version number hides mixed maturity, so read the label per feature before you plan around it." },
+    { "t": "table", "caption": "Maturity map, checked 2026-10-13", "head": ["Area", "Status", "What to do about it"], "rows": [
+      ["Core agents, graph workflows with checkpointing, orchestrations, declarative YAML, MCP", "Stable since the 1.0 announcement [[r13]]", "Build on these first"],
+      ["Python devui, foundry-hosting, a2a, durabletask, azurefunctions; .NET hosting, A2A, DevUI, Foundry packages", "Beta (Python) or preview (.NET) [[r14]] [[r15]]", "Pin versions and keep an exit path"],
+      ["Harness background agents, file access and looping; skills API; functional workflows; handoff autonomous mode; Magentic .NET types", "Experimental [[r2]]", "Keep off the critical path or hide behind your own interface"],
+      ["Go SDK", "Public preview. No packaged Harness, declarative agents or Foundry hosting package [[r1]]", "Choose .NET or Python for production work"]
+    ], "highlightCol": 1 },
+    { "t": "h", "text": "Dial board: which rung does the job need?", "level": 2 },
+    { "t": "dials", "id": "w11-l1-rung", "title": "Choose the rung", "prompt": "The docs give a blunt first rule: if you can write a function for the task, do that instead of using an AI agent [[r1]]. Agents fit open-ended work with autonomous tool use. Workflows fit well-defined steps, explicit order, or several agents and functions that must coordinate. The Harness sits between as an agent for long multi-step work (topic w11-t02). Flip the constraints and the ranking updates.",
+      "dials": [
+        { "id": "path", "label": "Shape of the path", "values": [ { "id": "fixed", "label": "Steps are known in advance" }, { "id": "open", "label": "Open-ended, the input decides" } ] },
+        { "id": "length", "label": "Run length", "values": [ { "id": "short", "label": "Short, one request" }, { "id": "long", "label": "Long, many steps and a plan" } ] },
+        { "id": "control", "label": "Control needs", "values": [ { "id": "inline", "label": "Inline approvals at most" }, { "id": "explicit", "label": "Explicit order, fan-out, human gates, resume" } ] }
+      ],
+      "options": [
+        { "id": "fn", "name": "Plain function", "summary": "Ordinary code, no model deciding the route." },
+        { "id": "agent", "name": "Plain agent with tools", "summary": "One agent, a session, function tools, per-tool approval." },
+        { "id": "harness", "name": "Harness Agent", "summary": "An agent pre-wired with todos, modes, file memory, standing approvals and persistence." },
+        { "id": "wf", "name": "Graph workflow", "summary": "Executors and edges run in supersteps with checkpoints." },
+        { "id": "wfag", "name": "Workflow of agents", "summary": "A graph whose nodes are agents (or Harness agents) plus plain functions." }
+      ],
+      "scores": {
+        "fn": {
+          "path": { "fixed": { "s": 2, "why": "The docs say it plainly: if a function can handle the task, write the function." }, "open": { "s": -2, "why": "Code cannot decide what to do with input it never anticipated." } },
+          "length": { "short": { "s": 1, "why": "One call, no state to keep, nothing to recover." }, "long": { "s": 0, "why": "Length is not what hurts a function. Missing state and recovery are, and those become your code." } },
+          "control": { "inline": { "s": 1, "why": "An approval is an ordinary if statement." }, "explicit": { "s": -2, "why": "Fan-out, gates and resume are yours to build, which is what a workflow engine exists to avoid." } }
+        },
+        "agent": {
+          "path": { "fixed": { "s": -1, "why": "You pay for model decisions the code could make, and the model may skip a step." }, "open": { "s": 2, "why": "Open-ended work with autonomous tool use is the agent's home ground." } },
+          "length": { "short": { "s": 2, "why": "One run, one session, a few tools. Nothing else to configure." }, "long": { "s": -1, "why": "History grows and there are no todos, modes or compaction unless you wire the providers yourself." } },
+          "control": { "inline": { "s": 1, "why": "A per-tool approval mode and the approval round trip cover an inline gate." }, "explicit": { "s": -1, "why": "Approvals work, but there is no barrier, fan-out or graph checkpoint to resume from." } }
+        },
+        "harness": {
+          "path": { "fixed": { "s": -2, "why": "Todos, modes and file memory are overhead for a path that code could fix." }, "open": { "s": 2, "why": "It adds planning state and approvals around an agent that chooses its own steps." } },
+          "length": { "short": { "s": -1, "why": "More machinery than a short run needs, and it needs a session." }, "long": { "s": 2, "why": "Todo tracking, plan and execute modes, file memory and per-call history persistence exist for long runs." } },
+          "control": { "inline": { "s": 1, "why": "Standing approvals and auto-approval rules cut repeated prompts, provided the same session is reused." }, "explicit": { "s": -1, "why": "It adds approvals, not an enforced order, fan-out or a graph checkpoint." } }
+        },
+        "wf": {
+          "path": { "fixed": { "s": 2, "why": "Explicit edges give an auditable order for a known procedure." }, "open": { "s": -1, "why": "Edges are authored in advance, so an unforeseen route needs a new edge." } },
+          "length": { "short": { "s": 1, "why": "Cheap when most executors are plain functions." }, "long": { "s": 1, "why": "Supersteps give clean checkpoint boundaries, so a long run can resume." } },
+          "control": { "inline": { "s": -1, "why": "Graph machinery you do not need for an inline gate." }, "explicit": { "s": 2, "why": "Fan-out, fan-in, conditional edges, human requests and checkpoints are the point of a workflow." } }
+        },
+        "wfag": {
+          "path": { "fixed": { "s": 1, "why": "Use agents only on steps that need language understanding and functions elsewhere." }, "open": { "s": 1, "why": "Agents decide locally inside nodes, but the route between nodes is still authored." } },
+          "length": { "short": { "s": 0, "why": "Graph plus agent overhead for a short run." }, "long": { "s": 1, "why": "Checkpointed supersteps, with agent executors that keep their own sessions." } },
+          "control": { "inline": { "s": -1, "why": "More structure than an inline gate needs." }, "explicit": { "s": 2, "why": "Agents get the autonomy, the graph keeps the order, the gates and the resume." } }
+        }
+      },
+      "takeaway": "Every rung is a promise about who owns the control flow. Climb only when a dial you can name forces it. A Harness Agent can sit inside a workflow node when both long autonomy and explicit gates are needed." },
+    { "t": "table", "caption": "What the Harness switches on (docs dated 2026-07-29)", "head": ["Capability", "Default", "Switch"], "rows": [
+      ["Function invocation with a per-request iteration limit, per-service-call history persistence", "On", "Always part of the chat pipeline"],
+      ["Todo tracking, plan and execute modes, session file memory", "On", "Python `disable_todo`, `disable_mode`, `disable_file_memory`; .NET `DisableTodoProvider`, `DisableAgentModeProvider`, `DisableFileMemory`"],
+      ["Standing tool approvals and auto-approval rules, OpenTelemetry, web search where the client supports it", "On", "`disable_tool_auto_approval`, `disable_web_search`; .NET `DisableToolAutoApproval`, `DisableOpenTelemetry`, `DisableWebSearch`"],
+      ["Compaction", "On only when token limits or a custom strategy are supplied", "Python `disable_compaction`; .NET `DisableCompaction`"],
+      ["Shared file access, background agents, shell execution, looping", "Opt-in", "Experimental, and shell tooling comes from the pre-release `agent-framework-tools` package"]
+    ], "highlightCol": 1 },
+    { "t": "failure", "title": "How the rung choice goes wrong", "items": [
+      { "symptom": "The team looks for a separate Harness host and a separate deployment path.", "cause": "The Harness is treated as a runtime. It is a normal agent: `HarnessAgent` derives from `AIAgent` and `create_harness_agent()` returns an `Agent`.", "fix": "Host it like any agent. You still supply session storage, exporters and the approval UX." },
+      { "symptom": "A Harness agent asks for approval, the user answers, and the run starts again from nothing.", "cause": "The default tool-approval middleware requires the same `AgentSession` across the approval round trip, and the caller created a new one.", "fix": "Persist and reuse the session id and state between the request and the answer (topic w11-t06)." },
+      { "symptom": "A design review assumes everything is GA because the SDK is at 1.x.", "cause": "The 1.0 announcement covered the core. Hosting, A2A, DevUI, durable packages and several features stayed Beta, preview or experimental. Docs also lag the registries, so a page can say `--pre` for a package PyPI lists as stable.", "fix": "Record the maturity of each package in the design, and check PyPI and NuGet on the day you decide." }
+    ] },
+    { "t": "callout", "kind": "interview", "title": "The sentence that earns points", "md": "Say the function out loud first: 'If the steps are known I would write code, and put a model only where language understanding is needed.' Then name the dial that moves you up: open path, run length, explicit gates. Interviewers also check that you know the Harness is composition, not a new runtime. Migration notes for Semantic Kernel and AutoGen users sit in topic w11-t27 [[r26]]." }
+  ],
+  "quiz": [
+    { "id": "w11-l1-q1", "type": "single", "tag": "concept", "difficulty": 1, "q": "A teammate says the Harness Agent is a separate runtime with its own host. What is the accurate correction?", "options": ["It is a separate runtime, but it hosts the same tools and middleware as a normal agent, behind its own deployment model", "It is only a marketing name for the chat client and adds nothing to the agent", "It is a normal agent pre-wired with providers and middleware: `HarnessAgent` derives from `AIAgent`", "It replaces middleware and providers with a fixed pipeline that cannot be changed"], "answer": 2, "explain": "The Harness composes parts that already exist: a chat client, a chat pipeline, providers (instructions, tools, memory, todos, modes) and middleware (approval, telemetry, optional looping). It is not a runtime, it is not an empty label, and you can still opt features out. What stays your job is session storage, exporters and the approval UX.", "ref": "r2" },
+    { "id": "w11-l1-q2", "type": "multi", "tag": "concept", "difficulty": 2, "q": "Select every capability the Harness enables by default (docs dated 2026-07-29).", "options": ["Todo tracking", "Plan and execute modes", "Shell command execution", "Standing tool approvals and auto-approval rules", "Bounded looping", "Background agents"], "answers": [0, 1, 3], "explain": "Todo tracking, plan and execute modes and standing approvals are on by default. Shell execution, looping, background agents and shared file access are opt-in, and background agents, file access and looping are experimental.", "ref": "r2" },
+    { "id": "w11-l1-q3", "type": "single", "tag": "flip", "difficulty": 2, "q": "The brief changes from 'a user chats and the agent chooses steps' to 'every request follows the same five steps, the order must be auditable, and one step needs a sign-off that may take a day'. What does the board suggest?", "options": ["A graph workflow with agents only on language-heavy steps, plain functions elsewhere, and a human request step", "Keep the Harness Agent and add more todos so it follows the order", "One large prompt that lists the five steps and asks the agent to respect them and to wait for the sign-off before it continues", "Magentic, so a planning manager enforces the order"], "answer": 0, "explain": "Known steps and an auditable order push the path dial to fixed and the control dial to explicit, where a workflow wins and agents earn a place only on language-heavy steps. Todos are state the model may ignore, a long prompt is a request and not an enforced order, and Magentic plans dynamically, which is the opposite of a fixed procedure.", "ref": "r1" },
+    { "id": "w11-l1-q4", "type": "match", "tag": "concept", "difficulty": 2, "q": "Match each feature to its maturity label as of 2026-10-13.", "pairs": [ { "l": "Graph `WorkflowBuilder` with checkpointing", "r": "Stable since the 1.0 announcement" }, { "l": "Python `agent-framework-a2a` and `agent-framework-durabletask`", "r": "Beta (1.0.0b version suffix)" }, { "l": "Python functional workflows (`@workflow`, `@step`)", "r": "Experimental" }, { "l": "Go SDK", "r": "Public preview" } ], "explain": "Graph workflows with checkpointing were stable at the 1.0 announcement. The Python extras for A2A and durable hosting carry a 1.0.0b suffix on PyPI. The functional workflow API is experimental, and the Go SDK is in public preview with gaps such as no packaged Harness.", "ref": "r13" }
+  ],
+  "defend": null,
+  "refs": ["r1", "r2", "r13", "r14", "r15", "r25", "r26", "r31"],
+  "takeaways": [
+    "Say the function first: if code can handle the task, an agent is the wrong tool.",
+    "Three dials pick the rung: shape of the path, run length and control needs (order, fan-out, gates, resume).",
+    "The Harness Agent is composition on a normal agent, not a runtime, and it needs the same session across approval round trips.",
+    "One version number hides mixed maturity: check Stable, Beta, preview and experimental per package on the day you decide (checked 2026-10-13)."
+  ]
+}

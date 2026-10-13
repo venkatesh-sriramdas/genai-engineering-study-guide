@@ -1,0 +1,101 @@
+{
+  "id": "w04-t04",
+  "order": 4,
+  "group": "Chunking",
+  "title": "Semantic chunking",
+  "minutes": 7,
+  "difficulty": "advanced",
+  "summary": "Embed the sentences, compare neighbours and start a new chunk where similarity drops. Boundaries follow topic shifts instead of length, at the price of an extra embedding pass and less stable chunks.",
+  "useIf": "Long text shifts topic without headings, you can afford an ingest-time embedding pass and you have measured a gain over a simple splitter.",
+  "avoidIf": "The corpus is huge, changes often or already has structure. Studies have not found consistent gains for the cost.",
+  "explain": [
+    { "t": "p", "md": "**Semantic chunking** looks for topic changes instead of counting tokens. The splitter breaks the text into sentences, embeds each one (often with a small window of neighbours), and measures the similarity between neighbouring positions. Where similarity falls below a threshold, or a chosen percentile of the drops, a boundary is placed. A maximum size still applies, or one long topic becomes one giant chunk." },
+    { "t": "diagram", "id": "w04-t04-d1", "title": "Semantic breakpoints", "alt": "Sentences are embedded, similarity between neighbours is computed, boundaries are placed at low similarity points, and a size cap is applied before the final chunks are embedded.", "src": "flowchart LR\n  A[\"Split into sentences\"] --> B[\"Embed each sentence\"]\n  B --> C[\"Similarity of neighbours\"]\n  C --> D[\"Break where it drops\"]\n  D --> E[\"Apply min and max size\"]\n  E --> F[\"Embed final chunks\"]" },
+    { "t": "p", "md": "The cost is concrete. Every sentence is embedded once to find boundaries, then each final chunk is embedded again for the index, so embedding tokens roughly double compared with a fixed splitter. Boundaries also depend on the neighbours: edit one paragraph and the breakpoints around it can move, which changes chunk ids and forces more re-embedding." },
+    { "t": "p", "md": "The evidence is cautious. A 2024 study compared semantic and fixed-size chunking on document retrieval, evidence retrieval and answer generation and found the extra compute was not justified by consistent gains [[tr27]]. That does not mean it never helps: text with sharp topic shifts and no headings, such as transcripts or long essays, is the plausible win. The Architecture Center lists semantic chunking as a custom approach [[tr9]], and the AI Search Content Understanding skill added semantic chunking as an opt-in preview in `2026-05-01-preview` (checked 2026-10-13) [[tr5]]." },
+    { "t": "callout", "kind": "preview", "title": "Preview status, checked 2026-10-13", "md": "Semantic chunking inside the Content Understanding skill is preview in `2026-05-01-preview`. The skill itself is GA in `2026-04-01`. Pin the API version you test with." },
+    { "t": "table", "caption": "Tuning dials for a semantic splitter", "head": ["Dial", "Too low or small", "Too high or large"], "rows": [
+      ["Similarity threshold or percentile", "Breaks everywhere, tiny chunks", "Rarely breaks, giant chunks"],
+      ["Window of neighbours per sentence", "Noisy boundaries", "Blurs real topic shifts"],
+      ["Minimum chunk size", "Fragments that match nothing", "Merges unrelated topics"],
+      ["Maximum chunk size", "Forced cuts mid-topic", "Exceeds the embedding limit"]
+    ] },
+    { "t": "p", "md": "The chunk visualizer lab in the fixed-size chunking topic includes an approximate semantic mode that uses word overlap between sentences, not embeddings. Use it to see how a threshold changes chunk count, not to judge embedding quality." }
+  ],
+  "whereToUse": [
+    "Transcripts, interviews and long essays with topic shifts but no headings",
+    "A small, high-value corpus where ingest cost is minor and retrieval quality is measurable",
+    "Experiments against a recursive baseline on your own labelled questions",
+    "Preparing text for a later proposition or contextual step on a few critical documents"
+  ],
+  "whenToUse": {
+    "use": ["No headings or layout exist", "Topic shifts are sharp and frequent", "You have a labelled set to prove a gain"],
+    "avoid": ["Corpora of millions of documents with frequent edits", "Documents that already have usable headings", "Teams that cannot measure retrieval quality"],
+    "flips": ["A measured gain over recursive splitting appears on your questions: adopt it for that source only", "Edits are frequent: choose structure-aware or recursive splitting for stable chunk ids", "Cost becomes the limit: lower the sentence window or sample documents"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Semantic splitting", "Topic shifts without structure", "Large or fast-changing corpora", "About twice the embedding tokens, unstable boundaries"],
+      ["Recursive splitting", "Prose with paragraphs", "Topic changes inside paragraphs", "Some mixed-topic chunks"],
+      ["Structure-aware splitting", "Headings and layout exist", "Flat text", "Needs a parser"],
+      ["Proposition chunking", "Fact-dense text, entity questions", "Large corpora, tight ingest budget", "LLM call for every passage"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Chunk counts explode and results get worse", "cause": "The similarity threshold is too strict, so almost every sentence becomes a boundary", "fix": "Use a percentile of the drops instead of a fixed value, add a minimum size and inspect a sample by eye" },
+    { "symptom": "A single chunk is thousands of tokens", "cause": "A long, uniform topic never triggered a breakpoint and no maximum size applied", "fix": "Always apply a maximum size and fall back to recursive splitting inside it" },
+    { "symptom": "Re-ingesting an edited document changes many chunk ids", "cause": "Boundaries depend on neighbouring sentences, so a small edit moves them", "fix": "Hash chunk text for identity, re-embed only changed chunks, or use structure-based boundaries for volatile sources" }
+  ],
+  "scenarios": [
+    {
+      "id": "w04-t04-s1",
+      "title": "Interview transcripts with topic jumps",
+      "situation": "A research team indexes 20,000 interview transcripts. Speakers jump between topics without any headings. Questions ask what a speaker said about one topic.",
+      "constraints": ["No headings", "Sharp topic shifts", "Corpus of 20,000 documents", "Ingest budget is generous", "A labelled question set exists"],
+      "unknowns": ["Do transcripts change after ingest?", "What does a typical topic span look like?"],
+      "question": "How do you chunk?",
+      "options": [
+        { "name": "Semantic chunking with min and max size, compared against a recursive baseline on the labelled set", "verdict": "best", "why": "This is the case semantic splitting targets, and the comparison proves the gain before you commit.", "tradeoff": "An extra embedding pass and tuning of threshold and window." },
+        { "name": "Recursive splitting only", "verdict": "good", "why": "Cheap, stable and often close in quality.", "tradeoff": "Chunks sometimes mix two topics." },
+        { "name": "Proposition chunking for every transcript", "verdict": "poor", "why": "An LLM pass over all text for a problem that boundary placement addresses more cheaply.", "tradeoff": "Right for fact-dense reference text with entity-centred questions." }
+      ],
+      "flips": [
+        { "if": "The comparison shows no gain", "then": "Keep recursive splitting and save the cost." },
+        { "if": "Transcripts are edited weekly", "then": "Prefer boundaries that stay stable, or re-embed changed chunks by hash." }
+      ],
+      "takeaway": "Try semantic splitting where topic shifts are the problem, and prove it first."
+    },
+    {
+      "id": "w04-t04-s2",
+      "title": "Large, volatile documentation set",
+      "situation": "A documentation platform holds millions of pages with headings. Pages change daily and the vector store is billed per embedding call.",
+      "constraints": ["Millions of pages", "Daily edits", "Headings exist", "Embedding cost is monitored"],
+      "unknowns": ["What share of pages changes each day?", "Do questions span sections?"],
+      "question": "What do you pick?",
+      "options": [
+        { "name": "Structure-aware splitting with a size cap and chunk-hash change detection", "verdict": "best", "why": "Section boundaries are stable under edits, so only changed chunks are re-embedded.", "tradeoff": "Needs reliable heading extraction." },
+        { "name": "Recursive splitting at about 512 tokens", "verdict": "good", "why": "Cheap and simple.", "tradeoff": "Ignores heading meaning and may move boundaries after edits." },
+        { "name": "Semantic splitting on every page", "verdict": "poor", "why": "Doubles embedding tokens and makes boundaries unstable under daily edits.", "tradeoff": "Reasonable on a small slice of unstructured pages after a measured win." }
+      ],
+      "flips": [
+        { "if": "A subset of pages has no headings and long mixed topics", "then": "Apply semantic splitting to that subset only." },
+        { "if": "Edits become rare", "then": "The stability argument weakens, so retest the options." }
+      ],
+      "takeaway": "Stable boundaries and low ingest cost beat clever boundaries at scale."
+    }
+  ],
+  "quiz": [
+    { "id": "w04-t04-q1", "type": "numeric", "tag": "numeric", "q": "A 50 million token corpus is semantic-chunked. Every sentence is embedded once to find boundaries, then every final chunk is embedded once for the index (no overlap). About how many million tokens are embedded in total?", "answer": 100, "tolerancePct": 5, "unit": "million tokens", "hint": "Two passes over the same text.", "explain": "The boundary pass embeds all 50 million tokens as sentences and the indexing pass embeds the same 50 million as chunks, so about 100 million. A fixed splitter needs only the second pass." },
+    { "id": "w04-t04-q2", "type": "single", "tag": "diagnose", "q": "After semantic chunking one chunk is 6,000 tokens long. What is the most likely cause?", "options": ["The threshold was too strict", "The embedding model is multilingual", "Overlap was set too high", "No breakpoint fired and no maximum size was applied"], "answer": 3, "explain": "A strict threshold produces many small chunks, not one large one. A long uniform topic with no breakpoint and no maximum size gives a giant chunk. Multilingual models and overlap do not cause it." },
+    { "id": "w04-t04-q3", "type": "single", "tag": "tradeoff", "q": "What did the 2024 comparison of semantic and fixed-size chunking conclude?", "options": ["Semantic chunking always wins", "Fixed-size chunking fails on all tasks", "The extra compute was not justified by consistent gains", "Semantic chunking is cheaper"], "answer": 2, "explain": "The study found gains were not consistent enough to justify the cost. It did not find that semantic chunking always wins, that fixed size fails, or that semantic chunking is cheaper." }
+  ],
+  "flashcards": [
+    { "front": "How does semantic chunking choose boundaries?", "back": "It embeds sentences, measures similarity between neighbours and starts a new chunk where similarity drops, with a size cap applied." },
+    { "front": "Why is semantic chunking expensive?", "back": "Sentences are embedded to find boundaries and the chunks are embedded again for the index. Boundaries also shift after edits, forcing more re-embedding." },
+    { "front": "What is the status of semantic chunking in the AI Search Content Understanding skill?", "back": "Opt-in preview in `2026-05-01-preview`, checked 2026-10-13. The skill itself is GA in `2026-04-01`." }
+  ],
+  "related": ["w04-t02", "w04-t03", "w04-t05", "w04-t07", "w04-l1"],
+  "refs": ["tr5", "tr9", "tr27"]
+}

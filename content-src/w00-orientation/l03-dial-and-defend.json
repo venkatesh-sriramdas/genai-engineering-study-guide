@@ -1,0 +1,91 @@
+{
+  "id": "w00-l3",
+  "order": 3,
+  "title": "Dial and defend in five moves",
+  "kind": "problem",
+  "minutes": 18,
+  "brief": "An interviewer asks how to make an assistant answer questions about information the model was never trained on. Notice what a strong answer asks before it names a technology, and practise the five moves on a gentle first board.",
+  "blocks": [
+    { "t": "h", "text": "The five moves", "level": 2 },
+    { "t": "flow", "title": "Dial-and-Defend", "direction": "h", "steps": [
+      { "title": "Clarify the dials", "md": "Ask about corpus, update rate, permission model, tenancy, latency, risk and cost.", "tag": "1" },
+      { "title": "List the options", "md": "Name every sensible option, including the boring one.", "tag": "2" },
+      { "title": "Pick and flip", "md": "Choose for the stated dials and say what would flip the choice.", "tag": "3" },
+      { "title": "Failure modes", "md": "Say how each one would show up and how you would detect it.", "tag": "4" },
+      { "title": "Metrics and rollout", "md": "State what you will measure and how you would roll it out safely.", "tag": "5" }
+    ] },
+    { "t": "scenario", "title": "The worked example prompt", "known": ["The model has never seen the content", "The interviewer gives no other detail"], "ask": ["How big is the content, and how often does it change?", "Do different users have different permissions?", "Does the answer need citations or live data?", "What is the latency budget, and what does a wrong answer cost?"], "tension": "You cannot choose until the dials are stated, so asking is the first move, not a delay." },
+    { "t": "h", "text": "Worked example: ground the assistant", "level": 2 },
+    { "t": "compare", "title": "Four ways to ground an assistant", "intro": "World 1 compares them in depth. Here you only need the shape of each option.", "options": [
+      { "name": "Prompt only", "summary": "Paste the knowledge into the prompt, ideally with prompt caching.", "pros": ["No infrastructure", "The model reads the full text"], "cons": ["Limited by the window and the cost of every call", "No per-user filtering"], "bestWhen": "The content is small and stable, with one audience. Anthropic's rule of thumb is under about 200,000 tokens [[r26]].", "avoidWhen": "The content is large, changes often or must be filtered per user." },
+      { "name": "RAG", "summary": "Retrieve the relevant chunks per question and ground the answer on them.", "pros": ["Scales to large corpora", "Citations and per-user filters", "Updates by re-indexing"], "cons": ["Retrieval quality becomes the ceiling", "More moving parts"], "bestWhen": "The corpus is large or changing, or permissions and citations matter.", "avoidWhen": "The content is tiny and stable, so the machinery buys nothing." },
+      { "name": "Tools", "summary": "Give the model a lookup tool for live data, such as an API or a search endpoint.", "pros": ["Always current", "Reads the system of record"], "cons": ["Extra round trips", "Tool design and permissions need care"], "bestWhen": "Data changes by the minute or lives behind an API.", "avoidWhen": "You need reasoning over a whole document set with no live source." },
+      { "name": "Fine-tuning", "summary": "Train behaviour into the model weights.", "pros": ["Style, format and smaller models"], "cons": ["Weak for facts. RAG beat unsupervised fine-tuning in a controlled study [[r27]]"], "bestWhen": "You need a tone, a format or a cheaper model.", "avoidWhen": "You want the model to know your facts." }
+    ] },
+    { "t": "dials", "id": "w00-l3-ground", "title": "How to ground an assistant", "prompt": "Flip the corpus, the update rate and what you need. The ranking and the reasons update.",
+      "dials": [
+        { "id": "size", "label": "Corpus size", "values": [
+          { "id": "small", "label": "Small, under about 200K tokens" },
+          { "id": "large", "label": "Large, millions of tokens" }
+        ] },
+        { "id": "rate", "label": "Update rate", "values": [
+          { "id": "rare", "label": "Rarely changes" },
+          { "id": "live", "label": "Changes by the minute" }
+        ] },
+        { "id": "need", "label": "What you need", "values": [
+          { "id": "facts", "label": "Cited facts from the content" },
+          { "id": "style", "label": "A tone or output format" }
+        ] }
+      ],
+      "options": [
+        { "id": "prompt", "name": "Prompt only", "summary": "Paste the content in." },
+        { "id": "rag", "name": "RAG", "summary": "Retrieve per question." },
+        { "id": "tools", "name": "Tools", "summary": "Look up live data." },
+        { "id": "ft", "name": "Fine-tuning", "summary": "Train behaviour in." }
+      ],
+      "scores": {
+        "prompt": {
+          "size": { "small": { "s": 2, "why": "Under about 200,000 tokens the content can go straight into the prompt." }, "large": { "s": -2, "why": "It will not fit, and long inputs lose accuracy." } },
+          "rate": { "rare": { "s": 1, "why": "A stable prompt is easy to maintain and cache." }, "live": { "s": -1, "why": "Every change rewrites the prompt." } },
+          "need": { "facts": { "s": 1, "why": "The model reads the source text directly." }, "style": { "s": 1, "why": "Instructions and examples steer tone and format cheaply." } }
+        },
+        "rag": {
+          "size": { "small": { "s": 0, "why": "Works, but may be more machinery than needed." }, "large": { "s": 2, "why": "Retrieval scales past any window." } },
+          "rate": { "rare": { "s": 0, "why": "Neutral." }, "live": { "s": 1, "why": "Re-index changed content without retraining." } },
+          "need": { "facts": { "s": 2, "why": "Retrieval gives grounded, citable answers." }, "style": { "s": -1, "why": "Retrieval does not change tone or format." } }
+        },
+        "tools": {
+          "size": { "small": { "s": 0, "why": "Neutral." }, "large": { "s": 1, "why": "A search tool can reach a corpus the prompt cannot hold." } },
+          "rate": { "rare": { "s": 0, "why": "Neutral." }, "live": { "s": 2, "why": "A lookup tool reads the live source." } },
+          "need": { "facts": { "s": 1, "why": "Fresh facts, with citations if the tool returns sources." }, "style": { "s": -2, "why": "A tool cannot change tone or format." } }
+        },
+        "ft": {
+          "size": { "small": { "s": -1, "why": "Little to learn from, and the prompt can hold it." }, "large": { "s": -1, "why": "Controlled studies favour RAG for facts at any size." } },
+          "rate": { "rare": { "s": 0, "why": "Neutral." }, "live": { "s": -2, "why": "Facts go stale and retraining is slow." } },
+          "need": { "facts": { "s": -2, "why": "New facts are learned slowly and unreliably." }, "style": { "s": 2, "why": "Tone, format and smaller models are what tuning is for." } }
+        }
+      },
+      "takeaway": "No option wins on every dial. Say which dial drove your pick, and which dial would flip it." },
+    { "t": "table", "caption": "A worked answer, move by move", "head": ["Move", "What you say", "Why it scores"], "rows": [
+      ["1. Clarify", "\"How big is the content, how often does it change, who may see which part, how fast must it answer and what does a wrong answer cost?\"", "Names the dials before any technology."],
+      ["2. Options", "\"Prompt only, RAG, tools for live lookups and fine-tuning. The boring option is pasting the content into a cached prompt.\"", "Includes the boring option as the baseline to beat."],
+      ["3. Pick and flip", "\"For a small, stable corpus with one audience I would use the cached prompt. If the corpus outgrows the window or permissions become per user I move to RAG. If the data changes by the minute I add a lookup tool.\"", "States dials and thresholds, not slogans."],
+      ["4. Failure modes", "\"Stale answers, missing citations and truncated context. I would detect them with a golden question set and a groundedness check.\"", "Pairs each failure with a detection signal."],
+      ["5. Metrics and rollout", "\"Accuracy on the golden set, citation rate, p95 latency and cost per answer. I would run in shadow, then a small canary.\"", "Names metrics and a safe rollout."]
+    ] },
+    { "t": "callout", "kind": "interview", "title": "Say the flip aloud", "md": "The sentence that separates good answers from great ones is the flip: \"If the corpus outgrows the window, or permissions become per user, I switch to RAG.\" It names a dial and a threshold." }
+  ],
+  "quiz": [
+    { "id": "w00-l3-q1", "type": "order", "tag": "order", "q": "Put the five Dial-and-Defend moves in order.", "items": ["Clarify the dials", "List the options, including the boring one", "Pick for the stated dials and say what would flip it", "Name failure modes and how you would detect them", "Name the metrics and the rollout plan"], "explain": "You cannot list options sensibly before you know the dials, and you cannot name failure modes before you have chosen. Metrics and rollout close the answer because they depend on the chosen design.", "difficulty": 1 },
+    { "id": "w00-l3-q2", "type": "single", "tag": "flip", "q": "You chose a cached prompt for a small, stable corpus. The corpus then grows to millions of tokens and changes hourly. What does the board flip to?", "options": ["Fine-tune the model on the whole corpus again every hour", "RAG with re-indexing as content changes", "Keep the prompt and move to a bigger model with a larger window", "Lower the temperature to keep the answers stable"], "answer": 1, "explain": "Retrieval scales past the window and re-indexing handles hourly updates. Hourly fine-tuning is slow and weak for facts, a bigger model does not remove the window or price limits, and temperature does not change what the model knows.", "difficulty": 1, "ref": "r26" },
+    { "id": "w00-l3-q3", "type": "single", "tag": "diagnose", "q": "A candidate answers: \"I would use a vector database and a large model at temperature 0.\" Which Dial-and-Defend move did they skip?", "options": ["Metrics and rollout", "Naming failure modes", "Listing a boring option", "Clarifying the dials"], "answer": 3, "explain": "They named a technology before asking about corpus size, update rate, permissions, latency, risk or cost. They also skipped other moves, but clarifying the dials is the one that makes every later choice defensible.", "difficulty": 1 }
+  ],
+  "defend": null,
+  "refs": ["r26", "r27"],
+  "takeaways": [
+    "Clarify the dials before you name a technology",
+    "Always offer the boring option as the baseline to beat",
+    "Pick for the stated dials and say which dial and threshold would flip the choice",
+    "Pair every failure mode with how you would detect it, then end on metrics and rollout"
+  ]
+}

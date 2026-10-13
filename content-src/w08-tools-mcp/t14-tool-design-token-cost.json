@@ -1,0 +1,93 @@
+{
+  "id": "w08-t14",
+  "order": 14,
+  "group": "Design and operations",
+  "title": "Tool design and token cost",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "Every tool definition and every tool result costs tokens and shapes the model's choices. Good tools have few, well-named, task-shaped operations, unambiguous parameters and bounded, meaningful results.",
+  "useIf": "You are writing or reviewing tools, or an agent picks the wrong tool, runs slowly or costs too much per turn.",
+  "avoidIf": "You expose one tool per API endpoint because the API already looks that way.",
+  "explain": [
+    { "t": "p", "md": "A host places tool definitions (name, description, schema, annotations) in the model's context on every request, so cost scales with how many tools you expose and how long each definition is. MCP's client guidance illustrates about 150,000 tokens of definitions up front versus about 2,000 with on-demand loading, and says to switch strategies once definitions pass a threshold such as 1% to 5% of the context window. It is an illustration, not a benchmark [[r8]]. Anthropic estimates that a typical five-server setup can use about 55k tokens of definitions [[r19]]." },
+    { "t": "formula", "title": "Definition cost", "expr": "definition_tokens = tool_count x average_tokens_per_definition", "vars": [{ "k": "tool_count", "v": "Tools exposed to the model in one request" }, { "k": "average_tokens_per_definition", "v": "Name, description, schema and annotations, measured with your tokenizer" }], "example": "45 tools x 500 tokens = 22,500 tokens, which is about 17.6 percent of a 128,000-token context before the user says anything." },
+    { "t": "table", "caption": "Design rules and why they work", "head": ["Rule", "Why", "Example"], "rows": [["Consolidate chained operations into task-shaped tools", "Fewer definitions and fewer round trips", "`schedule_event` instead of `list_users`, `list_events`, `create_event`"], ["Namespace names", "Boundaries help selection and avoid collisions", "`asana_search`, `jira_search`"], ["Name parameters unambiguously", "Models guess less", "`user_id`, not `user`"], ["Return meaningful context and bounded size", "Token cost and signal per call", "Pagination, filters, truncation with sensible defaults. Claude Code caps tool responses at 25,000 tokens by default"], ["Offer `response_format`", "The model picks cost versus detail", "`concise` or `detailed`"], ["Make errors actionable", "Lets the model retry correctly", "Say what format was expected, not only a code"], ["Evaluate with realistic tasks", "Measure calls, tokens and errors, then edit descriptions", "Run before and after each change"]] },
+    { "t": "p", "md": "The spec adds mechanics: names SHOULD be 1 to 128 characters from A-Z, a-z, 0-9, underscore, hyphen and dot, and an aggregator SHOULD prefix names with a server identifier because the server `name` is not guaranteed unique. Do not mark sensitive parameters with `x-mcp-header`, since header values are visible to network intermediaries [[r6]]. Design advice and numbers in the table come from Anthropic's tool-writing guide [[r14]]." },
+    { "t": "callout", "kind": "tip", "title": "Prefix style matters", "md": "Anthropic found that prefix versus suffix namespacing has non-trivial effects on tool-use evaluations and that effects vary by model, so choose by running your own evaluation." }
+  ],
+  "whereToUse": [
+    "Wrapping an existing REST API as an MCP server",
+    "Reviewing a catalog that grew by adding one tool per feature",
+    "Setting result-size defaults for data-heavy tools",
+    "Deciding when a catalog needs tool search instead of trimming"
+  ],
+  "whenToUse": {
+    "use": ["Design tools around tasks the agent performs", "Measure definition tokens and keep a budget", "Return the smallest result that supports the next decision", "Iterate with an evaluation and real transcripts"],
+    "avoid": ["One tool per endpoint with generic names like `get` or `list`", "Dumping full records when a few fields answer the question", "Stripping descriptions to save tokens at the cost of selection accuracy"],
+    "flips": ["Definitions exceed a few percent of the context window: add tool search or code mode", "Tools are used by humans in scripts too: keep finer-grained operations and add workflow tools on top"]
+  },
+  "alternatives": {
+    "title": "Shapes of a tool surface",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Task-shaped workflow tools", "Common multi-step tasks", "Callers need low-level control", "More server logic to build and test"],
+      ["One tool per endpoint", "Mapping is mechanical and the set is small", "Dozens of endpoints", "Token cost and selection errors"],
+      ["Namespaced groups", "Multiple services or resources", "A single service with few tools", "Longer names"],
+      ["Tool search over a big catalog", "Hundreds of tools", "Small catalogs with prompt caching", "Extra search step and cache effects"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "The agent picks the wrong tool among near-duplicates", "cause": "Overlapping tools with vague descriptions", "fix": "Merge them or state in each description when to use it and when not to, then re-evaluate" },
+    { "symptom": "Token spend per turn doubled after a new server was added", "cause": "All definitions are injected on every request", "fix": "Measure definition tokens, prune, and apply tool search past your threshold" },
+    { "symptom": "Runs fail when a tool returns a huge list", "cause": "No pagination, filter or truncation defaults", "fix": "Add limits with sensible defaults and steer the model to narrower queries" }
+  ],
+  "scenarios": [
+    {
+      "id": "w08-t14-s1",
+      "title": "Wrapping a 60-endpoint REST API",
+      "situation": "A team wants to expose its REST API to agents. It has 60 endpoints, most used in a few repeating workflows. Latency and cost matter.",
+      "constraints": ["Large API surface", "A handful of repeating workflows", "Cost and latency matter"],
+      "unknowns": ["Which workflows do agents actually run?", "Do other consumers need raw endpoints?"],
+      "question": "How should you design the tools?",
+      "options": [
+        { "name": "Around 8 workflow tools named by task and namespaced, built from observed transcripts", "verdict": "best", "why": "Fewer definitions, fewer round trips and clearer choices for the model.", "tradeoff": "More server logic, and rarely used endpoints need another route." },
+        { "name": "All 60 endpoints behind tool search", "verdict": "good", "why": "Full coverage with on-demand loading.", "tradeoff": "An extra search step and added cache and accuracy concerns." },
+        { "name": "One tool per endpoint with generic names", "verdict": "poor", "why": "Large token cost and ambiguous choices.", "tradeoff": "Acceptable for a tiny API or a quick prototype." }
+      ],
+      "flips": [
+        { "if": "Workflows are unknown and varied", "then": "Expose the raw tools with tool search until usage data appears." },
+        { "if": "Only five endpoints matter", "then": "Expose those five directly." }
+      ],
+      "takeaway": "Design for the agent's tasks, not for the API's shape."
+    },
+    {
+      "id": "w08-t14-s2",
+      "title": "Two servers both expose `search`",
+      "situation": "A host aggregates a wiki server and a ticket server. Both define a tool called `search`. The model sometimes queries the wrong system.",
+      "constraints": ["Aggregated catalog", "Name collision", "Servers owned by different teams"],
+      "unknowns": ["Can either team rename tools?", "Does the host prefix names itself?"],
+      "question": "How do you remove the ambiguity?",
+      "options": [
+        { "name": "Prefix names with a server identifier and write descriptions that say when to use each", "verdict": "best", "why": "The spec advises prefixing for collisions and clear descriptions guide selection.", "tradeoff": "Slightly longer names and a prefix convention to maintain." },
+        { "name": "Ask one team to rename its tool", "verdict": "good", "why": "Fixes the collision at the source.", "tradeoff": "Cross-team coordination and the next collision remains possible." },
+        { "name": "Disambiguate using the server's self-reported `name`", "verdict": "poor", "why": "The server `name` is not guaranteed unique and SHOULD NOT be relied on for disambiguation.", "tradeoff": "Use only identifiers your host assigns and controls." }
+      ],
+      "flips": [
+        { "if": "You own both servers", "then": "Rename at the source with a namespaced convention." },
+        { "if": "The host already prefixes names with a server identifier it assigns", "then": "The collision is handled, and you need only clearer descriptions." }
+      ],
+      "takeaway": "Namespaces come from the integrator, not from self-reported names."
+    }
+  ],
+  "quiz": [
+    { "id": "w08-t14-q1", "type": "numeric", "tag": "numeric", "q": "A host exposes 45 tools averaging 500 tokens each. The model's context window is 128,000 tokens. What percentage of the context do the definitions use?", "answer": 17.6, "tolerancePct": 3, "unit": "%", "hint": "45 x 500, then divide by 128,000.", "explain": "45 x 500 = 22,500 tokens. 22,500 / 128,000 is about 17.6 percent, far above the 1 to 5 percent threshold the MCP client guidance suggests for switching to progressive discovery." },
+    { "id": "w08-t14-q2", "type": "single", "tag": "diagnose", "q": "An agent often calls `list_events` and then `create_event` with a guessed user. Which redesign best matches the guidance?", "options": ["Add more tools for each field", "A `schedule_event` tool that finds availability and creates the event, with a `user_id` parameter", "Remove descriptions to save tokens", "Return larger results from `list_events`"], "answer": 1, "explain": "Consolidating chained operations into a task-shaped tool and naming parameters unambiguously reduces calls and guesses. More tools raise cost, removing descriptions hurts selection and larger results cost tokens." }
+  ],
+  "flashcards": [
+    { "front": "What is the definition cost of a tool catalog?", "back": "Tool count times average tokens per definition, paid on every request. Measure it and compare with your context window." },
+    { "front": "Name three tool design rules from Anthropic's guide.", "back": "Consolidate chained operations, namespace names, and return bounded, meaningful results. Also name parameters unambiguously and evaluate with realistic tasks." },
+    { "front": "Why prefix tool names when aggregating servers?", "back": "Names are unique per server only, and the server `name` is not guaranteed unique, so the integrator should prefix with an identifier it controls." }
+  ],
+  "related": ["w08-t15", "w08-t02", "w08-t05", "w08-l02"],
+  "refs": ["r8", "r6", "r14", "r19"]
+}

@@ -1,0 +1,111 @@
+{
+  "id": "w07-t10",
+  "order": 10,
+  "group": "Access control options",
+  "title": "Live source permission checks",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "After retrieval, ask the system of record whether this caller may read each candidate right now. It gives the freshest answer, at the price of latency, load and failure handling.",
+  "useIf": "Rights are per document or rule-based, change quickly and are owned by another system.",
+  "avoidIf": "Query volume is high and the source cannot take a call per hit, or an index-side filter already meets the revocation target.",
+  "explain": [
+    { "t": "p", "md": "A live check treats the index ACL as a hint and the **source of truth as the decision**. The usual shape is a pre-filter that returns a short candidate list, then parallel permission calls for only the top hits, with a deadline and a fail-closed rule. Checking every candidate is rarely affordable, and checking only the hits the user will see is usually enough." },
+    { "t": "diagram", "id": "w07-t10-d1", "title": "Pre-filter, then parallel live checks", "alt": "A query is pre-filtered to a short candidate list. The top hits are checked in parallel at the source with a deadline. Allowed hits are kept, spare candidates refill gaps, and the result goes to the prompt.", "src": "flowchart LR\n  Q[Query] --> F[(Pre-filter top 20)]\n  F --> C[Parallel live checks on top hits]\n  C --> K[Keep allowed, refill from spares]\n  K --> P[Prompt]\n  C -. timeout .-> D[Drop hit, fail closed]" },
+    { "t": "formula", "title": "Latency of the checks", "expr": "parallel: max(t_i), capped by the deadline. sequential: sum(t_i)", "vars": [ { "k": "t_i", "v": "latency of the permission call for hit i" } ], "example": "Ten checks of 80 ms each cost about 80 ms plus tail when run in parallel and 800 ms when run one after another. Always set a per-call and an overall deadline." },
+    { "t": "p", "md": "Three design choices matter. First, **cache decisions** by principal and document with a TTL shorter than the revocation target, because the TTL is part of your SLA. Second, **fail closed**: if a check times out, hide the document. Azure AI Search's native ACL enforcement does this too: when Microsoft Graph is unavailable it returns a 5xx and no partially filtered result [[r12]]. Third, **delegation** is the cousin of this pattern: the Microsoft 365 Copilot Retrieval API preserves permissions without copying data, but limits calls to 200 per user per hour and 25 results [[r26]]." },
+    { "t": "callout", "kind": "note", "title": "Change feeds are not a live check", "md": "Microsoft Graph driveItem notifications average under one minute but can take up to six hours, and directory subscriptions expire in under 29 days [[r27]]. Do not promise a revocation SLA tighter than the feed you depend on." }
+  ],
+  "whereToUse": [
+    "Restricted tiers where a revoked grant must stop working in seconds",
+    "Sources with deny rules, sharing links or guests that cannot be copied into an index",
+    "A second line of defence on the top hits after an index pre-filter",
+    "Systems where an internal policy service already answers can-this-user-read-this"
+  ],
+  "whenToUse": {
+    "use": ["Revocation targets are seconds to a minute", "Rules are richer than allow lists", "Few hits per answer need checking"],
+    "avoid": ["Checking hundreds of candidates serially", "Sources with strict per-user rate limits and no caching", "Failing open to protect availability for restricted data"],
+    "flips": ["Revocation relaxes to hours: drop the live check and rely on the pre-filter", "The source gives a retrieval API that honours permissions: delegate instead of checking", "Query volume grows 10 times: add a short-TTL decision cache and a circuit breaker"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Live check on top hits", "Rich rules, seconds-level revocation", "Source cannot take the load", "Latency tail, outage handling"],
+      ["Pre-filter only", "Group rules, lag acceptable", "Seconds-level revocation", "Stale grants until sync"],
+      ["Delegate retrieval to the source", "Content lives in a permission-aware store", "You need your own ranking", "Quotas, licensing, less control"],
+      ["Decision cache with short TTL", "Repeated hits, quota pressure", "TTL longer than the revocation target", "Stale decisions up to the TTL"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Answers get slower as users cite more documents", "cause": "Checks run one by one", "fix": "Run them in parallel with a per-call and an overall deadline" },
+    { "symptom": "A source outage exposes restricted documents", "cause": "The code fails open on timeout", "fix": "Fail closed for restricted tiers and alert on timeout rates" },
+    { "symptom": "Users are throttled by the source", "cause": "Every hit triggers a fresh call", "fix": "Cache decisions for a TTL shorter than the SLA and batch where the API allows" }
+  ],
+  "scenarios": [
+    {
+      "id": "w07-t10-s1",
+      "title": "Tight latency budget, fast source",
+      "situation": "Retrieval has 300 ms in total. The permission API answers in about 100 ms at the median and 150 ms at p95. Answers use up to five documents, and a revoked grant must stop working within seconds.",
+      "constraints": ["300 ms retrieval budget", "Source p95 150 ms", "Revocation within seconds"],
+      "unknowns": ["What is the source's rate limit?", "What happens when a hit is dropped?"],
+      "question": "How do you add the live check?",
+      "options": [
+        { "name": "Check about 50 candidates one by one", "verdict": "poor", "why": "Fifty serial calls cost seconds and break the budget.", "tradeoff": "Only plausible for batch jobs with no latency target." },
+        { "name": "Pre-filter to 20, check the top 5 in parallel with a 120 ms deadline, refill from spares and fail closed on timeout", "verdict": "best", "why": "Parallel calls cost about one call plus tail and fit the budget.", "tradeoff": "A slow source hides some documents, so track the timeout rate." },
+        { "name": "Check only the single top hit", "verdict": "good", "why": "Cheapest.", "tradeoff": "The other cited documents are unchecked, so revocation is stale for them." }
+      ],
+      "flips": [
+        { "if": "The source p95 rises to 400 ms", "then": "Delegate or shorten the live set and lean on the pre-filter." },
+        { "if": "Revocation relaxes to minutes", "then": "A short-TTL decision cache can replace many calls." }
+      ],
+      "takeaway": "Check few hits, in parallel, with a deadline."
+    },
+    {
+      "id": "w07-t10-s2",
+      "title": "Source quota of 200 requests per user per hour",
+      "situation": "The source API allows 200 permission calls per user per hour. Heavy users run 60 queries an hour and each cites eight documents. Restricted content needs revocation within a minute.",
+      "constraints": ["200 calls per user per hour", "480 checks per heavy user per hour", "Revocation within a minute"],
+      "unknowns": ["Do the same documents recur across queries?", "Is a batch check available?"],
+      "question": "How do you stay under quota?",
+      "options": [
+        { "name": "Cache decisions per principal and document for 60 seconds, and check only top hits", "verdict": "best", "why": "Recurring hits reuse a decision, and the TTL fits the one-minute target.", "tradeoff": "Up to a minute of staleness and a cache to scope and test." },
+        { "name": "Cache decisions for 24 hours", "verdict": "poor", "why": "A day-old decision defeats a one-minute revocation target.", "tradeoff": "Fine for general content with a daily SLA." },
+        { "name": "Use one broad service identity to check on behalf of all users", "verdict": "good", "why": "Avoids per-user quota.", "tradeoff": "The check then runs under the service's rights unless it asks about the user explicitly, which risks a confused deputy." }
+      ],
+      "flips": [
+        { "if": "A batch permission API exists", "then": "Batch the top hits in one call." },
+        { "if": "Quota is lifted", "then": "Drop the cache and check live." }
+      ],
+      "takeaway": "A cache TTL is part of the revocation SLA."
+    },
+    {
+      "id": "w07-t10-s3",
+      "title": "The policy service times out",
+      "situation": "An internal policy service times out on about 2% of calls during peak. The assistant serves a restricted tier and a general tier. Product wants high availability.",
+      "constraints": ["2% timeouts", "Two sensitivity tiers", "Availability goal"],
+      "unknowns": ["What does a timeout cost the user?", "Is the index ACL fresh enough for the general tier?"],
+      "question": "What do you do on timeout?",
+      "options": [
+        { "name": "Fail closed on the restricted tier, tell the user some sources were unavailable, and fall back to the index ACL on the general tier", "verdict": "best", "why": "It protects restricted data and keeps general answers flowing.", "tradeoff": "Restricted answers are sometimes incomplete." },
+        { "name": "Fail open for all tiers to protect availability", "verdict": "poor", "why": "An outage then exposes restricted documents.", "tradeoff": "Defensible only for public content." },
+        { "name": "Fail closed for all tiers", "verdict": "good", "why": "Safe.", "tradeoff": "Needless loss of general answers during timeouts." }
+      ],
+      "flips": [
+        { "if": "Timeouts exceed a few percent for minutes", "then": "Open a circuit breaker and serve the restricted tier from cache or decline." },
+        { "if": "The general tier is also sensitive", "then": "Treat it as restricted." }
+      ],
+      "takeaway": "Decide fail-open or fail-closed per tier before the outage."
+    }
+  ],
+  "quiz": [
+    { "id": "w07-t10-q1", "type": "numeric", "tag": "numeric", "q": "Ten permission checks each take 80 ms and you run them one after another. How many milliseconds do they add?", "answer": 800, "tolerancePct": 5, "unit": "ms", "hint": "Sequential latency is the sum", "explain": "Ten times 80 ms is 800 ms. In parallel the cost is about the slowest call plus tail, around 80 ms, which is why checks should run concurrently with a deadline.", "ref": "r26" },
+    { "id": "w07-t10-q2", "type": "single", "tag": "tradeoff", "q": "You cache permission decisions to protect a rate-limited source. How long may the TTL be?", "options": ["As long as needed to stay under the quota", "No longer than the revocation target for that tier", "Exactly one hour for every tier", "Until the document is next re-indexed"], "answer": 1, "explain": "The TTL adds staleness on top of everything else, so it must stay inside the revocation target of the tier. Quota pressure, a fixed hour and re-index time are not reasons to exceed it.", "ref": "r27" }
+  ],
+  "flashcards": [
+    { "front": "What is the usual shape of a live check?", "back": "Pre-filter to a short list, check the top hits at the source in parallel with a deadline, refill from spares, and fail closed on timeout." },
+    { "front": "How does Azure AI Search native ACL behave when Graph is down?", "back": "It fails closed: the service returns a 5xx and no partially filtered result." },
+    { "front": "Why must a decision cache TTL be shorter than the revocation target?", "back": "A cached allow stays valid until it expires, so the TTL is part of the revocation SLA." }
+  ],
+  "related": ["w07-t06", "w07-t08", "w07-t12", "w07-t15", "w07-l3", "w07-l6"],
+  "refs": ["r12", "r26", "r27"]
+}

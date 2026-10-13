@@ -1,0 +1,79 @@
+{
+  "id": "w03-l1",
+  "order": 1,
+  "title": "Pick the pipe",
+  "kind": "problem",
+  "minutes": 15,
+  "brief": "Files, rows and pages must become searchable chunks. Nobody has told you the freshness target, the source mix or who carries the pager. Choose how content gets in, and say what would flip your choice.",
+  "blocks": [
+    { "t": "h", "text": "Five ways in, three dials", "level": 2 },
+    { "t": "p", "md": "Every ingestion design answers the same three questions: **how fresh** must the index be, **what kind of sources** feed it, and **who owns the pipeline** when it breaks. The mechanisms are in topics `w03-t01` (architectures), `w03-t02` (connectors) and `w03-t07` (CDC and events). This level makes you choose between them. A scheduled indexer whose skillset also chunks and embeds is called integrated vectorization [[r11]]. Start with the numbers that decide most of it." },
+    { "t": "stats", "items": [
+      { "label": "Indexer schedule floor", "value": "5 min", "note": "Longest interval is 1,440 minutes (24 hours) [[r3]]" },
+      { "label": "Push batch cap", "value": "1,000 docs or 16 MB", "note": "HTTP 413 above it, 207 on partial failure, 503 means retry [[r2]]" },
+      { "label": "Indexer run time to plan for", "value": "about 2 h", "note": "The limits page lists 2 or 24 hours by tier [[r26]]" }
+    ] },
+    { "t": "dials", "id": "w03-l1-arch", "title": "Pick an ingestion architecture", "prompt": "Flip the three constraints. The ranking and the reasons update.",
+      "dials": [
+        { "id": "mix", "label": "Source mix", "values": [ { "id": "ga", "label": "Mostly GA stores (Blob, SQL, Cosmos DB, OneLake)" }, { "id": "odd", "label": "SharePoint, other apps or no indexer" } ] },
+        { "id": "rate", "label": "Freshness target", "values": [ { "id": "hours", "label": "Hours or daily" }, { "id": "minutes", "label": "Minutes" }, { "id": "seconds", "label": "Seconds" } ] },
+        { "id": "team", "label": "Scale and ownership", "values": [ { "id": "small", "label": "Modest corpus, small team" }, { "id": "big", "label": "Huge corpus, platform team on call" } ] }
+      ],
+      "options": [
+        { "id": "indexer", "name": "Scheduled indexer with skillset", "summary": "Azure AI Search pulls from the source, detects changes and runs built-in skills." },
+        { "id": "push", "name": "Push from your own code", "summary": "A service reads the source, chunks, embeds and calls the Index Documents API." },
+        { "id": "event", "name": "Event-driven pipeline, then push", "summary": "Blob events, a change feed or CDC feed a queue and workers that push." },
+        { "id": "batch", "name": "Batch ETL and rebuild", "summary": "A scheduled job re-reads and rebuilds large parts of the index." },
+        { "id": "foundry", "name": "Foundry IQ knowledge source", "summary": "Declare a knowledge source and let it generate the indexer pipeline." }
+      ],
+      "scores": {
+        "indexer": {
+          "mix": { "ga": { "s": 2, "why": "Blob, ADLS Gen2, Cosmos DB, Azure SQL, Table Storage and OneLake have GA indexers with built-in change detection [[r1]]." }, "odd": { "s": -1, "why": "The SharePoint indexer is preview and some sources have no indexer, so you may still need a push path [[r1]]." } },
+          "rate": { "hours": { "s": 2, "why": "A schedule can be as sparse as every 1,440 minutes [[r3]]." }, "minutes": { "s": 0, "why": "The floor is 5 minutes, and staleness is the interval plus the run time, which can reach hours [[r26]]." }, "seconds": { "s": -2, "why": "Nothing schedules faster than 5 minutes [[r3]]." } },
+          "team": { "small": { "s": 2, "why": "Declarative: no workers, queues or retry code to own." }, "big": { "s": -1, "why": "Run time is capped (plan for 2 hours), so a big backfill spans many runs, and you cannot tune retries or parsing per file [[r26]]." } }
+        },
+        "push": {
+          "mix": { "ga": { "s": 0, "why": "Works, but you rebuild the change detection the indexer gives for free." }, "odd": { "s": 2, "why": "Any source your code can read can be pushed, through any parser you choose." } },
+          "rate": { "hours": { "s": 0, "why": "Works, but you must write and run the scheduler." }, "minutes": { "s": 1, "why": "Call the API when your trigger fires, with no 5 minute floor." }, "seconds": { "s": 1, "why": "Latency is yours to control, but you still need a trigger that says what changed." } },
+          "team": { "small": { "s": -1, "why": "You own parsing, chunking, embedding, retries and monitoring." }, "big": { "s": 1, "why": "You control batching (1,000 documents or 16 MB per request), parallelism and throttling [[r2]]." } }
+        },
+        "event": {
+          "mix": { "ga": { "s": 0, "why": "Blob events and the Cosmos DB change feed exist, but you build the glue [[r23]] [[r24]]." }, "odd": { "s": 1, "why": "Log-based CDC such as Debezium reaches databases that have no indexer, with at-least-once delivery [[r25]]." } },
+          "rate": { "hours": { "s": -1, "why": "Overbuilt: queues and workers for freshness nobody asked for." }, "minutes": { "s": 1, "why": "Reacts to each change instead of polling." }, "seconds": { "s": 2, "why": "The only option here that reacts per change, if the workers keep up." } },
+          "team": { "small": { "s": -2, "why": "The queue, workers, dead letters and replay all need an owner and an on-call rota." }, "big": { "s": 2, "why": "Workers scale on their own, with dead letters and replay under your control." } }
+        },
+        "batch": {
+          "mix": { "ga": { "s": 0, "why": "Simple to reason about, but it ignores the incremental detection the indexers provide." }, "odd": { "s": 1, "why": "ETL tools reach almost any source in bulk." } },
+          "rate": { "hours": { "s": 1, "why": "A nightly rebuild is fine when a day of staleness is acceptable." }, "minutes": { "s": -2, "why": "A rebuild takes longer than the freshness target." }, "seconds": { "s": -2, "why": "A rebuild cannot meet seconds." } },
+          "team": { "small": { "s": 1, "why": "One scheduled job is easy to own." }, "big": { "s": -2, "why": "Re-embedding unchanged content every night wastes embedding calls at scale." } }
+        },
+        "foundry": {
+          "mix": { "ga": { "s": 1, "why": "The indexed kinds for a search index, Blob and OneLake carry no preview label [[r12]]." }, "odd": { "s": -1, "why": "Azure SQL, File and Indexed SharePoint kinds are preview, and remote kinds query live instead of ingesting [[r12]]." } },
+          "rate": { "hours": { "s": 1, "why": "It generates an indexer pipeline, so schedules apply [[r12]]." }, "minutes": { "s": 0, "why": "Expect the indexer schedule floor and run caps to apply, since the pipeline is an indexer [[r12]]." }, "seconds": { "s": -2, "why": "An indexer pipeline cannot refresh in seconds." } },
+          "team": { "small": { "s": 2, "why": "Least code: choose a source and the pipeline is generated." }, "big": { "s": 0, "why": "You give up per-file control of parsing and retries." } }
+        }
+      },
+      "takeaway": "Freshness decides first, because the indexer floor is 5 minutes. The source mix decides second, because indexers cover some stores well and others not at all. Team size decides last, and it is the dial people forget." },
+    { "t": "diagram", "id": "w03-l1-decide", "title": "A decision path you can say aloud", "alt": "A decision tree. If seconds of freshness are needed, use an event-driven push. Otherwise, if the source has no GA indexer or built-in skills are not enough, push from your own code. Otherwise use a scheduled indexer, and add a batch or push backfill if the backlog is too big for the run caps.", "src": "flowchart TD\n  A{Seconds of freshness?} -->|yes| E[Event-driven push]\n  A -->|no| B{GA indexer for the source?}\n  B -->|no| P[Push from your code]\n  B -->|yes| C{Built-in skills enough?}\n  C -->|no| P\n  C -->|yes| I[Scheduled indexer]\n  I --> D{Backfill too big for run caps?}\n  D -->|yes| K[Add a push backfill]\n  D -->|no| OK[Keep the indexer]", "caption": "Mixing paths is normal: the indexer for the long tail, a push path for the few sources where seconds matter." },
+    { "t": "failure", "title": "How ingestion goes wrong", "items": [
+      { "symptom": "The index lags the source by much more than the schedule says", "cause": "Staleness is the interval plus the run time. A backlog or slow skills can fill a capped run [[r26]].", "fix": "Chart documents per run and run duration. Split the corpus across several data sources or move the bulk to a push backfill." },
+      { "symptom": "A retried queue message writes a document twice", "cause": "Event Grid and Debezium deliver at least once, so duplicates follow any fault [[r24]] [[r25]].", "fix": "Upsert with a stable key (`mergeOrUpload`) and skip the write when the content hash is unchanged." },
+      { "symptom": "A push batch is rejected, or looks fine yet some documents are missing", "cause": "A request above 1,000 documents or 16 MB returns 413, and HTTP 207 means only some documents failed [[r2]].", "fix": "Cap batches by bytes as well as count, read the per-document status on 207, retry only the failures, and back off on 503." },
+      { "symptom": "The indexer says Success but documents are missing", "cause": "A run succeeds while errors stay below Max failed items [[r33]].", "fix": "Alert on per-run error counts and the documents-succeeded trend, not on the run status alone." }
+    ] },
+    { "t": "callout", "kind": "preview", "title": "Preview status as of 2026-10-13", "md": "The SharePoint in Microsoft 365 indexer needs a preview REST API [[r7]]. Foundry IQ indexed kinds for Azure SQL, File and Indexed SharePoint are preview, while search index, Blob and OneLake carry no preview label [[r12]]. Index projections and the Content Understanding skill are GA in REST `2026-04-01`, while Reset Documents, Reset Skills and Resync need `2026-08-01-preview` [[r8]]." }
+  ],
+  "quiz": [
+    { "id": "w03-l1-q1", "type": "single", "tag": "flip", "difficulty": 2, "q": "A support portal keeps articles as blobs, and an edited article must be searchable within 30 seconds. The indexer currently runs every 5 minutes. What change fits?", "options": ["Set the indexer schedule to every 30 seconds so the next run picks up the edit", "Move to a bigger search tier so each indexer run finishes much faster", "Publish blob events to a queue and let workers parse, embed and push the article", "Replace the indexer with a batch job that rebuilds the whole index every 5 minutes"], "answer": 2, "explain": "The schedule floor is 5 minutes, so no setting reaches 30 seconds, and a bigger tier only shortens the run, not the interval. A rebuild every 5 minutes is slower still and wastes embedding calls. Events trigger work per change, and the workers must be idempotent because delivery is at least once [[r3]] [[r24]]." },
+    { "id": "w03-l1-q2", "type": "multi", "tag": "bug", "difficulty": 2, "q": "A push worker times out and resends the same batch. Select every fact that makes the replay safe or helps keep it safe.", "options": ["`mergeOrUpload` on a stable key overwrites the document instead of duplicating it", "`delete` of a key that is not in the index does not fail", "HTTP 207 means nothing was written, so a retry must resend every document", "Document keys come from the source id plus chunk position, not a random GUID per attempt"], "answers": [0, 1, 3], "explain": "Upserting by key and tolerating deletes of missing keys make the batch repeatable, and a deterministic key is what lets the upsert find the earlier copy. A random GUID per attempt would create duplicates. HTTP 207 means partial failure, so resending only the failed documents is correct, and resending everything is merely wasteful [[r2]]." },
+    { "id": "w03-l1-q3", "type": "numeric", "tag": "numeric", "difficulty": 2, "q": "You backfill 2,400,000 chunk documents by push. Each document is about 40 KB as JSON including its vector. Taking 16 MB as 16,000 KB, what is the minimum number of requests?", "answer": 6000, "tolerancePct": 5, "unit": "requests", "hint": "Each request is limited by both the 1,000 document cap and the 16 MB cap. Which one binds?", "explain": "16,000 KB divided by 40 KB gives 400 documents per request, below the 1,000 document cap, so bytes bind. 2,400,000 / 400 = 6,000 requests. Using the document cap alone gives 2,400, the usual mistake [[r2]]." }
+  ],
+  "defend": null,
+  "refs": ["r1", "r2", "r3", "r7", "r8", "r11", "r12", "r23", "r24", "r25", "r26", "r33", "r30"],
+  "takeaways": [
+    "Choose in this order: freshness, source mix, then who owns the pipeline",
+    "The indexer floor is 5 minutes and a run can last hours, so seconds of freshness mean events and push",
+    "Event Grid and Debezium deliver at least once, so every sink must be idempotent",
+    "Cap push batches by bytes and count, and alert on error counts because Success can hide failures"
+  ]
+}

@@ -1,0 +1,96 @@
+{
+  "id": "w15-l4",
+  "order": 4,
+  "title": "Meter the tokens, set the targets, pick the backend",
+  "kind": "problem",
+  "minutes": 22,
+  "brief": "Finance wants cost per team, the on-call engineer wants a target that tells her when to wake up, and the product owner wants to know whether answers got worse. Choose the meters, the SLIs and the place the telemetry lives. The dials are not given.",
+  "blocks": [
+    { "t": "h", "text": "Count tokens where sampling cannot hurt", "level": 2 },
+    { "t": "table", "caption": "GenAI metrics by job (status Development, checked 2026-10-13). Topic w15-t04.", "head": ["Signal", "Use it for", "Careful"], "rows": [
+      ["Usage counters `gen_ai.client.inference.usage.input_tokens` and `.output_tokens`", "Totals and cost, split by `gen_ai.token.modality` [[r5]]", "`input_tokens` includes cached tokens and `output_tokens` includes reasoning tokens. The cache read, cache write and reasoning counters are subsets"],
+      ["Per-operation histograms `gen_ai.client.inference.operation.input_tokens` and `.output_tokens`", "Percentiles and outliers", "They should not be used for total usage or cost calculations"],
+      ["Latency histograms `gen_ai.client.inference.duration`, `.time_to_first_chunk` (streaming only), `.time_per_output_chunk`", "Slow models and the feel of streaming", "Recommended buckets run from 0.01 s and double up to 81.92 s"],
+      ["Agent metrics `gen_ai.invoke_agent.duration`, `.inference_calls`, `.tool_calls`, and `gen_ai.execute_tool.duration`", "Runaway loops and slow tools", "Agent Framework docs list `gen_ai.client.token.usage`, so check which names your build emits [[r10]]"]
+    ] },
+    { "t": "formula", "title": "Full-price input tokens", "expr": "uncached input = input_tokens - cache_read.input_tokens", "vars": [ { "k": "input_tokens", "v": "gen_ai.client.inference.usage.input_tokens, which already includes cached tokens" }, { "k": "cache_read.input_tokens", "v": "the subset served from the prompt cache" } ], "example": "A call reports 8,000 input tokens of which 6,000 were cache reads, so 2,000 tokens are uncached. Adding the cache reads on top would report 14,000. Cache writes are also a subset of input and may be priced differently, so split them out the same way." },
+    { "t": "h", "text": "Dial board: where does the telemetry live?", "level": 2 },
+    { "t": "dials", "id": "w15-l4-backend", "title": "Choose a telemetry backend", "prompt": "Flip the constraints. This board scores tracing and viewing. Compare evaluation features in chapters w12 and w14. Topics w15-t08 and w15-t12.",
+      "dials": [
+        { "id": "eco", "label": "Ecosystem", "values": [ { "id": "azure", "label": "Azure-first, enterprise controls" }, { "id": "neutral", "label": "Multi-cloud or self-hosted, OpenTelemetry-first" }, { "id": "lc", "label": "Already on LangChain or LangGraph" } ] },
+        { "id": "stage", "label": "Stage", "values": [ { "id": "dev", "label": "Local development" }, { "id": "prod", "label": "Production" } ] },
+        { "id": "feat", "label": "What you need in the tool", "values": [ { "id": "plain", "label": "Generic traces and metrics" }, { "id": "llm", "label": "An LLM-focused UI with scoring and prompt iteration" } ] }
+      ],
+      "options": [
+        { "id": "foundry", "name": "Foundry portal with Application Insights", "summary": "Server-side tracing after you connect App Insights to the Foundry project." },
+        { "id": "grafana", "name": "Application Insights with Grafana", "summary": "Agents view (preview) and prebuilt Grafana dashboards." },
+        { "id": "aspire", "name": "Aspire Dashboard", "summary": "A standalone local OTLP viewer in Docker." },
+        { "id": "langfuse", "name": "Langfuse", "summary": "LLM observability that takes OTLP over HTTP." },
+        { "id": "langsmith", "name": "LangSmith", "summary": "LLM traces and a runs dashboard, with OTLP ingestion." },
+        { "id": "phoenix", "name": "Arize Phoenix", "summary": "Open-source tracing and evaluation built on OpenTelemetry." }
+      ],
+      "scores": {
+        "foundry": {
+          "eco": { "azure": { "s": 2, "why": "Server-side tracing turns on after you connect an Application Insights resource to the project, with no code change." }, "neutral": { "s": -1, "why": "The no-code path covers agents hosted in Foundry. Elsewhere you export client-side, which is preview." }, "lc": { "s": -1, "why": "Code that Foundry does not host needs the client-side route, which is preview." } },
+          "stage": { "dev": { "s": -1, "why": "Needs an Azure project, and traces take a few minutes to appear." }, "prod": { "s": 2, "why": "GA for prompt and hosted agents. The portal Traces tab shows 90 days and the data sits in Application Insights [[r12]]." } },
+          "feat": { "plain": { "s": 1, "why": "Traces and metrics are what it provides first." }, "llm": { "s": 0, "why": "Tracing is the verified part here. Check evaluation features separately." } }
+        },
+        "grafana": {
+          "eco": { "azure": { "s": 2, "why": "Prebuilt Grafana dashboards exist for Agent Framework, workflows, Foundry and coding agents, next to the Agents view (preview) [[r14]]." }, "neutral": { "s": 0, "why": "OTLP in from any language, but Azure Monitor is still the store." }, "lc": { "s": 0, "why": "Works through OTLP like any other app." } },
+          "stage": { "dev": { "s": 0, "why": "Needs an Azure resource, though a developer machine can export to it." }, "prod": { "s": 1, "why": "You control sampling and alerts, and metrics are not sampled. The Agents view is preview." } },
+          "feat": { "plain": { "s": 2, "why": "Traces, metrics and dashboards are the product." }, "llm": { "s": -1, "why": "The Agents view covers runs, tool calls, models and errors, and sorts traces by tokens used. Prompt iteration and scoring live elsewhere." } }
+        },
+        "aspire": {
+          "eco": { "azure": { "s": 0, "why": "A local viewer, not a platform." }, "neutral": { "s": 1, "why": "Standard OTLP, any language." }, "lc": { "s": 0, "why": "Standard OTLP." } },
+          "stage": { "dev": { "s": 2, "why": "One Docker container: OTLP on port 4317 and the UI on port 18888, per the Agent Framework doc [[r10]]." }, "prod": { "s": -2, "why": "It is framed as a local development viewer." } },
+          "feat": { "plain": { "s": 1, "why": "Traces, logs and metrics in one place." }, "llm": { "s": -1, "why": "No scoring or prompt workspace." } }
+        },
+        "langfuse": {
+          "eco": { "azure": { "s": -1, "why": "Not an Azure service, so telemetry leaves your tenant unless you run it yourself." }, "neutral": { "s": 2, "why": "OTLP in over HTTP, with cloud regions or a local deployment." }, "lc": { "s": 1, "why": "Receives OTLP from other libraries and has its own SDKs." } },
+          "stage": { "dev": { "s": 0, "why": "Needs a cloud account or a local deployment." }, "prod": { "s": 1, "why": "Works in production if the exporter speaks OTLP over HTTP. gRPC is not supported [[r17]]." } },
+          "feat": { "plain": { "s": 0, "why": "Built for LLM traces, not generic services." }, "llm": { "s": 2, "why": "Built around LLM traces. By default it keeps spans that look LLM-relevant." } }
+        },
+        "langsmith": {
+          "eco": { "azure": { "s": -1, "why": "SaaS or self-hosted, outside Azure Monitor." }, "neutral": { "s": 0, "why": "Takes OTLP with an x-api-key header, so any OpenTelemetry app can send to it [[r18]]." }, "lc": { "s": 2, "why": "Built-in integration for LangChain and LangGraph apps, plus plain OTLP for the rest." } },
+          "stage": { "dev": { "s": 0, "why": "Needs an account or a self-hosted install." }, "prod": { "s": 1, "why": "Regional SaaS endpoints and self-hosted installs exist." } },
+          "feat": { "plain": { "s": 0, "why": "Aimed at LLM runs more than generic services." }, "llm": { "s": 2, "why": "Traces and a runs dashboard for LLM apps." } }
+        },
+        "phoenix": {
+          "eco": { "azure": { "s": -1, "why": "Not an Azure service." }, "neutral": { "s": 2, "why": "Open source, built on OpenTelemetry and OpenInference instrumentation [[r19]]." }, "lc": { "s": 1, "why": "Auto-instrumentation for LangChain, LlamaIndex, DSPy and other frameworks." } },
+          "stage": { "dev": { "s": 1, "why": "Open source, so you can run it beside your code." }, "prod": { "s": 1, "why": "Arize also offers AX, a managed platform on the same open standards." } },
+          "feat": { "plain": { "s": 0, "why": "Aimed at AI applications." }, "llm": { "s": 2, "why": "Traces, evaluation and prompt iteration in one tool." } }
+        }
+      },
+      "takeaway": "Every option wins somewhere. Because they all speak OpenTelemetry, the cheapest hedge is to instrument once with standard OTLP and keep the backend swappable." },
+    { "t": "table", "caption": "SLIs for an agent run. These are design suggestions, not vendor numbers. Topic w15-t10.", "head": ["SLI", "How to measure", "Signal"], "rows": [
+      ["Availability of runs", "Share of `invoke_agent` spans without `error.type`", "`gen_ai.invoke_agent.duration` with `error.type`"],
+      ["End-to-end latency", "p95 run duration, excluding time paused for human approval", "`gen_ai.invoke_agent.duration`"],
+      ["Time to first output (streaming)", "p95 first-chunk time", "`gen_ai.client.inference.time_to_first_chunk`"],
+      ["Tool reliability", "Error ratio and p95 duration per tool", "`gen_ai.execute_tool.duration`"],
+      ["Runaway detection", "p99 of model calls and tool calls per run", "`gen_ai.invoke_agent.inference_calls`, `.tool_calls`"],
+      ["Cost", "Tokens per successful task and the cached share", "`gen_ai.client.inference.usage.*` counters"],
+      ["Quality", "Online evaluation pass rate on sampled traffic", "Evaluation results (chapter w14)"]
+    ] },
+    { "t": "callout", "kind": "tip", "title": "Targets, alerts and online quality", "md": "Choose each SLO from your own baseline with the SRE Workbook method, not from a copied number [[r21]]. Alert on metrics, which are not sampled, and use traces to explain an alert. For the quality SLI, score a sampled share of live traffic with the framework's evaluation hooks (`evaluate_agent`, `evaluate_workflow`) or a cloud evaluator, and watch the pass rate for drift (topic w15-t11) [[r24]]. A course on tracing and evaluating agent runs with a third-party stack is listed in the references." },
+    { "t": "failure", "title": "Failure modes of metering and export", "items": [
+      { "symptom": "The cost dashboard shows more tokens than the provider bill.", "cause": "Cached tokens were added on top of input tokens, but they are a subset of them.", "fix": "Use `input_tokens - cache_read.input_tokens` for the uncached share." },
+      { "symptom": "A per-user cost metric loses series without any error.", "cause": "The APIM `llm-emit-token-metric` policy allows up to five custom dimensions, 100 unique values per dimension and 1,000 active time series per namespace, and drops the excess silently. Azure Monitor allows 10 dimension keys per metric [[r16]].", "fix": "Use low-cardinality dimensions (team, product, model) and read per-user detail from traces or logs." },
+      { "symptom": "Langfuse shows nothing from a default Agent Framework Python exporter.", "cause": "The Python default is OTLP over gRPC and Langfuse accepts only OTLP over HTTP at `/api/public/otel`. This follows from the two pages, not from a vendor statement.", "fix": "Set an HTTP protocol for the exporter and point it at the Langfuse endpoint." },
+      { "symptom": "LangSmith returns 404 for every export.", "cause": "The base endpoint included `/v1/traces`, which OTLP/HTTP exporters append themselves.", "fix": "Set `OTEL_EXPORTER_OTLP_ENDPOINT` to `https://api.smith.langchain.com/otel` and pass the `x-api-key` header." },
+      { "symptom": "Gateway token counts are low for streamed calls.", "cause": "Interrupted streams give wrong counts, and some OpenAI streams need `include_usage` set to true.", "fix": "Set `include_usage` and compare gateway totals with provider-reported usage." }
+    ] }
+  ],
+  "quiz": [
+    { "id": "w15-l4-q1", "type": "numeric", "tag": "numeric", "difficulty": 2, "q": "A call reports `gen_ai.client.inference.usage.input_tokens` of 12,000, of which `cache_read.input_tokens` is 9,000. There were no cache writes. How many input tokens were uncached?", "answer": 3000, "tolerancePct": 0, "unit": "tokens", "hint": "Cached tokens are a subset of input tokens.", "explain": "The input count already includes the cache reads, so uncached input is 12,000 - 9,000 = 3,000. Adding them would give 21,000, which double counts. The same subset rule holds for reasoning tokens inside output tokens.", "ref": "r5" },
+    { "id": "w15-l4-q2", "type": "match", "tag": "concept", "difficulty": 2, "q": "Match each need to the signal that answers it best.", "pairs": [ { "l": "Total spend by team this month", "r": "Usage counters such as `gen_ai.client.inference.usage.input_tokens`" }, { "l": "Find requests with unusually large prompts", "r": "Per-operation token histograms" }, { "l": "Streaming feels slow to users", "r": "`gen_ai.client.inference.time_to_first_chunk`" }, { "l": "Detect a runaway tool loop", "r": "`gen_ai.invoke_agent.tool_calls` and `.inference_calls` per run" } ], "explain": "Counters are the sums to use for cost. The per-operation histograms exist for percentiles and outliers and should not be used for totals. Time to first chunk is the streaming responsiveness metric, and per-run call counts expose loops.", "ref": "r5" },
+    { "id": "w15-l4-q3", "type": "single", "tag": "tradeoff", "difficulty": 3, "q": "Finance asks for token cost per user per day. The gateway can emit token metrics with custom dimensions. What is the sound design?", "options": ["Attribute metrics by team or product with few values, and look up per-user detail in traces or logs", "Add the user id as a custom dimension on the APIM token metric, because the policy allows five custom dimensions per metric", "Raise the Azure Monitor limits so that every user id gets its own time series", "Compute per-user cost from sampled spans and report the retained total as it is"], "answer": 0, "explain": "A user id has high cardinality: APIM caps a dimension at 100 unique values and 1,000 active time series per namespace and drops the excess silently. Raising Azure Monitor limits does not lift the APIM caps. Sampled spans must be weighted by `itemCount`, or the total is far too low.", "ref": "r16" }
+  ],
+  "defend": null,
+  "refs": ["r5", "r10", "r12", "r14", "r16", "r17", "r18", "r19", "r21", "r22", "r23", "r24"],
+  "takeaways": [
+    "Use the usage counters for totals and cost, the per-operation histograms for outliers, and remember that cached and reasoning tokens are subsets, not extras.",
+    "Gateway metric dimensions have hard cardinality limits and excess is dropped silently, so attribute by team or product and read per-user detail from traces.",
+    "Pick SLIs for runs, latency, streaming, tools, runaway calls, cost and quality, set targets from your baseline, and alert on metrics.",
+    "Choose the backend by ecosystem, stage and what the tool must offer. Instrument once with standard OTLP and mind transport details: Langfuse needs HTTP and LangSmith wants a base endpoint."
+  ]
+}

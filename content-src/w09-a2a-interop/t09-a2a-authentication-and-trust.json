@@ -1,0 +1,165 @@
+{
+  "id": "w09-t09",
+  "order": 9,
+  "group": "Security and platforms",
+  "title": "A2A authentication and trust",
+  "minutes": 8,
+  "difficulty": "advanced",
+  "summary": "A2A treats agents as ordinary enterprise HTTP services: identity lives in the transport, credentials are obtained out of band, the server authenticates every request and authorizes per skill, task and data.",
+  "useIf": "Your agent calls agents you do not own, or others call yours, and you must decide how identity, delegation and trust boundaries work.",
+  "avoidIf": "You assume the Agent Card or a task state grants trust: neither authenticates or authorizes anyone.",
+  "explain": [
+    { "t": "p", "md": "A2A payloads carry no identity. Authentication happens at the HTTP or transport layer. The card advertises schemes in `securitySchemes` (API key, HTTP, OAuth 2.0, OpenID Connect, mutual TLS), the client obtains credentials **out of band**, and the server MUST authenticate every request. Production traffic MUST use TLS. The spec recommends TLS 1.3 or newer, while the enterprise guide says TLS 1.2 or higher, so treat 1.3 as the target and 1.2 as the floor [[r1]] [[r8]]." },
+    { "t": "table", "caption": "How A2A layers trust [[r1]] [[r8]]", "head": ["Layer", "Rule", "Design consequence"], "rows": [
+      ["Transport", "TLS mandatory in production, clients verify the server certificate", "Terminate TLS only at hops you control"],
+      ["Authentication", "Every request, credentials in headers, 401 with `WWW-Authenticate`", "No identity or tokens inside message parts"],
+      ["Authorization", "Server decides by skill, action, data policy and scope; 403 when denied", "Per-skill scopes and least privilege"],
+      ["Task scope", "Operations are scoped to the caller, not-found hides other callers' tasks", "Return `TaskNotFoundError` for foreign ids"],
+      ["In-task authorization", "`AUTH_REQUIRED` hands a credential job to the client and authorizes nothing by itself", "Check authorization per sensitive operation"]
+    ] },
+    { "t": "p", "md": "Skills can carry their own `securityRequirements`, so `place-order` may need a scope that `stock-check` does not. OAuth flows in the spec are `authorizationCode`, `clientCredentials` and `deviceCode`, with `implicit` and `password` marked deprecated. The v1.0 migration page says those two were removed, which conflicts with the spec. The spec is authoritative [[r1]] [[r2]]." },
+    { "t": "p", "md": "**Delegated identity** is a design choice, not a protocol feature. A client-credentials token proves which application called. If the callee must act for a particular user, use a user-bound flow such as authorization code and keep the user identity in the token, not in message text. On Foundry, incoming A2A requires a Microsoft Entra token and the **Foundry Agent Consumer** role (or another role granting endpoint access); assign it to the identity's object (principal) ID, not its client ID. Key-based and anonymous access are not supported (checked 2026-10-13) [[r17]]." },
+    { "t": "callout", "kind": "warn", "title": "In-task credentials can travel", "md": "If a credential moves in band through a chain of agents, every agent in the chain sees it. The spec recommends credentials bound to the originating agent and readable only by it, and prefers secure out-of-band delivery [[r1]]." }
+  ],
+  "whereToUse": [
+    "Securing a partner-facing agent with per-skill OAuth scopes",
+    "Authorizing a Foundry-hosted agent so only specific identities can call it",
+    "Reviewing how a client agent forwards user identity to a remote agent",
+    "Placing an API gateway in front of agents for rate limits, quotas and audit",
+    "Designing what a human must approve when a task asks for credentials"
+  ],
+  "whenToUse": {
+    "use": [
+      "OAuth 2.0 client credentials for application-to-application calls with scopes per skill",
+      "OAuth authorization code (or an on-behalf-of exchange) when the callee must act as a user",
+      "Mutual TLS or private networking for a small set of high-trust internal peers"
+    ],
+    "avoid": [
+      "Do not place user or client identity inside message parts",
+      "Do not use one shared API key for many partners or for sensitive skills",
+      "Do not let the card, a skill description or a task state stand in for authorization"
+    ],
+    "flips": [
+      "The callee must enforce per-user access to data: move from application tokens to user-bound tokens",
+      "A partner cannot do OAuth: an API key per partner behind a gateway with rate limits is a fallback",
+      "Data is regulated: sign cards, pin hosts and log task ids and trace context on both sides"
+    ]
+  },
+  "alternatives": {
+    "title": "Security schemes",
+    "head": ["Scheme", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["API key", "Simple partner integrations behind a gateway", "Many callers or sensitive skills", "Shared secrets, no user identity"],
+      ["OAuth 2.0 client credentials", "App-to-app, scopes per skill", "The callee must know the end user", "Token issuer and scope design"],
+      ["OAuth 2.0 authorization code", "Acting on behalf of a user", "Unattended batch work", "Consent flows, token refresh, delegation chains"],
+      ["OpenID Connect", "You already federate identity", "Machine callers without an identity provider", "Provider dependency and discovery config"],
+      ["Mutual TLS", "A few high-trust peers, private networks", "Many external partners", "Certificate issuance and rotation"]
+    ]
+  },
+  "pitfalls": [
+    {
+      "symptom": "A valid Entra token gets 401 or 403 from a Foundry agent over A2A",
+      "cause": "The calling identity lacks the Foundry Agent Consumer role, or the role was assigned to the client ID instead of the object ID",
+      "fix": "Assign the role to the principal (object) ID at the project or agent scope [[r17]]"
+    },
+    {
+      "symptom": "Users see tasks that belong to someone else",
+      "cause": "Task lookups were not scoped to the authenticated caller",
+      "fix": "Scope `GetTask`, `ListTasks` and `CancelTask` to the caller and return not found for foreign ids [[r1]]"
+    },
+    {
+      "symptom": "A credential travelled through three agents and was reused",
+      "cause": "An in-band credential was forwarded unbound",
+      "fix": "Prefer out-of-band delivery and bind credentials to the requesting agent [[r1]]"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "w09-t09-s1",
+      "title": "Many partners calling your quoting agent",
+      "situation": "Fifty partners call your agent. Reading quotes should be open to all of them, but placing orders is limited to contracted partners. Auditors want per-partner logs.",
+      "constraints": ["External callers at scale", "Different skills need different rights", "Per-partner audit"],
+      "unknowns": ["Can partners run OAuth clients?", "Is a gateway available for rate limits?"],
+      "question": "Which scheme do you declare on the card?",
+      "options": [
+        { "name": "OAuth 2.0 client credentials with scopes per skill, behind a gateway", "verdict": "best", "why": "Scopes map to skills, tokens identify each partner and the gateway adds rate limits and logs.", "tradeoff": "Partners need OAuth clients and you operate an issuer." },
+        { "name": "Mutual TLS per partner", "verdict": "good", "why": "Strong identity at the transport layer.", "tradeoff": "Certificate issuance and rotation for fifty partners, and coarse authorization." },
+        { "name": "One shared API key", "verdict": "poor", "why": "No per-partner identity, no per-skill rights and one leak exposes everyone.", "tradeoff": "Acceptable for a prototype with one trusted partner." }
+      ],
+      "flips": [
+        { "if": "Partners are few and trusted", "then": "Mutual TLS is simpler." },
+        { "if": "Partners cannot run OAuth", "then": "Issue one API key each, behind a gateway with quotas." }
+      ],
+      "takeaway": "Map scopes to skills and identify each caller."
+    },
+    {
+      "id": "w09-t09-s2",
+      "title": "A remote agent that reads a user's mailbox",
+      "situation": "A remote agent must summarize one user's mailbox when that user asks. A wrong identity would expose another person's mail.",
+      "constraints": ["Acts on behalf of an end user", "Highly sensitive data", "Per-user access control"],
+      "unknowns": ["Does the callee support user-bound tokens?", "How is consent captured and revoked?"],
+      "question": "How does the callee learn who the user is?",
+      "options": [
+        { "name": "A user-bound token (authorization code or on-behalf-of) validated by the callee", "verdict": "best", "why": "Identity is cryptographically bound to the request and the callee enforces the user's own access.", "tradeoff": "Consent flows, token refresh and delegation-chain design." },
+        { "name": "An application token plus the user id in the message text", "verdict": "poor", "why": "A2A payloads carry no identity, so any caller could claim any user.", "tradeoff": "Fine only where the callee has no per-user data." },
+        { "name": "A service account that reads every mailbox, filtered afterwards", "verdict": "good", "why": "Simple to build.", "tradeoff": "Over-privileged: one flaw exposes everyone's mail." }
+      ],
+      "flips": [
+        { "if": "Work runs unattended overnight", "then": "Use a scoped app identity with explicit, audited access grants." },
+        { "if": "The callee only needs the user's group", "then": "A signed claim in the token may suffice." }
+      ],
+      "takeaway": "Per-user access needs a user-bound credential, never a name in the payload."
+    }
+  ],
+  "quiz": [
+    {
+      "id": "w09-t09-q1",
+      "type": "single",
+      "tag": "security",
+      "q": "Where does A2A carry the caller's identity?",
+      "options": [
+        "In a `userId` field of the message",
+        "In the transport layer credentials, such as HTTP headers",
+        "In the Agent Card of the caller",
+        "In the `contextId`"
+      ],
+      "answer": 1,
+      "explain": "A2A payloads carry no identity. Credentials travel in standard headers or transport metadata and the server authenticates every request. Message fields, cards and context ids can be forged or are unrelated."
+    },
+    {
+      "id": "w09-t09-q2",
+      "type": "multi",
+      "tag": "security",
+      "q": "Which statements about A2A security are correct? Select all that apply.",
+      "options": [
+        "The server MUST authenticate every incoming request",
+        "Moving a task to `AUTH_REQUIRED` authorizes the operation that follows",
+        "Authorization can be applied per skill using scopes",
+        "Production traffic MUST use TLS"
+      ],
+      "answers": [0, 2, 3],
+      "explain": "Every request is authenticated, authorization may use per-skill scopes and production needs TLS. The `AUTH_REQUIRED` state authorizes nothing by itself."
+    },
+    {
+      "id": "w09-t09-q3",
+      "type": "single",
+      "tag": "diagnose",
+      "q": "A caller with a valid Entra token gets denied by a Foundry agent over A2A. Which check comes first?",
+      "options": [
+        "Switch the binding to gRPC",
+        "Add an API key header",
+        "Disable TLS verification",
+        "Confirm the identity holds the Foundry Agent Consumer role, assigned to its object ID"
+      ],
+      "answer": 3,
+      "explain": "Foundry requires Entra auth and a role that grants endpoint access, assigned to the principal's object ID. Foundry v1.0 supports JSON-RPC only, does not accept keys and TLS must stay on."
+    }
+  ],
+  "flashcards": [
+    { "front": "Why does A2A put no identity in the message payload?", "back": "Identity is established at the transport layer with standard HTTP credentials, so payload fields can be forged and are never trusted for auth." },
+    { "front": "What does `TASK_STATE_AUTH_REQUIRED` authorize on its own?", "back": "Nothing. It asks the client to obtain a credential, and scope and validity come from the implementation, issuer or an extension." },
+    { "front": "What does a caller need to reach a Foundry agent over A2A?", "back": "A Microsoft Entra token and the Foundry Agent Consumer role (or a role granting endpoint access), assigned to the object ID. No keys or anonymous access." }
+  ],
+  "related": ["w09-t03", "w09-t08", "w09-t10", "w09-l05", "w08-t11", "w12-t15", "w12-t16"],
+  "refs": ["r1", "r2", "r8", "r17"]
+}

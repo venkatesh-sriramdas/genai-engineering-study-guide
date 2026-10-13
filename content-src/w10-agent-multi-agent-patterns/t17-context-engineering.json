@@ -1,0 +1,97 @@
+{
+  "id": "w10-t17",
+  "order": 17,
+  "group": "Context and memory",
+  "title": "Context engineering",
+  "minutes": 10,
+  "difficulty": "core",
+  "summary": "Context engineering is choosing what enters the model's window at every step: instructions, tool definitions, memory, retrieved data, history and tool results. The aim is the smallest set of high-signal tokens that makes the next step succeed.",
+  "useIf": "An agent runs many steps, uses many tools or large tool results, or the bill and latency are dominated by input tokens.",
+  "avoidIf": "Never skip it for long agent loops. For one short chat turn with a small prompt there is little to engineer.",
+  "explain": [
+    { "t": "p", "md": "Anthropic frames context as a finite resource with diminishing returns: the model has an **attention budget**, and every token competes with the others. The goal is the smallest set of high-signal tokens that makes the next step succeed [[r6]]. Cognition calls context engineering effectively the number one job of an agent builder [[r3]]. Five levers matter: what is in the prompt, in which order, how large tool results are, what history you keep and what you load only on demand." },
+    { "t": "formula", "title": "The window budget", "expr": "used = system + tools + memory + history + retrieval + tool_results + reserved_output     (stay under the window)", "vars": [{ "k": "tools", "v": "tool definitions, resent on every request" }, { "k": "reserved_output", "v": "room kept for the answer and any reasoning tokens" }], "example": "System 2,000 + 60 tools x 350 + memory 1,500 + 30 turns x 800 + 5 chunks x 900 + tool results 28,000 + output 6,000 = **87,000** tokens in a 100,000 window, leaving 13,000." },
+    { "t": "diagram", "id": "w10-t17-d1", "title": "A cache-friendly prompt layout", "alt": "From top to bottom the prompt holds stable system instructions, tool definitions and memory, then append-only history, then volatile retrieval and tool results, then reserved output. The stable prefix can be cached.", "src": "flowchart TB\n  A[System instructions: stable] --> B[Tool definitions: stable, fixed order]\n  B --> C[Memory: stable per session]\n  C --> D[History: append-only]\n  D --> E[Volatile retrieval and tool results]\n  E --> F[Reserved output]" },
+    { "t": "p", "md": "Order is a cost lever. Manus calls the KV-cache hit rate the single most important production metric, reports an average input to output ratio near 100 to 1, and quotes cached input at $0.30 per million tokens against $3 uncached for one Claude model in 2025 (check current pricing). Its rules: keep the prefix stable, so a timestamp at the start of the system prompt kills hits, make context append-only, serialise deterministically, and mask tools instead of removing them mid-run [[r7]]. Placement is also a quality lever: accuracy is highest when relevant text sits at the start or end of the input and lowest in the middle [[r39]], so keep critical constraints near the edges and recite the current plan near the end, as Manus does with a todo file [[r7]]." },
+    { "t": "p", "md": "Load data on demand. Keep lightweight identifiers such as paths, queries and links, and fetch content with tools when needed [[r6]]. Trim tool results to the fields the model needs and keep a pointer to the rest." },
+    { "t": "lab", "id": "context-budget", "intro": "Illustrative planner, not a tokenizer: sizes, windows and the cache discount are your inputs, not vendor figures. Load the Tool-heavy agent preset and apply tool search, then compare summarising with dropping on the research preset, and switch the prompt to the cache-friendly order." }
+  ],
+  "whereToUse": [
+    "Any agent that loops over tools for more than a handful of steps",
+    "Assistants with large tool catalogs from several teams",
+    "RAG assistants where retrieved chunks compete with history for space",
+    "Cost reviews where input tokens dominate the invoice",
+    "Latency work: shorter, cache-friendly prompts shorten time to first token"
+  ],
+  "whenToUse": {
+    "use": ["The agent takes many steps and history grows", "Tool definitions or tool results are large", "Input tokens, not output, drive cost and latency"],
+    "avoid": ["Over-compressing early, which drops details that later steps need", "Rewriting history every turn, which breaks cache reuse", "Chasing a larger window instead of trimming what you send"],
+    "flips": ["Tool results are the bulk: trim or clear them first", "Tool definitions are the bulk: load tools on demand with tool search", "History is the bulk and stays relevant: summarise with pinned facts and offload detail to files"]
+  },
+  "alternatives": {
+    "title": "Levers compared",
+    "head": ["Lever", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Stable prefix and append-only context", "Many steps share a long prefix", "Content must be rewritten each step", "Needs discipline in prompt assembly [[r7]]"],
+      ["Trim or clear tool results", "Large results go stale", "A later step needs the raw output", "Keep a pointer to restore [[r6]]"],
+      ["On-demand retrieval", "Data is large and mostly unused", "Latency per fetch matters more", "Extra tool calls [[r6]]"],
+      ["Bigger context window", "A single task truly needs all of it", "Quality drops with length", "Context rot, cost, latency [[r8]]"],
+      ["Sub-agents with fresh windows", "Branches are independent", "Coupled work needs shared state", "Tokens multiply [[r2]]"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Cached-input share collapsed after a prompt change", "cause": "A volatile value such as a timestamp or retrieval block sits before stable content", "fix": "Move volatile segments to the end, serialise tools and JSON deterministically and keep history append-only." },
+    { "symptom": "The request overflows or quality drops before the user speaks", "cause": "Dozens of tool definitions are loaded on every call", "fix": "Load a small set of tools plus a search tool, and de-duplicate overlapping tools." },
+    { "symptom": "The agent forgets an early instruction in a long run", "cause": "It sits in the middle of a long context where recall is weakest [[r39]]", "fix": "Pin instructions near the start, recite the current goal near the end and compact history." }
+  ],
+  "scenarios": [
+    {
+      "id": "w10-t17-s1",
+      "title": "Cache hits fell after a release",
+      "situation": "After a prompt change, input cost per request rose sharply and time to first token worsened. Nothing else changed. The release added the current date and a retrieved snippet near the top of the system prompt.",
+      "constraints": ["Provider supports prefix caching", "Long shared prefix across requests", "Cost and latency regression is measured"],
+      "unknowns": ["What does the cached-token field show per request?", "Is tool order stable between requests?"],
+      "question": "What do you change?",
+      "options": [
+        { "name": "Move the date and retrieval to the end, keep the prefix stable and serialise tools in a fixed order", "verdict": "best", "why": "Caches reuse the longest identical prefix, so a volatile value early in the prompt defeats them.", "tradeoff": "Instructions that depend on the date must read it from later in the prompt." },
+        { "name": "Switch to a larger model", "verdict": "poor", "why": "It does not touch the cause and raises per-token cost.", "tradeoff": "Right only if quality, not cost, were the problem." },
+        { "name": "Disable caching to avoid inconsistency", "verdict": "good", "why": "Removes the fragility.", "tradeoff": "You pay full price for every token and give up latency savings." }
+      ],
+      "flips": [
+        { "if": "Prompts are shorter than the provider's minimum cacheable length", "then": "Caching will not apply, so focus on trimming instead." },
+        { "if": "Retrieval must precede instructions for quality", "then": "Test the quality gain against the lost cache share." }
+      ],
+      "takeaway": "Stable first, volatile last."
+    },
+    {
+      "id": "w10-t17-s2",
+      "title": "A tool-heavy agent overflows",
+      "situation": "An agent exposes eighty tools from several teams and long tool outputs. Requests approach the window limit, and tool choice has become unreliable.",
+      "constraints": ["Many tool definitions", "Large tool outputs", "Runs of dozens of steps", "No budget to move to a bigger window"],
+      "unknowns": ["How much of the window do tool definitions take?", "Can large outputs be reduced to key fields?"],
+      "question": "What do you do first?",
+      "options": [
+        { "name": "Load a few tools plus a tool search, trim tool results to key fields and clear stale results with pointers", "verdict": "best", "why": "It attacks the two largest segments with the least risk, and tool search also reduces overlap errors.", "tradeoff": "An extra search round trip and the chance of missing a similar tool." },
+        { "name": "Summarise the whole history every five steps", "verdict": "good", "why": "Frees space as the run grows.", "tradeoff": "Loses exact details, costs an extra call and rewrites history, which breaks cache reuse." },
+        { "name": "Raise the window by moving to a larger-context model", "verdict": "poor", "why": "Quality degrades with length and cost rises, while the overlap problem remains.", "tradeoff": "Reasonable for one-off tasks that truly need the whole input." }
+      ],
+      "flips": [
+        { "if": "History is the largest segment", "then": "Offload to files and summarise, after clearing results." },
+        { "if": "Tool sets differ by trust boundary", "then": "Split into sub-agents per boundary." }
+      ],
+      "takeaway": "Trim the biggest, safest segment first."
+    }
+  ],
+  "quiz": [
+    { "id": "w10-t17-q1", "type": "single", "tag": "tradeoff", "q": "Which prompt order is most friendly to prefix caching?", "options": ["Retrieved chunks, system prompt, tools, history", "Current date, system prompt, tools, history", "System prompt, tools, memory, history, retrieval and tool results", "History, system prompt, retrieval, tools"], "answer": 2, "explain": "Stable segments go first, history is append-only and volatile segments go last, so the longest identical prefix is reused. The other orders put changing content ahead of stable content. [[r7]]", "ref": "r7", "difficulty": 2 },
+    { "id": "w10-t17-q2", "type": "numeric", "tag": "numeric", "q": "System 2,000 + 60 tools at 350 tokens + memory 1,500 + 30 turns at 800 + 5 chunks at 900 + tool results 28,000 + reserved output 6,000. How many tokens of headroom remain in a 100,000 token window?", "answer": 13000, "tolerancePct": 1, "unit": "tokens", "hint": "Sum all segments, then subtract from the window.", "explain": "2,000 + 21,000 + 1,500 + 24,000 + 4,500 + 28,000 + 6,000 = 87,000, so headroom is 13,000. Remember the soft quality limit sits below the hard window." },
+    { "id": "w10-t17-q3", "type": "multi", "tag": "bug", "q": "Which practices in an agent's prompt assembly are bugs for cache hit rate?", "options": ["A timestamp at the start of the system prompt", "Appending new turns to the end of history", "Serialising tools in a different order on each request", "Keeping the system prompt unchanged across turns"], "answers": [0, 2], "explain": "A leading timestamp and unstable tool or JSON ordering change the prefix and defeat caching. Append-only history and an unchanged system prompt preserve the prefix. [[r7]]", "ref": "r7", "difficulty": 2 }
+  ],
+  "flashcards": [
+    { "front": "What is the attention budget idea?", "back": "Context is finite with diminishing returns. Aim for the smallest set of high-signal tokens for the next step [[r6]]." },
+    { "front": "Manus's cache rules?", "back": "Stable prefix (no leading timestamp), append-only context, deterministic serialisation, and mask tools instead of removing them [[r7]]." },
+    { "front": "Where does the model recall best in long input?", "back": "At the start and end of the input, with the lowest recall in the middle (Lost in the Middle) [[r39]]." }
+  ],
+  "related": ["w10-l4", "w10-t18", "w10-t19", "w10-t11"],
+  "refs": ["r6", "r3", "r7", "r39", "r8", "r2"]
+}

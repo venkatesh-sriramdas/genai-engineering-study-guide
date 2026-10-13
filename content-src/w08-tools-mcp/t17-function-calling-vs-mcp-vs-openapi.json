@@ -1,0 +1,138 @@
+{
+  "id": "w08-t17",
+  "order": 17,
+  "group": "Design and operations",
+  "title": "Function calling vs MCP vs OpenAPI tools",
+  "minutes": 9,
+  "difficulty": "core",
+  "summary": "Three ways to give a model tools: functions your app defines and runs, an MCP server another party owns, or an OpenAPI tool a platform calls from a spec. Choose by reuse, ownership, auth model and latency.",
+  "useIf": "You must decide how a new capability reaches a model and who defines, runs and secures it.",
+  "avoidIf": "You treat them as rivals. Hosts convert MCP tools to function-calling format, and platforms can bundle all three.",
+  "explain": [
+    { "t": "p", "md": "In every option the model emits a structured call. What differs is who owns the definition, who executes it and who authenticates. **Function calling**: you declare schemas in the request (OpenAI `type: \"function\"`, `strict: true`), the model returns a call, and your application runs the code and returns the output [[tr11]] [[tr14]]. **MCP**: a server owns the tool and a host discovers it with `tools/list`. Platforms can also call servers for you, such as OpenAI's `mcp` tool with `server_url`, `require_approval` and `allowed_tools` [[tr12]]. **OpenAPI tool**: the platform reads an OpenAPI 3.0 or 3.1 spec and calls the HTTP API itself. Foundry needs an `operationId` per operation and supports `anonymous`, API key and managed identity auth [[tr13]]." },
+    { "t": "table", "caption": "Who owns and runs what", "head": ["Option", "Definition comes from", "Code runs in", "Auth held by"], "rows": [["Function calling", "Your request", "Your app", "Your app"], ["MCP server", "`tools/list` from the server", "The server process", "The server (OAuth) or host configuration"], ["OpenAPI tool", "An OpenAPI spec", "The target API, called by the platform", "A platform connection: API key or managed identity"]] },
+    { "t": "dials", "id": "w08-t17-pick", "title": "Pick a tool integration", "prompt": "Flip the constraints. The ranking and the reasons update.", "dials": [
+      { "id": "reuse", "label": "Reuse", "values": [{ "id": "one", "label": "One agent in one app" }, { "id": "many", "label": "Many hosts or agents" }] },
+      { "id": "owner", "label": "Ownership", "values": [{ "id": "same", "label": "Same team" }, { "id": "other", "label": "Another team or vendor" }] },
+      { "id": "auth", "label": "Auth model", "values": [{ "id": "app", "label": "App identity is enough" }, { "id": "user", "label": "Per-user delegated access" }] },
+      { "id": "latency", "label": "Latency budget", "values": [{ "id": "tight", "label": "Tight" }, { "id": "relaxed", "label": "Relaxed" }] }
+    ], "options": [
+      { "id": "fn", "name": "Function calling in the app", "summary": "You define schemas and run the code." },
+      { "id": "mcp", "name": "MCP server", "summary": "The owner publishes tools over MCP." },
+      { "id": "oapi", "name": "OpenAPI tool", "summary": "The platform calls an existing API from its spec." }
+    ], "scores": {
+      "fn": {
+        "reuse": { "one": { "s": 2, "why": "No extra process or protocol for a single consumer." }, "many": { "s": -2, "why": "Each host re-implements the same functions." } },
+        "owner": { "same": { "s": 2, "why": "The team that owns the app owns the code." }, "other": { "s": -1, "why": "You must wrap someone else's system yourself." } },
+        "auth": { "app": { "s": 1, "why": "Your app already holds its credentials." }, "user": { "s": 0, "why": "Possible, but you build the delegated token handling." } },
+        "latency": { "tight": { "s": 2, "why": "In-process calls add no network hop." }, "relaxed": { "s": 0, "why": "Latency does not decide the choice." } }
+      },
+      "mcp": {
+        "reuse": { "one": { "s": -1, "why": "A server boundary is overhead for one consumer." }, "many": { "s": 2, "why": "Written once, used by every MCP host." } },
+        "owner": { "same": { "s": 0, "why": "Works, but a boundary you may not need." }, "other": { "s": 2, "why": "The owner ships and versions the server." } },
+        "auth": { "app": { "s": 0, "why": "Works, with auth work you might skip." }, "user": { "s": 2, "why": "OAuth 2.1 with audience-bound tokens fits delegated access." } },
+        "latency": { "tight": { "s": -1, "why": "An extra process or network hop." }, "relaxed": { "s": 1, "why": "The hop is affordable." } }
+      },
+      "oapi": {
+        "reuse": { "one": { "s": 0, "why": "Fine if a spec already exists." }, "many": { "s": 1, "why": "The spec is reusable, but tool config is per platform unless bundled." } },
+        "owner": { "same": { "s": 1, "why": "Reuses your own API spec with no new server." }, "other": { "s": 1, "why": "Works if the owner publishes a clean spec." } },
+        "auth": { "app": { "s": 1, "why": "API key or managed identity covers it." }, "user": { "s": -1, "why": "In Foundry the listed methods are anonymous, API key and managed identity, not per-user OAuth." } },
+        "latency": { "tight": { "s": -1, "why": "The platform calls out over the network." }, "relaxed": { "s": 1, "why": "Acceptable for most API calls." } }
+      }
+    }, "takeaway": "Reuse and ownership push toward MCP, a single app pushes toward functions, and an existing API with a spec favours an OpenAPI tool." },
+    { "t": "callout", "kind": "tip", "title": "They compose", "md": "A host turns MCP tool definitions into the model's function-calling format [[r23]]. Foundry suggests adding an OpenAPI tool through a toolbox to reuse it across agents and centralise credentials [[tr13]]." },
+    { "t": "p", "md": "**Choosing.** Start with the simplest layout that fits. One app and one owner means functions. A second host or another owner means MCP. A clean spec plus a platform that calls it means an OpenAPI tool. Revisit when a dial changes." }
+  ],
+  "whereToUse": [
+    "Function calling for app-internal actions: a database lookup in your service",
+    "MCP for capabilities owned by another team or shipped to many hosts",
+    "An OpenAPI tool for an existing REST API with a clean spec and managed identity",
+    "A gateway turning a REST API into an MCP server when policy and discovery matter"
+  ],
+  "whenToUse": {
+    "use": ["Choose functions for one app and one owner", "Choose MCP when reuse, ownership or per-user OAuth matter", "Choose an OpenAPI tool when a spec exists and the platform supports it", "Re-evaluate when a second consumer appears"],
+    "avoid": ["Wrapping three private functions in a remote server", "Hand-writing function schemas for a large API that already has a spec", "Using an OpenAPI tool for per-user delegated OAuth when the platform lists only key or managed identity"],
+    "flips": ["A second host needs the same tools: move from functions to an MCP server", "Latency becomes critical: bring the code in process as functions or use stdio locally"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Function calling", "One app, tight latency", "Many hosts reuse the tools", "Duplicated code per host"],
+      ["MCP server", "Reuse, other owners, per-user OAuth", "Single app, tiny scope", "A server to run, secure and version"],
+      ["OpenAPI tool", "Existing spec, platform-managed calls", "Need prompts, resources or rich protocol features", "Platform specific, auth limited to supported methods"],
+      ["Gateway REST-to-MCP", "Central policy and discovery for APIs", "You need resources or prompts", "Extra hop and gateway configuration [[r17]]"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Three hosts carry three slightly different copies of the same function", "cause": "Functions were defined in each app", "fix": "Extract them into an MCP server once more than one host needs them" },
+    { "symptom": "An OpenAPI tool fails to register or picks poor operations", "cause": "Operations lack an `operationId` or have vague names and descriptions", "fix": "Give each operation a descriptive `operationId` of letters, hyphens and underscores" }
+  ],
+  "scenarios": [
+    {
+      "id": "w08-t17-s1",
+      "title": "A demo due tomorrow",
+      "situation": "A two-person team prototypes an assistant with one custom lookup. The demo may be thrown away. No other team is involved.",
+      "constraints": ["One app, one owner", "Days of runway", "App identity suffices"],
+      "unknowns": ["Will the prototype become a product?", "Will another host need the lookup?"],
+      "question": "How do you expose the lookup?",
+      "options": [
+        { "name": "A function tool with a strict schema, run in the app", "verdict": "best", "why": "Fastest path, no extra hop or boundary, and the team controls the code.", "tradeoff": "Extraction is later work if a second host appears." },
+        { "name": "A local stdio MCP server", "verdict": "good", "why": "A clean boundary that is ready for reuse.", "tradeoff": "A subprocess to supervise for no current gain." },
+        { "name": "Build a REST API and OpenAPI spec for the platform to call", "verdict": "poor", "why": "A new API and network hop for one throwaway lookup.", "tradeoff": "Right when a REST API and spec already exist." }
+      ],
+      "flips": [
+        { "if": "A second team wants the same lookup", "then": "Move it behind an MCP server." },
+        { "if": "A REST API and OpenAPI spec for it already exist", "then": "An OpenAPI tool avoids rewriting the schema." }
+      ],
+      "takeaway": "One consumer and one owner means keep it in process."
+    },
+    {
+      "id": "w08-t17-s2",
+      "title": "Existing REST APIs for Foundry agents",
+      "situation": "A platform team already has REST APIs with clean OpenAPI 3.1 specs and operation ids. All agents run in Foundry and authenticate with managed identity or API keys. Nobody needs MCP prompts or resources.",
+      "constraints": ["Specs exist", "Agents on one platform", "Managed identity or API key auth"],
+      "unknowns": ["How many agents will reuse the same tools?", "Is central version control needed?"],
+      "question": "How should the agents get these tools?",
+      "options": [
+        { "name": "OpenAPI tools, bundled in a toolbox for reuse", "verdict": "best", "why": "Reuses the existing specs with no new server and centralises credentials and versions.", "tradeoff": "Platform specific, and toolbox features such as tool search are Preview." },
+        { "name": "Expose the APIs as MCP servers through an API gateway", "verdict": "good", "why": "Adds central policy and works with non-Foundry hosts.", "tradeoff": "Gateway setup and tools only." },
+        { "name": "Re-implement each operation as a function in every agent", "verdict": "poor", "why": "Duplicated code that drifts from the spec.", "tradeoff": "Fine only for a single agent and a handful of operations." }
+      ],
+      "flips": [
+        { "if": "Non-Foundry hosts must also use the tools", "then": "Prefer MCP through a gateway." },
+        { "if": "Per-user delegated access is required", "then": "Use an MCP server with OAuth." }
+      ],
+      "takeaway": "When a good spec exists, let the platform call the API."
+    },
+    {
+      "id": "w08-t17-s3",
+      "title": "A vendor shipping to many hosts with per-user access",
+      "situation": "A SaaS vendor wants its product usable from many third-party AI hosts. Each customer user must act under their own identity and the vendor ships on its own schedule.",
+      "constraints": ["Many third-party hosts", "Per-user delegated access", "Vendor owns release cycle"],
+      "unknowns": ["Which hosts and revisions must be supported?", "Does the vendor's IdP support CIMD?"],
+      "question": "How should the vendor package its tools?",
+      "options": [
+        { "name": "A remote MCP server with OAuth", "verdict": "best", "why": "Written once for every MCP host, with standard audience-bound per-user auth and vendor-controlled versioning.", "tradeoff": "The vendor runs and secures a service and supports several spec revisions." },
+        { "name": "Publish an OpenAPI spec and let hosts wire it up", "verdict": "good", "why": "Low effort and reusable by platforms that import specs.", "tradeoff": "Each host decides how to call and authenticate, and per-user OAuth may not be supported." },
+        { "name": "Ship function-calling snippets in documentation", "verdict": "poor", "why": "Every integrator copies and maintains the code, so versions drift.", "tradeoff": "Acceptable only as an example next to a real integration." }
+      ],
+      "flips": [
+        { "if": "Only one partner platform matters", "then": "Support its native tool format first." },
+        { "if": "Per-user access is not needed", "then": "An OpenAPI spec with an API key may be enough." }
+      ],
+      "takeaway": "Shipping to many hosts with per-user auth is what MCP is for."
+    }
+  ],
+  "quiz": [
+    { "id": "w08-t17-q1", "type": "single", "tag": "concept", "q": "With plain function calling, who executes the function the model asks for?", "options": ["The model provider", "The MCP server", "Your application, which returns the output to the model", "The OpenAPI platform"], "answer": 2, "explain": "In function calling the model returns a call and your application runs the code and sends back the output. An MCP server or a platform OpenAPI tool executes in other layouts, and the model provider does not run your function." },
+    { "id": "w08-t17-q2", "type": "match", "tag": "concept", "q": "Match each option to a defining detail.", "pairs": [{ "l": "Function calling", "r": "Your app runs the code and returns the output" }, { "l": "MCP server", "r": "Definitions discovered with `tools/list`" }, { "l": "Foundry OpenAPI tool", "r": "Each operation needs an `operationId`" }, { "l": "OpenAI `mcp` tool", "r": "Configured with `server_url` and `require_approval`" }], "explain": "These are the defining mechanics in the function calling, MCP, Foundry OpenAPI and OpenAI remote MCP documentation." }
+  ],
+  "flashcards": [
+    { "front": "What decides function calling vs MCP vs OpenAPI tool?", "back": "Reuse across hosts, who owns the tool, whether access is per user, and latency budget. One app and tight latency favour functions." },
+    { "front": "What does Foundry require for OpenAPI tools?", "back": "OpenAPI 3.0 or 3.1 with an `operationId` per operation, and auth by anonymous, API key or managed identity." },
+    { "front": "Do MCP and function calling compete?", "back": "No. Hosts convert MCP tool definitions into the model's function-calling format. MCP is the host-to-server protocol, function calling is the model interface." }
+  ],
+  "related": ["w08-t01", "w08-t02", "w08-t16", "w08-l01", "w08-l07"],
+  "refs": ["tr11", "tr12", "tr13", "tr14", "r17", "r23"]
+}

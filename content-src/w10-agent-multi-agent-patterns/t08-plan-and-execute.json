@@ -1,0 +1,94 @@
+{
+  "id": "w10-t08",
+  "order": 8,
+  "group": "Reasoning loops",
+  "title": "Plan-and-execute",
+  "minutes": 7,
+  "difficulty": "core",
+  "summary": "A planner writes the steps first, then an executor carries them out, often with cheaper calls and without reasoning after every tool result. A replan step handles surprises.",
+  "useIf": "Tool chains are fairly predictable, you want a reviewable plan before side effects, or token cost per run matters more than step-by-step flexibility.",
+  "avoidIf": "Each tool result changes what you should do next, or the environment shifts faster than a plan can stay valid.",
+  "explain": [
+    { "t": "p", "md": "**Plan-and-execute** splits thinking from doing. A planner produces an ordered list of steps; an executor runs them, usually one tool call or small subtask at a time; a replanner revises the remaining steps if a step fails or reveals new facts. Plan-and-Solve prompting was introduced to reduce the missing-step errors of zero-shot chain of thought by devising a plan first and then executing the subtasks [[r38]]. ReWOO goes further by decoupling reasoning from tool observations, so the plan can reference earlier results by placeholder and tools run without a model call between them. It reports 5x token efficiency and 4 percent higher accuracy on HotpotQA against interleaved reasoning [[r18]]." },
+    { "t": "diagram", "id": "w10-t08-d1", "title": "Plan, execute, replan", "alt": "A planner writes a plan, an executor runs each step, a check decides whether to continue, replan or finish.", "src": "flowchart LR\n  P[Planner: write steps] --> E[Executor: run next step]\n  E --> C{Result as expected?}\n  C -->|yes, more steps| E\n  C -->|surprise| R[Replan remaining steps]\n  R --> E\n  C -->|done| F[Final answer]" },
+    { "t": "p", "md": "The plan is also an artifact. You can show it to a user, store it, diff it and require approval before anything runs. Magentic orchestration in Microsoft Agent Framework builds on this idea with a task ledger and a flag for human review of the plan [[r10]]. The weakness is brittleness: a plan written before the first observation encodes assumptions that may be wrong, and a long plan executed blindly compounds a bad assumption. Replanning on failure, and short plans for uncertain tasks, are the usual defences." },
+    { "t": "callout", "kind": "tip", "title": "Reasoning models blur the line", "md": "OpenAI advises giving reasoning models a clear goal, constraints and an output contract instead of scripting every step [[r34]]. A strong reasoning model may plan internally. An explicit plan still helps when you need approval, audit or cheaper executors." }
+  ],
+  "whereToUse": [
+    "Multi-step API or data tasks with stable tool chains",
+    "Tasks that need a plan reviewed before any write or spend",
+    "Long jobs where a small model can execute steps a larger model planned",
+    "Reports and analyses that follow a known outline",
+    "Agents where token cost matters and tool results are small and checkable"
+  ],
+  "whenToUse": {
+    "use": ["Steps and tools are predictable enough to plan", "Someone needs to see or approve the plan first", "Execution steps are simple enough for a cheaper model"],
+    "avoid": ["Early observations usually overturn the plan", "The environment changes during execution", "The task is short enough that a plan is more tokens than the work"],
+    "flips": ["Replans happen on most runs: switch to ReAct", "Plans repeat across runs: freeze them as a workflow", "Steps need judgement mid-way: let the executor reason, not only call tools"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Plan-and-execute (this topic)", "Predictable chains, plan review, cost pressure", "Frequent surprises", "Stale plans, replan logic"],
+      ["ReAct", "Observations steer every step", "Predictable chains, tight cost", "Quadratic input growth"],
+      ["ReWOO style (plan with placeholders)", "Tool results need no reasoning between calls", "A result changes the plan", "Complex planner prompt [[r18]]"],
+      ["Workflow", "Steps fully fixed", "Inputs vary", "Branch growth"],
+      ["Magentic task ledger", "Open-ended multi-agent work needing a visible plan", "Time-sensitive or deterministic work [[r9]]", "Untested beyond its original design"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Step four fails because step two returned something the plan did not expect", "cause": "The plan assumed a result shape before seeing it", "fix": "Validate each step's result, replan the remainder on mismatch, and keep plans short for uncertain tasks." },
+    { "symptom": "The executor follows the plan after the goal has changed", "cause": "No replan trigger when the user or the facts change", "fix": "Check the plan against new input at each step boundary and replan on conflict." },
+    { "symptom": "Planning costs more than the work", "cause": "A large model writes a long plan for a three-call task", "fix": "Skip planning for short tasks, or use a small model with a template for the plan." }
+  ],
+  "scenarios": [
+    {
+      "id": "w10-t08-s1",
+      "title": "Stable chain, cost pressure",
+      "situation": "A nightly job reconciles records across four internal systems. The tool order is nearly always the same, tool results are small, and the bill is the concern.",
+      "constraints": ["Predictable tool chain", "Batch, so latency is relaxed", "Cost per run is monitored", "Read and write tools"],
+      "unknowns": ["How often does a step return something unexpected?", "Is approval needed before writes?"],
+      "question": "Which loop shape do you choose?",
+      "options": [
+        { "name": "Plan-and-execute with a cheap executor and replan on mismatch", "verdict": "best", "why": "Stable chains benefit from planning once and running cheaply. The replan path covers rare surprises.", "tradeoff": "More engineering than a simple loop, and the plan needs validation." },
+        { "name": "Plain ReAct on a large model", "verdict": "good", "why": "Works and adapts.", "tradeoff": "Pays for reasoning after every tool result when the chain rarely changes." },
+        { "name": "One huge prompt that does all four systems in one call", "verdict": "poor", "why": "Tool calls still need executing, and one call cannot react to a failed step.", "tradeoff": "Fine only for tasks with no tools, where one call can do the work." }
+      ],
+      "flips": [
+        { "if": "Reconciliation steps vary a lot per record", "then": "Use ReAct per record." },
+        { "if": "The chain is fully fixed", "then": "Replace the planner with a workflow in code." }
+      ],
+      "takeaway": "Plan once when the world is stable. Replan only when it is not."
+    },
+    {
+      "id": "w10-t08-s2",
+      "title": "Review before side effects",
+      "situation": "An agent will provision resources and send messages on a user's behalf. The user wants to see what it intends to do before anything happens. Runs are low volume.",
+      "constraints": ["Side effects cannot all be undone", "A human reviews before execution", "Low volume"],
+      "unknowns": ["Can the plan be shown in a readable form?", "What happens if the user edits a step?"],
+      "question": "How do you structure the run?",
+      "options": [
+        { "name": "Generate a plan, require approval, execute steps with checks and replan on failure", "verdict": "best", "why": "The plan is a reviewable artifact and approval happens before any side effect.", "tradeoff": "Added user friction and a plan that may need editing." },
+        { "name": "ReAct loop with an approval prompt on each write", "verdict": "good", "why": "Gates only the risky calls and adapts to results.", "tradeoff": "Many interruptions, and the user never sees the whole intent up front." },
+        { "name": "Autonomous loop with logging only", "verdict": "poor", "why": "Logs help after the fact but cannot undo messages already sent.", "tradeoff": "Right for read-only tasks or fully reversible actions." }
+      ],
+      "flips": [
+        { "if": "Actions are cheap and reversible", "then": "Drop plan approval and rely on audit and compensation." },
+        { "if": "Approval waits take hours", "then": "Persist the plan and run state durably so the wait costs nothing." }
+      ],
+      "takeaway": "A plan is the cheapest place to put a human."
+    }
+  ],
+  "quiz": [
+    { "id": "w10-t08-q1", "type": "single", "tag": "concept", "q": "What does ReWOO change compared with an interleaved reasoning loop?", "options": ["It decouples reasoning from tool observations, so tool calls run without a model call between them", "It removes tools from the agent", "It trains the model on each tool", "It runs all steps in parallel"], "answer": 0, "explain": "ReWOO plans with placeholders for tool results and runs tools without interleaved reasoning, reporting 5x token efficiency and 4 percent higher accuracy on HotpotQA. It still uses tools and is not inherently parallel. [[r18]]", "ref": "r18", "difficulty": 2 },
+    { "id": "w10-t08-q2", "type": "single", "tag": "flip", "q": "Replans occur on 70 percent of runs. What is the sensible change?", "options": ["Make plans longer", "Disable replanning", "Add a second planner", "Move toward a ReAct loop, since observations are steering the work"], "answer": 3, "explain": "Frequent replans show observations change the path, which is the ReAct case. Longer plans bake in more wrong assumptions, disabling replanning breaks failure handling and a second planner adds cost.", "difficulty": 2 }
+  ],
+  "flashcards": [
+    { "front": "What is the main weakness of plan-and-execute?", "back": "Brittleness. A plan written before the first observation can rest on wrong assumptions, so you need replanning and short plans for uncertain tasks." },
+    { "front": "What did ReWOO report?", "back": "5x token efficiency and 4 percent higher accuracy on HotpotQA versus interleaved reasoning, by decoupling reasoning from tool observations [[r18]]." },
+    { "front": "Why is a plan useful beyond cost?", "back": "It is an artifact you can show, store, diff and approve before side effects run." }
+  ],
+  "related": ["w10-l2", "w10-t07", "w10-t15", "w10-t22"],
+  "refs": ["r38", "r18", "r10", "r34"]
+}

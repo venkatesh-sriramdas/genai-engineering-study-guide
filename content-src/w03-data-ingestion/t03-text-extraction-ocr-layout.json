@@ -1,0 +1,115 @@
+{
+  "id": "w03-t03",
+  "order": 3,
+  "group": "Parsing",
+  "title": "Text extraction, OCR and layout analysis",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "Three ways to turn a file into text: read the embedded text layer, run OCR on page images, or run layout analysis that also recovers reading order, headings, tables and figures.",
+  "useIf": "Your files include scans, multi-column pages, tables or forms and you must decide how much parsing each document type deserves.",
+  "avoidIf": "Every file is clean born-digital text: a heavy parser adds cost and a new failure surface for no gain.",
+  "explain": [
+    { "t": "p", "md": "**Native extraction** reads the text layer already inside a born-digital PDF or Office file. It is fast and cheap, but it knows nothing about structure: columns can interleave and a table becomes a stream of cells. **OCR** reads pixels from scans and photos and returns text, still without structure. **Layout analysis** adds the structure: reading order, headings, tables, figures and selection marks." },
+    { "t": "p", "md": "Azure Document Intelligence layout v4.0 (`2024-11-30`, GA) returns Markdown when you set `outputContentFormat=markdown`, renders tables as HTML tables with merged cells and multi-row headers, shows selection marks as ☒ and ☐, flags handwriting per line in `styles` with a confidence, and describes figures with `boundingRegions`, `spans` and `elements`. For Word, Excel, PowerPoint and HTML it extracts embedded text only, not embedded images [[tr16]]." },
+    { "t": "p", "md": "Inside Azure AI Search, the Document Layout skill wraps that model. `outputFormat` is `markdown` (default) or `text`, `markdownHeaderDepth` runs from `h1` to `h6` (default `h6`) and `outputMode` is `oneToMany`. Its `chunkingProperties` apply only to `text` output. It times out when a document needs over 5 minutes, and a billable Foundry resource is required beyond 20 documents per indexer per day [[tr17]]. Service limits per request are 500 MB and 2,000 pages on S0 [[tr34]]." },
+    { "t": "p", "md": "Open-source parsers such as Docling (MIT-licensed code, runs locally, handles layout, reading order, tables and OCR for scans) cover the same ground when data cannot leave your network [[tr20]]. Quality varies by document type, which is why benchmarks such as OmniDocBench exist [[tr22]]. Treat the parser as a versioned dependency and test it on your own pages." },
+    { "t": "flow", "title": "Route each document to the cheapest parser that keeps its structure", "direction": "h", "steps": [
+      { "title": "Classify", "md": "Born-digital with a text layer, scan, or mixed. Count pages and tables.", "tag": "cheap" },
+      { "title": "Extract natively", "md": "Use the text layer for clean single-column files.", "tag": "text" },
+      { "title": "Analyse layout", "md": "Scans, columns, tables, forms and figures go to layout analysis with Markdown output.", "tag": "structure" },
+      { "title": "Check a sample", "md": "Compare against a labelled set per document type and pin the parser version.", "tag": "test" }
+    ] }
+  ],
+  "whereToUse": [
+    "Contracts, manuals and reports that mix prose, tables and figures and feed structure-aware chunking",
+    "Scanned archives where text is only available through OCR",
+    "Forms and invoices with selection marks and handwriting",
+    "Air-gapped or regulated environments that parse locally with an open-source tool",
+    "Pre-processing step before a Text Split or semantic chunking stage"
+  ],
+  "whenToUse": {
+    "use": [
+      "Use native extraction for clean born-digital single-column text",
+      "Use layout analysis when tables, columns, forms or figures carry meaning",
+      "Use OCR-only output when scans are plain text and you do not need structure",
+      "Use a local parser when data residency or an air gap forbids a cloud service"
+    ],
+    "avoid": [
+      "Avoid layout analysis on every file by default: it costs more per page and adds time",
+      "Avoid native extraction for multi-column or table-heavy PDFs without checking reading order",
+      "Avoid unpinned parser versions: a silent upgrade changes chunk text and your retrieval metrics"
+    ],
+    "flips": [
+      "Pages are mostly charts and slides: consider a vision model or page-image embeddings instead of text parsing",
+      "Volume is very high and data must stay local: open-source parsing on your own compute beats a per-page service",
+      "You need page coordinates for citations: pick a parser that returns regions such as `boundingRegions`"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Native text extraction", "Clean born-digital text", "Scans, columns, tables", "Cheapest, but reading order and tables can be wrong"],
+      ["OCR only", "Plain scanned text", "You need tables, headings or forms", "Text without structure, handwriting errors"],
+      ["Layout analysis (Document Intelligence)", "Tables, forms, figures, citations with regions", "Very high volume on a tight budget", "Per-page charges, 5 minute skill timeout"],
+      ["Open-source local parser (Docling, Unstructured)", "Air gap, high volume, full control", "You cannot run or tune models", "Compute and upgrade churn, pin versions"],
+      ["Vision model per page", "Charts and visual layouts", "You need deterministic output", "Cost and variability, see the vision topic"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "Parsing code that read `:selected:` tokens suddenly finds no checked boxes", "cause": "Layout v4.0 returns ☒ and ☐ and tables as HTML, not the older tokens", "fix": "Update the parser code, keep a regression set of forms" },
+    { "symptom": "Large PDFs fail or are billed without output", "cause": "The Document Layout skill times out after 5 minutes of layout work and is still charged when a Foundry resource is attached", "fix": "Split very long documents and filter by page count before the skill" },
+    { "symptom": "Answers mix two unrelated sentences", "cause": "Native extraction read a two-column page across the columns", "fix": "Use layout analysis for multi-column files and spot-check reading order" },
+    { "symptom": "Retrieval quality drops after a dependency bump", "cause": "The parser changed output (Docling v2.138.0 shipped 2026-10-12, Unstructured 0.27.25 on 2026-10-10) [[tr21]]", "fix": "Pin versions and run a parsing regression set before upgrading" }
+  ],
+  "scenarios": [
+    {
+      "id": "w03-t03-s1",
+      "title": "Mixed archive on a budget",
+      "situation": "A corpus of 300,000 files is mostly born-digital PDFs, with a smaller share of scans and some table-heavy reports. The budget is tight and answers must quote tables correctly.",
+      "constraints": ["Cost per page matters at this volume", "Tables must survive", "Cloud processing is allowed", "A labelled test set of 200 pages exists"],
+      "unknowns": ["What share of pages are scans or tables?", "Is page-level citation required?"],
+      "question": "How do you parse?",
+      "options": [
+        { "name": "Route by type: native text for clean PDFs, layout analysis for scans and table-heavy files", "verdict": "best", "why": "You spend per-page money only where structure matters and verify on the labelled set.", "tradeoff": "You build a classifier and maintain two paths." },
+        { "name": "Layout analysis for every file", "verdict": "good", "why": "One path with consistent Markdown output and tables everywhere.", "tradeoff": "Pays for structure on files that have none." },
+        { "name": "OCR-only text for every file", "verdict": "poor", "why": "It flattens tables and loses reading order, which breaks table questions.", "tradeoff": "Right for plain scanned prose with no tables." }
+      ],
+      "flips": [
+        { "if": "Most files turn out to contain tables", "then": "Layout analysis everywhere is simpler and not much dearer." },
+        { "if": "Budget is unlimited and uniform output is valued", "then": "A single layout path wins on simplicity." }
+      ],
+      "takeaway": "Route by document type and measure on a labelled sample."
+    },
+    {
+      "id": "w03-t03-s2",
+      "title": "Sensitive documents that cannot leave the network",
+      "situation": "A team must index internal reports that policy says cannot be sent to external cloud services. Volume is moderate and layout quality still matters.",
+      "constraints": ["No external cloud processing", "Layout and tables needed", "Engineers can run services on their own hosts", "Updates are monthly"],
+      "unknowns": ["What licences apply to the models the parser downloads?", "Is a GPU available?"],
+      "question": "Which parser approach fits?",
+      "options": [
+        { "name": "Local open-source parser such as Docling, pinned and regression tested", "verdict": "best", "why": "It runs locally, covers layout, tables and OCR, and the code is MIT licensed.", "tradeoff": "You own compute, upgrades and quality tuning, and model licences vary." },
+        { "name": "Native text extraction only", "verdict": "good", "why": "Local and cheap, and fine for born-digital text.", "tradeoff": "Tables and columns may be wrong, so answers about them degrade." },
+        { "name": "Cloud layout service with sample data", "verdict": "poor", "why": "It breaks the no-external-processing rule.", "tradeoff": "Right when residency and policy allow the service." }
+      ],
+      "flips": [
+        { "if": "A compliant private deployment of a managed service is approved", "then": "The managed layout service reduces operations." },
+        { "if": "Files are clean text only", "then": "Native extraction is enough." }
+      ],
+      "takeaway": "Residency can decide the parser before quality does."
+    }
+  ],
+  "quiz": [
+    { "id": "w03-t03-q1", "type": "single", "tag": "bug", "q": "After upgrading to layout v4.0 `2024-11-30` your checkbox parser returns nothing. What changed?", "options": ["Selection marks are now Unicode ☒ and ☐ and tables are HTML", "Checkboxes are returned only as images", "Selection marks were removed", "The output switched to JSON only"], "answer": 0, "explain": "v4.0 renders selection marks as ☒ and ☐ instead of `:selected:` and `:unselected:` tokens, and Markdown tables become HTML tables. The others are not documented behaviour.", "ref": "tr16" },
+    { "id": "w03-t03-q2", "type": "numeric", "tag": "numeric", "q": "A 5,300 page document must be split to stay under the 2,000 page S0 request limit. What is the minimum number of requests?", "answer": 3, "tolerancePct": 0, "unit": "requests", "explain": "5,300 divided by 2,000 is 2.65, so you need 3 requests. File size (500 MB) and the skill's 5 minute timeout also apply.", "ref": "tr34" },
+    { "id": "w03-t03-q3", "type": "multi", "tag": "tradeoff", "q": "Which signals argue for layout analysis over native extraction?", "options": ["Two-column pages", "Tables that carry the answer", "Plain single-column born-digital text", "Forms with checkboxes"], "answers": [0, 1, 3], "explain": "Columns, tables and forms depend on structure that a text layer lacks. Plain born-digital text is the case where native extraction is enough." }
+  ],
+  "flashcards": [
+    { "front": "How do you get Markdown from Document Intelligence layout?", "back": "Set `outputContentFormat=markdown` (v4.0 `2024-11-30`, GA). Tables come as HTML tables and selection marks as ☒ and ☐." },
+    { "front": "Document Layout skill: output formats and the timeout?", "back": "`outputFormat` is `markdown` (default) or `text`. Documents needing over 5 minutes in the layout model time out." },
+    { "front": "When does a local parser such as Docling beat a cloud layout service?", "back": "When data cannot leave your network or volume makes per-page pricing hard. You then own compute, upgrades and tuning." }
+  ],
+  "related": ["w03-t04", "w03-t05", "w04-t05", "w04-t11"],
+  "refs": ["tr16", "tr17", "tr20", "tr21", "tr22", "tr34", "tr36", "tr38"]
+}

@@ -1,0 +1,144 @@
+{
+  "id": "w09-t05",
+  "order": 5,
+  "group": "Protocol",
+  "title": "Message, Part and Artifact",
+  "minutes": 7,
+  "difficulty": "core",
+  "summary": "A Message carries communication between client and agent, a Part is the typed content container inside messages and artifacts, and an Artifact is a deliverable produced by a task.",
+  "useIf": "You design what a remote agent sends back and must decide what goes in a message, what goes in an artifact and which part type carries it.",
+  "avoidIf": "You put task results in status messages: the spec says messages are not a reliable delivery mechanism.",
+  "explain": [
+    { "t": "p", "md": "A `Message` has a `messageId`, a `role` (`ROLE_USER` or `ROLE_AGENT`), `parts`, and optional `taskId`, `contextId` and `referenceTaskIds`. A `Part` holds exactly one of `text`, `raw` (inline bytes, base64 in JSON), `url` (a reference) or `data` (any structured JSON value), plus `mediaType`, `filename` and `metadata`. An `Artifact` has an `artifactId`, optional `name` and `description`, and one or more parts [[r1]] [[tr2]]." },
+    { "t": "p", "md": "The spec separates **communication from output**. Messages carry instructions, questions, clarifications and status. Results SHOULD be returned as artifacts of a task. Not every message is persisted in task history, and a client that reconnects to a stream may miss status messages, so messages must not carry critical information [[r1]]. Streamed artifacts can arrive in chunks: `append` extends an earlier artifact with the same id and `lastChunk` marks the end [[r1]]." },
+    { "t": "code", "lang": "json", "title": "A completed task result: one artifact with two parts", "code": "{\n  \"id\": \"task-7\",\n  \"contextId\": \"ctx-1\",\n  \"status\": { \"state\": \"TASK_STATE_COMPLETED\" },\n  \"artifacts\": [\n    {\n      \"artifactId\": \"quote-1\",\n      \"name\": \"Quote\",\n      \"parts\": [\n        { \"text\": \"Quote ready for part 12345.\", \"mediaType\": \"text/plain\" },\n        { \"data\": { \"price\": 41.5, \"currency\": \"EUR\", \"leadDays\": 3 }, \"mediaType\": \"application/json\" }\n      ]\n    }\n  ]\n}", "caption": "Illustrative shape based on the v1.0 data model, not a captured response." },
+    { "t": "table", "caption": "Choosing a Part type [[r1]]", "head": ["Part field", "Carries", "Good for"], "rows": [
+      ["`text`", "Plain text", "Answers, summaries, short explanations"],
+      ["`data`", "Structured JSON", "Forms, quotes and results a program consumes"],
+      ["`url`", "A reference to content", "Large or protected files fetched separately"],
+      ["`raw`", "Inline bytes (base64 in JSON)", "Small images or files where one round trip matters"]
+    ] },
+    { "t": "p", "md": "The card's `defaultInputModes` and `defaultOutputModes` list the media types an agent accepts and produces, and an unsupported part type returns `ContentTypeNotSupportedError`. Foundry's incoming A2A endpoint supports only the **text** modality (checked 2026-10-13) [[r17]]." }
+  ],
+  "whereToUse": [
+    "Returning a generated report, image or dataset as a task artifact",
+    "Passing structured input such as a form or a parts list to a remote agent as a `data` part",
+    "Sending clarifying questions with `INPUT_REQUIRED` as a status message",
+    "Referencing large files by `url` so protocol payloads stay small",
+    "Declaring supported media types on the Agent Card so clients can negotiate"
+  ],
+  "whenToUse": {
+    "use": [
+      "Put results in artifacts and keep messages for questions, scoping and progress",
+      "Use `data` parts with `application/json` when a program consumes the result",
+      "Use `url` parts for large or access-controlled files"
+    ],
+    "avoid": [
+      "Do not hide the only copy of a result in a status message",
+      "Do not inline large files as base64 in streamed events",
+      "Do not omit `mediaType`: receivers should not have to guess"
+    ],
+    "flips": [
+      "Peer is a Foundry agent: stay with text parts, since only text is supported there",
+      "Files are small and the network round trip matters more than payload size: inline `raw` can win over `url`",
+      "A downstream system needs strict schemas: define the `data` shape in the skill description and test it"
+    ]
+  },
+  "alternatives": {
+    "title": "Where to put content",
+    "head": ["Choice", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Artifact with parts", "Deliverables and results", "Short conversational text", "Needs a task to hang off"],
+      ["Message with parts", "Questions, scoping and status", "Anything the client must keep", "May not be persisted or replayed [[r1]]"],
+      ["`url` part", "Large or protected files", "No fetchable URL or short-lived access", "Needs expiring authenticated links"],
+      ["`raw` part", "Small inline files", "Large content or streamed events", "Base64 inflates payloads by about a third"]
+    ]
+  },
+  "pitfalls": [
+    {
+      "symptom": "A client reconnects and the result it was waiting for is gone",
+      "cause": "The agent delivered the result only inside a status message, which can be missed after a disconnect",
+      "fix": "Return deliverables as artifacts and fetch them with `GetTask` after reconnecting [[r1]]"
+    },
+    {
+      "symptom": "Streaming slows and memory spikes on large outputs",
+      "cause": "Large files were sent as inline `raw` parts in events",
+      "fix": "Send a `url` part, or chunk artifacts with `append` and `lastChunk`"
+    },
+    {
+      "symptom": "The receiver misreads structured results",
+      "cause": "A JSON string was placed in a `text` part without a media type",
+      "fix": "Use a `data` part with `mediaType: application/json` and document the shape"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "w09-t05-s1",
+      "title": "A 40 MB report from a long-running job",
+      "situation": "A remote agent produces a 40 MB PDF after a 15-minute job. Callers sometimes disconnect before it finishes. The file is confidential.",
+      "constraints": ["Large, confidential file", "Callers may disconnect", "Result must be retrievable later"],
+      "unknowns": ["How long can the agent keep the file?", "Can links be authenticated and expiring?"],
+      "question": "How does the agent deliver the report?",
+      "options": [
+        { "name": "A task artifact with a `url` part pointing to an authenticated, expiring link", "verdict": "best", "why": "The result survives disconnects, stays out of the event stream and access can be controlled.", "tradeoff": "The agent must run file storage and issue links." },
+        { "name": "A task artifact with an inline `raw` part", "verdict": "good", "why": "A single self-contained response with no extra fetch.", "tradeoff": "A 40 MB file becomes about 53 MB of base64 in JSON." },
+        { "name": "Stream the bytes in status messages", "verdict": "poor", "why": "Status messages may be missed on reconnect and are not for deliverables.", "tradeoff": "Right only for transient progress text." }
+      ],
+      "flips": [
+        { "if": "The file is 50 KB", "then": "Inline `raw` is fine." },
+        { "if": "Callers cannot fetch URLs from the agent's domain", "then": "Chunk it as an artifact over the stream with `append` and `lastChunk`." }
+      ],
+      "takeaway": "Deliverables are artifacts, and big ones travel by reference."
+    },
+    {
+      "id": "w09-t05-s2",
+      "title": "A structured quote consumed by code",
+      "situation": "An order-processing agent calls a supplier agent for quotes and parses the price, currency and lead time programmatically. Quotes must be reproducible in audits.",
+      "constraints": ["Machine consumer", "Audit needs reproducible results", "Schema stability required"],
+      "unknowns": ["Does the supplier version its output schema?", "Is a human summary also needed?"],
+      "question": "How should the supplier return the quote?",
+      "options": [
+        { "name": "An artifact with a `data` part (`application/json`) and an optional text part for humans", "verdict": "best", "why": "Typed fields for code, a retained artifact for audits and a readable summary alongside.", "tradeoff": "Both sides must agree on and version the JSON shape." },
+        { "name": "JSON inside a `text` part", "verdict": "good", "why": "Works with text-only peers and needs no extra modality.", "tradeoff": "Parsing is fragile and the media type does not say it is JSON." },
+        { "name": "A status message sentence the caller parses with an LLM", "verdict": "poor", "why": "Non-deterministic parsing of a message that may not be persisted.", "tradeoff": "Fine for a human chat summary, not for money." }
+      ],
+      "flips": [
+        { "if": "The peer is Foundry and supports only text", "then": "Use JSON in a text part with a documented shape." },
+        { "if": "Only a human reads the quote", "then": "A text part is enough." }
+      ],
+      "takeaway": "Machines get `data`, humans get `text`."
+    }
+  ],
+  "quiz": [
+    {
+      "id": "w09-t05-q1",
+      "type": "single",
+      "tag": "concept",
+      "q": "Where should an agent return the deliverable of a task?",
+      "options": [
+        "In a status message on the task",
+        "In the Agent Card",
+        "As an artifact of the task",
+        "In the `metadata` of the next request"
+      ],
+      "answer": 2,
+      "explain": "The spec says results SHOULD be artifacts and messages are for communication. Status messages may not be persisted or replayed, the card describes the agent and request metadata is not a result channel."
+    },
+    {
+      "id": "w09-t05-q2",
+      "type": "multi",
+      "tag": "concept",
+      "q": "A `Part` holds exactly one of which content fields? Select all that apply.",
+      "options": ["`text`", "`raw`", "`artifactId`", "`url`"],
+      "answers": [0, 1, 3],
+      "explain": "The content fields are `text`, `raw`, `url` and `data`. `artifactId` identifies an artifact and is not a part field."
+    }
+  ],
+  "flashcards": [
+    { "front": "What is the difference between a Message and an Artifact in A2A?", "back": "Messages carry communication: questions, scoping and status. Artifacts carry task deliverables. Results SHOULD be artifacts." },
+    { "front": "Which four content fields can a Part use?", "back": "Exactly one of `text`, `raw`, `url` or `data`, plus `mediaType`, `filename` and `metadata`." },
+    { "front": "What do `append` and `lastChunk` do on an artifact update?", "back": "`append` extends an earlier artifact with the same id. `lastChunk` marks the final chunk, so large artifacts can stream." }
+  ],
+  "related": ["w09-t04", "w09-t06", "w09-l03", "w13-t01"],
+  "refs": ["r1", "r17", "tr2"]
+}

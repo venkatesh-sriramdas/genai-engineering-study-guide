@@ -1,0 +1,112 @@
+{
+  "id": "w01-t01",
+  "order": 1,
+  "group": "Model basics",
+  "title": "Tokens and tokenization",
+  "minutes": 7,
+  "difficulty": "core",
+  "summary": "Models read and bill in tokens, which are pieces of text produced by a tokenizer. Counts differ by model family, language, content type and tool definitions.",
+  "useIf": "You budget cost, context or latency, migrate between model families, or debug a prompt that is longer than it looks.",
+  "avoidIf": "You only need a rough idea and the margin of error does not matter. Even then, never reuse a count from another model family.",
+  "explain": [
+    { "t": "p", "md": "A **token** is a unit the model reads and writes. A tokenizer, usually based on byte-pair encoding, splits text into pieces learned from a training corpus [[r28]]. Common words become one token. Rare words, numbers, code and many non-English scripts split into more pieces, so the same meaning can cost more tokens in another language. Treat that as something to measure, not to assume." },
+    { "t": "p", "md": "Counts are **not portable**. Claude Opus 4.7 and later use a newer tokenizer that produces roughly 30% more tokens for the same text, and the exact rise depends on the content [[r30]]. On that tokenizer 1M tokens is about 555,000 words or 2.5M Unicode characters, against about 750,000 words before (estimates). Input, output and reasoning tokens all bill, and tool definitions, images and documents count too [[r20]]." },
+    { "t": "table", "caption": "Ways to count tokens", "head": ["Method", "Exact?", "Covers images, files, tools?", "Watch for"], "rows": [
+      ["OpenAI `POST /v1/responses/input_tokens`", "Exact, includes role and boundary tokens", "Yes, takes Responses-style input", "Counts for the model you name only [[r29]]"],
+      ["Anthropic `POST /v1/messages/count_tokens`", "Estimate, can differ slightly", "Yes, but errors for server tools and the MCP connector", "May include system-added tokens that are not billed [[r30]]"],
+      ["Local `tiktoken`", "Exact for its encodings", "Plain text only", "`o200k_base` and `cl100k_base` exist. Which one GPT-5 and GPT-6 use is unverified [[tr4]]"],
+      ["Characters divided by 4", "No", "No", "Wrong for images, files and tools"]
+    ] },
+    { "t": "callout", "kind": "gotcha", "title": "Tool definitions are input tokens", "md": "OpenAI injects function definitions into the system message, so they count against context and bill as input. The function-calling guide suggests fewer than 20 functions at the start of a turn (soft advice) and `tool_search` with `defer_loading` for large catalogs on gpt-5.4 and later [[r9]]." }
+  ],
+  "whereToUse": [
+    "Cost forecasts: multiply counted tokens by the price per million tokens, input and output separately",
+    "Context budgeting before you assemble retrieved chunks, history and tool definitions",
+    "Migrations between model families, where the tokenizer changes the budget",
+    "Rate-limit planning, because limits are usually expressed in tokens per minute",
+    "Debugging unexpectedly long prompts, such as a pasted table or an image-heavy file"
+  ],
+  "whenToUse": {
+    "use": [
+      "You must predict cost or fit a window and need an exact count",
+      "Your workload mixes languages, code or numbers",
+      "You pass tools, images or PDFs, which a text counter ignores",
+      "You switch vendors or model generations"
+    ],
+    "avoid": [
+      "Using a local tokenizer count for a vendor that does not publish that tokenizer",
+      "Counting once and reusing the number after the prompt template changes",
+      "Spending hours on tokenizer detail when a 10% error does not change the decision"
+    ],
+    "flips": [
+      "The workload is image or file heavy: use the vendor's counting endpoint, not a text tokenizer",
+      "A prompt must fit a hard window: count on the target model with production-shaped payloads",
+      "Volume is small and cost is tiny: an estimate is enough"
+    ]
+  },
+  "alternatives": {
+    "title": "Choosing a counting method",
+    "head": ["Method", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Vendor counting endpoint", "You need the exact figure for tools, images and files", "You count millions of items, since each count is a network call", "Latency, rate limits, and Anthropic server tools are rejected"],
+      ["Local tokenizer library", "Plain text at volume, offline", "The model is not covered or content is not text", "Silent error for other vendors"],
+      ["Read `usage` from real responses", "You want billed truth after the fact", "You must know before you send", "Only available after the spend"],
+      ["Characters divided by 4", "A back-of-envelope sizing", "Any decision with a margin under 30%", "Misleads for non-English text, code, images and tools"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A prompt that fit on one vendor overflows after migration", "cause": "The new tokenizer produces more tokens for the same text", "fix": "Recount real prompts on the target model and leave headroom, about 30% for the Claude change" },
+    { "symptom": "Cost forecast is off by a wide margin", "cause": "The estimate ignored tool definitions, system text and reasoning tokens", "fix": "Count full requests, then compare with the `usage` field from sampled production calls" },
+    { "symptom": "Counting a request with a server tool fails on Anthropic", "cause": "`count_tokens` returns `invalid_request_error` for web search, web fetch, code execution and tool search", "fix": "Count the request without those tools, then add an allowance based on observed usage" }
+  ],
+  "scenarios": [
+    {
+      "id": "w01-t01-s1",
+      "title": "Migrating a long prompt to a newer Claude model",
+      "situation": "A prompt of 780,000 tokens on an earlier Claude model must run on Claude Opus 5.5, which has a 1M window. Quality tests pass.",
+      "constraints": ["Window on the target is 1M tokens", "Prompts vary in content", "A production release is two weeks away"],
+      "unknowns": ["How much do real prompts grow on the new tokenizer?", "Is the long-context price step applicable on the target?"],
+      "question": "How do you confirm it fits?",
+      "options": [
+        { "name": "Recount a sample of real prompts on the target with its counting endpoint and size headroom from the worst case", "verdict": "best", "why": "The newer tokenizer can add roughly 30% and the rise depends on content, so only target-model counts settle it [[r30]].", "tradeoff": "Costs a batch of count calls and some engineering time." },
+        { "name": "Assume it fits because the window is larger", "verdict": "poor", "why": "A 30% rise on 780,000 tokens is about 1,014,000, which already exceeds 1M.", "tradeoff": "Fine only when prompts are far below the window and growth cannot reach it." },
+        { "name": "Count locally with `tiktoken` and add 10%", "verdict": "good", "why": "Cheap and offline.", "tradeoff": "`tiktoken` is not the Claude tokenizer, so the number is only a rough proxy." }
+      ],
+      "flips": [
+        { "if": "Prompts are at most 300,000 tokens", "then": "A 30% rise still fits with room to spare, so an estimate is enough." },
+        { "if": "Prompts contain images or PDFs", "then": "Use the counting endpoint, since local text counters ignore them." }
+      ],
+      "takeaway": "Count on the model you will call, with production-shaped input."
+    },
+    {
+      "id": "w01-t01-s2",
+      "title": "Forecasting a nightly summarisation job",
+      "situation": "A batch job will summarise two million documents a night. Finance wants a monthly estimate in a week. Documents are plain text in three languages.",
+      "constraints": ["Plain text only", "High volume", "Three languages", "Estimate needed within a week"],
+      "unknowns": ["Token counts per language for the chosen model", "Output length target"],
+      "question": "How do you build the estimate?",
+      "options": [
+        { "name": "Characters divided by 4 for all three languages", "verdict": "poor", "why": "Languages and scripts split into different numbers of tokens, so one ratio misstates at least two of them.", "tradeoff": "Acceptable as a first sketch before any sample exists." },
+        { "name": "Sample documents per language, count with a local tokenizer that matches the model, extrapolate with a margin, then check against `usage` in a pilot", "verdict": "good", "why": "Cheap at volume and language aware.", "tradeoff": "Only as accurate as the match between the tokenizer and the model." },
+        { "name": "Sample per language, count with the vendor endpoint for the target model, extrapolate, then verify with a one-night pilot", "verdict": "best", "why": "Per-language samples capture the language effect and the vendor endpoint matches billing.", "tradeoff": "More calls and a pilot to run before the final number." }
+      ],
+      "flips": [
+        { "if": "Several model families are candidates", "then": "Repeat the sample count per model, since tokenizers differ." },
+        { "if": "Volume is small", "then": "Use a single estimate and revisit after real usage appears." }
+      ],
+      "takeaway": "Sample by language, count on the target, confirm with a pilot."
+    }
+  ],
+  "quiz": [
+    { "id": "w01-t01-q1", "type": "numeric", "tag": "numeric", "q": "A prompt is 600,000 tokens on an earlier Claude tokenizer. The newer tokenizer yields about 30% more tokens for the same text. How many tokens should you plan for?", "answer": 780000, "tolerancePct": 3, "unit": "tokens", "explain": "600,000 x 1.30 = 780,000 tokens. The 30% is a vendor estimate that varies with content, so size headroom above this figure [[r30]]." },
+    { "id": "w01-t01-q2", "type": "single", "tag": "concept", "q": "Which statement about counting tokens for a request that includes images and tool definitions is correct?", "options": ["A local text tokenizer gives the exact count", "Characters divided by 4 is accurate enough", "The vendor's counting endpoint for the target model is the reliable source", "Images do not count toward context"], "answer": 2, "explain": "Images, files and tool definitions count, and a text-only tokenizer ignores them. Characters divided by 4 is wrong for them as well." },
+    { "id": "w01-t01-q3", "type": "multi", "tag": "diagnose", "q": "A prompt is longer than expected. Which are likely causes?", "options": ["Tool definitions were added to the request", "A non-English or code-heavy section tokenizes into more pieces", "Temperature was raised", "A newer tokenizer produces more tokens for the same text"], "answers": [0, 1, 3], "explain": "Tool definitions, script and content type, and a tokenizer change all raise counts. Temperature affects sampling, not input length." }
+  ],
+  "flashcards": [
+    { "front": "Why can't you reuse a token count across vendors?", "back": "Each model family has its own tokenizer. Claude Opus 4.7 and later yield about 30% more tokens than earlier Claude models for the same text." },
+    { "front": "Which OpenAI endpoint returns an exact input count?", "back": "`POST /v1/responses/input_tokens`, which takes Responses-style input and includes role and boundary tokens." },
+    { "front": "What do tool definitions do to a request?", "back": "They are injected as input text, count against context and bill as input tokens." }
+  ],
+  "related": ["w01-t02", "w01-t09", "w01-l1", "w02-t11", "w16-t01"],
+  "refs": ["r28", "r29", "r30", "r20", "r9", "tr4"]
+}

@@ -1,0 +1,94 @@
+{
+  "id": "w08-t03",
+  "order": 3,
+  "group": "Foundations",
+  "title": "Resources and resource templates",
+  "minutes": 7,
+  "difficulty": "core",
+  "summary": "Resources are context data a server exposes by URI. The host application decides what to attach, and resource templates let it address a whole family of items with a URI pattern.",
+  "useIf": "You have documents, schemas, files or records that a host or user should be able to browse and attach as context.",
+  "avoidIf": "The model must decide on its own which data to fetch and when, since nothing attaches a resource unless the host does.",
+  "explain": [
+    { "t": "p", "md": "A **resource** is addressed by a URI such as `file:///project/src/main.rs` or an `https://` URL. Resources are **application-controlled**: the host might show a picker, let users search, or include items by heuristics. The model does not see a resource unless the host attaches it [[tr1]]." },
+    { "t": "p", "md": "A server declares the `resources` capability with two optional flags: `listChanged` (the list can change) and `subscribe` (individual resources can be watched). Clients call `resources/list` and `resources/read`. Results in 2026-07-28 carry `ttlMs` and `cacheScope`. A `resources/read` MAY also return an `input_required` result when the server needs more input." },
+    { "t": "p", "md": "A **resource template** uses an RFC 6570 URI template, for example `file:///{path}`, listed with `resources/templates/list`. Arguments can be auto-completed through `completion/complete`, which returns at most 100 items [[tr9]]. A missing resource returns `-32602` in 2026-07-28, where earlier revisions used `-32002` [[r1]]." },
+    { "t": "diagram", "id": "w08-t03-d1", "title": "Browse, read and watch (2026-07-28)", "alt": "The client lists templates, reads a resource, then opens a subscriptions listen stream with resourceSubscriptions and receives updated notifications, then re-reads.", "src": "sequenceDiagram\n  participant C as Client\n  participant S as Server\n  C->>S: resources/templates/list\n  S-->>C: uriTemplate, ttlMs\n  C->>S: resources/read uri\n  S-->>C: contents, cacheScope\n  C->>S: subscriptions/listen resourceSubscriptions\n  S--)C: notifications/resources/updated\n  C->>S: resources/read uri" },
+    { "t": "callout", "kind": "note", "title": "Subscriptions changed", "md": "In 2025-11-25 a client sent `resources/subscribe` inside a session. In 2026-07-28 that request is gone. Clients open one `subscriptions/listen` stream and name URIs in `resourceSubscriptions`, and updates carry an `io.modelcontextprotocol/subscriptionId` [[tr7]]." },
+    { "t": "callout", "kind": "gotcha", "title": "Per-user lists are allowed, per-connection lists are not", "md": "Lists MUST NOT vary per connection, but MAY vary by the authorization on the request. Use `cacheScope: private` for results that depend on the caller so shared caches never cross users [[tr6]]." }
+  ],
+  "whereToUse": [
+    "An IDE attaching files, schemas or git history that the user selects",
+    "A knowledge base exposed as browsable documents behind a template such as `kb:///{space}/{page}`",
+    "Database schemas and API specs that coding agents should read as context",
+    "Targets of `resource_link` blocks that tools return instead of large payloads"
+  ],
+  "whenToUse": {
+    "use": ["A person or host decides what to attach", "The content is addressable by a stable URI", "You want change notifications without the model polling", "Large content should be fetched only on demand"],
+    "avoid": ["The model must discover relevant data itself and the host cannot attach it", "The data needs a computed answer rather than a stored document", "Every read must trigger a side effect"],
+    "flips": ["The model must find the right item: add a search tool that returns resource links", "Hosts do not surface resources: expose the same data through a read tool"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Resource or template", "Host or user attaches known context", "Model must choose what to fetch", "Invisible unless the host attaches it"],
+      ["Read tool", "Model-driven access, any host", "Data should be user-selected", "Tokens for the definition and each call"],
+      ["Resource link from a tool", "Large results referenced by URI", "Client cannot follow links", "Extra read round trip"],
+      ["RAG over the same data", "Semantic search over a large corpus", "You need exact, addressable items", "Index, chunking and freshness work"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "The agent never reads the policy documents the team published", "cause": "They were exposed only as resources and nothing attached them for the model", "fix": "Have the host attach them, add a search tool, or return resource links from tools. Verify with traces that show reads of those URIs" },
+    { "symptom": "One user sees another user's cached document", "cause": "A user-specific `resources/read` result was cached as `public`", "fix": "Mark user-dependent results `private` and key caches by authorization context" },
+    { "symptom": "Clients get `-32002` on a missing resource and handle it wrongly", "cause": "The error code changed to `-32602` in 2026-07-28", "fix": "Handle both codes while dual-era clients exist" }
+  ],
+  "scenarios": [
+    {
+      "id": "w08-t03-s1",
+      "title": "Attaching project files in an IDE",
+      "situation": "An IDE host lets users pick files to give to the assistant. A code server could expose files by path. Repositories are large and users know what they want.",
+      "constraints": ["User selects the context", "Large corpus", "Local server"],
+      "unknowns": ["Does the host offer a picker for resources?", "Should the model also find files on its own?"],
+      "question": "How should the server expose files?",
+      "options": [
+        { "name": "A `file:///{path}` resource template with path completion", "verdict": "best", "why": "The user or host addresses any file by URI and only attached content enters context.", "tradeoff": "The model cannot discover files unless the host or a search tool helps." },
+        { "name": "A `read_file` tool only", "verdict": "good", "why": "Works in every host and lets the model choose files itself.", "tradeoff": "Pays tool-definition tokens and loses the user-driven picker." },
+        { "name": "Put the whole repository into the system prompt", "verdict": "poor", "why": "It burns context on files the task does not need.", "tradeoff": "Reasonable only for a tiny repository." }
+      ],
+      "flips": [
+        { "if": "Users expect the agent to explore unprompted", "then": "Add a search tool that returns `resource_link` blocks." },
+        { "if": "The host does not support resources", "then": "Expose a read tool." }
+      ],
+      "takeaway": "Resources fit user-selected context, tools fit model-driven access."
+    },
+    {
+      "id": "w08-t03-s2",
+      "title": "Per-user documents behind a shared cache",
+      "situation": "A remote server returns documents the caller may see. A shared caching gateway sits in front of several hosts. Permissions differ per user.",
+      "constraints": ["Permissions are per user", "Shared cache layer", "Reads are frequent"],
+      "unknowns": ["How fast must revocation take effect?", "Can the gateway key its cache by token?"],
+      "question": "How do you set the caching hints on `resources/read`?",
+      "options": [
+        { "name": "`cacheScope: private` with a short `ttlMs`", "verdict": "best", "why": "Responses may be reused only within the same authorization context, so no cross-user leak, and a short TTL bounds revocation lag.", "tradeoff": "Lower hit rate than a public cache." },
+        { "name": "`ttlMs: 0` everywhere", "verdict": "good", "why": "Always fresh and safe.", "tradeoff": "Every read reaches the origin and cost and latency rise." },
+        { "name": "`cacheScope: public` with a long TTL", "verdict": "poor", "why": "Any user could receive another user's cached content.", "tradeoff": "Right only for content identical for everyone, such as shared templates." }
+      ],
+      "flips": [
+        { "if": "The documents are public and identical for all callers", "then": "Use `public` with a longer TTL." },
+        { "if": "Revocation must be immediate", "then": "Keep TTL at 0 and rely on live authorization checks." }
+      ],
+      "takeaway": "Match cache scope to who may see the bytes."
+    }
+  ],
+  "quiz": [
+    { "id": "w08-t03-q1", "type": "single", "tag": "concept", "q": "What does it mean that resources are application-controlled?", "options": ["The model calls them with arguments", "The host decides what to attach as context", "The server decides when to push them to users", "They are always loaded at connection start"], "answer": 1, "explain": "The host app, often through a picker or heuristics, chooses what enters context. The model-called pattern describes tools, servers do not push context into prompts, and nothing loads at start by default." },
+    { "id": "w08-t03-q2", "type": "order", "tag": "order", "q": "Put the steps in order for browsing a templated resource and watching it in 2026-07-28.", "items": ["`resources/templates/list`", "`completion/complete` for a template variable", "`resources/read`", "`subscriptions/listen` with `resourceSubscriptions`"], "explain": "The client discovers templates, optionally completes a variable, reads the resource and then opens a listen stream naming the URI to be told when it changes." }
+  ],
+  "flashcards": [
+    { "front": "Why can a published resource go unused by an agent?", "back": "Resources are application-controlled. Unless the host attaches them or a tool links to them, the model never sees them." },
+    { "front": "How are resource subscriptions done in 2026-07-28?", "back": "Through `subscriptions/listen` with `resourceSubscriptions`. The old `resources/subscribe` request was removed." },
+    { "front": "What is a resource template?", "back": "An RFC 6570 URI template such as `file:///{path}`, listed via `resources/templates/list`, with optional argument completion (up to 100 items)." }
+  ],
+  "related": ["w08-t02", "w08-t04", "w08-t10", "w08-l01"],
+  "refs": ["tr1", "r28", "tr6", "tr7", "tr9", "r1"]
+}

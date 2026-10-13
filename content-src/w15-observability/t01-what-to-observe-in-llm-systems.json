@@ -1,0 +1,149 @@
+{
+  "id": "w15-t01",
+  "order": 1,
+  "group": "Foundations",
+  "title": "What to observe in LLM systems",
+  "minutes": 7,
+  "difficulty": "core",
+  "summary": "LLM systems fail quietly: the request succeeds, the text is fluent and the content is wrong. Observability records the shape of every run (spans, tokens, finish reasons, tool calls) and treats content as a separate, governed decision.",
+  "useIf": "You operate, or are about to operate, a model-backed feature and need to explain wrong answers, slow runs and surprising bills.",
+  "avoidIf": "You expect status codes and error rates alone to tell you whether the system works.",
+  "explain": [
+    { "t": "p", "md": "A classic service fails loudly with a 500, a timeout or an exception. An LLM system usually returns 200. Error rates stay flat while answer quality drops, cost scales with tokens, latency depends on how many model and tool calls a run made, and the evidence you need to debug (the prompt, the retrieved text, the tool result) is also the data you must protect. That is why observability here has more jobs than uptime." },
+    { "t": "table", "caption": "What changes compared with a classic service", "head": ["Question", "Classic service", "LLM or agent system", "Signal that answers it"], "rows": [
+      ["Did it fail?", "Status code, exception", "Often no: 200 with a wrong answer", "Online quality scores, user feedback"],
+      ["Why was it slow?", "One request path", "Several model and tool calls per run, plus waits", "Nested spans, `gen_ai.invoke_agent.inference_calls` and `.tool_calls`"],
+      ["What did it cost?", "Per request, stable", "Per token, varies with context, cache and reasoning", "Token usage counters by model and agent"],
+      ["What happened inside?", "Logs and stack traces", "Prompts, retrieved chunks, tool arguments and results", "Opt-in content capture, held outside the span"],
+      ["Is it drifting?", "Rare", "Model, prompt or data changes shift quality silently", "Sampled online evaluation, scheduled test sets"]
+    ] },
+    { "t": "p", "md": "The OpenTelemetry GenAI conventions give a shared vocabulary for the shape: spans such as `chat`, `invoke_agent` and `execute_tool`, token and duration metrics, and opt-in content attributes. All of them carry the status **Development** as of 2026-10-13, so pin versions and expect renames [[r1]]. Agent Framework emits these spans and metrics for you once telemetry is on [[r10]], and Foundry can collect traces server-side into Application Insights [[r12]]." },
+    { "t": "callout", "kind": "why", "title": "Shape first, content second", "md": "Spans, token counts, finish reasons and tool-call counts rarely contain personal data and answer most operational questions. Prompts and outputs answer the rest but need consent, redaction, retention limits and access control. Decide them separately (see content capture, redaction and privacy)." }
+  ],
+  "whereToUse": [
+    "A support assistant whose answers are fluent but sometimes wrong and nobody can say why",
+    "An agent platform where one user request fans out into many model and tool calls",
+    "A cost review after a token bill rose without a matching traffic increase",
+    "A release gate that needs to know whether a prompt change moved quality or latency",
+    "An incident where a downstream tool or MCP server failed silently inside an agent run"
+  ],
+  "whenToUse": {
+    "use": [
+      "Trace every agent run end to end with model, tool and agent spans before launch",
+      "Emit token and duration metrics, which are not sampled, for dashboards and alerts",
+      "Score a sample of live traffic for quality so silent failures become visible"
+    ],
+    "avoid": [
+      "Do not rely on HTTP error rates as the health signal for answer quality",
+      "Do not capture prompts and outputs everywhere by default",
+      "Do not build dashboards on metric names you have not checked against what your build emits"
+    ],
+    "flips": [
+      "Data is regulated: keep shape signals in the main pipeline and move content to a separate, access-controlled store",
+      "Traffic is tiny and non-critical: console or local traces may be enough until you launch",
+      "Quality matters more than uptime for the feature: invest in online scoring before extra infrastructure dashboards"
+    ]
+  },
+  "alternatives": {
+    "title": "Ways to find out what happened",
+    "head": ["Approach", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Traces and metrics (this chapter)", "You need run structure, latency and cost per step", "You need to read the actual text", "Needs instrumentation and a backend"],
+      ["Application logs of prompts and outputs", "A prototype with synthetic data", "Real users, regulated data or high volume", "Leaks personal data, hard to correlate across hops"],
+      ["Periodic offline evaluation only", "Release gating on a golden set", "Live drift and unseen inputs", "Blind between test runs"],
+      ["User feedback only", "Cheap signal of real dissatisfaction", "Silent errors that users do not notice", "Sparse, biased and slow"]
+    ]
+  },
+  "pitfalls": [
+    {
+      "symptom": "The answer was wrong, yet every span is green and the error rate is flat",
+      "cause": "Only transport status was monitored, and quality is a semantic property",
+      "fix": "Add run-level attributes (finish reasons, tool-call counts) and sampled online quality scores"
+    },
+    {
+      "symptom": "A cost panel disagrees with the provider bill",
+      "cause": "Cached and reasoning tokens were added on top of input and output totals, or sampled spans were summed",
+      "fix": "Treat cached and reasoning counts as subsets and build totals from unsampled counters [[r5]]"
+    },
+    {
+      "symptom": "Debugging requires prompts that nobody is allowed to store",
+      "cause": "Content capture was an all-or-nothing switch",
+      "fix": "Store content in a governed external store and keep references on spans [[r4]]"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "w15-t01-s1",
+      "title": "Fluent but wrong, and no way to say why",
+      "situation": "A support assistant sometimes quotes the wrong policy. Error rates and latency are normal. The team has only HTTP logs. Customer data is involved and legal has not approved storing prompts.",
+      "constraints": ["Personal data in prompts", "No approval to store content yet", "Quality problem, not an outage"],
+      "unknowns": ["How many model and tool calls does a run make?", "Is retrieval the suspect or the model?", "Can a restricted store hold content later?"],
+      "question": "What do you add first?",
+      "options": [
+        { "name": "Run traces with agent, model, retrieval and tool spans plus finish reasons and token counts, content off", "verdict": "best", "why": "It shows which step ran, how long it took and whether retrieval returned anything, without storing text.", "tradeoff": "You cannot read the wrong answer itself until a governed content store is approved." },
+        { "name": "Log full prompts and answers to the application log", "verdict": "poor", "why": "It stores customer data without approval and is hard to correlate across steps.", "tradeoff": "Fine for a lab with synthetic data." },
+        { "name": "Add a weekly offline evaluation run", "verdict": "good", "why": "It measures quality on a golden set and catches regressions.", "tradeoff": "It does not explain live failures or see unseen inputs." }
+      ],
+      "flips": [
+        { "if": "Legal approves a restricted store with short retention", "then": "Add content capture by reference for sampled and failed runs." },
+        { "if": "The data is synthetic or internal only", "then": "Capture content on spans in non-production." }
+      ],
+      "takeaway": "Start with run shape, which is safe and answers most questions."
+    },
+    {
+      "id": "w15-t01-s2",
+      "title": "The bill doubled while traffic did not",
+      "situation": "Monthly token spend doubled. Request volume grew 10 percent. Three teams share one model deployment through a gateway.",
+      "constraints": ["Shared deployment", "Spend moved, traffic did not", "Need attribution by team and agent"],
+      "unknowns": ["Did context length or reasoning usage grow?", "Did a cache stop hitting?", "Which agent loops more?"],
+      "question": "Which signal do you build first?",
+      "options": [
+        { "name": "Token usage counters by model and agent, plus inference-call counts per run", "verdict": "best", "why": "Counters are unsampled and show whether tokens per call or calls per run rose.", "tradeoff": "Needs careful dimension choices to avoid cardinality blowups." },
+        { "name": "Sampled trace review", "verdict": "good", "why": "Good for explaining a spike once you know where to look.", "tradeoff": "Sampling distorts totals." },
+        { "name": "Request-count dashboard", "verdict": "poor", "why": "Requests barely changed, so it cannot explain the spike.", "tradeoff": "Useful as a denominator for tokens per request." }
+      ],
+      "flips": [
+        { "if": "Teams share a gateway", "then": "Emit token metrics at the gateway with a team dimension." },
+        { "if": "One agent shows rising calls per run", "then": "Inspect its traces for a loop or retry storm." }
+      ],
+      "takeaway": "Use unsampled counters for totals and traces for explanations."
+    }
+  ],
+  "quiz": [
+    {
+      "id": "w15-t01-q1",
+      "type": "single",
+      "tag": "concept",
+      "q": "Why can an LLM feature be broken while its error rate and latency look healthy?",
+      "options": [
+        "The request returns success even when the answer is wrong, so quality needs its own signals",
+        "LLM calls never raise exceptions",
+        "Latency does not matter for LLM systems",
+        "Token counts hide the error rate"
+      ],
+      "answer": 0,
+      "explain": "Transport success says nothing about semantic correctness, so you need online quality scoring and run-level signals. LLM clients do raise errors, latency does matter and token counts are unrelated to error rates."
+    },
+    {
+      "id": "w15-t01-q2",
+      "type": "multi",
+      "tag": "tradeoff",
+      "q": "Which signals are generally safe to collect for every run without storing user content? Select all that apply.",
+      "options": [
+        "Token usage counts and finish reasons",
+        "Tool-call counts and durations",
+        "Full prompt and response text on every span",
+        "Agent, model and tool span names and durations"
+      ],
+      "answers": [0, 1, 3],
+      "explain": "Shape signals (counts, durations, names, finish reasons) rarely contain personal data. Full prompts and responses are the sensitive part and are opt-in under the GenAI conventions."
+    }
+  ],
+  "flashcards": [
+    { "front": "Why is HTTP success not enough for an LLM feature?", "back": "A 200 response can carry a fluent but wrong answer. You need run-level signals and sampled quality scoring as well." },
+    { "front": "Which signals describe the shape of a run?", "back": "Spans for agent, model and tool steps, token usage, durations, finish reasons and tool-call counts." },
+    { "front": "What is the status of the OpenTelemetry GenAI conventions as of 2026-10-13?", "back": "Development. They moved to the semantic-conventions-genai repository on 2026-05-05, so pin versions and expect renames." }
+  ],
+  "related": ["w15-t02", "w15-t03", "w15-t06", "w15-t11", "w14-t01", "w14-t02"],
+  "refs": ["r1", "r4", "r5", "r10", "r12"]
+}

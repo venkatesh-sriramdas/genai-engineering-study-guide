@@ -1,0 +1,118 @@
+{
+  "id": "w16-t08",
+  "order": 8,
+  "group": "Gateway and resilience",
+  "title": "Retries, timeouts and jitter",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "A retry spends more of the server's capacity to raise your odds of success. Done once, with backoff, jitter, a cap and a deadline, it absorbs blips. Done at every layer, it turns a blip into an outage.",
+  "useIf": "Calls fail transiently with 429, 408 or 5xx, and you must decide what to retry, how long to wait and when to stop.",
+  "avoidIf": "The error is a quota or billing failure, a client error, or a side-effecting call with no idempotency key.",
+  "explain": [
+    { "t": "p", "md": "OpenAI's guidance is to treat `Retry-After` as a minimum plus a small random delay, otherwise use exponential backoff with jitter, cap attempts and total time, never retry quota or billing errors, and count SDK retries so loops do not multiply [[r16]]. AWS explains why: capped backoff alone leaves clients retrying in clusters, and **jitter** spreads them out and cuts total calls [[r18]]. Its **full jitter** variant sleeps a random time between 0 and the capped exponential value." },
+    { "t": "p", "md": "**Layers multiply.** With three retries at each of five stacked layers, a failing database sees 3^5 = 243 times the load, which makes recovery unlikely. Retry at one point in the stack, and limit retries locally with a token bucket [[tr3]]. **Timeouts** come from the downstream latency percentile: choose an acceptable false-timeout rate such as 0.1% and read the p99.9 latency, padded when the percentile is close to the median [[tr3]]. For LLM calls use separate limits for time to first token and for total generation, since output length drives total time. Only **idempotent** calls are safe to retry; a tool that charges a card needs an idempotency key first [[tr3]]." },
+    { "t": "code", "lang": "python", "title": "One retry layer with full jitter, Retry-After and a deadline (illustrative)", "code": "def call_with_retries(send, max_attempts=4, base=0.5, cap=20.0, deadline_s=60.0):\n    start = time.monotonic()\n    for attempt in range(max_attempts):\n        resp = send()\n        if resp.ok:\n            return resp\n        if resp.status in (400, 401, 403, 404) or resp.is_quota_error:\n            raise ApiError(resp)  # never retry\n        wait = random.uniform(0, min(cap, base * 2 ** attempt))  # full jitter\n        wait = max(wait, resp.retry_after_s or 0)  # Retry-After is a minimum\n        if time.monotonic() - start + wait > deadline_s:\n            break\n        time.sleep(wait)\n    raise GiveUp()", "caption": "Count SDK retries too: set the SDK's own retries to zero if this loop owns the policy." },
+    { "t": "table", "caption": "What to retry", "head": ["Signal", "Retry?", "Why"], "rows": [
+      ["429 from a rate window, `Retry-After` present", "Yes, after at least that delay", "Transient; the server told you when"],
+      ["429 for exhausted quota or billing", "No", "More attempts cannot succeed [[r16]]"],
+      ["408, 500, 502, 503, 504", "Yes, with jitter and a cap", "Often transient; 503 from a gateway may be a tripped breaker"],
+      ["400, 401, 403, 404", "No", "The same request will fail again"]
+    ] }
+  ],
+  "whereToUse": [
+    "The single client wrapper around model calls in your service",
+    "Gateway policies that retry across backends",
+    "Agent frameworks that retry failed steps or tool calls",
+    "Batch and Flex clients that wait on 429 and 408 [[r11]]",
+    "Embedding and ingestion workers under rate limits"
+  ],
+  "whenToUse": {
+    "use": ["Failures are transient and calls are idempotent", "You can bound attempts and total time", "The server provides `Retry-After`"],
+    "avoid": ["Retrying quota, billing or validation errors", "Retrying inside every layer of a deep call stack", "Retrying side-effecting tool calls without an idempotency key", "Retrying after a stream has already shown text to the user, unless you can resume"],
+    "flips": ["Sustained overload: stop retrying and shed load or degrade", "Deadline shorter than the backoff: fail fast and fall back", "Hedging is acceptable instead: duplicates a cheap idempotent call early rather than waiting"]
+  },
+  "alternatives": {
+    "title": "Failure responses compared",
+    "head": ["Response", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Retry with jitter", "Brief transient failures", "Overload, quota exhaustion", "Amplifies load if layered"],
+      ["Circuit breaker", "A dependency is down", "Single brief blips", "Rejects traffic when open; 503s"],
+      ["Fallback model or region", "Capacity or regional trouble", "Quality gap is large", "Cold cache, residency, different behaviour"],
+      ["Fail fast and tell the user", "Deadline cannot be met", "Work is cheap and likely to succeed", "A visible failure"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A small provider blip becomes a long outage", "cause": "SDK, framework and app each retry three times, multiplying traffic", "fix": "Keep one retry layer, set the others to zero and cap total attempts and time" },
+    { "symptom": "Thousands of clients return at the same second", "cause": "Backoff without jitter keeps clients synchronised", "fix": "Add full jitter and honour `Retry-After` as a minimum" },
+    { "symptom": "A customer was charged twice", "cause": "A tool call was retried after a timeout and was not idempotent", "fix": "Send an idempotency key and check state before repeating side effects" },
+    { "symptom": "Retries keep failing with the same 429", "cause": "The error was exhausted quota or billing", "fix": "Detect it, stop retrying, alert and degrade" }
+  ],
+  "scenarios": [
+    {
+      "id": "w16-t08-s1",
+      "title": "Three layers, three retries each",
+      "situation": "A service calls a framework that calls an SDK that calls a model. Each layer makes up to three attempts with no jitter. During a provider slowdown the load on the model endpoint multiplies and recovery drags on.",
+      "constraints": ["Interactive traffic", "Provider returns 429 and 503", "Layers owned by different teams"],
+      "unknowns": ["Which layer should own the policy?", "What is the user's deadline?"],
+      "question": "What do you change?",
+      "options": [
+        { "name": "One retry layer with jitter, `Retry-After` honoured, capped attempts and a total deadline; other layers set to zero", "verdict": "best", "why": "Three attempts at each of three layers is up to 27 attempts per request at the bottom. One owned policy removes the multiplication.", "tradeoff": "One team owns retry behaviour and must expose it as configuration." },
+        { "name": "Raise the base delay in every layer", "verdict": "good", "why": "Slows the storm.", "tradeoff": "Layers still multiply and latency grows." },
+        { "name": "Add more retries to be safe", "verdict": "poor", "why": "More attempts add load when the dependency is overloaded.", "tradeoff": "More retries are right only for rare transient faults." }
+      ],
+      "flips": [
+        { "if": "The deadline is under a second", "then": "No retries; use a fallback or fail fast." },
+        { "if": "Overload persists", "then": "Add a circuit breaker and shed load." }
+      ],
+      "takeaway": "Retry at one layer. Layers multiply."
+    },
+    {
+      "id": "w16-t08-s2",
+      "title": "The stream breaks halfway",
+      "situation": "A chat UI streams tokens. After 300 tokens the connection drops with a 5xx.",
+      "constraints": ["The user has seen partial text", "Generation is not idempotent in content", "A deterministic resume is not available"],
+      "unknowns": ["Can the client resume from a partial state?", "Is the response stored server-side?"],
+      "question": "What should the client do?",
+      "options": [
+        { "name": "Keep the partial text visible, mark it incomplete and let the user retry or continue", "verdict": "best", "why": "A silent restart replaces text the user has read and doubles cost.", "tradeoff": "One extra user action." },
+        { "name": "Retry the whole call and replace the text", "verdict": "good", "why": "Often fine when little text was shown.", "tradeoff": "The new answer can differ and the first tokens are paid twice." },
+        { "name": "Retry in a loop until the stream completes", "verdict": "poor", "why": "Repeated partial runs waste tokens and risk a retry storm.", "tradeoff": "Right only with a hard cap and when no text has been shown yet." }
+      ],
+      "flips": [
+        { "if": "Background mode stores the response server-side", "then": "Poll or resume it rather than regenerating." },
+        { "if": "No text was displayed yet", "then": "A bounded retry is fine." }
+      ],
+      "takeaway": "After the user has seen output, retrying changes their experience."
+    },
+    {
+      "id": "w16-t08-s3",
+      "title": "An agent that issues refunds",
+      "situation": "An agent calls a refund tool that times out at the client. The refund may or may not have been processed.",
+      "constraints": ["The tool has side effects", "Money moves", "Idempotency keys are supported by the payment API"],
+      "unknowns": ["Does the API return the prior result for a repeated key?", "Is there a status lookup?"],
+      "question": "How do you retry?",
+      "options": [
+        { "name": "Retry with the same idempotency key, or look up status before repeating", "verdict": "best", "why": "The key makes repeated attempts safe, so the side effect happens once.", "tradeoff": "Requires key generation, storage and a status endpoint." },
+        { "name": "Do not retry and escalate to a human", "verdict": "good", "why": "Safe for rare failures.", "tradeoff": "Slow and costly at volume." },
+        { "name": "Retry blindly with backoff", "verdict": "poor", "why": "A double refund is possible.", "tradeoff": "Blind retries are right only for read-only calls." }
+      ],
+      "flips": [
+        { "if": "The API offers no idempotency or status", "then": "Escalate for human reconciliation." },
+        { "if": "The call is a read", "then": "Retry freely within the budget." }
+      ],
+      "takeaway": "Side effects need idempotency before retries."
+    }
+  ],
+  "quiz": [
+    { "id": "w16-t08-q1", "type": "numeric", "tag": "numeric", "q": "Five stacked layers each retry up to 3 times when the bottom service fails. How many times the original load can the bottom service see?", "answer": 243, "tolerancePct": 0, "unit": "x", "explain": "Retries multiply: 3^5 = 243. AWS uses this example to argue for retrying at a single point in the stack [[tr3]].", "difficulty": 2 },
+    { "id": "w16-t08-q2", "type": "single", "tag": "bug", "q": "What is the main flaw in this retry policy?", "code": { "lang": "python", "code": "for attempt in range(10):\n    r = send()\n    if r.ok: return r\n    time.sleep(2 ** attempt)" }, "options": ["It sleeps too short", "It uses exponential backoff", "No jitter, no cap, no deadline, and it retries every error"], "answer": 2, "explain": "Without jitter clients stay synchronised, the delay is uncapped (2^9 is 512 seconds), there is no total deadline and quota or 4xx errors are retried too. Exponential backoff itself is fine [[r18]].", "difficulty": 2 },
+    { "id": "w16-t08-q3", "type": "multi", "tag": "tradeoff", "q": "Which failures are reasonable to retry with backoff and a cap?", "options": ["429 from a rate window with Retry-After", "503 from an overloaded endpoint", "429 for exhausted billing quota", "400 for a malformed request"], "answers": [0, 1], "explain": "Transient rate and overload errors can succeed later. Quota or billing exhaustion and 400s fail again [[r16]].", "difficulty": 1 }
+  ],
+  "flashcards": [
+    { "front": "What is full jitter?", "back": "Sleep a random time between 0 and min(cap, base x 2^attempt). It spreads retries and cuts total calls versus no jitter." },
+    { "front": "Why retry at only one layer?", "back": "Retries multiply across layers. Three retries at five layers is 3^5 = 243 times the load on the bottom service." },
+    { "front": "How should `Retry-After` be used?", "back": "As a minimum wait, plus a small random delay. Never retry quota or billing errors." }
+  ],
+  "related": ["w16-t04", "w16-t09", "w16-t10", "w16-l4", "w01-t13"],
+  "refs": ["r16", "r18", "r11", "tr3"]
+}

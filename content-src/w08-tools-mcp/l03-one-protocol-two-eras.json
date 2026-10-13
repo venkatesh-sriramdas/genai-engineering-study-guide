@@ -1,0 +1,114 @@
+{
+  "id": "w08-l03",
+  "order": 3,
+  "title": "One protocol, two eras",
+  "kind": "problem",
+  "minutes": 18,
+  "brief": "Hosts and servers in your estate sit on different MCP revisions, and a plain load balancer fronts the servers. You must decide which era to build for and how old and new peers connect. The client mix, the fleet shape and any need for server-initiated requests are open.",
+  "blocks": [
+    { "t": "h", "text": "From a handshake to per-request metadata", "level": 2 },
+    { "t": "table", "caption": "Revision timeline. Revisions are dated by the last backwards-incompatible change [[r1]]", "head": ["Revision", "What it added or changed", "Status on 2026-10-13"], "rows": [
+      ["2024-11-05", "stdio and HTTP+SSE transports. MCP was open-sourced on 2024-11-25", "Past revision. HTTP+SSE is Deprecated"],
+      ["2025-03-26", "OAuth 2.1 authorization framework, Streamable HTTP replaces HTTP+SSE, JSON-RPC batching, tool annotations, audio content [[r33]]", "Past revision"],
+      ["2025-06-18", "Batching removed. Structured tool output, servers classified as OAuth resource servers, RFC 8707 resource indicators required of clients, elicitation, resource links, `MCP-Protocol-Version` header [[r32]]", "Past revision"],
+      ["2025-11-25", "Client ID Metadata Documents, URL mode elicitation, experimental Tasks, JSON Schema 2020-12 default, OpenID Connect Discovery, SSE polling [[r31]]", "Past revision, the last stateful one"],
+      ["2026-07-28", "Stateless model, `server/discover`, Multi Round-Trip Requests, `subscriptions/listen`, caching fields, Tasks as an extension [[r1]]", "Current"]
+    ], "highlightCol": 2 },
+    { "t": "diagram", "id": "w08-l03-d1", "title": "2025-11-25: stateful lifecycle", "alt": "A client sends initialize, the server replies with capabilities and a session id, the client sends the initialized notification, then calls a tool with the session id header. The server later pushes an elicitation request on a stream.", "src": "sequenceDiagram\n  participant C as Client\n  participant S as Server\n  C->>S: initialize with version and capabilities\n  S-->>C: result and Mcp-Session-Id\n  C->>S: notifications/initialized\n  C->>S: tools/call with Mcp-Session-Id\n  S-->>C: elicitation/create pushed on a stream\n  C->>S: elicitation answer", "caption": "Version and capabilities are negotiated once. A server that assigns a session id expects it on every later request, answers 404 when the session is gone, and the client must then start over [[r21]] [[r22]]." },
+    { "t": "diagram", "id": "w08-l03-d2", "title": "2026-07-28: stateless exchange", "alt": "A client optionally calls server discover. It then calls a tool with version and capabilities in metadata. The server returns input required with a request state, the client retries with input responses and gets a complete result.", "src": "sequenceDiagram\n  participant C as Client\n  participant S as Server\n  C->>S: server/discover (optional)\n  S-->>C: versions, capabilities, ttlMs\n  C->>S: tools/call with _meta version and capabilities\n  S-->>C: input_required and requestState\n  C->>S: retry with inputResponses and requestState\n  S-->>C: result with resultType complete", "caption": "Each request stands alone, so any instance behind a plain load balancer can answer it [[r1]] [[r3]]." },
+    { "t": "table", "caption": "What changed on the wire [[r1]] [[r2]] [[r21]] [[r22]]", "head": ["Concern", "2025-11-25 (stateful)", "2026-07-28 (stateless)"], "rows": [
+      ["Start of a connection", "`initialize` request, then `notifications/initialized`", "No handshake. `server/discover` is mandatory for servers and optional for clients"],
+      ["Version and capabilities", "Negotiated once in `initialize`", "Sent in `_meta` on every request: `io.modelcontextprotocol/protocolVersion` and `io.modelcontextprotocol/clientCapabilities`"],
+      ["Session", "`Mcp-Session-Id` assigned at init. 404 means start a new session. DELETE ends it", "No sessions and no header. Cross-call state uses explicit handles"],
+      ["Server asks the client something", "`sampling/createMessage`, `roots/list`, `elicitation/create` pushed on streams", "Multi Round-Trip Requests: `input_required`, then a retry with `inputResponses`"],
+      ["Change notifications", "GET stream and `resources/subscribe`", "`subscriptions/listen`, one long-lived POST response stream"],
+      ["Stream resumption", "SSE event ids and `Last-Event-ID`", "Removed. A broken stream loses the request and the client re-issues it with a new id"],
+      ["Long-running calls", "Tasks, experimental in the core", "Tasks extension `io.modelcontextprotocol/tasks`, polled with `tasks/get`"],
+      ["List caching", "No freshness fields", "`ttlMs` and `cacheScope` required. Deterministic `tools/list` order is a SHOULD"],
+      ["Errors worth knowing", "Resource not found is `-32002`", "Resource not found is `-32602`. `UnsupportedProtocolVersionError` is `-32022`. `-32020` to `-32099` is reserved for MCP"]
+    ], "highlightCol": 2 },
+    { "t": "dials", "id": "w08-l03-era", "title": "Which era should a server target?", "prompt": "Flip the client mix, the fleet shape and the need for server-initiated sampling or roots.",
+      "dials": [
+        { "id": "clients", "label": "Who connects", "values": [ { "id": "modern", "label": "Mostly modern SDKs and hosts" }, { "id": "mixed", "label": "A mix of old and new" }, { "id": "legacy", "label": "Mostly legacy hosts" } ] },
+        { "id": "fleet", "label": "Deployment shape", "values": [ { "id": "single", "label": "One instance, sticky routing is fine" }, { "id": "lb", "label": "Autoscaled fleet behind a plain load balancer" } ] },
+        { "id": "sampling", "label": "Server-initiated sampling or roots needed today", "values": [ { "id": "no", "label": "No" }, { "id": "yes", "label": "Yes" } ] }
+      ],
+      "options": [
+        { "id": "legacy", "name": "Stay on 2025-11-25", "summary": "Keep the initialize handshake and sessions." },
+        { "id": "dual", "name": "Dual-era server", "summary": "Serve modern requests statelessly and legacy clients through initialize." },
+        { "id": "modern", "name": "Modern only (2026-07-28)", "summary": "Drop sessions and the handshake entirely." }
+      ],
+      "scores": {
+        "legacy": {
+          "clients": { "modern": { "s": -2, "why": "A modern client against a legacy server fails. On stdio it should probe first so it fails deterministically." }, "mixed": { "s": -1, "why": "Modern clients cannot use it." }, "legacy": { "s": 2, "why": "Matches what the hosts speak." } },
+          "fleet": { "single": { "s": 1, "why": "One instance can hold session state in memory." }, "lb": { "s": -2, "why": "Sessions need sticky routing or shared session storage." } },
+          "sampling": { "no": { "s": 0, "why": "Nothing extra needed." }, "yes": { "s": 1, "why": "Server-initiated requests still work in the legacy era, though sampling is Deprecated." } }
+        },
+        "dual": {
+          "clients": { "modern": { "s": 0, "why": "Works, but you carry a legacy path nobody uses." }, "mixed": { "s": 2, "why": "A dual-era server serves both kinds of client. A request with modern `_meta` is stateless and an `initialize` selects legacy semantics." }, "legacy": { "s": 1, "why": "Serves legacy clients and avoids the failure when they meet a modern-only server." } },
+          "fleet": { "single": { "s": 0, "why": "Neutral." }, "lb": { "s": -1, "why": "The modern path is stateless, but the legacy path still needs stickiness or shared state." } },
+          "sampling": { "no": { "s": 0, "why": "Neutral." }, "yes": { "s": 0, "why": "Legacy clients keep server-initiated requests. Modern clients get them through MRTR." } }
+        },
+        "modern": {
+          "clients": { "modern": { "s": 2, "why": "Simplest code path and no legacy baggage." }, "mixed": { "s": -1, "why": "Legacy clients get a 400 with no fall-forward mechanism." }, "legacy": { "s": -2, "why": "Most callers would fail." } },
+          "fleet": { "single": { "s": 1, "why": "Simple, though statelessness is not needed here." }, "lb": { "s": 2, "why": "No sessions, no sticky routing and no shared session store." } },
+          "sampling": { "no": { "s": 1, "why": "Nothing blocks a clean stateless design." }, "yes": { "s": -1, "why": "Sampling is Deprecated and only reachable through MRTR. Plan the move to direct model APIs." } }
+        }
+      },
+      "takeaway": "Statelessness pays when you scale out. Compatibility pays when the host mix is old. A dual-era server buys time at the price of two code paths." },
+    { "t": "accordion", "items": [
+      { "title": "Deprecated features, with migration and earliest removal", "blocks": [
+        { "t": "table", "caption": "State of the deprecated registry on 2026-10-13. No feature has been Removed yet [[r9]] [[r25]]", "head": ["Feature", "Deprecated in", "Migration path", "Earliest removal"], "rows": [
+          ["Roots", "2026-07-28 (SEP-2577)", "Pass paths through tool parameters, resource URIs or server configuration", "First revision released on or after 2027-07-28"],
+          ["Sampling", "2026-07-28 (SEP-2577)", "Call the model provider API directly", "First revision released on or after 2027-07-28"],
+          ["Logging", "2026-07-28 (SEP-2577)", "Write to stderr on stdio or use OpenTelemetry", "First revision released on or after 2027-07-28"],
+          ["Dynamic Client Registration", "2026-07-28", "Client ID Metadata Documents", "First revision released on or after 2027-07-28"],
+          ["`includeContext` values `thisServer` and `allServers`", "2025-11-25 (SEP-2596)", "Omit the field or use `none`", "Follows Sampling"],
+          ["HTTP+SSE transport", "2025-03-26 (SEP-2596)", "Streamable HTTP", "Three months after SEP-2596 reaches Final"]
+        ] },
+        { "t": "p", "md": "Deprecated means the feature stays in the spec and keeps working. New work should not adopt it. A deprecated feature stays at least twelve months, or at least ninety days when removal is expedited for an active security risk [[r25]]. Elicitation is **not** deprecated. Tasks moved to an extension but are not deprecated. Agent Framework's docs say sampling removal comes no later than 2027-07-28, which is stricter than the spec's earliest-removal wording [[r26]]." }
+      ] },
+      { "title": "Transports in both eras", "blocks": [
+        { "t": "list", "style": "ul", "items": [
+          "**stdio**: newline-delimited JSON-RPC with no embedded newlines. A server MUST NOT write anything but MCP messages to stdout. stderr is free for logs and clients SHOULD NOT treat it as an error signal [[r2]].",
+          "**Streamable HTTP, 2026-07-28**: one endpoint. Every JSON-RPC message is its own POST with `Accept` listing `application/json` and `text/event-stream`. The reply is one JSON object or a per-request SSE stream. The GET stream and DELETE are gone. Servers MUST validate `Origin` (403 if invalid) and SHOULD bind local servers to 127.0.0.1 [[r2]].",
+          "**Required request headers, 2026-07-28**: `MCP-Protocol-Version` on every request, `Mcp-Method` on all requests, `Mcp-Name` for `tools/call`, `resources/read` and `prompts/get`. A mismatch with the body returns `HeaderMismatch` (`-32020`) [[r2]].",
+          "**Streamable HTTP, 2025-11-25**: one endpoint with POST and GET. A session id is returned at initialization. SSE event ids support resumption through `Last-Event-ID` [[r22]].",
+          "**HTTP+SSE**: the 2024-11-05 transport with separate `/sse` and `/messages` endpoints. Deprecated. Older tutorials still show it [[r9]]."
+        ] }
+      ] },
+      { "title": "Dual-era compatibility matrix", "blocks": [
+        { "t": "table", "caption": "Expected outcome for each client and server era [[r24]]", "head": ["Client", "Server", "Outcome"], "rows": [
+          ["Modern", "Modern", "Works. `server/discover` is optional. A version mismatch returns `UnsupportedProtocolVersionError` and the client retries with a shared version"],
+          ["Modern", "Legacy", "Fails. On stdio the client SHOULD send `server/discover` first so it fails deterministically"],
+          ["Dual-era", "Modern", "Works. The client stays modern"],
+          ["Dual-era", "Legacy", "Works. The client falls back to `initialize` after a non-modern error, a 4xx without a modern error body, or a timeout"],
+          ["Legacy", "Modern", "Fails. Legacy clients have no fall-forward mechanism and get a 400 on HTTP"],
+          ["Legacy", "Dual-era", "Works. The server answers `initialize` and serves the negotiated legacy revision"]
+        ] },
+        { "t": "p", "md": "A modern-only server that receives an `initialize` request SHOULD name its supported versions in the error text, because that message may be the only diagnostic a legacy client can show. Clients SHOULD cache the detected era per server process on stdio or per origin on HTTP [[r24]]." }
+      ] }
+    ] },
+    { "t": "failure", "title": "Failure modes and how to detect them", "items": [
+      { "symptom": "Legacy hosts get HTTP 400 after a server upgrade", "cause": "A modern-only server rejects requests that lack the modern `_meta` and headers", "fix": "Run dual-era until a per-version request counter shows no legacy traffic. Name supported versions in the `initialize` error text" },
+      { "symptom": "Intermittent 404 on legacy clients after scaling out, none on modern clients", "cause": "The legacy session lives on one instance and the load balancer is not sticky", "fix": "Use sticky routing or shared session storage for the legacy path, and move state into explicit handles for the modern path" },
+      { "symptom": "A new client hangs against an old stdio server", "cause": "The client skipped the `server/discover` probe and waited for a modern reply", "fix": "Probe first on stdio, treat a non-modern error as legacy, and cache the era per process" },
+      { "symptom": "One user reads or edits another user's basket", "cause": "A state handle was treated as a capability and not checked against the caller", "fix": "Authorize the handle against the verified user on every call. Use high-entropy, expiring handles for unauthenticated servers [[r6]]" },
+      { "symptom": "A dropped stream reruns a non-idempotent tool", "cause": "Resumption is gone in 2026-07-28, so the client re-issues the request with a new id", "fix": "Pass idempotency keys, and use Tasks for calls that outlive a connection" }
+    ] }
+  ],
+  "quiz": [
+    { "id": "w08-l03-q1", "type": "order", "tag": "order", "q": "Put the 2025-11-25 stateful startup and first call in order.", "items": ["Client sends `initialize` with its protocol version and capabilities", "Server replies with its capabilities and, over HTTP, an `Mcp-Session-Id`", "Client sends `notifications/initialized`", "Client calls `tools/list` and includes the session id on the request"], "explain": "Initialization must be the first interaction. The server's reply carries its capabilities and the optional session id. The client confirms with the initialized notification and then operates, repeating the session id on every later HTTP request.", "difficulty": 1, "ref": "r21" },
+    { "id": "w08-l03-q2", "type": "multi", "tag": "concept", "q": "Select everything the 2026-07-28 revision removed or replaced.", "options": ["The `initialize` and `notifications/initialized` handshake", "The `Mcp-Session-Id` header", "`Last-Event-ID` stream resumption", "Elicitation as a feature", "`tools/call` itself"], "answers": [0, 1, 2], "explain": "The handshake, protocol sessions with their header, and SSE resumption were removed. Elicitation stays active and rides on Multi Round-Trip Requests. `tools/call` is a core request that gained `resultType` and the option to return `input_required`.", "difficulty": 2, "ref": "r1" },
+    { "id": "w08-l03-q3", "type": "single", "tag": "flip", "q": "A server must serve both new and old hosts and runs on an autoscaled fleet behind a plain load balancer. It does not need sampling. Which option fits?", "options": ["Stay on 2025-11-25 and add sticky routing everywhere", "Modern only, because it is the Current revision and every legacy client is expected to upgrade soon", "Dual-era: stateless for modern requests, `initialize` for legacy ones", "Drop Streamable HTTP and move to HTTP+SSE"], "answer": 2, "explain": "A mixed client base rules out modern-only, because legacy clients get a 400 with no fall-forward. Staying legacy blocks modern clients and forces sticky or shared sessions. HTTP+SSE is Deprecated. Dual-era keeps both reachable and keeps the modern path stateless.", "difficulty": 2, "ref": "r24" },
+    { "id": "w08-l03-q4", "type": "single", "tag": "concept", "q": "Which statement about the deprecations in 2026-07-28 is correct?", "options": ["Roots, Sampling and Logging are Deprecated but still functional, with earliest removal in the first revision released on or after 2027-07-28", "Roots, Sampling and Logging were removed on 2026-07-28 and must be deleted from servers", "Elicitation was deprecated together with Sampling because both ask the client for input", "Dynamic Client Registration is the preferred registration method and HTTP+SSE is Current"], "answer": 0, "explain": "Deprecated features remain in the spec and keep working until a later revision removes them. Elicitation is not deprecated. Dynamic Client Registration is deprecated in favor of Client ID Metadata Documents, and HTTP+SSE was replaced by Streamable HTTP.", "difficulty": 1, "ref": "r9" }
+  ],
+  "defend": null,
+  "refs": ["r1", "r2", "r9", "r21", "r22", "r24", "r25", "r26", "r31", "r32", "r33"],
+  "takeaways": [
+    "2026-07-28 replaced the handshake and session id with per-request `_meta`, a required `server/discover` and explicit handles.",
+    "Server-initiated requests became Multi Round-Trip Requests, and SSE resumption was removed.",
+    "Roots, Sampling, Logging, Dynamic Client Registration, HTTP+SSE and two `includeContext` values are Deprecated. Nothing is Removed yet.",
+    "Choose legacy, dual-era or modern by client mix and fleet shape. A modern client against a legacy-only server fails."
+  ]
+}

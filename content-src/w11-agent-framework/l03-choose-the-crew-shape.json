@@ -1,0 +1,92 @@
+{
+  "id": "w11-l3",
+  "order": 3,
+  "title": "Choose the crew shape: five orchestrations and when to avoid each",
+  "kind": "problem",
+  "minutes": 20,
+  "brief": "Several agents have to cooperate on one task. Pick sequential, concurrent, handoff, group chat or Magentic, or keep one agent with specialists as tools. The dials are not given, so find the ones that decide it.",
+  "blocks": [
+    { "t": "h", "text": "Five shapes, one decision tree", "level": 2 },
+    { "t": "diagram", "id": "w11-d2", "title": "Which orchestration?", "alt": "A decision tree. A known order leads to sequential, independent views to concurrent. An unknown order asks who owns the thread: a specialist leads to handoff, a shared conversation to group chat, a plan ledger to Magentic.", "src": "flowchart TB\n  Q1{Order known?} -->|each step builds on the last| SEQ[Sequential]\n  Q1 -->|independent views| CON[Concurrent]\n  Q1 -->|no| Q2{Who owns the thread?}\n  Q2 -->|a specialist takes over| HO[Handoff]\n  Q2 -->|a shared conversation| GC[Group chat]\n  Q2 -->|needs a plan ledger| MAG[Magentic]", "caption": "A starting sketch, not a verdict. Cost, latency and the need for a human mid-run can still overrule it. Topics w11-t18 to w11-t23." },
+    { "t": "table", "caption": "What each pattern actually does", "head": ["Pattern", "Topology", "Behaviour to know", "Status (2026-10-13)"], "rows": [
+      ["Sequential", "Pipeline", "By default each agent gets the previous agent's whole conversation (its input plus its reply). You can pass only the reply. Agents and custom executors can mix [[r21]]", "Stable"],
+      ["Concurrent", "Fan-out, then aggregate", "The default aggregator returns one `AgentResponse` with one assistant message per participant. A custom aggregator replaces it. Only the aggregator output is terminal unless you set `intermediate_output_from` [[r32]]", "Stable"],
+      ["Handoff", "Mesh, no central orchestrator", "Control moves through handoff tool calls and the receiving agent owns the task. Supports only `Agent` with local tool execution. Interactive by default [[r19]]", "Stable. Autonomous mode is experimental (.NET default 50 turns per agent)"],
+      ["Group chat", "Star: an orchestrator picks the speaker", "Round-robin, prompt-based or custom selection over a shared full history. Bounded by `termination_condition` and `max_rounds` (Python) or `MaximumIterationCount` (.NET)", "Stable"],
+      ["Magentic", "Star with a planning manager", "Based on Magentic-One. Limits on rounds, stalls and plan resets. Plan review is off by default in Python (`enable_plan_review=False`) and on in .NET (`RequirePlanSignoff` true). The docs say it is untested outside the original design [[r20]]", "Python package stable. .NET types experimental (`MAAIW001`)"]
+    ] },
+    { "t": "h", "text": "Dial board: pick the orchestration", "level": 2 },
+    { "t": "dials", "id": "w11-l3-shape", "title": "Pick by task shape, cost and who talks to the user", "prompt": "Flip the constraints. Agent-as-tool, a single agent that calls specialists, is on the board because the Azure guidance says to use the lowest rung that meets the requirement [[r30]].",
+      "dials": [
+        { "id": "path", "label": "Shape of the work", "values": [ { "id": "ordered", "label": "Ordered stages" }, { "id": "indep", "label": "Independent views of one input" }, { "id": "refine", "label": "Back-and-forth refinement of one artifact" }, { "id": "open", "label": "Open-ended, route unknown" } ] },
+        { "id": "budget", "label": "Token and latency budget", "values": [ { "id": "tight", "label": "Tight" }, { "id": "generous", "label": "Generous, run is high value" } ] },
+        { "id": "user", "label": "User input mid-run", "values": [ { "id": "yes", "label": "The user answers or steers" }, { "id": "no", "label": "Run to completion" } ] }
+      ],
+      "options": [
+        { "id": "seq", "name": "Sequential", "summary": "A pipeline of agents." },
+        { "id": "conc", "name": "Concurrent", "summary": "Fan out to several agents and aggregate." },
+        { "id": "hand", "name": "Handoff", "summary": "A mesh where specialists take over the task." },
+        { "id": "group", "name": "Group chat", "summary": "A shared conversation with a speaker picker." },
+        { "id": "mag", "name": "Magentic", "summary": "A planning manager with a task ledger." },
+        { "id": "tool", "name": "Single agent, specialists as tools", "summary": "Control returns to the primary agent." }
+      ],
+      "scores": {
+        "seq": {
+          "path": { "ordered": { "s": 2, "why": "A pipeline: each agent builds on the previous agent's conversation." }, "indep": { "s": -1, "why": "It serializes work that could run at once." }, "refine": { "s": -1, "why": "One pass per agent, with no loop back for revision." }, "open": { "s": -2, "why": "The order is fixed before the run." } },
+          "budget": { "tight": { "s": 1, "why": "N calls and no manager overhead." }, "generous": { "s": 0, "why": "More budget buys nothing here." } },
+          "user": { "yes": { "s": -1, "why": "It does not pause for free text on its own. You must add a human request step." }, "no": { "s": 0, "why": "It runs to completion." } }
+        },
+        "conc": {
+          "path": { "ordered": { "s": -1, "why": "Parallel branches cannot build on one another." }, "indep": { "s": 2, "why": "Fan-out and aggregate suit independent views, ensembles and voting." }, "refine": { "s": -1, "why": "There is no revision loop." }, "open": { "s": -1, "why": "The participants are fixed in advance." } },
+          "budget": { "tight": { "s": 0, "why": "Parallelism cuts latency, not tokens. Every participant still pays." }, "generous": { "s": 1, "why": "Ensembles and votes spend tokens for a better answer." } },
+          "user": { "yes": { "s": -1, "why": "No free-text pause by default." }, "no": { "s": 0, "why": "It runs to completion and aggregates." } }
+        },
+        "hand": {
+          "path": { "ordered": { "s": -1, "why": "Routing adds hops when the order is already known." }, "indep": { "s": -1, "why": "Control sits with one specialist at a time." }, "refine": { "s": 0, "why": "Agents can pass control back and forth, but only a turn limit ends the exchange." }, "open": { "s": 1, "why": "Specialists decide who takes over through handoff tool calls, with no central planner." } },
+          "budget": { "tight": { "s": 0, "why": "Only the owner runs, but each hop is a model call." }, "generous": { "s": 0, "why": "Extra budget does not change the shape." } },
+          "user": { "yes": { "s": 2, "why": "Interactive by default: the conversation can return to the user." }, "no": { "s": -1, "why": "Autonomous mode is experimental, with a .NET default of 50 turns per agent." } }
+        },
+        "group": {
+          "path": { "ordered": { "s": -1, "why": "A star with a speaker picker is overkill for a known order." }, "indep": { "s": 0, "why": "Agents add perspectives, but they share one full history." }, "refine": { "s": 2, "why": "A shared history suits a maker-checker loop, bounded by `termination_condition` and `max_rounds`." }, "open": { "s": 0, "why": "The orchestrator picks the next speaker, but there is no plan ledger." } },
+          "budget": { "tight": { "s": -1, "why": "Every turn re-reads the shared full history." }, "generous": { "s": 1, "why": "Quality loops are affordable." } },
+          "user": { "yes": { "s": -1, "why": "It does not pause for free text on its own." }, "no": { "s": 0, "why": "It ends on its termination condition or round cap." } }
+        },
+        "mag": {
+          "path": { "ordered": { "s": -2, "why": "Planning for a known order wastes manager calls." }, "indep": { "s": 0, "why": "It can fan out, but you pay for planning." }, "refine": { "s": 1, "why": "The manager can re-plan after a stalled round." }, "open": { "s": 2, "why": "A planning manager with a task ledger suits open-ended work." } },
+          "budget": { "tight": { "s": -2, "why": "Planning, ledger updates and re-plans add model calls, and the limits on rounds, stalls and resets exist for a reason." }, "generous": { "s": 1, "why": "Worth it when one run is high value." } },
+          "user": { "yes": { "s": 1, "why": "Plan review can pause for sign-off. It is on by default in .NET and off in Python." }, "no": { "s": 0, "why": "It runs to its limits." } }
+        },
+        "tool": {
+          "path": { "ordered": { "s": 0, "why": "One agent can call specialists in order, but the order lives in a prompt." }, "indep": { "s": 1, "why": "An agent can call several specialists as tools." }, "refine": { "s": 0, "why": "Possible, but the loop is the agent's own." }, "open": { "s": 0, "why": "The set of specialists is fixed in advance." } },
+          "budget": { "tight": { "s": 2, "why": "One owner and one thread: the cheapest multi-agent shape." }, "generous": { "s": 0, "why": "Nothing extra to spend the budget on." } },
+          "user": { "yes": { "s": 0, "why": "Approval round trips work as for any agent." }, "no": { "s": 0, "why": "It runs to completion." } }
+        }
+      },
+      "takeaway": "All six options can win. The surprise is how often the single agent with specialists as tools wins on a tight budget, and how rarely Magentic does. Start with group chat unless the path truly needs a plan." },
+    { "t": "table", "caption": "Composition: how control and sessions behave when you nest or wrap", "head": ["Option", "Control and ownership", "Catch"], "rows": [
+      ["Agent as tool", "Control returns to the primary agent, which keeps ownership", "The primary's context holds every result"],
+      ["Handoff", "The receiving agent owns the task", "No central orchestrator to stop a bounce between agents, so cap the turns"],
+      ["Workflow as agent (`workflow.as_agent(name=...)`, `AsAIAgent`)", "The caller sees an agent and not the graph", "The start executor must accept chat messages. The serialized session holds the inner checkpoint. The id given to `AsAIAgent` names only the outer agent, so inner agents still need stable ids. Python 1.2.2 (2026-04-29) returns only the final answer [[r22]]"],
+      ["Sub-workflow (`WorkflowExecutor`, .NET `BindAsExecutor`)", "The parent owns the run. Inner requests reach the parent with a qualified port id such as `SubWorkflow.GuessNumber`", "Inner failures surface as `SubworkflowErrorEvent`. `AgentExecutor` keeps its own session unless you pass a shared one [[r33]]"]
+    ], "highlightCol": 1 },
+    { "t": "failure", "title": "Failure modes by shape", "items": [
+      { "symptom": "A group chat runs 40 rounds and the bill spikes with no error.", "cause": "No `termination_condition` or round cap, so nothing ends the conversation.", "fix": "Always set both `termination_condition` and `max_rounds` (`MaximumIterationCount` in .NET)." },
+      { "symptom": "Handoff agents bounce the task back and forth.", "cause": "A mesh has no central orchestrator, and the specialists' descriptions overlap.", "fix": "Sharpen what each specialist owns, cap the turns, and keep experimental autonomous mode off unless the task needs it." },
+      { "symptom": "Magentic stalls, re-plans and the bill climbs.", "cause": "The planning manager is allowed unlimited rounds, stalls or plan resets.", "fix": "Set the limits (the docs' sample uses 10, 3 and 2, which are examples and not defaults), turn plan review on for risky work, and try group chat first." },
+      { "symptom": "A concurrent run shows one blended answer and the per-agent results are missing from the event stream.", "cause": "Only the aggregator output is terminal by default.", "fix": "Pass `intermediate_output_from` for the participants whose output you want surfaced." }
+    ] }
+  ],
+  "quiz": [
+    { "id": "w11-l3-q1", "type": "single", "tag": "tradeoff", "difficulty": 2, "q": "A team wants Magentic for an open-ended research task with a generous budget, but nobody has tried a simpler shape. What is the defensible first move?", "options": ["Adopt Magentic right away, because open-ended work is its design case and the docs recommend starting there before simpler shapes", "Try group chat with a termination condition and a round cap first. Move to Magentic only if a plan ledger is needed", "Use concurrent orchestration, because it is the cheapest multi-agent pattern", "Use handoff in autonomous mode so that no manager is needed"], "answer": 1, "explain": "Magentic adds a planning manager, a task ledger and re-plans, and the docs warn it is untested outside the original Magentic-One design, so earn it by showing group chat is not enough. Concurrent is not cheaper (every participant pays) and does not suit open-ended routing. Handoff's autonomous mode is experimental.", "ref": "r20" },
+    { "id": "w11-l3-q2", "type": "multi", "tag": "concept", "difficulty": 2, "q": "Select every statement that is true of handoff orchestration.", "options": ["There is no central orchestrator, so the agents form a mesh", "The receiving agent owns the task after the handoff", "It supports only `Agent` with local tool execution", "Control returns to the first agent when the specialist finishes", "Autonomous mode is stable and defaults to 50 turns in every SDK", "It is interactive by default"], "answers": [0, 1, 2, 5], "explain": "Handoff is a mesh where the receiving agent owns the task, supports only `Agent` with local tool execution and is interactive by default. Returning control to the first agent describes agent-as-tool, not handoff. Autonomous mode is experimental, and the 50-turn default is documented for .NET.", "ref": "r19" },
+    { "id": "w11-l3-q3", "type": "single", "tag": "diagnose", "difficulty": 1, "q": "A group chat ran 40 rounds and the cost spiked, with no error in the logs. What is missing from the design?", "options": ["A custom aggregator that merges the participants' answers into a single final response", "Plan review, so a human signs off on the plan", "A `termination_condition` and a `max_rounds` cap (`MaximumIterationCount` in .NET)", "A sub-workflow wrapper around the orchestration"], "answer": 2, "explain": "Group chat is bounded by its termination condition and round cap. Without them nothing ends a conversation that keeps finding something to say. Aggregators belong to concurrent orchestration, plan review to Magentic, and a sub-workflow wrapper adds nesting but no bound.", "ref": "r30" }
+  ],
+  "defend": null,
+  "refs": ["r19", "r20", "r21", "r22", "r30", "r32", "r33"],
+  "takeaways": [
+    "Orchestrations differ by topology: sequential is a pipeline, concurrent is fan-out and aggregate, handoff is a mesh, group chat and Magentic are stars.",
+    "Start with the lowest rung. A single agent with specialists as tools is often the cheapest honest answer.",
+    "Every loop needs a brake: termination condition and round cap for group chat, limits for Magentic, a turn limit for handoff.",
+    "Wrapping or nesting changes sessions and ids: inner agents need stable ids, and a workflow as agent returns only the final answer since Python 1.2.2 (2026-04-29)."
+  ]
+}

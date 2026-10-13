@@ -1,0 +1,94 @@
+{
+  "id": "w10-t13",
+  "order": 13,
+  "group": "Multi-agent",
+  "title": "Handoff and swarm",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "In a handoff, one agent transfers control and the conversation to another agent that takes full ownership. Agents form a mesh with no central orchestrator, and each hop is a model call that can loop.",
+  "useIf": "The right specialist is not known up front, emerges during the conversation, and should talk to the user directly.",
+  "avoidIf": "The route is identifiable from the first message (use a router), you need one accountable owner, or work should run in parallel.",
+  "explain": [
+    { "t": "p", "md": "**Handoff** means an agent decides to pass the task to another agent, and the receiver takes over. Microsoft Agent Framework describes handoff as a mesh topology with no central orchestrator: the receiving agent takes full ownership and has the full context, and handoff supports `Agent` only, with agents that support local tool execution [[r11]]. The Azure guide adds that agents in this pattern do not typically work in parallel, and full control moves from one agent to another [[r9]]. The OpenAI Agents SDK exposes a handoff to the model as a tool, named `transfer_to_<agent_name>` by default [[r20]]." },
+    { "t": "diagram", "id": "w10-t13-d1", "title": "A handoff mesh with escape hatches", "alt": "A user reaches a triage agent. Triage hands off to billing or technical agents. Specialists can return to triage or escalate to a human.", "src": "flowchart LR\n  U[User] --> T[Triage agent]\n  T -->|transfer_to_billing| B[Billing agent]\n  T -->|transfer_to_technical| X[Technical agent]\n  B -->|back to triage| T\n  X -->|back to triage| T\n  B -->|escalate| H[Human agent]\n  X -->|escalate| H" },
+    { "t": "p", "md": "Two design choices control behaviour. **State passing**: by default the next agent sees the history, but you can shape it. The Agents SDK offers `input_filter` to trim what the receiver sees, `input_type` for structured handoff arguments, `on_handoff` for side effects, `is_enabled` to switch a target on or off and `nest_handoff_history` [[r20]]. **Loop control**: The Azure guide lists infinite handoff loops and bouncing between agents as a risk [[r9]]. Handoff is interactive by default and returns to the user when an agent answers without handing off. Autonomous mode keeps an agent working until it hands off, a termination condition holds or the per-agent turn limit is hit, for example `WithAutonomousMode(turnLimit: 10)` in the C# builder [[r11]]. OpenAI's Swarm library introduced the idea of agents and handoffs and is labelled experimental and educational, replaced by the Agents SDK [[tr17]]." },
+    { "t": "callout", "kind": "gotcha", "title": "Each handoff is a model call", "md": "A conversation that hops through three specialists pays for three agent turns before the answer. Cap hops, define which agents may hand to which, and log every transfer with its reason." }
+  ],
+  "whereToUse": [
+    "Customer-support flows where a triage agent hands to billing, technical or account specialists",
+    "Domain tutors or advisors where the user converses with the specialist",
+    "Multi-skill assistants where expertise requirements appear during the conversation",
+    "Escalation paths that end in a human agent",
+    "Prototypes built on the Agents SDK or Agent Framework handoff orchestration"
+  ],
+  "whenToUse": {
+    "use": ["The best agent is unknown until the conversation reveals it", "Specialists should own and continue the dialogue", "A clear signal tells an agent it has reached its limit [[r9]]"],
+    "avoid": ["The right agent is clear from the first input, so a deterministic router suffices [[r9]]", "Poor routing would badly hurt the user experience", "Avoiding loops and bouncing is hard to guarantee"],
+    "flips": ["You need one accountable owner: use a supervisor with agents as tools", "Multiple operations must run at once: use concurrent orchestration", "Bouncing appears in traces: add a hop cap and an allow-list of handoff targets"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Handoff (this topic)", "Specialist should take over, route emerges", "Route is known up front, one owner needed", "Loops, bouncing, a model call per hop [[r9]]"],
+      ["Router", "Categories are clear from the first message", "Route changes mid-conversation", "Misroute risk [[r1]]"],
+      ["Supervisor", "One accountable owner, results come back", "Specialist must converse with the user", "Hub bottleneck [[r32]]"],
+      ["Group chat", "Several agents refine one draft", "Linear delegation is enough", "Transcript cost grows [[r9]]"],
+      ["Single agent with skills", "One agent can load on-demand knowledge", "Specialists need separate tools or permissions", "One context carries all [[r32]]"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A conversation bounces between two agents", "cause": "Each agent's instructions say the other is better suited, with no hop limit", "fix": "Set a hop cap, restrict handoff targets, add a termination condition and an escalate-to-human path." },
+    { "symptom": "The new agent repeats questions the user already answered", "cause": "History was filtered too hard or not passed at all", "fix": "Pass a structured summary of facts gathered, and use the history filter deliberately, not by default." },
+    { "symptom": "Hand-offs go to the wrong specialist", "cause": "Overlapping specialist descriptions", "fix": "Rewrite descriptions with clear boundaries, and evaluate handoff decisions on labelled conversations." }
+  ],
+  "scenarios": [
+    {
+      "id": "w10-t13-s1",
+      "title": "Conversation that changes topic",
+      "situation": "A support assistant starts with account questions, and halfway through the user raises a billing dispute and then a technical fault. Specialists have different tools and policies. Users expect continuity.",
+      "constraints": ["Topic emerges mid-conversation", "User should talk to the specialist", "Different tools and policies per specialist", "A human escalation exists"],
+      "unknowns": ["How many hops does a typical conversation need?", "What state must pass between agents?"],
+      "question": "What orchestration do you choose?",
+      "options": [
+        { "name": "Handoff mesh with a hop cap, target allow-list, structured state passing and human escalation", "verdict": "best", "why": "Specialists take over the dialogue as topics change, and the guards contain the loop risk.", "tradeoff": "A model call per hop and a need to evaluate handoff decisions." },
+        { "name": "Supervisor with specialists as tools", "verdict": "good", "why": "One consistent voice and accountable owner.", "tradeoff": "Users never talk to the specialist, and every turn pays a hub hop." },
+        { "name": "A router that classifies only the first message", "verdict": "poor", "why": "The topic changes later, so the first classification becomes wrong.", "tradeoff": "Right when the topic is fixed by the first message." }
+      ],
+      "flips": [
+        { "if": "Accountability must sit with one agent", "then": "Use a supervisor and keep the specialist as a tool." },
+        { "if": "Traces show frequent bouncing", "then": "Tighten descriptions, cap hops and review routing evals." }
+      ],
+      "takeaway": "Handoff fits conversations whose topic moves, if you cap the hops."
+    },
+    {
+      "id": "w10-t13-s2",
+      "title": "Route known from the first message",
+      "situation": "An internal bot receives requests from a form that already tags the department. Latency matters, and each department has its own agent. No one expects the topic to change.",
+      "constraints": ["Route known at the start", "Latency sensitive", "Stable categories"],
+      "unknowns": ["Does the tag come from a trusted field?", "What happens if a request is mistagged?"],
+      "question": "How do you route?",
+      "options": [
+        { "name": "Deterministic dispatcher on the form tag, with a fallback agent for mistagged requests", "verdict": "best", "why": "The route is known, so no model call is needed to choose, and latency stays low.", "tradeoff": "A mistagged request needs a fallback path." },
+        { "name": "Triage agent with handoff mesh", "verdict": "poor", "why": "It adds a model hop and loop risk where a field lookup would do.", "tradeoff": "Right if the tag were missing or untrusted and content had to decide." },
+        { "name": "One agent with every department's tools", "verdict": "good", "why": "Simple to ship.", "tradeoff": "Tool overload and broad permissions in one agent." }
+      ],
+      "flips": [
+        { "if": "Tags are unreliable", "then": "Add a classifier router before the department agents." },
+        { "if": "Requests often cross departments", "then": "Introduce handoff or a supervisor." }
+      ],
+      "takeaway": "If code can pick the route, do not pay a model to pick it."
+    }
+  ],
+  "quiz": [
+    { "id": "w10-t13-q1", "type": "single", "tag": "concept", "q": "In the OpenAI Agents SDK, how is a handoff exposed to the model by default?", "options": ["As a tool named transfer_to_<agent_name>", "As a system message", "As a separate API endpoint", "As a retrieval index"], "answer": 0, "explain": "Handoffs are modelled as tools, and the default tool name is transfer_to_ followed by the agent name, which you can override with tool_name_override. [[r20]]", "ref": "r20", "difficulty": 1 },
+    { "id": "w10-t13-q2", "type": "multi", "tag": "diagnose", "q": "Traces show conversations bouncing between two agents. Which changes address it?", "options": ["Add a hop cap", "Restrict which agents each agent may hand off to", "Add a termination condition", "Give both agents longer instructions about each other"], "answers": [0, 1, 2], "explain": "A cap, a target allow-list and a termination condition are the named controls for loops. Longer mutual instructions often make bouncing worse. [[r11]]", "ref": "r11", "difficulty": 2 }
+  ],
+  "flashcards": [
+    { "front": "What does the receiving agent get in an Agent Framework handoff?", "back": "Full ownership of the task and the full context. It is a mesh topology with no central orchestrator [[r11]]." },
+    { "front": "Name four handoff options in the OpenAI Agents SDK.", "back": "tool_name_override, on_handoff, input_type and input_filter, plus is_enabled, tool_description_override and nest_handoff_history [[r20]]." },
+    { "front": "What is OpenAI Swarm's status?", "back": "Experimental and educational, replaced by the OpenAI Agents SDK, per its README checked 2026-10-13 [[tr17]]." }
+  ],
+  "related": ["w10-l3", "w10-t03", "w10-t12", "w10-t10"],
+  "refs": ["r11", "r9", "r20", "r1", "r32", "tr17"]
+}

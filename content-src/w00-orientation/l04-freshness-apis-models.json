@@ -1,0 +1,83 @@
+{
+  "id": "w00-l4",
+  "order": 4,
+  "title": "Freshness map A: models, APIs and caching",
+  "kind": "concept",
+  "minutes": 15,
+  "brief": "Half of what you read about LLM APIs is out of date, and some of it breaks code. Use this dated map, checked on 2026-10-13, to test a fact before you say it in an answer.",
+  "blocks": [
+    { "t": "h", "text": "How to read this map", "level": 2 },
+    { "t": "p", "md": "Every row carries an absolute date and a source. Where a vendor gave no date, the row says so. Items that already happened are in the tabs. Items still ahead of 2026-10-13 are in the last table, so you can pin and test replacements before they land." },
+    { "t": "tabs", "tabs": [
+      { "label": "Models and APIs", "blocks": [
+        { "t": "table", "head": ["Date", "Change", "Why it matters"], "rows": [
+          ["2025-03-11", "OpenAI releases the **Responses API** with built-in tools [[r1]].", "Many tutorials still teach Chat Completions or Assistants."],
+          ["2025-08-07", "The GPT-5 family reaches the API [[r1]].", "Reasoning models changed which parameters are accepted."],
+          ["2025-08", "Azure OpenAI offers an opt-in **v1 API** [[r28]].", "Base URL ends `/openai/v1` and a dated `api-version` is no longer required."],
+          ["2025-08-20", "OpenAI releases the **Conversations API** [[r1]].", "A durable conversation object exists, and it is not ZDR eligible [[r29]]."],
+          ["2025-08-26", "OpenAI announces the **Assistants API** deprecation, with sunset on 2026-08-26 [[r4]].", "It shut down on 2026-08-26. Threads map to Conversations and Runs to Responses."],
+          ["2025-12-11 and 2026-02-10", "OpenAI adds client-side `/responses/compact`, then server-side compaction through `context_management` [[r1]].", "Context management is an API feature, not only your code."],
+          ["2026-03-05", "GPT-5.4: Chat Completions rejects tools when reasoning effort is not `none` [[r3]].", "Old agent code breaks on upgrade. Use Responses."],
+          ["2026-04-16", "Claude Opus 4.7: a new tokenizer (about 30% more tokens), `xhigh` effort, and non-default sampling values return 400 [[r7]].", "Token budgets and temperature code both break."],
+          ["2026-09-03", "GPT-6 Astra: async tool calling, and `reasoning.effort: none` returns 400 [[r30]].", "Port effort settings, do not copy them."],
+          ["2026-09-22 to 2026-10-07", "Claude Opus 5.5 (thinking cannot be disabled), Sonnet 5.5 (forced `tool_choice` returns 400) and Haiku 5.5 [[r7]].", "Code written for older Claude models can break."],
+          ["2026-09-29", "GPT-6.1 Sol: Chat Completions works only without tools [[r30]].", "Tools need Responses."]
+        ] }
+      ] },
+      { "label": "Caching and cost", "blocks": [
+        { "t": "table", "head": ["Date", "Change", "Why it matters"], "rows": [
+          ["2026-07-09 (release of the GPT-5.6 family; the exact change date for caching is unverified)", "The GPT-5.6 family adds explicit prompt caching controls [[r1]]. Cache writes bill at 1.25x the input rate, `prompt_cache_options` and explicit breakpoints appear, 128-token rounding is gone, `prompt_cache_retention` is deprecated and `prompt_cache_key` becomes optional [[r5]].", "Older models return 400 for the new fields."],
+          ["2026-09-03 and later", "Moving from GPT-5.5 or earlier to GPT-6 replaces `prompt_cache_retention` with `prompt_cache_options.ttl` (`\"30m\"`) [[r30]].", "The cost model changes, so recompute savings."],
+          ["2026-09-08", "Prompt Cache Diagnostics is GA in Responses for GPT-5.6 and later [[r1]].", "Use it to debug cache misses."],
+          ["2026-04-24 (version date of `gpt-5.5`)", "Azure enables extended retention by default on `gpt-5.5` but `in_memory` on `gpt-5.4` and older [[r6]].", "The same code caches differently by model."],
+          ["2026-07-28", "The MCP revision adds cache hints (`ttlMs`, `cacheScope`) and makes deterministic tool order a SHOULD [[r8]].", "A reshuffled tool list also breaks provider prompt caches."],
+          ["2026-09-25", "Azure Flex: `service_tier: \"flex\"` on a model without Flex support returns 400 instead of falling back to Standard [[r31]].", "Do not assume a graceful fallback."]
+        ] }
+      ] },
+      { "label": "Wind-downs", "blocks": [
+        { "t": "table", "head": ["Date", "Change", "Why it matters"], "rows": [
+          ["2026-05-07", "OpenAI starts winding down self-serve fine-tuning [[r2]].", "Plan alternatives. Active customers lose job creation on 2027-01-06."],
+          ["2026-06-03", "OpenAI deprecates the Evals platform (read-only 2026-10-31, shutdown 2026-11-30), reusable prompts (`v1/prompts`, shutdown 2026-11-30) and Agent Builder (shutdown 2026-11-30) [[r2]].", "The Assistants migration table still maps Assistants to Prompts."],
+          ["2026-06-11", "OpenAI announces shutdown of the `gpt-5-2025-08-07`, `gpt-5-mini`, `gpt-5-nano`, `gpt-5-pro`, `o3` and `o3-pro` snapshots for 2026-12-11 [[r2]].", "Azure keeps `gpt-5` until 2027-02-09 [[r18]], so dates depend on the platform."],
+          ["2026-10-01", "OpenAI deprecates `gpt-5.3-codex`, `gpt-5.1` and `gpt-5.4-nano`, with shutdown on 2027-04-01 [[r2]].", "Six months of notice."]
+        ] }
+      ] }
+    ] },
+    { "t": "diagram", "id": "w00-d-api-timeline", "title": "Seven dates that changed API code", "alt": "A timeline from the Responses API release in 2025 through the Assistants deprecation, the GPT-5.4 tool rule, the GPT-5.6 caching model, the Assistants sunset, GPT-6 Astra and the first large shutdowns.", "src": "flowchart LR\n  A[2025-03-11 Responses API] --> B[2025-08-26 Assistants deprecated]\n  B --> C[2026-03-05 GPT-5.4 tools need Responses]\n  C --> D[2026-07-09 GPT-5.6 caching model]\n  D --> E[2026-08-26 Assistants sunset]\n  E --> F[2026-09-03 GPT-6 Astra]\n  F --> G[2026-10-23 Large shutdowns]", "caption": "The last node is still ahead of 2026-10-13." },
+    { "t": "h", "text": "Upcoming model and API dates to pin", "level": 2 },
+    { "t": "table", "caption": "Dates after 2026-10-13", "head": ["Date", "What happens", "Platform"], "rows": [
+      ["2026-10-23", "Shutdown of `gpt-4`, `gpt-4-turbo`, `gpt-3.5-turbo`, `o1`, `o3-mini`, `o4-mini`, `gpt-4.1-nano`, `gpt-4o-2024-05-13` and related fine-tunes [[r2]].", "OpenAI API"],
+      ["2026-10-31", "The Evals platform becomes read-only [[r2]].", "OpenAI API"],
+      ["2026-11-19", "Azure retires `o1`, `o1-pro`, `o3`, `o3-mini`, `o3-pro`, `o4-mini` and `o3-deep-research` [[r18]].", "Azure OpenAI"],
+      ["2026-11-30", "Shutdown of Evals, reusable prompts and Agent Builder [[r2]].", "OpenAI API"],
+      ["2026-12-09", "Azure retires `gpt-4o` 2024-05-13 [[r18]].", "Azure OpenAI"],
+      ["2026-12-11", "Shutdown of the `gpt-5` snapshots named above [[r2]].", "OpenAI API"],
+      ["2027-01-06", "Active customers can no longer create fine-tuning jobs [[r2]].", "OpenAI API"],
+      ["2027-04-14", "Azure retires the `gpt-4.1` family [[r18]].", "Azure OpenAI"]
+    ], "highlightCol": 0 },
+    { "t": "callout", "kind": "preview", "title": "How to read the labels", "md": "Statuses are what the source said on 2026-10-13: GA, Preview, Beta, Deprecated or unverified. Flex processing is Beta. A date marked unverified means I could not find the vendor's own date. Check the source before you quote it. What flips a recommendation: a Preview label, a missing SLA or a retirement date inside your delivery window." },
+    { "t": "accordion", "items": [
+      { "title": "Go deeper: keep your own map fresh", "blocks": [
+        { "t": "list", "style": "ol", "items": [
+          "Subscribe to three feeds: the OpenAI changelog and deprecations pages, the Claude Platform release notes, and the Microsoft Learn what's new and retirement schedule pages.",
+          "When you cite a limit, a default or an availability, write the date you checked it and the status.",
+          "Pin model versions in production, keep an eval set, and test the replacement as soon as a retirement notice appears.",
+          "Expect platform differences: the same model can retire on a different date on Azure than on the OpenAI API."
+        ] }
+      ] }
+    ] }
+  ],
+  "quiz": [
+    { "id": "w00-l4-q1", "type": "order", "tag": "order", "q": "Put these events in date order, earliest first.", "items": ["OpenAI releases the Responses API", "OpenAI announces the Assistants API deprecation", "GPT-5.4 stops Chat Completions from using tools with reasoning on", "The Assistants API shuts down", "GPT-6 Astra is released"], "explain": "The dates are 2025-03-11, 2025-08-26, 2026-03-05, 2026-08-26 and 2026-09-03. Knowing the order helps you spot tutorials that predate each change.", "difficulty": 2, "ref": "r1" },
+    { "id": "w00-l4-q2", "type": "single", "tag": "diagnose", "q": "An agent written in 2025 uses Chat Completions with function tools on a reasoning model, and it fails after the team upgrades to GPT-5.4. What is the most likely cause?", "options": ["Function tools were removed from every OpenAI API in the upgrade", "The Assistants API shutdown also blocks Chat Completions calls", "Reasoning models cannot call functions in any OpenAI API", "Chat Completions rejects tools with reasoning on"], "answer": 3, "explain": "From GPT-5.4 on, Chat Completions does not support tool calling with reasoning effort other than none, so the agent must move to Responses or run with effort none. Tools still exist in Responses, the Assistants shutdown is unrelated, and reasoning models can call functions.", "difficulty": 2, "ref": "r3" },
+    { "id": "w00-l4-q3", "type": "numeric", "tag": "numeric", "q": "OpenAI's Evals platform becomes read-only on 2026-10-31. How many days of write access remain after 2026-10-13?", "answer": 18, "tolerancePct": 1, "unit": "days", "hint": "Count from 2026-10-13 to 2026-10-31 in the same month.", "explain": "31 minus 13 is 18 days. The platform then stays read-only until the shutdown on 2026-11-30, so export what you need before the write window closes.", "difficulty": 1, "ref": "r2" }
+  ],
+  "defend": null,
+  "refs": ["r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8", "r18", "r28", "r29", "r30", "r31"],
+  "takeaways": [
+    "Date and label every product fact, and say where a date is unverified",
+    "Responses, Conversations, compaction and GPT-5.4 changed what API code looks like",
+    "Caching rules changed with GPT-5.6 and again for GPT-6, so recompute savings",
+    "Pin the shutdown dates ahead of you, because Azure and OpenAI retire the same model on different days"
+  ]
+}

@@ -1,0 +1,114 @@
+{
+  "id": "w11-t05",
+  "order": 5,
+  "group": "Behaviour",
+  "title": "Tools and function invocation",
+  "minutes": 8,
+  "difficulty": "core",
+  "summary": "Tools are functions the model can request. The framework runs the tool loop: model asks, framework calls the function, result goes back, until the model answers or a limit stops it.",
+  "useIf": "The agent must read data, call APIs or act, and you want the framework to run the call loop with limits and middleware.",
+  "avoidIf": "The call is deterministic and always needed: call it in code and pass the result in as context.",
+  "explain": [
+    { "t": "p", "md": "**Function tools** are your code with a schema. In Python pass any function (docstring becomes the description, `Annotated[str, Field(description=...)]` documents parameters) or decorate it with `@tool`. In .NET use `AIFunctionFactory.Create(method)` [[tr5]]. **Other tool sources**: MCP servers the agent process connects to (`MCPStreamableHTTPTool`, `MCPStdioTool`), hosted tools that the provider runs (web search, code interpreter, hosted MCP via client `get_*_tool()` methods) and other agents wrapped as tools [[tr36]]." },
+    { "t": "p", "md": "**The loop.** In Python the `FunctionInvocation` layer in the chat client runs the loop. Several tool calls in one assistant message run concurrently by default; set `allow_concurrent_invocation` to `False` when tools share mutable state. `max_function_calls` and `max_duration_seconds` default to `None` (unlimited) and are best-effort: they are checked after each model-requested batch, so a batch can overshoot. Time waiting for tool approval counts toward the duration limit [[tr5]]." },
+    { "t": "p", "md": "**Errors are filtered.** `include_detailed_errors` defaults to `False`, so the model gets a generic failure and the original exception stays available to trusted host code. Turn it on only when the result stays on a trusted channel [[tr5]]. On a Harness Agent function invocation is wired for you, and `@tool` functions default to `approval_mode=\"never_require\"` [[tr5]]." },
+    { "t": "flow", "title": "One tool-loop iteration", "steps": [
+      { "title": "Model call", "md": "Chat middleware runs, the model returns text or tool calls." },
+      { "title": "Approval check", "md": "Tools marked for approval pause the run and return a request." },
+      { "title": "Tool calls", "md": "Function middleware wraps each call; calls in one message run concurrently by default." },
+      { "title": "Limits", "md": "Stop at `max_iterations`, `max_function_calls` or `max_duration_seconds`, then ask for a final text answer." }
+    ] },
+    { "t": "tabs", "tabs": [
+      { "label": "C#", "blocks": [ { "t": "code", "lang": "csharp", "code": "[Description(\"Get the weather for a given location.\")]\nstatic string GetWeather([Description(\"The location.\")] string location)\n    => $\"The weather in {location} is cloudy, 15C.\";\n\nAIAgent agent = projectClient.AsAIAgent(\n    model: \"gpt-5.4-mini\",\n    instructions: \"You are a helpful assistant\",\n    tools: [AIFunctionFactory.Create(GetWeather)]);\n\n// Harness: pass tools through options and cap the loop\nAIAgent harness = chatClient.AsHarnessAgent(new HarnessAgentOptions\n{\n    ChatOptions = new ChatOptions { Tools = [AIFunctionFactory.Create(GetWeather)] },\n    MaximumIterationsPerRequest = 20,\n});" } ] },
+      { "label": "Python", "blocks": [ { "t": "code", "lang": "python", "code": "from typing import Annotated\nfrom pydantic import Field\nfrom agent_framework import tool\n\n@tool(name='weather_tool', description='Retrieves weather for any location')\ndef get_weather(\n    location: Annotated[str, Field(description='The location.')],\n) -> str:\n    return f'The weather in {location} is cloudy, 15C.'\n\nagent = client.as_agent(instructions='You are helpful.', tools=[get_weather])\n\nclient.function_invocation_configuration.update({\n    'max_iterations': 5,\n    'max_function_calls': 20,\n    'max_duration_seconds': 30.0,\n})\nclient.function_invocation_configuration['allow_concurrent_invocation'] = False" } ] }
+    ] }
+  ],
+  "whereToUse": [
+    "Read-only lookups: order status, knowledge search, calendar free/busy",
+    "Actions with side effects, gated by approval (see tool approval)",
+    "MCP servers that expose a shared tool catalogue across agents",
+    "Provider-hosted tools such as web search or code interpreter when the client supports them",
+    "Agents wrapped as tools so a primary agent keeps ownership of the task"
+  ],
+  "whenToUse": {
+    "use": [
+      "The model must choose among actions at run time",
+      "The tool has a stable, well-described schema and bounded cost",
+      "You want middleware, telemetry and approval to apply per call"
+    ],
+    "avoid": [
+      "The call always happens: do it in code, fewer tokens and no variance",
+      "The tool returns huge payloads: shrink or summarise before returning, since results are re-sent to the model",
+      "The tool needs a secret the model could see: keep secrets in the host and inject runtime-only values"
+    ],
+    "flips": [
+      "Tools share mutable state: set `allow_concurrent_invocation` to `False` so calls run in model order",
+      "A hosted MCP tool must be traced end to end: use a client-opened MCP transport, because provider-issued calls get no `_meta` trace context"
+    ]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Local function tool", "Your code, your identity, full middleware control", "The function already exists as a shared service", "You own the schema and errors"],
+      ["Client-opened MCP tool", "Shared catalogue, traced via `params._meta`", "The server is untrusted or slow", "Another process and auth surface"],
+      ["Hosted tool (provider runs it)", "Web search, code interpreter, little code", "You need local policy or trace context", "Provider makes the call: no local middleware or `_meta` injection"],
+      ["Agent as tool", "Primary agent keeps ownership and combines answers", "Control should transfer fully", "Extra model calls and tokens"],
+      ["Direct code call", "Always needed, deterministic", "Need is conditional", "None"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A run loops through tools for minutes and costs spike", "cause": "No call or time cap: `max_function_calls` and `max_duration_seconds` default to unlimited", "fix": "Set explicit limits and watch `gen_ai.invoke_agent.tool_calls` in telemetry [[tr5]]" },
+    { "symptom": "Two tools corrupt shared state", "cause": "Calls in one assistant message run concurrently by default", "fix": "Set `allow_concurrent_invocation=False` or make tools safe to run in parallel" },
+    { "symptom": "Debugging shows only a generic tool failure", "cause": "`include_detailed_errors` is `False`, so the model sees a generic result", "fix": "Read `Content.exception` in trusted host code or logs; enable detailed errors only for trusted channels" }
+  ],
+  "scenarios": [
+    {
+      "id": "w11-t05-s1",
+      "title": "Shared tool catalogue for several agents",
+      "situation": "Five teams want the same 20 internal tools. A platform team owns them. Agents run in different services. Security requires traces that cross into the tool server.",
+      "constraints": ["Shared catalogue owned by one team", "End-to-end tracing required", "Agents run in the team's own process"],
+      "unknowns": ["Is the MCP server on the private network?", "Who authenticates the agent to the server?", "How big is the tool list in tokens?"],
+      "question": "How do agents consume the tools?",
+      "options": [
+        { "name": "A client-opened MCP connection from each agent process", "verdict": "best", "why": "The framework injects W3C trace context into `params._meta` for sessions the agent process opens, so traces cross into the server.", "tradeoff": "Each agent holds a connection and must handle auth and a large tool list." },
+        { "name": "Provider-hosted MCP tool configuration", "verdict": "good", "why": "Little code and the provider manages the connection.", "tradeoff": "The provider issues `tools/call`, so no `_meta` trace context is injected and the chain breaks." },
+        { "name": "Copy the 20 functions into each team's code", "verdict": "poor", "why": "Divergent copies and no central ownership.", "tradeoff": "Only sensible for two or three tiny tools nobody else needs." }
+      ],
+      "flips": [
+        { "if": "Tracing across the boundary is not required and the provider supports hosted MCP", "then": "The hosted connector becomes attractive for simplicity." },
+        { "if": "The tool list is very large", "then": "Add progressive tool exposure from a context provider." }
+      ],
+      "takeaway": "Who opens the MCP session decides who can propagate trace context."
+    },
+    {
+      "id": "w11-t05-s2",
+      "title": "Stop a runaway tool loop",
+      "situation": "A research agent sometimes calls a search tool 40 times for one question. Each call returns 8 KB. Latency target is 20 seconds.",
+      "constraints": ["20 second budget", "Large tool results", "Cost per run is capped"],
+      "unknowns": ["Is the model re-searching because results are poor?", "Can results be trimmed?", "Is partial output acceptable at the limit?"],
+      "question": "What do you change first?",
+      "options": [
+        { "name": "Set `max_function_calls` and `max_duration_seconds`, and shrink tool results with a result parser", "verdict": "best", "why": "Limits bound the loop and a smaller result cuts tokens per iteration. At a limit the client asks for a final text answer.", "tradeoff": "Limits are best-effort and a batch can overshoot." },
+        { "name": "Raise `max_iterations` to be safe", "verdict": "poor", "why": "It lengthens the loop and cost.", "tradeoff": "Only right when answers truly need many steps and budget allows." },
+        { "name": "Disable the tool", "verdict": "good", "why": "Ends the loop.", "tradeoff": "Loses the capability the agent exists for." }
+      ],
+      "flips": [
+        { "if": "The task really needs long searches", "then": "Move to a Harness Agent with compaction and background execution." },
+        { "if": "Results are poor and the model keeps re-searching", "then": "Fix retrieval quality or the tool description first; limits only hide the symptom." }
+      ],
+      "takeaway": "Cap the loop and slim the payload before you tune the prompt."
+    }
+  ],
+  "quiz": [
+    { "id": "w11-t05-q1", "type": "single", "tag": "diagnose", "q": "Your agent opened an MCP session with `MCPStreamableHTTPTool` and traces reach the server. After you switch to a provider-hosted MCP configuration the server spans are orphaned. Why?", "options": ["The provider runtime issues `tools/call`, so the framework cannot inject `params._meta` context", "The server dropped `traceparent`", "Hosted tools disable OpenTelemetry", "Sampling was lowered"], "answer": 0, "explain": "The framework injects trace context only for MCP sessions the agent process itself opens. Hosted connectors are called by the provider.", "ref": "tr36" },
+    { "id": "w11-t05-q2", "type": "multi", "tag": "concept", "q": "Which statements about Python tool limits are true? Select all.", "options": ["`max_function_calls` and `max_duration_seconds` default to `None`", "Limits are checked after each model-requested batch, so a batch can exceed them", "Time waiting for approval counts toward `max_duration_seconds`", "At a limit the client raises an exception to the caller"], "answers": [0, 1, 2], "explain": "The docs say the client stops invoking tools and asks the model for a final text response, not an exception. The first three are stated as written.", "ref": "tr5" }
+  ],
+  "flashcards": [
+    { "front": "What default approval mode does a Harness Agent give `@tool` functions?", "back": "`approval_mode=\"never_require\"`. Mark risky tools `always_require` explicitly." },
+    { "front": "Do multiple tool calls in one assistant message run in parallel?", "back": "Yes by default (client-side). Set `allow_concurrent_invocation` to `False` for shared mutable state." },
+    { "front": "Which three tool limits does Python expose on the client?", "back": "`max_iterations`, `max_function_calls` and `max_duration_seconds` in `function_invocation_configuration`." }
+  ],
+  "related": ["w11-t04", "w11-t06", "w11-t07", "w08-t02", "w08-t17"],
+  "refs": ["tr5", "tr36"]
+}

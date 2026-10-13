@@ -1,0 +1,127 @@
+{
+  "id": "w05-t17",
+  "order": 17,
+  "group": "Output and debugging",
+  "title": "Debugging a bad RAG answer",
+  "minutes": 9,
+  "difficulty": "core",
+  "summary": "Trace a bad answer from symptom to component. Check the evidence first, then retrieval, ranking, context assembly and generation, one stage at a time.",
+  "useIf": "An answer is wrong, missing, stale or unsupported, and you need to know which stage to fix before changing anything.",
+  "avoidIf": "You would tune prompts or swap models before looking at what was retrieved.",
+  "explain": [
+    { "t": "p", "md": "Most bad RAG answers are retrieval faults dressed as generation faults. The method is a bottom-up checklist. Move up a stage only when the stage below is proven good. Keep a **trace** per request: the raw and rewritten query, filters, per-retriever ranks, fused and reranked order with scores, the cutoff decision, the final context and the prompt, and the answer with its citations. Platforms help: Azure agentic retrieval returns an `activity` log when you set `includeActivity: true` [[r6]], and OpenAI file search returns raw hits only with `include: [\"file_search_call.results\"]` [[tr12]]." },
+    { "t": "flow", "title": "Debug from the bottom up", "direction": "v", "steps": [
+      { "title": "1. Is the answer in the corpus?", "md": "Search the source for the fact. Missing means ingestion, parsing or a real coverage gap." },
+      { "title": "2. Is it in the index, and visible to this caller?", "md": "Query by exact text. Check chunking, metadata and ACL filters." },
+      { "title": "3. Is it in the candidates?", "md": "Look at per-leg ranks. Not in the top candidates means a recall fault: retriever mode, query transformation, `k`." },
+      { "title": "4. Does it survive ranking and cutoff?", "md": "In the candidates but dropped means reranker, fusion or an over-strict cutoff." },
+      { "title": "5. Is it in the prompt, and well placed?", "md": "Check context size, truncation and order. Evidence in the middle is used less [[r24]]." },
+      { "title": "6. Oracle test: gold chunk in the prompt", "md": "Still wrong means a generation fault. Right means one of stages 1 to 5.", "tag": "decisive" }
+    ] },
+    { "t": "table", "caption": "Symptom to likely component", "head": ["Symptom", "Likely component", "First check"], "rows": [
+      ["Exact code or name not found", "Lexical leg or analyzer", "Does BM25 return it? Test the analyzer"],
+      ["Right topic, wrong passage", "Chunking or ranking", "Rank of the gold chunk before and after rerank"],
+      ["Works for admins, not for staff", "ACL filter or identity", "Run the query with each identity and compare candidates"],
+      ["Answer cites a chunk that does not support it", "Generation and citation", "Entailment check of claim against span"],
+      ["Stale answer", "Ingestion freshness", "Index timestamp for the source document"],
+      ["Confident answer to an unanswerable question", "Cutoff and abstention", "Scores of the top chunks, cutoff value"]
+    ], "highlightCol": 1 },
+    { "t": "p", "md": "**Two habits make the method fast.** First, keep a small golden set of real questions with their gold chunks, so every hypothesis becomes a rank or recall@k check rather than an opinion. Second, replay failures with the failing user's real identity and filters, because many apparent quality bugs are permission, freshness or language-handling bugs that vanish under a broad test account." },
+    { "t": "p", "md": "Fix the stage you proved, then re-run the **golden set** so the fix does not break other queries. Track recall@k and context precision for retrieval, and faithfulness for generation, as separate metrics." }
+  ],
+  "whereToUse": [
+    "Triage of user-reported wrong answers by a support or platform engineer",
+    "Regression analysis after an index, embedding or prompt change",
+    "Building the logging schema for a new RAG service",
+    "Interview answers about how you would isolate a retrieval fault from a generation fault"
+  ],
+  "whenToUse": {
+    "use": ["Every time a user flags an answer, trace before you tune", "After any change to chunking, embeddings, filters or prompts", "When quality differs by user, language or query type", "To decide whether the next investment is retrieval or generation"],
+    "avoid": ["Changing several stages at once, which hides which change helped", "Debugging from the final answer alone, without the trace", "Declaring a model fault before running the oracle test"],
+    "flips": ["The oracle test fails: move to prompt, context order and model", "The gold chunk is absent from candidates: fix recall before ranking", "Only one identity is affected: look at filters and ACL sync first"]
+  },
+  "alternatives": {
+    "title": "Compared with its neighbours",
+    "head": ["Option", "Wins when", "Loses when", "Cost or risk"],
+    "rows": [
+      ["Bottom-up trace (this topic)", "You need a reliable root cause", "No logs exist yet", "Needs logging and a golden set"],
+      ["Prompt tweaking first", "The oracle test already failed", "Evidence is missing", "Hides retrieval faults"],
+      ["Swap the model", "Generation faults with gold context", "Retrieval faults", "Cost, regressions"],
+      ["Add a reranker or hybrid blindly", "Gold chunk is in candidates but low", "Gold chunk is absent", "Latency and cost without gain"],
+      ["LLM judge for whole answers only", "Fast scoring at scale", "You need to localise the fault", "No stage attribution"]
+    ]
+  },
+  "pitfalls": [
+    { "symptom": "A fix improves one question and breaks others", "cause": "No golden set, so regressions are invisible", "fix": "Keep labelled queries with gold chunks and rerun them after every change" },
+    { "symptom": "The gold chunk is retrieved but the answer ignores it", "cause": "It sits mid-context among many chunks, or the prompt does not require using it [[r24]]", "fix": "Shrink and reorder the context, require citations and run the oracle test" },
+    { "symptom": "Tests pass, production fails for some users", "cause": "Tests ran with a broad identity, while real users hit ACL filters or different tenants", "fix": "Replay the failing query with the real user's identity and compare candidates" }
+  ],
+  "scenarios": [
+    {
+      "id": "w05-t17-s1",
+      "title": "The right chunk is at rank 31",
+      "situation": "A user reports a wrong answer. The trace shows the gold chunk at rank 31 in the fused list. The reranker takes the top 50, and the context holds five chunks.",
+      "constraints": ["Gold chunk is in the candidates", "Reranker cuts to five chunks", "Hybrid retrieval already runs"],
+      "unknowns": ["What rank does the gold chunk get after reranking?", "How often do similar failures occur?"],
+      "question": "Where is the fault?",
+      "options": [
+        { "name": "Ranking: check the reranked position, improve reranking or chunk text, then widen the window if needed", "verdict": "best", "why": "The chunk is present in the candidates, so the fault sits after retrieval. The reranked rank tells you whether ranking or the cutoff dropped it.", "tradeoff": "Needs score logging and golden-set reruns." },
+        { "name": "Swap to a larger generation model", "verdict": "poor", "why": "The model never saw the chunk if it was cut before the prompt.", "tradeoff": "Right only if the oracle test fails." },
+        { "name": "Increase k to 200 for retrieval", "verdict": "good", "why": "More candidates can help recall.", "tradeoff": "Does not solve a reranking or cutoff drop, and costs more." }
+      ],
+      "flips": [
+        { "if": "The gold chunk is at rank 120 and not in the candidates", "then": "It is a recall fault: fix the retriever, query transformation or chunking." },
+        { "if": "The gold chunk is at rank 3 after reranking but absent from the five-chunk context", "then": "It is a context-assembly fault: check the cutoff, deduplication and token-budget trimming." }
+      ],
+      "takeaway": "Locate the stage before you fix."
+    },
+    {
+      "id": "w05-t17-s2",
+      "title": "Answer contradicts the retrieved chunk",
+      "situation": "The context contains the correct policy chunk at the top, yet the answer states the opposite. The oracle test with the same chunk also fails.",
+      "constraints": ["Retrieval is correct", "Context is short", "The prompt asks for grounded answers"],
+      "unknowns": ["Does the prompt allow outside knowledge?", "Does the chunk have a negation or table that is hard to parse?"],
+      "question": "What do you change?",
+      "options": [
+        { "name": "Treat it as a generation fault: tighten the prompt, require quote-then-answer, check chunk formatting, and test a stronger model", "verdict": "best", "why": "The oracle test isolates generation. Quotes make contradictions visible.", "tradeoff": "More tokens and prompt maintenance." },
+        { "name": "Retune hybrid weights", "verdict": "poor", "why": "Retrieval already surfaced the right chunk.", "tradeoff": "Right when the gold chunk is missing or low." },
+        { "name": "Add a citation checker only", "verdict": "good", "why": "It will flag the contradiction.", "tradeoff": "It detects the error without fixing the cause." }
+      ],
+      "flips": [
+        { "if": "The chunk is a flattened table that loses its meaning", "then": "Fix parsing and chunking, since the model saw bad evidence." },
+        { "if": "The oracle test passes with the same chunk", "then": "The fault lies in the live context: look at prompt assembly, other chunks that contradict the gold one, or truncation." }
+      ],
+      "takeaway": "The oracle test separates retrieval from generation."
+    },
+    {
+      "id": "w05-t17-s3",
+      "title": "Works for admins, fails for staff",
+      "situation": "Support engineers reproduce answers fine as admins. Staff users get 'not found' for the same question.",
+      "constraints": ["Per-document permissions", "Security filter in the index", "Same query text"],
+      "unknowns": ["Were ACLs ingested for the staff documents?", "Does the retrieval call use the user's identity?"],
+      "question": "Where do you look?",
+      "options": [
+        { "name": "Replay the query with a staff identity, compare candidates and ACL fields, and check ACL sync", "verdict": "best", "why": "An identity-dependent failure points to filters or ACL data, not the model.", "tradeoff": "Needs test identities and a trace that records the filter." },
+        { "name": "Increase the cutoff sensitivity", "verdict": "poor", "why": "The chunk is probably filtered out before ranking.", "tradeoff": "Right when scores are low for everyone." },
+        { "name": "Tell staff to rephrase", "verdict": "good", "why": "May work around some misses.", "tradeoff": "Leaves the real defect." }
+      ],
+      "flips": [
+        { "if": "Staff and admins get identical candidates", "then": "Look at the cutoff, prompt or language handling instead." },
+        { "if": "Only the staff candidates are missing, and the ACL field values differ for the gold chunk", "then": "It is an ACL sync or group-mapping fault: fix the index permission fields rather than retrieval." }
+      ],
+      "takeaway": "Replay with the real identity."
+    }
+  ],
+  "quiz": [
+    { "id": "w05-t17-q1", "type": "single", "tag": "diagnose", "q": "You paste the gold chunk into the prompt and the model still answers wrongly. Which stage do you fix?", "options": ["Retrieval recall", "Generation: prompt, context handling or model", "Index freshness", "ACL sync"], "answer": 1, "explain": "The oracle test removes retrieval, ranking and filters. A failure with gold context in the prompt is a generation fault." },
+    { "id": "w05-t17-q2", "type": "order", "tag": "order", "q": "Put the debugging checks in order, from first to last.", "items": ["Is the answer in the corpus?", "Is it in the index and visible to this caller?", "Is it in the retrieved candidates?", "Does it survive reranking and the cutoff?", "Is it in the prompt, well placed?"], "explain": "Go bottom-up: source, index and permissions, candidates, ranking and cutoff, then context assembly. Only then blame generation." },
+    { "id": "w05-t17-q3", "type": "match", "tag": "diagnose", "q": "Match each symptom to its likely stage.", "pairs": [{ "l": "Exact code never found", "r": "Lexical leg or analyzer" }, { "l": "Works for admins, not staff", "r": "ACL filter or identity" }, { "l": "Stale answer", "r": "Ingestion freshness" }, { "l": "Confident answer to an unanswerable question", "r": "Cutoff and abstention" }], "explain": "Each symptom has a primary suspect: analyzers for exact tokens, filters for identity-specific misses, ingestion for staleness and the cutoff for no-answer cases." }
+  ],
+  "flashcards": [
+    { "front": "What is the oracle test?", "back": "Put the gold chunk in the prompt. Still wrong is a generation fault. Right means retrieval, ranking, filters or context assembly failed." },
+    { "front": "What should a RAG trace record?", "back": "Raw and rewritten query, filters, per-leg ranks, fused and reranked order with scores, cutoff decision, final context, prompt, answer and citations." },
+    { "front": "In which order do you debug a bad answer?", "back": "Corpus, index and ACLs, candidates, ranking and cutoff, prompt context, then generation." }
+  ],
+  "related": ["w05-t01", "w05-l6", "w14-t03", "w14-t06", "w07-t19"],
+  "refs": ["r6", "r24", "tr12"]
+}

@@ -1,0 +1,131 @@
+{
+  "id": "w01-l2",
+  "order": 2,
+  "title": "Turn the right knob",
+  "kind": "problem",
+  "minutes": 18,
+  "brief": "Output is too random, too repetitive or too long, and someone says \"set temperature to 0\". Pick the control that acts on the actual failure, then check that your model and API still accept it.",
+  "blocks": [
+    { "t": "h", "text": "What each control does and where it exists", "level": 2 },
+    { "t": "table", "caption": "Decoding controls by API (checked 2026-10-13)", "head": ["Control", "What it does", "Range and notes", "Where it exists"], "rows": [
+      ["`temperature`", "Scales randomness. Lower is more peaked.", "OpenAI 0 to 2, change this or `top_p`, not both. Anthropic 0.0 to 1.0, default 1.0 [[r4]] [[r19]].", "Chat, Responses, Messages. Newer Claude models accept only 1.0."],
+      ["`top_p`", "Nucleus sampling: keep the smallest token set whose cumulative probability reaches `p`.", "Claude models released after Opus 4.6 accept only 0.99 or higher [[r19]].", "Chat, Responses, Messages"],
+      ["`top_k`", "Sample from the k most likely tokens.", "Anthropic deprecated it and returns 400 on models released after Opus 4.6. Gemini calls it `topK` in `generationConfig`.", "Not in OpenAI bodies"],
+      ["`seed`", "Asks for repeatable sampling.", "Best effort and Beta in Chat. Watch `system_fingerprint` [[r5]].", "Chat only"],
+      ["`frequency_penalty`, `presence_penalty`", "Penalize tokens by how often or whether they already appeared.", "-2.0 to 2.0 [[r5]].", "Chat only"],
+      ["`logit_bias`", "Adds a bias to chosen token ids.", "Token id to -100 to 100. Values between -1 and 1 are the usual range [[r5]].", "Chat only"],
+      ["`logprobs`, `top_logprobs`", "Returns log probabilities of generated tokens and top alternatives.", "`top_logprobs` 0 to 20. In Chat it needs `logprobs: true`.", "Chat and Responses. Not in Messages."],
+      ["`stop`, `stop_sequences`", "Ends generation when a string appears.", "Up to 4 sequences in Chat, not supported on o3 and o4-mini. Claude returns `stop_reason: \"stop_sequence\"` [[r19]].", "Chat and Messages. Not in Responses."],
+      ["Max tokens", "Caps generated tokens, reasoning included.", "`max_completion_tokens` (Chat), `max_output_tokens` (Responses), `max_tokens` (Messages, required). Chat `max_tokens` is deprecated and incompatible with o-series.", "All three APIs"]
+    ], "highlightCol": 3 },
+    { "t": "callout", "kind": "gotcha", "title": "Temperature 0 is not determinism", "md": "Anthropic says temperature 0.0 is not fully deterministic [[r19]]. OpenAI marks `seed` as best effort and Beta, and the Responses body has no `seed` [[r5]] [[r4]]. Expect small variation. Make it harmless with a schema, and test flaky extraction with repeated runs instead of trusting one." },
+    { "t": "h", "text": "Pick the knob, then check the model accepts it", "level": 2 },
+    { "t": "dials", "id": "w01-l2-knobs", "title": "Which knob for which goal", "prompt": "Flip the goal, the model path and the API. Watch knobs lose points when the model or API rejects them.",
+      "dials": [
+        { "id": "goal", "label": "Goal", "values": [
+          { "id": "repeat", "label": "Repeatable extraction" },
+          { "id": "vary", "label": "Varied creative copy" },
+          { "id": "loop", "label": "Stop loops or cut at a delimiter" },
+          { "id": "conf", "label": "Confidence signal for a classifier" }
+        ] },
+        { "id": "path", "label": "Model path", "values": [
+          { "id": "std", "label": "Non-reasoning model" },
+          { "id": "reason", "label": "Reasoning, effort not none" }
+        ] },
+        { "id": "api", "label": "API", "values": [
+          { "id": "chat", "label": "OpenAI Chat Completions" },
+          { "id": "resp", "label": "OpenAI Responses" },
+          { "id": "msg", "label": "Anthropic Messages, newer Claude" }
+        ] }
+      ],
+      "options": [
+        { "id": "temp", "name": "Lower or raise temperature or top_p", "summary": "Reshape the sampling distribution. Change one, not both." },
+        { "id": "seed", "name": "seed plus system_fingerprint", "summary": "Ask for repeatable draws and log the backend fingerprint." },
+        { "id": "pen", "name": "Frequency and presence penalties", "summary": "Push the model away from tokens it already used." },
+        { "id": "bias", "name": "logit_bias", "summary": "Boost or ban specific token ids." },
+        { "id": "lp", "name": "logprobs and top_logprobs", "summary": "Read token probabilities as a confidence signal." },
+        { "id": "stop", "name": "Stop sequences", "summary": "End generation at a chosen string." }
+      ],
+      "scores": {
+        "temp": {
+          "goal": { "repeat": { "s": 2, "why": "A low temperature or top_p narrows sampling, which is the usual first step for extraction." }, "vary": { "s": 2, "why": "Raising temperature adds variety. OpenAI allows 0 to 2." }, "loop": { "s": 0, "why": "Temperature does not target loops directly." }, "conf": { "s": -1, "why": "It reshapes the distribution but gives no confidence number." } },
+          "path": { "std": { "s": 1, "why": "Accepted on non-reasoning models." }, "reason": { "s": -2, "why": "OpenAI says to remove temperature and top_p when effort is not none, and Azure lists them as rejected on most reasoning models." } },
+          "api": { "chat": { "s": 1, "why": "Accepted, range 0 to 2." }, "resp": { "s": 1, "why": "Accepted in the Responses body." }, "msg": { "s": -1, "why": "Claude models released after Opus 4.6 accept only temperature 1.0 and top_p of 0.99 or higher." } }
+        },
+        "seed": {
+          "goal": { "repeat": { "s": 1, "why": "Same seed and parameters usually match, but it is best effort." }, "vary": { "s": -1, "why": "A fixed seed removes variety instead of adding it." }, "loop": { "s": 0, "why": "Neutral." }, "conf": { "s": 0, "why": "Neutral." } },
+          "path": { "std": { "s": 0, "why": "Available on Chat, marked Beta." }, "reason": { "s": -1, "why": "Sources do not list it as a reasoning control, so do not rely on it." } },
+          "api": { "chat": { "s": 1, "why": "The only OpenAI body with `seed`. Check `system_fingerprint` for backend changes." }, "resp": { "s": -2, "why": "The Responses body has no `seed`." }, "msg": { "s": -2, "why": "Anthropic has no `seed`, and says even temperature 0.0 is not fully deterministic." } }
+        },
+        "pen": {
+          "goal": { "repeat": { "s": -1, "why": "Penalties change word choice and do not make output repeatable." }, "vary": { "s": 1, "why": "Presence penalty nudges text toward tokens it has not used." }, "loop": { "s": 2, "why": "Frequency penalty (-2.0 to 2.0) directly discourages repeated tokens." }, "conf": { "s": -1, "why": "They distort the probabilities you want to read." } },
+          "path": { "std": { "s": 0, "why": "Accepted on non-reasoning Chat models." }, "reason": { "s": -2, "why": "Azure lists both penalties as rejected on reasoning models." } },
+          "api": { "chat": { "s": 1, "why": "Chat Completions only, -2.0 to 2.0." }, "resp": { "s": -2, "why": "Not in the Responses body." }, "msg": { "s": -2, "why": "Not in the Messages body. Anthropic's OpenAI compatibility layer ignores them silently." } }
+        },
+        "bias": {
+          "goal": { "repeat": { "s": 0, "why": "It can ban or boost token ids, but needs the tokenizer and is brittle." }, "vary": { "s": -1, "why": "It narrows output rather than widening it." }, "loop": { "s": 1, "why": "It can ban a looping token, but it is a blunt tool." }, "conf": { "s": 0, "why": "Neutral." } },
+          "path": { "std": { "s": 0, "why": "Accepted on non-reasoning Chat models." }, "reason": { "s": -2, "why": "Azure lists `logit_bias` as rejected on reasoning models." } },
+          "api": { "chat": { "s": 1, "why": "Chat only: token id to -100..100." }, "resp": { "s": -2, "why": "Not in the Responses body." }, "msg": { "s": -2, "why": "Not in the Messages body." } }
+        },
+        "lp": {
+          "goal": { "repeat": { "s": 0, "why": "It measures variation, it does not remove it." }, "vary": { "s": -1, "why": "It does not add variety." }, "loop": { "s": 0, "why": "Neutral." }, "conf": { "s": 2, "why": "Token log probabilities are a common confidence signal. `top_logprobs` returns 0 to 20 alternatives." } },
+          "path": { "std": { "s": 1, "why": "Available on non-reasoning models." }, "reason": { "s": -2, "why": "OpenAI says to remove `logprobs` and `top_logprobs` when effort is not none." } },
+          "api": { "chat": { "s": 1, "why": "`logprobs: true` with `top_logprobs`." }, "resp": { "s": 1, "why": "`top_logprobs` with the `message.output_text.logprobs` include value." }, "msg": { "s": -2, "why": "The Messages body has no logprobs." } }
+        },
+        "stop": {
+          "goal": { "repeat": { "s": 1, "why": "A delimiter ends the output cleanly for downstream parsing." }, "vary": { "s": 0, "why": "Neutral." }, "loop": { "s": 2, "why": "Ends generation at a delimiter, up to 4 sequences in Chat." }, "conf": { "s": 0, "why": "Neutral." } },
+          "path": { "std": { "s": 1, "why": "Accepted on non-reasoning models." }, "reason": { "s": -1, "why": "Not supported on o3 and o4-mini. Check each model." } },
+          "api": { "chat": { "s": 1, "why": "`stop` takes up to 4 sequences." }, "resp": { "s": -2, "why": "No `stop` in the Responses body. Trim in code or use a schema." }, "msg": { "s": 1, "why": "`stop_sequences` is an array and `stop_reason` becomes `stop_sequence`." } }
+        }
+      },
+      "takeaway": "A knob that fits the goal can still lose because the model path or the API rejects it. Check acceptance before you tune." },
+    { "t": "tabs", "tabs": [
+      { "label": "Chat Completions", "blocks": [
+        { "t": "code", "lang": "python", "title": "Chat Completions, non-reasoning model", "code": "resp = client.chat.completions.create(\n    model=\"gpt-4.1\",\n    messages=messages,\n    temperature=0,\n    seed=7,\n    stop=[\"\\n###\"],\n    max_completion_tokens=800,\n)\nprint(resp.system_fingerprint)", "caption": "Illustrative. Log the fingerprint with every seeded call." }
+      ] },
+      { "label": "Responses", "blocks": [
+        { "t": "code", "lang": "python", "title": "Responses, non-reasoning model", "code": "resp = client.responses.create(\n    model=\"gpt-4.1\",\n    input=messages,\n    temperature=0,\n    max_output_tokens=800,\n)", "caption": "Illustrative. There is no seed, stop or penalty field in this body." }
+      ] },
+      { "label": "Anthropic Messages", "blocks": [
+        { "t": "code", "lang": "python", "title": "Messages, newer Claude model", "code": "msg = client.messages.create(\n    model=\"claude-sonnet-5-5\",\n    max_tokens=800,\n    stop_sequences=[\"\\n###\"],\n    messages=messages,\n)", "caption": "Illustrative. No temperature: newer Claude models accept only the default 1.0. `max_tokens` is required." }
+      ] }
+    ] },
+    { "t": "failure", "title": "Control failure modes", "items": [
+      { "symptom": "A 400 appears after you turn reasoning on, naming `temperature`, `top_p` or `logprobs`", "cause": "OpenAI says to remove temperature, top_p and top_logprobs when effort is not `none`, plus `logprobs` in Chat. Azure's reasoning page lists more as rejected, yet its GPT-6 table marks temperature, top_p and logprobs as supported [[r2]] [[r15]].", "fix": "Gate sampling parameters on the effort value in code and test against your real deployment, because the two sources disagree." },
+      { "symptom": "400 after moving a service to a Claude model released after Opus 4.6", "cause": "Those models accept only temperature 1.0 and top_p of 0.99 or higher, and `top_k` is rejected.", "fix": "Delete the non-default values and steer with the prompt, a schema and evals." },
+      { "symptom": "Settings seem to work but never change the output", "cause": "Anthropic's OpenAI SDK compatibility layer silently ignores seed, logprobs, penalties, logit_bias, response_format, reasoning_effort, store and strict [[r36]].", "fix": "Use the native API in production. Treat the layer as a testing aid." },
+      { "symptom": "Seeded calls return different text", "cause": "`seed` is best effort and the backend can change, which shows up in `system_fingerprint`.", "fix": "Log the fingerprint, compare runs with a tolerance and enforce a schema." },
+      { "symptom": "Tuning feels random after changing both `temperature` and `top_p`", "cause": "Both reshape the same distribution, so effects compound.", "fix": "Change one, hold the other at its default and measure against a fixed eval set." }
+    ] },
+    { "t": "accordion", "items": [
+      { "title": "Go deeper: what temperature and top_p do to the distribution", "blocks": [
+        { "t": "formula", "title": "Softmax with temperature", "expr": "p_i = exp(z_i / T) / sum_j exp(z_j / T)", "vars": [
+          { "k": "z_i", "v": "the model's raw score (logit) for token i" },
+          { "k": "T", "v": "temperature. Below 1 sharpens the distribution, above 1 flattens it" }
+        ], "example": "At T = 0.5 the gap between two logits doubles in the exponent, so the top token dominates. Nucleus sampling then keeps the smallest set of tokens whose cumulative probability reaches `top_p`. This is the textbook definition. Vendors do not publish their exact samplers." }
+      ] },
+      { "title": "Go deeper: logprobs and logit_bias in practice", "blocks": [
+        { "t": "p", "md": "Read the probability of the first generated token to build a confidence score for a classifier. Calibrate it against labelled data before you set a threshold. `logit_bias` needs token ids from the right tokenizer, so a ban written for one model can miss in another. Neither works on a reasoning path where OpenAI tells you to remove `logprobs` [[r2]]." }
+      ] }
+    ] }
+  ],
+  "quiz": [
+    { "id": "w01-l2-q1", "type": "single", "tag": "bug", "q": "A team calls a GPT-6 model with reasoning effort `medium` and also sends `temperature` and `top_p`. What should change?", "code": { "lang": "python", "code": "resp = client.responses.create(\n    model=\"gpt-6-sol\",\n    input=prompt,\n    reasoning={\"effort\": \"medium\"},\n    temperature=0.2,\n    top_p=0.9,\n)" }, "options": ["Move `reasoning` out of the body and into the `input` field", "Remove `temperature` and `top_p` for this effort level", "Raise `top_p` above 1 so the nucleus covers every token", "Replace `input` with a messages array of role objects"], "answer": 1, "explain": "OpenAI says to remove temperature, top_p and top_logprobs when effort is not none. `reasoning` is a valid Responses field, `top_p` cannot exceed 1, and `input` does not have to be an array of messages.", "difficulty": 2, "ref": "r2" },
+    { "id": "w01-l2-q2", "type": "multi", "tag": "concept", "q": "Select every control that exists in the Chat Completions body but not in the Responses body.", "options": ["`seed`", "`stop`", "`temperature`", "`logit_bias`", "`top_logprobs`"], "answers": [0, 1, 3], "explain": "The Responses body has no seed, stop, n, penalties, logit_bias or top_k. `temperature` and `top_logprobs` exist in both.", "difficulty": 2, "ref": "r4" },
+    { "id": "w01-l2-q3", "type": "match", "tag": "concept", "q": "Match each goal to the control that targets it.", "pairs": [
+      { "l": "Confidence signal for a classifier", "r": "`logprobs` with `top_logprobs`" },
+      { "l": "End output at a delimiter", "r": "`stop` or `stop_sequences`" },
+      { "l": "Best-effort repeatable sampling", "r": "`seed` plus `system_fingerprint`" },
+      { "l": "Discourage repeated tokens", "r": "`frequency_penalty`" }
+    ], "explain": "Each control acts on one failure. Temperature changes randomness in general and does not do any of these four jobs directly.", "difficulty": 1 },
+    { "id": "w01-l2-q4", "type": "single", "tag": "flip", "q": "A service tunes `temperature: 0.2` for extraction on a non-reasoning model, then moves to a Claude model released after Opus 4.6. What is the best response?", "options": ["Keep `temperature: 0.2` and also add `top_k: 40` for extra control", "Set temperature to 0, because that is deterministic on Claude models", "Remove the non-default sampling values and use schema and evals", "Set `top_p` to 0.5 to compensate for the removed temperature"], "answer": 2, "explain": "Those models accept only temperature 1.0 and top_p of 0.99 or higher, and `top_k` is rejected, so each distractor returns a 400. Anthropic also says temperature 0.0 is not fully deterministic.", "difficulty": 2, "ref": "r19" }
+  ],
+  "defend": null,
+  "refs": ["r2", "r4", "r5", "r15", "r19", "r36"],
+  "takeaways": [
+    "Name the failure first (randomness, repetition, length, confidence), then pick the control that acts on it",
+    "Change temperature or top_p, never both, and treat seed as best effort",
+    "Reasoning paths and newer Claude models reject sampling controls that older models accepted",
+    "Compatibility layers can ignore your settings silently, so test with the native API"
+  ]
+}
